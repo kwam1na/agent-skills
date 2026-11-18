@@ -39,7 +39,7 @@ Checked against `main` at `bb54fe4` on 2026-11-18:
 - Both plan lenses align.
 - A story round can run the mandated pair plus a lane-chosen subset of the declared story lenses, fixed at round 1 with
   its reason, shown at hand-off and at `lead-accept`.
-- Without `--lenses` and without any default set, every declared lens runs, as today.
+- Without `--lenses` and with no `use` declared, every declared lens runs, as today.
 - The behaviour is proven by fixture tests in the run-delivery test modules, which run this checkout's
   `run_delivery.py`. This delivery's own review runs the installed generation, which has no `--lenses`, so its own
   rounds run every declared lens.
@@ -64,23 +64,28 @@ Checked against `main` at `bb54fe4` on 2026-11-18:
    always gives the same list. An id that isn't declared, isn't a story lens, or is repeated is refused, naming the
    declared story lenses. `--lenses` without `--lenses-reason`, an empty or blank reason, or a
    reason over 600 characters is refused. `--lenses-reason` without `--lenses` is refused.
-4. **The set is fixed at round 1.** Round 1's meta records `lenses` and `lensesReason`; the `review.started` entry
-   carries both. A later round without `--lenses` keeps round 1's set. A later round with `--lenses` naming a different
-   set is refused, naming round 1's set; the same set is accepted. `--restart` of round 1 may change the set and
-   reason, and records the old ones in the restart's entry. Every story-review loop that iterates `c.lenses` today
-   iterates the story's set instead: the restart's discards, the briefs, the reduction's results and refusals, the
-   checkout removal, and `journal_returns`.
-5. **The defaults, in order.** With no `--lenses` at round 1, the set is the story's `reviewLenses` in the delivery
-   file, else the delivery file's `storyReview.lenses`, else every declared story lens. A default names its source as
-   its reason, such as `the delivery file's storyReview.lenses`. A default is validated as `--lenses` is, and an invalid
-   one is refused naming the file and field. A plan-only lens is never in a default.
-6. **The checks follow the story's set.** `review-reduce` refuses a meta whose set isn't the story's fixed set.
-   `handoff` refuses a last round that doesn't carry every lens of the story's set. `lead-accept` refuses a last
-   journaled round whose verdicts aren't the story's set, read from round 1's `review.started` in the journal. A round
-   carried from before this change, whose meta has no `lensesReason`, counts as the full declared set, so in-flight
-   stories are unchanged.
+4. **The set is fixed at round 1, in the round metas.** Every round's meta records `lenses` and `lensesReason`, and
+   rounds after the first copy both from round 1's meta. A later round without `--lenses` keeps round 1's set. A later
+   round with `--lenses` naming the same set is accepted, and one naming a different set is refused, naming round 1's
+   set. `--restart` of round 1 may change the set and reason, and the restart's entry in the meta's `restarts` records
+   the old ones. The journal is unchanged: `review.started` already carries `lenses`, which now holds the story's set,
+   and no new field is journaled, because `journal-kinds.json` closes that entry's data and changing it is a
+   record-shape change. Every story-review loop that iterates `c.lenses` today iterates the story's set instead: the
+   restart's discards, the briefs, the reduction's results and refusals, the checkout removal, and `journal_returns`.
+5. **The default is every story lens.** With no `--lenses` at round 1, the set is every declared lens whose use
+   includes `story`, and the reason recorded is `every declared story lens`. A plan-only lens is never in it. With no
+   `use` declared anywhere, that is every declared lens, as today. The delivery file gets no default set: nothing
+   writes one and `lead-setup`'s redraft would drop it, so the lane brief is where the lead asks for a set.
+6. **The checks follow the story's set.** A story whose round 1 meta has a `lensesReason` has that meta's set as its
+   set. A story whose round 1 meta has none was prepared before this change, and its set is every declared lens, so
+   in-flight stories are checked as today. `review-reduce` refuses a meta whose `lenses` aren't the story's set.
+   `handoff` refuses a last round whose entries aren't the story's set. `lead-accept` takes the story's set from the
+   latest `review.started` for round 1 in the journal, and with none, from every declared lens; it refuses a last
+   journaled round whose verdicts aren't that set.
 7. **The set is shown.** `review-prepare` prints the set and its reason. `handoff`'s message names the set and the
-   reason. `lead-accept` prints them before its decisions, so the lead can refuse an acceptance whose set is too thin.
+   reason. `lead-accept` prints the set and the reason before its decisions, so the lead can refuse an acceptance
+   whose set is too thin. It reads the reason from round 1's meta in the story's review folder, where the hand-off
+   left it (the lane's checkout, else the kept lane evidence), and prints `reason not found` when neither holds it.
 8. **Plan review takes plan lenses.** `plan_review_lenses` refuses a lens whose use excludes `plan`, naming the
    declared plan lenses. A story-only lens is refused the same way.
 9. **`doctor` lists each declared lens** on one `ok` line per lens, with its use (`plan`, `story` or `plan, story`)
@@ -96,6 +101,9 @@ Checked against `main` at `bb54fe4` on 2026-11-18:
 - Changing the round brief template or the review validator. A round's `requestedLenses` already names its own set.
 - Choosing lenses per round. The set is held for the story.
 - Plan review's own rules beyond Decision 8.
+- A default story set in the delivery file (`storyReview.lenses`, or a story's own set), which the ticket proposed:
+  no command writes either and `lead-setup`'s redraft drops them. A lead asks for a set in the lane brief.
+- Journaling the reason or a restart's old set. `review.started`'s data is closed, so either is a record-shape change.
 
 ## Approval Handoffs
 
@@ -112,40 +120,50 @@ and provenance. The candidate's checks: `tests.test_run_delivery`, `tests.test_r
 
 ## Scenarios
 
-In `tests/test_run_delivery.py`, with a fixture declaring one story lens, one plan-only lens through `review.lenses`'s
-`use`, and one both-use lens:
+In `tests/test_run_delivery.py`, with a fixture declaring, besides the mandated pair: `lens.x`, a story-only lens
+through `review.lenses`'s `use`; `lens.p`, a plan-only lens through `review.lenses`'s `use`; `lens.b`, a
+`review.lenses` lens with no `use`; and `lens.h`, a `harness.config.ts` lens made plan-only through `review.use`:
 
 - `review-prepare K --round 1 --lenses lens.x,lens.adversarial-testing,lens.outcome-correctness --lenses-reason R`
-  writes briefs for those three only, and the meta and the `review.started` entry carry them in declaration order with
-  `R`. `review-reduce` with those three results aligns, and `handoff` accepts the round; its message names the set and
-  `R`.
+  writes briefs for those three only, and the meta and the `review.started` entry carry them in declaration order,
+  the meta with `R`. It prints the set and `R`. `review-reduce` with those three results aligns, and `handoff` accepts
+  the round; its message names the set and `R`.
 - `--lenses lens.outcome-correctness,lens.x`, leaving out a mandated lens, is refused naming the mandated pair and the
-  declared story lenses; nothing is written. A repeated id is refused.
-- `--lenses lens.nowhere` is refused naming the declared story lenses; nothing is written. The plan-only lens is
-  refused the same way.
-- `--lenses` without `--lenses-reason`, with a blank one, or with one over 600 characters, and `--lenses-reason`
-  alone, are each refused.
-- Round 2 without `--lenses` keeps round 1's set. Round 2 with a different `--lenses` is refused naming round 1's set.
-  `--restart` of round 1 with a different set is accepted and the restart entry records the old set.
-- No `--lenses` and no defaults: every declared story lens runs, and the plan-only lens doesn't. With no `use`
-  anywhere, every declared lens runs, as today.
-- The delivery file's `storyReview.lenses`, and a story's `reviewLenses` over it, each set the round-1 set and its
-  reason names the source. An invalid default is refused naming the file and field.
-- A `use` that is empty, names an unknown use, names an undeclared lens or narrows a mandated lens is a config
-  conflict.
+  declared story lenses; nothing is written. A repeated id is refused. `--lenses lens.nowhere` is refused naming the
+  declared story lenses. `--lenses` naming `lens.p`, and naming `lens.h`, are each refused the same way.
+- `--lenses` without `--lenses-reason`, with a blank one, or with one of 601 characters, and `--lenses-reason` alone,
+  are each refused. A reason of exactly 600 characters is accepted.
+- Round 2 of the chosen-set story: without `--lenses` it keeps round 1's set, and its meta copies the set and `R`;
+  with the same `--lenses` it is accepted; with a different `--lenses` it is refused naming round 1's set. That round
+  2 reduces and the story hands off with three lenses.
+- `--restart` of round 1 with a different set is accepted, the restart entry records the old set and reason, and the
+  round reduces with the new set.
+- No `--lenses`: the set is the mandated pair, `lens.x` and `lens.b`, without `lens.p` or `lens.h`, and the reason is
+  `every declared story lens`. A fixture with no `use` and no `review.use` runs every declared lens, as today.
+- A `use` that is empty or names an unknown use, a `review.use` that names an undeclared lens, and a `use` or
+  `review.use` that narrows a mandated lens are each a config conflict.
 - `review-reduce` refuses a meta whose set isn't round 1's. `handoff` refuses a last round missing a lens of the set.
-- A round prepared before this change (a meta with the full set and no `lensesReason`) reduces and hands off as today.
-- `doctor` prints one line per declared lens with its use; `config`'s row shows the use.
-- `lead-brief` lists each story lens with its charter's purpose and leaves out the plan-only lens.
+- A story prepared before this change (a round 1 meta with every declared lens and no `lensesReason`) reduces and
+  hands off as today, and one whose legacy meta lists fewer lenses is refused, as today.
+- `doctor` prints one line per declared lens with its use and where it was declared: `lens.h` as `plan`, from
+  `harness.config.ts`; `lens.b` as `plan, story`, from the own config. `config`'s row shows the use.
+- `lead-brief` lists `lens.x` and `lens.b`, each with its charter's purpose, and leaves out `lens.p` and `lens.h`. One
+  charter's first line after its title is a heading and another's is over 160 characters: the purpose skips the
+  heading and is cut to 160.
 
-In `tests/test_run_delivery_supervisor.py`:
+In `tests/test_run_delivery_supervisor.py`, with a fixture declaring two extra story lenses, `lens.x` and `lens.y`:
 
-- `lead-accept` accepts a hand-off whose last round carries the story's chosen set, and prints the set and reason.
-- `lead-accept` refuses one whose last journaled round lacks a lens of that set.
+- A story chooses the mandated pair and `lens.x`. `lead-accept` accepts its hand-off and prints the set and reason.
+- `lead-accept` refuses a hand-off whose last journaled round carries the pair and `lens.y` instead of `lens.x`.
+- Round 1 prepared with the pair and `lens.x`, then restarted with the pair and `lens.y`: `lead-accept` accepts
+  against the restart's set.
+- A pre-change story, whose round 1 `review.started` names every declared lens and whose meta has no `lensesReason`,
+  is accepted as today, and `lead-accept` prints `reason not found` rather than failing.
 
-In `tests/test_run_delivery_plan_review.py`:
+In `tests/test_run_delivery_plan_review.py`, with the same plan-only, story-only, both-use and harness lenses:
 
-- `plan-review prepare --lenses` accepts the plan-only lens and refuses a story-only one, naming the plan lenses.
+- `plan-review prepare --lenses` accepts `lens.p`, `lens.h` and `lens.b`, the last declared with no `use`, and refuses
+  `lens.x`, naming the declared plan lenses.
 
 ## Units and order
 
