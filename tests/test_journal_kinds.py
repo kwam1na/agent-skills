@@ -86,7 +86,7 @@ TABLE = {
     "base.flaky": ("S", "problem", "source head after? failing", "", "-"),
     "base.moved": ("S", "note", "from to merged *why*", "", "epic: Delivery base updated"),
     "base.published": ("B", "note", "base from", "", "-"),
-    "base.merge.authorized": ("S", "decision", "reviewed baseCommits token", "", "-"),
+    "base.merge.authorized": ("S", "decision", "reviewed baseCommits token by?", "", "-"),
     "ownership.granted": ("B", "note", "path span? base? movedFrom?", "", "-"),
     "ownership.revoked": ("B", "note", "path span? base? movedFrom?", "", "-"),
     "ownership.claimed": ("B", "note", "path base", "", "-"),
