@@ -95,8 +95,8 @@ test("draws the run as a line map, chapter by chapter", async () => {
   // The tracker item the delivery is listed under opens in the tracker.
   expect(now.querySelector(".kicker a")?.getAttribute("href")).toBe("https://tracker.example/issue/PAY-2354");
   expect(now.querySelector("h1")?.textContent).toBe("1 of 8 pieces have landed.");
-  // What landed last is one of the chapter's facts: its title, then its ticket and how long ago.
-  expect(now.querySelector(".fact")?.textContent).toBe("Last landedHold the cart through a payment redirectPAY-2358 · 44 minutes ago");
+  // What landed last is the chapter's second fact, after the stories landed: its title, then its ticket, its pull request and how long ago.
+  expect(now.querySelector(".facts > .fact:nth-child(2)")?.textContent).toBe("Last landedHold the cart through a payment redirectPAY-2358 · #1101 · 44 minutes ago");
   const checking = now.querySelector(".checking").textContent;
   expect(now.querySelector(".checking .ck-h-words")?.textContent).toBe("Checking · PAY-2361");
   expect(checking).toContain("Retry card payments once on a dropped connection");
@@ -109,13 +109,9 @@ test("draws the run as a line map, chapter by chapter", async () => {
   expect(now.querySelector(".checking .ck-count")?.textContent).toBe("3/6");
   expect(now.querySelector(".checking .ck-chosen > summary")?.textContent).toBe("3 done, 2 waiting · started 6m ago");
   expect(checking).toContain("Up next: Keep the order number on the receipt page · Record the payment provider's reference");
-  const attention = now.querySelector(".attention").textContent;
-  expect(attention).toContain("Show a calm message when the card is declined stopped");
-  expect(attention).toContain("checkout end-to-end failed: declined card shows the retry button, declined card keeps the cart");
-  expect(attention).toContain("Backend is blocked");
-  expect(attention).toContain("Waiting on the dev backend lease");
-  expect(attention).toContain("its change request closed without merging");
-  expect(attention).toContain("The forge is not answering");
+  // A stopped piece, a blocked lane, a source's report and a silent source reach the supervisor's "Needs you", which this
+  // record has none of: the page draws no list of its own.
+  expect(now.querySelector(".attention, .needs-you")).toBeNull();
   expect(now.querySelector(".since")?.textContent).toBe("Saved viewUpdated just nowbase aaaaaaa");
 
   // The line: one row per lane, a stop per piece, drawn by where the piece stands.
@@ -911,7 +907,7 @@ test("marks what changed since the last update, as the earlier map did", async (
   // The story's new beat arrives as a new row does; the beats it already held stay as they were.
   expect([...app.querySelectorAll("#happened .beat.fresh > time")].map((time) => time.getAttribute("datetime"))).toEqual(["2026-10-22T05:09:00Z"]);
   expect([...app.querySelectorAll(".parked li.fresh")].map((item) => item.textContent)).toEqual(["PAY-2399Show the retry count to support"]);
-  expect(app.querySelector("#now .fact")?.textContent).toBe("Last landedRetry card payments once on a dropped connectionPAY-2361 · a minute ago");
+  expect(app.querySelector("#now .facts > .fact:nth-child(2)")?.textContent).toBe("Last landedRetry card payments once on a dropped connectionPAY-2361 · #1106 · a minute ago");
 });
 
 test("shows pieces checked as one batch together, each with its change request", async () => {
@@ -999,7 +995,7 @@ test("shows a lead's status whole, and a broken main line as needing attention",
   document.journal.push({ at: "2026-10-22T05:08:00Z", id: 11, kind: "base.broken", lane: null, subject: null, data: { source: "queue", detail: "Typecheck fails on main" } });
   const [{ app }] = await open(document);
   expect(app.querySelector(".say")?.textContent).toBe("Pausing merges · back after the deploy");
-  expect(app.querySelector(".attention")?.textContent).toContain("The main line is brokenTypecheck fails on main");
+  expect(app.querySelector(".attention")).toBeNull();  // the supervisor's "Needs you" names the break; the page words none
 });
 
 test("keeps a newer push over a late read, and works with a store that cannot subscribe or report status", async () => {

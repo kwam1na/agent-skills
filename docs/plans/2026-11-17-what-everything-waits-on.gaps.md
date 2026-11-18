@@ -45,6 +45,31 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
   stale claims when a story lands.
 - **`lead-assign`'s co-change warning missed files stories needed.** `hosted-snapshot.schema.json` and the pins in
   `tests/test_registry.py` and `tests/test_run_delivery.py` surfaced mid-story, one grant at a time. Open.
+- **Adjacent spans of one lane count as separate.** Lane 2 held `tests/test_waits.py` 588 and 589 as two grants, and an
+  edit replacing both was refused at review-prepare. They were merged into one claim by hand. Open.
+- **Ownership problems surface one refusal at a time.** Lanes learned of a missing grant only when review-prepare or
+  the queue refused it, and then asked again, so one story took several round trips. Open.
+
+- **No preview of the queue's ownership check.** Before re-queuing after a regrant, the lead merged each candidate
+  into `main` with `git merge-tree` and ran `region_ownership.problems` by script, to see whether the queue would
+  refuse it. Open: a lead command that runs the queue's region check on a candidate without queuing it.
+- **No view of which claimed lines a lane is changing.** To carve a span safely, the lead read each lane's working
+  diff by script (`git diff -U0` in its checkout) to learn whether the lines another lane asked for were in use.
+  Open: the record or a command could show each lane's touched lines against its claims.
+
+**Proposal: spans follow the work.** Spans and grants were the largest source of lead work in this delivery: about
+40 stale spans regranted by script after landings, 3 carves that left lines unowned, and a dozen requests corrected by
+a line. One unit of work would close most of it:
+
+1. On `candidate.merged`, release the landed story's spans and carry its lane's other spans to the new base, with the
+   boundary checks the lead ran by hand.
+2. `lead-own --carve PATH --base B --give LANE:START-END`, applied whole or not at all, in place of revoke-then-grant.
+3. Merge a lane's touching spans on grant.
+4. A lane command that checks its committed diff against its claims and lists every file and line it still needs, in
+   one go.
+
+Granting by quoted line or anchor, with edge widening and the end-of-file rule, stays V26-3570. A lane reading its own
+grants from the record (`lane-grants`) belongs with V26-3571.
 
 ### The merge queue and checks
 
@@ -59,8 +84,13 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
 - **A provenance listing change is caught only in the queue, after acceptance.** V26-3552 was stopped for adding
   `wait-words.json`. Fix: V26-3565 (lane 3, this delivery).
 - **Tests outside a lane's files go unrun until the queue runs them.** `tests.test_registry` (V26-3552) and
-  `tests.test_run_delivery` (V26-3555) failed in the queue on pins the lanes never ran. Open: nothing proposes the test
-  modules that pin a changed file.
+  `tests.test_run_delivery` (V26-3555) failed in the queue on pins the lanes never ran. V26-3567 failed `hosted.typecheck`,
+  `hosted.build` and `hosted.test` the same way: the hosted viewer's build script patches `line-map.js` at fixed hooks,
+  and two were inside code the story removed, after its grace round. Open: nothing proposes the test modules or
+  services that read a changed file before the queue does.
+- **A reviewer's checkout can't run the hosted viewer's tests.** On V26-3567's round 6, the outcome lens couldn't run
+  vitest: review-prepare's prepare commands install the Python and page dependencies, but not `hosted/delivery-viewer`'s
+  `node_modules`. The lane's own run stood in. Open: prepare a lens's checkout for every service the story's checks name.
 - **A story's new test module can't be among its acceptance checks.** The base's catalogue learns the module only when
   the story lands (`tests.test_waits_review`). Open.
 - **A batch runs every check after one has already failed.** V26-3565 and V26-3426 were checked together. The new
@@ -74,6 +104,12 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
   lane read new stories from the lead checkout.
 - **A re-queued candidate leaves its lane's row "waiting on the lead".** The row was patched by hand. Fix: V26-3426
   (this delivery).
+
+- **The supervisor can lose a SIGTERM.** Its handler raises SystemExit from inside a signal, and when that lands while
+  CPython 3.11 compiles a module on a first in-process import, the exit is lost (206 of 300 probes; 0 on 3.14). The
+  supervisor then keeps running past a stop. V26-3554's new import made it likely, and it failed the queue twice. Fixed
+  in V26-3554 by honouring a recorded signal at each step and wait. Separately, `run_delivery.py`'s state reader catches
+  `BaseException` while it loads, which would also swallow a stop. Open.
 
 ### The lead's loop
 

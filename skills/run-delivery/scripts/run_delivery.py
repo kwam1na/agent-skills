@@ -9814,8 +9814,10 @@ def tracker_item(item: dict) -> dict:
     """A tracker "Needs you" item with where it comes from and what clears it: the publisher's lag clears when it
     posts; a ledger line is only shown, and stays."""
     if not item["holding"]:
-        return {**item, "source": "tracker ledger", "clears": "nothing: it stays listed for the friction note"}
-    return {**item, "source": "tracker publisher", "clears": "the publisher posting those entries on a later pass"}
+        return {**item, "source": "tracker ledger", "clears": "nothing: it stays listed for the friction note",
+                "kind": "trackerLedger", "who": "lead", "fields": {"detail": item["text"]}}
+    return {**item, "source": "tracker publisher", "clears": "the publisher posting those entries on a later pass",
+            "kind": "trackerLag", "who": "lead", "fields": {"detail": item["text"]}}
 
 
 def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = False) -> list[dict]:
@@ -9829,19 +9831,23 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
     running = full_health_running(c)
     if running is not None:
         items.append({"holding": True, "source": "fullHealth", "text": f"{running_words(running)}; the close waits "
-                      "for its result", "clears": FULL_HEALTH_RUNNING_CLEARS})
+                      "for its result", "clears": FULL_HEALTH_RUNNING_CLEARS, "kind": "healthRunning", "who": "lead",
+                      "since": running.get("startedAt"), "fields": {"head": str(running.get("head", ""))}})
     last, rerun = full_health_results(c, head) if head else (None, False)
     if last and last["result"] == "failed" and not rerun and delivery_posture(c)["posture"] != "focused":
         items.append({"holding": True, "source": "fullHealth",
                       "text": f"fullHealth failed at {head[:10]}: {last.get('output', '')[-300:]}. It "
                       f"runs again at a later base head, or when you judge it flaky: {flow_command()} lead-resolve "
                       "full-health --why TEXT",
-                      "clears": f"a pass at a later base head, or {flow_command()} lead-resolve full-health --why TEXT"})
+                      "clears": f"a pass at a later base head, or {flow_command()} lead-resolve full-health --why TEXT",
+                      "kind": "healthFailed", "who": "lead",
+                      "fields": {"head": head, "detail": last.get("output", "")[-300:]}})
     if last and last["result"] == "flaky":
         items.append({"holding": False, "source": "fullHealth",
                       "text": f"fullHealth failed at {head[:10]}, and its failing tests passed alone, so the base isn't "
                       f"broken: {', '.join(last.get('tests', []))}. They are flaky: fix them",
-                      "clears": "a fullHealth pass at a later base head"})
+                      "clears": "a fullHealth pass at a later base head", "kind": "healthFlaky", "who": "lead",
+                      "fields": {"head": head, "tests": list(last.get("tests", []))}})
     events = [e for e in doc["journal"] if e["kind"] in ("base.broken", "base.repaired")]
     if events and events[-1]["kind"] == "base.broken":
         # A break fullHealth found clears with its next pass; the queue's own break waits for the lead. Under focused no
@@ -9856,7 +9862,9 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           "text": f"The delivery base is broken: {entry_said(events[-1])[:300]}. It holds nothing "
                           f"while the base declares the focused posture on {said['source']} ({said['reason'][:200]}), "
                           "and serve still waits for base.repaired",
-                          "clears": "journalling base.repaired, or a fullHealth pass once the base returns to gate"})
+                          "clears": "journalling base.repaired, or a fullHealth pass once the base returns to gate",
+                          "kind": "baseFocused", "who": "lead", "since": events[-1].get("at"),
+                          "fields": {"detail": entry_said(events[-1])[:300], "source": said["source"]}})
         else:
             items.append({"holding": True, "source": source,
                           "text": f"The delivery base is broken: {entry_said(events[-1])[:300]}. "
@@ -9864,7 +9872,8 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           "which serve takes first and alone, or land the fix by hand and journal base.repaired; the "
                           "candidates the break stopped resume on base.repaired, with no --requeue",
                           "clears": ("a fullHealth pass at a later base head, or " if found else "")
-                          + "journalling base.repaired"})
+                          + "journalling base.repaired", "kind": "baseHealth" if found else "baseBroken", "who": "lead",
+                          "since": events[-1].get("at"), "fields": {"detail": entry_said(events[-1])[:300]}})
     items += lane_needs(doc["state"])
     for item in doc["state"]["queue"]:
         merge = unaccepted_merge(doc, item)
@@ -9872,7 +9881,8 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
             items.append({"holding": True, "source": f"journal entry {merge['id']} (candidate.merged)",
                           "text": f"{item['subject']} merged before you accepted it, and its checkout is kept until you decide",
                           "clears": f"{flow_command()} lead-accept {item['subject']}, or {flow_command()} lead-decide "
-                          f"--subject {item['subject']} if lead-accept can't take it"})
+                          f"--subject {item['subject']} if lead-accept can't take it", "kind": "unaccepted",
+                          "who": "lead", "subject": item["subject"], "since": merge.get("at")})
     resolutions = {entry.get("journal") for entry in read_log("resolutions", c.delivery)}
     for entry in doc["journal"]:
         if entry["kind"] in HOLDING_KINDS and not blocker_resolved(c, doc, entry, resolutions):
@@ -9883,22 +9893,31 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                              else "") + f": {holding_words(entry)[:300]}. Resolve it with {flow_command()} "
                           f"lead-resolve {entry['id']} --why TEXT",
                           "clears": ("the runner's hold clearing, journalling base.repaired, or " if runners else "")
-                          + f"{flow_command()} lead-resolve {entry['id']} --why TEXT"})
+                          + f"{flow_command()} lead-resolve {entry['id']} --why TEXT",
+                          "kind": "runnerHold" if runners else "blocker", "who": "lead", "since": entry.get("at"),
+                          **({"subject": entry["subject"]} if entry.get("subject") else {}),
+                          **({"lane": entry["lane"]} if entry.get("lane") else {}),
+                          "fields": {"entry": entry["id"], "detail": holding_words(entry)[:300]}})
     needed = listener_needed(doc["state"])
     if needed and lead_listener(c.state) is None:
-        items.append({"holding": False, "source": f"{LEAD_WAIT_LEASE} in the record", **listening_words(c, doc["state"])})
+        listening = listening_words(c, doc["state"])
+        items.append({"holding": False, "source": f"{LEAD_WAIT_LEASE} in the record", **listening, "kind": "listener",
+                      "who": "lead", "fields": {"detail": listening["text"]}})
     for name in flapping:
         items.append({"holding": True, "source": f"the supervisor's {name}", "clears": f"the {name} staying up",
                       "text": f"The supervisor's {name} won't stay up; its log is "
-                      f"{lead_file(c, f'supervisor.{name}.log')}"})
+                      f"{lead_file(c, f'supervisor.{name}.log')}", "kind": "flapping", "who": "lead",
+                      "fields": {"name": name, "log": str(lead_file(c, f'supervisor.{name}.log'))}})
     if c.forge.get("mergeNeedsReady") and not authority().get("readyPullRequests"):
         drafts = [item["subject"] for item in doc["state"]["queue"] if item["stage"] != "merged" and not item.get("pending")
                   and not any(a.get("ready") for a in read_log("acceptance", item["subject"]))]
         if drafts:
             items.append({"holding": True, "source": "acceptance", "text": f"Accepted as drafts while the merge step "
                           f"refuses drafts: {', '.join(drafts)}. Mark each ready, then lead-accept --requeue it if it "
-                          "stopped", "clears": "marking each ready, then lead-accept --requeue for one that stopped"})
-    return items + waits_needing(c, doc, items)
+                          "stopped", "clears": "marking each ready, then lead-accept --requeue for one that stopped",
+                          "kind": "drafts", "who": "operator", "fields": {"subjects": drafts}})
+    items += record_needs(doc, items)
+    return say_needs(c, doc, items + waits_needing(c, doc, items))
 
 
 def lane_named(lane: str) -> str:
@@ -9922,18 +9941,152 @@ def listening_words(c, state: dict) -> dict:
             "clears": delivery_state.wait_said(table, "listening", "clears", {})}
 
 
+# Who a lane's question can wait on, besides the lead and another lane: the operator, by the names a lane gives them.
+OPERATOR_NAMES = ("operator", "user", "you")
+
+
+def lane_story(state: dict, lane: str) -> dict | None:
+    """The story a lane is on: its piece still being built or reviewed, else its latest piece not yet landed."""
+    planned = [p for p in state.get("planned", []) if p.get("lane") == lane and p["stage"] in ("building", "review")]
+    queued = [q for q in state["queue"] if q["stage"] != "merged"
+              and (q.get("assignedLane", q.get("lane")) if q["stage"] == "stopped" else q.get("lane")) == lane]
+    found = planned or queued
+    return found[-1] if found else None
+
+
 def lane_needs(state: dict) -> list[dict]:
     """The lanes "Needs you" lists: one blocked on a question, and one waiting on the lead. A lane in the `waiting`
-    state waits on a story, which goes on by itself when it lands, so it is not listed."""
+    state waits on a story, which goes on by itself when it lands, so it is not listed. Each names who must act: the
+    lead, the operator, or another lane, as the lane's `waitingOn` says."""
     items = []
+    lanes = {lane["id"] for lane in state["lanes"]}
     for lane in state["lanes"]:
+        on = str(lane.get("waitingOn") or "")
+        who = "operator" if on.lower() in OPERATOR_NAMES else on if on in lanes else "lead"
+        story = lane_story(state, lane["id"])
+        facts = {"who": who, "lane": lane["id"], "since": lane.get("since") or lane.get("focusAt"),
+                 **({"subject": story["subject"]} if story else {}), "fields": {"focus": lane.get("focus", "")}}
         if lane.get("state") == "blocked":
             items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane's state changing",
-                          "text": f"{lane['id']} is blocked: {lane.get('focus', '')}"})
+                          "text": f"{lane['id']} is blocked: {lane.get('focus', '')}", "kind": "laneBlocked", **facts})
         elif lane.get("waitingOn") == "lead":
             items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane no longer waiting on you",
-                          "text": f"{lane['id']} waits on you: {lane.get('focus', '')}"})
+                          "text": f"{lane['id']} waits on you: {lane.get('focus', '')}", "kind": "laneAsks", **facts})
     return items
+
+
+def record_needs(doc: dict, named: list[dict]) -> list[dict]:
+    """What the record itself shows needs someone, which no item in ``named`` says: serving paused, a stopped piece, a
+    source's report, and a source that stopped answering. None of these holds the close."""
+    state = doc["state"]
+    meta = state.get("meta") or {}
+    items = []
+    if isinstance(meta.get("hold"), dict) and not any(item.get("kind") == "runnerHold" for item in named):
+        reason = str(meta["hold"].get("reason") or "")
+        items.append({"holding": False, "source": "the record's hold", "text": f"Serving is paused: {reason}",
+                      "clears": "the lead lifting the hold", "kind": "paused", "who": "lead",
+                      "since": meta["hold"].get("at"), "fields": {"reason": reason}})
+    for item in state["queue"]:
+        if item["stage"] != "stopped":
+            continue
+        stops = [e for e in doc["journal"] if e["kind"] == "candidate.stopped" and e.get("subject") == item["subject"]]
+        failed = [f"{check.get('title') or check.get('id')} {'timed out' if check.get('state') == 'timed_out' else 'failed'}"
+                  for check in item.get("checks") or [] if isinstance(check, dict)
+                  and check.get("state") in ("failed", "timed_out")]
+        detail = "; ".join(failed) or (entry_said(stops[-1]) if stops else "")
+        items.append({"holding": False, "source": f"journal entry {stops[-1]['id']} (candidate.stopped)" if stops
+                      else f"{item['subject']} in the queue", "text": f"{item['subject']} stopped: {detail}",
+                      "clears": f"{item['subject']} put back, landing or settling", "kind": "stopped", "who": "lead",
+                      "subject": item["subject"], "since": stops[-1].get("at") if stops else None,
+                      "fields": {"detail": detail}})
+    for report in meta.get("sourceReports") or []:
+        if isinstance(report, dict):
+            note, about = str(report.get("note") or ""), str(report.get("subject") or "")
+            items.append({"holding": False, "source": "a source's report", "text": f"{about or 'For the lead'}: {note}",
+                          "clears": "the report leaving the record", "kind": "report", "who": "lead",
+                          "since": report.get("at"), "fields": {"about": about, "detail": note}})
+    for name, source in sorted((meta.get("sources") or {}).items()):
+        if isinstance(source, dict) and source.get("status") == "stale":
+            reason = str(source.get("reason") or "")
+            items.append({"holding": False, "source": f"the {name} source", "text": f"The {name} is not answering: {reason}",
+                          "clears": f"the {name} answering again", "kind": "stale", "who": "lead",
+                          "since": source.get("lastReadAt"), "fields": {"name": name, "reason": reason}})
+    return items
+
+
+# What a row of "Needs you" is said in, beside its facts: from the table of wait sentences, by the item's kind.
+NEED_WORDS = ("headline", "why", "clears", "who")
+
+
+def say_needs(c, doc: dict, items: list[dict]) -> list[dict]:
+    """Each item with its facts filled from the record and its row's words from the table of wait sentences: the
+    lane its story is on, the story's state, the story it waits on with that one's lane and state, and the headline,
+    why, what clears it and who acts. An item's `text`, which the close and the friction note read, is unchanged."""
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+    table = delivery_state.load_wait_words()
+    state = doc["state"]
+    pieces = {item["subject"]: item for item in [*state["queue"], *state.get("planned", [])]}
+    lane_of = lambda piece: piece.get("assignedLane", piece.get("lane")) if piece.get("stage") == "stopped" else piece.get("lane")
+    found = delivery_state.waits(doc, needing={name for item in items for name in needs_about(doc, item)}, words=table)
+    said = []
+    for item in items:
+        item = {key: value for key, value in item.items() if value is not None}
+        # A field with nothing to say is left out, so the bracketed part that names it is too.
+        fields = {name: value for name, value in item.pop("fields", {}).items() if value not in ("", None, [])}
+        piece = pieces.get(item.get("subject")) or {}
+        if piece:
+            item.setdefault("lane", lane_of(piece))
+            item["state"] = piece["stage"]
+        wait = next((w for w in found if w["subject"] == item.get("subject") and w["on"] in pieces), None)
+        if wait:
+            on = pieces[wait["on"]]
+            item["blocker"] = {"subject": wait["on"], "state": on["stage"], **({"lane": lane_of(on)} if lane_of(on) else {})}
+        kind, who = item.get("kind", "other"), item.get("who", "lead")
+        words = {**fields, **{name: item[name] for name in ("lane", "subject") if item.get(name)}, "kind": kind,
+                 "who": who, "whom": delivery_state.wait_said(table, "needsYou", "whom", {"who": who})}
+        item["said"] = {name: delivery_state.wait_said(table, "needsYou", name, words) for name in NEED_WORDS}
+        if item.get("waiting"):
+            count = delivery_state.wait_said(table, "needsYou", "count", {"count": item.pop("waiting")})
+            item["said"]["why"] = f"{item['said']['why']} {count}".strip()
+        said.append(item)
+    return said
+
+
+def needs_words(c) -> dict:
+    """The words "Needs you" is laid out in, beside its rows' own: its heading, a holding row's mark, and the form of a
+    row's age, whose {age} the page fills."""
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+    table = delivery_state.load_wait_words()
+    return {"heading": delivery_state.wait_said(table, "needsYou", "heading", {}),
+            "holding": delivery_state.wait_said(table, "needsYou", "holding", {}),
+            "age": table["needsYou"]["templates"]["age"]}
+
+
+def needs_summary(c, items: list[dict]) -> str:
+    """The sentence "Needs you" opens with: how many items wait on whom, the operator first, and how many of them hold
+    up the finish, from the table of wait sentences."""
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+    table = delivery_state.load_wait_words()
+    if not items:
+        return delivery_state.wait_said(table, "needsYou", "summary", {"shape": "empty", "parts": [], "holding": 0})
+    whom: dict[str, int] = {}
+    for item in sorted(items, key=lambda item: item.get("who") != "operator"):
+        whom[item.get("who", "lead")] = whom.get(item.get("who", "lead"), 0) + 1
+    parts = [delivery_state.wait_said(table, "needsYou", "part", {
+        "count": count, "whom": delivery_state.wait_said(table, "needsYou", "whom", {"who": who})}) for who, count in whom.items()]
+    holding = sum(1 for item in items if item["holding"])
+    shape = ("none" if not holding else "it" if len(items) == 1 else "all" if holding == len(items)
+             else "one" if holding == 1 else "some")
+    return delivery_state.wait_said(table, "needsYou", "summary", {"shape": shape, "parts": parts, "holding": holding})
 
 
 def busy_lanes(state: dict) -> list[str]:
@@ -9944,6 +10097,8 @@ def busy_lanes(state: dict) -> list[str]:
 def needs_about(doc: dict, item: dict) -> set[str]:
     """The lanes and stories a "Needs you" item is about, read from where it comes from."""
     source = item["source"]
+    if item.get("subject") and item.get("kind") == "stopped":
+        return {item["subject"]}
     if source.endswith("'s state"):
         return {source[:-len("'s state")]}
     found = re.match(r"journal entry ([0-9]+) ", source)
@@ -9982,9 +10137,11 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
             or next((item for item, names in zip(items, about) if lane and lane in names), None)
         if named is not None:
             named["text"] = f"{named['text'].rstrip()} {count}"
+            named["waiting"] = len(waiting)
         elif piece.get("stage") == "stopped":
             added.append({"holding": False, "source": f"{on}'s waits", "clears": f"{on} put back, landing or settling",
-                          "text": delivery_state.wait_said(table, "needsYou", "stopped", {"subject": on}) + " " + count})
+                          "text": delivery_state.wait_said(table, "needsYou", "stopped", {"subject": on}) + " " + count,
+                          "kind": "stopped", "who": "lead", "subject": on, "waiting": len(waiting), "fields": {"detail": ""}})
     for free in delivery_state.free_to_start(doc, found, words=table):
         # A story free to start is in "Needs you" itself, so what waits on it is counted on its item.
         waiting = list(dict.fromkeys(wait["subject"] for wait in found
@@ -9992,7 +10149,9 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
         said = free["words"] + (" " + delivery_state.wait_said(table, "needsYou", "count", {"count": len(waiting)})
                                 if waiting else "")
         added.append({"holding": False, "source": f"{free['subject']}'s waits", "text": said,
-                      "clears": f"{free['subject']} assigned, held, or waiting again"})
+                      "clears": f"{free['subject']} assigned, held, or waiting again", "kind": "free", "who": "lead",
+                      "subject": free["subject"], **({"lane": free["lane"]} if free.get("lane") else {}),
+                      **({"waiting": len(waiting)} if waiting else {})})
     return added
 
 
@@ -10007,6 +10166,10 @@ def write_needs(c, items: list[dict] | None, number: int, started: float) -> Non
     written: dict = {"spec": "delivery-needs-you/1", "running": items is not None, "pass": number,
                      "at": at.strftime("%Y-%m-%dT%H:%M:%SZ"), "items": items or []}
     if items is not None:
+        # The list's own words, from the table of wait sentences: its heading, the sentence it opens with, the mark a
+        # holding row carries, and the age column's form, whose {age} the page fills as it ticks.
+        written["summary"] = needs_summary(c, items)
+        written["words"] = needs_words(c)
         interval = supervisor_pass_seconds(c)
         stale = at + datetime.timedelta(seconds=interval + max(interval, time.monotonic() - started))
         written["staleAfter"] = stale.strftime("%Y-%m-%dT%H:%M:%SZ")
