@@ -8017,6 +8017,9 @@ def accept_story(c, args) -> None:
     if not item:
         raise Stop(f"{key} is not in the queue; the lane has not handed it off")
     merged = item["stage"] == "merged"
+    if not merged:
+        # A hand-off that ends a failed run waits beside the row the queue still checks: what it claims is its own.
+        item = _validator().handed_item(doc["state"], doc["journal"], key) or item
     added = handed_additions(c, key, item["head"]) if not merged and lead_selects(c) and not args.full_suite else {}
     chosen = check_ids(c, args.checks, "--checks", added) if args.checks is not None else None
     problems, decisions = [], []
@@ -8245,6 +8248,38 @@ def accept_story(c, args) -> None:
     if needs_video(key):
         print("  once it merges: lead-evidence page, republish the page (same address), lead-evidence published --url, "
               "and link its section from the story in the tracker")
+
+
+def lead_base_broken(args) -> None:
+    """Name the base broken before a base re-run's verdict, through the state tool's base-broken; a re-run at that head
+    ends, and the candidate under it stops. --repair names another queued candidate as the repair; --self-repair says
+    the candidate under the re-run holds the fix, so its next accepted hand-off at another head is the repair."""
+    c = cfg()
+    if not (c.state / "state.json").is_file():
+        raise Stop("initialize the delivery record first")
+    repair = c.require(args.repair) if args.repair else None
+    if repair:
+        item = next((q for q in load_state()["state"]["queue"] if q["subject"] == repair), None)
+        if not item or item["stage"] != "queued" or item.get("pending"):
+            raise Stop(f"--repair names a queued candidate the queue may take; {repair} is "
+                       f"{'not in the queue' if not item else 'waiting for acceptance' if item.get('pending') else item['stage']}")
+    head = git("rev-parse", "--verify", "--quiet", f"{args.head}^{{commit}}")
+    done = state_tool("base-broken", "--head", head, "--check", args.check, "--test", args.test, "--why", args.why,
+                      *(["--self-repair"] if args.self_repair else []), check=False)
+    answer = json.loads(done.stdout) if done.stdout.strip().startswith("{") else {}
+    if done.returncode != 0:
+        raise Stop(f"base-broken refused: {answer.get('error') or (done.stderr or done.stdout).strip()[-400:]}")
+    print(f"journalled base.broken (entry {answer['broken']['id']}) at {head[:10]}: {args.test} in {args.check}")
+    if answer.get("superseded"):
+        print(f"  ended the base re-run of {answer['stopped']} (check.superseded, entry {answer['superseded']['id']}); "
+              f"{answer['stopped']} stopped as base_broken")
+    if repair:
+        state_tool("repair", "--subject", repair)
+        print(f"  named {repair} the repair: serve takes it alone, and its merge journals base.repaired")
+    elif args.self_repair:
+        print(f"  {answer['stopped']} holds the fix: accept its next hand-off at another head and it becomes the repair")
+    else:
+        print("  no repair named: name one with the state tool's repair, or journal base.repaired once the base is fixed")
 
 
 # -- lead: cleanup ---------------------------------------------------------------------------------
@@ -12824,6 +12859,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--full-suite", action="store_true", help="under selection.lead: check on the binding's fallback, "
                    "journalled as the lead's decision")
     p.add_argument("--reason", help="with --checks or --full-suite: why"); p.set_defaults(fn=lead_accept)
+    p = command(sub, "lead-base-broken", help="name the base broken before a base re-run's verdict, ending a re-run at "
+                "that head")
+    p.add_argument("--head", required=True, help="the base head that is broken")
+    p.add_argument("--check", required=True); p.add_argument("--test", required=True)
+    p.add_argument("--why", required=True, help="how you know the base, not the candidate, broke it")
+    repaired = p.add_mutually_exclusive_group()
+    repaired.add_argument("--repair", metavar="KEY", help="another, queued candidate holds the fix")
+    repaired.add_argument("--self-repair", action="store_true", help="the candidate under the re-run holds the fix")
+    p.set_defaults(fn=lead_base_broken)
     p = command(sub, "lead-authorize-base-merge", help="authorize exact delivery-base commits before the lane merges")
     p.add_argument("key"); p.add_argument("--reviewed", required=True); p.add_argument("--base", action="append", required=True)
     p.set_defaults(fn=lead_authorize_base_merge)

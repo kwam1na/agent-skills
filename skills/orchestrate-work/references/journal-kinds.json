@@ -116,6 +116,7 @@
         "check_failed",
         "base_broken",
         "base_rerun_stopped",
+        "superseded",
         "base_moved",
         "ready_refused",
         "review_not_current",
@@ -191,6 +192,13 @@
         "queue",
         "fullHealth",
         "lead"
+      ]
+    },
+    "supersededPhase": {
+      "description": "Which part of a failed candidate's run a superseding entry ended: the rest of its own checks, or its re-run on the main line.",
+      "enum": [
+        "checks",
+        "base-rerun"
       ]
     },
     "snapshotSource": {
@@ -975,6 +983,10 @@
         "batch": {
           "type": "names",
           "optional": true
+        },
+        "base": {
+          "type": "base",
+          "optional": true
         }
       },
       "because": {
@@ -1052,6 +1064,43 @@
       "explain": "A check failed on a piece. What happens next depends on whether the main line fails it too.",
       "tracker": null,
       "instruction": "None: its outcome posts with `candidate.stopped` once the failure is classified."
+    },
+    "check.superseded": {
+      "altitude": "story",
+      "tone": "decision",
+      "label": "Run ended early",
+      "data": {
+        "base": {
+          "type": "base"
+        },
+        "head": {
+          "type": "commit"
+        },
+        "by": {
+          "type": "count"
+        },
+        "phase": {
+          "type": "supersededPhase"
+        }
+      },
+      "because": {
+        "required": true
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": {
+          "by": "phase",
+          "cases": {
+            "base-rerun": "The run on the main line was ended early"
+          },
+          "otherwise": "The rest of the checks were ended early"
+        },
+        "line": "For the piece at {head:commit}, against {base.head:commit}"
+      },
+      "explain": "A check had already failed, so the piece wasn't going to merge; a new hand-off or a broken main line ended the rest of its run.",
+      "tracker": null,
+      "instruction": "None: the acceptance or the broken main line that ended the run posts on its own."
     },
     "check.retried": {
       "altitude": "story",
@@ -1352,6 +1401,18 @@
         "after": {
           "type": "name",
           "optional": true
+        },
+        "check": {
+          "type": "name",
+          "optional": true
+        },
+        "test": {
+          "type": "name",
+          "optional": true
+        },
+        "why": {
+          "type": "prose",
+          "optional": true
         }
       },
       "because": {
@@ -1364,7 +1425,8 @@
         "line": {
           "by": "source",
           "cases": {
-            "fullHealth": "The full run failed[ at {head:commit}][, after {after} landed][: {detail}]"
+            "fullHealth": "The full run failed[ at {head:commit}][, after {after} landed][: {detail}]",
+            "lead": "The lead named it broken[ at {head:commit}][: {test} in {check}][. {why}]"
           },
           "otherwise": "[{detail}]"
         }

@@ -570,6 +570,19 @@
       "line": ""
     },
     {
+      "kind": "check.started",
+      "lane": "lane-1",
+      "subject": "APP-12",
+      "data": {
+        "base": {
+          "ref": "main",
+          "head": "cccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "head": "Checks started on APP-12",
+      "line": ""
+    },
+    {
       "kind": "check.finished",
       "lane": "lane-1",
       "subject": "APP-12",
@@ -664,6 +677,38 @@
       },
       "head": "unit failed",
       "line": ""
+    },
+    {
+      "kind": "check.superseded",
+      "lane": "lane-1",
+      "subject": "APP-12",
+      "data": {
+        "base": {
+          "ref": "main",
+          "head": "cccccccccccccccccccccccccccccccccccccccc"
+        },
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "by": 41,
+        "phase": "base-rerun"
+      },
+      "head": "The run on the main line was ended early",
+      "line": "For the piece at aaaaaaa, against ccccccc"
+    },
+    {
+      "kind": "check.superseded",
+      "lane": "lane-1",
+      "subject": "APP-12",
+      "data": {
+        "base": {
+          "ref": "main",
+          "head": "cccccccccccccccccccccccccccccccccccccccc"
+        },
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "by": 41,
+        "phase": "checks"
+      },
+      "head": "The rest of the checks were ended early",
+      "line": "For the piece at aaaaaaa, against ccccccc"
     },
     {
       "kind": "check.retried",
@@ -1120,6 +1165,32 @@
       },
       "head": "The main line broke",
       "line": ""
+    },
+    {
+      "kind": "base.broken",
+      "lane": null,
+      "subject": "APP-12",
+      "data": {
+        "source": "lead",
+        "reason": "base_broken",
+        "head": "cccccccccccccccccccccccccccccccccccccccc",
+        "check": "unit",
+        "test": "tests.test_guide.test_names_shipped_files",
+        "why": "The same test fails on main in the lead's own run."
+      },
+      "head": "The main line broke",
+      "line": "The lead named it broken at ccccccc: tests.test_guide.test_names_shipped_files in unit. The same test fails on main in the lead's own run."
+    },
+    {
+      "kind": "base.broken",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "source": "lead",
+        "reason": "base_broken"
+      },
+      "head": "The main line broke",
+      "line": "The lead named it broken"
     },
     {
       "kind": "base.repaired",

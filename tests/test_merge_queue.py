@@ -3892,7 +3892,8 @@ class CheckVisibilityTests(MergeQueueTestCase):
         [started] = self.journal(adopter, "check.started")
         failed = self.journal(adopter, "check.failed")
         [stopped] = self.journal(adopter, "candidate.stopped")
-        self.assertFacts(started, "check.started", {})
+        # A lone candidate's run names the base it checks against, which a check.superseded that ends it repeats.
+        self.assertFacts(started, "check.started", {"base": {"ref": "main", "head": adopter.tip("main")}})
         # The stop names every failure, in order, and each failure the run it belongs to.
         self.assertEqual([entry["data"]["check"] for entry in failed], ["suite", "other"])
         self.assertTrue(all(entry["because"] == [started["id"]] for entry in failed), failed)
@@ -4474,6 +4475,9 @@ class CheckVisibilityTests(MergeQueueTestCase):
 class StoppedBaseRerunTests(MergeQueueTestCase):
     """A base re-run that was stopped says nothing of the base: the candidate is checked again, once a pair of heads."""
 
+    # Its checks wait on real processes and signals within bounds a busy machine can make miss.
+    run_quietly = True
+
     FLAKES = [{"check": "stop", "tests": ["test_launcher_.*"], "ref": "FLAKE-9"}]
 
     def stoppable(self, how: str, armed: int = 1) -> Adopter:
@@ -4741,6 +4745,143 @@ class StoppedBaseRerunTests(MergeQueueTestCase):
         self.assertEqual(len(self.journal(adopter, "candidate.stopped")), 1)
         self.assertEqual(len(self.journal(adopter, "base.rerun.stopped")), 4)
         self.assertEqual(self.journal(adopter, "base.broken"), [])
+
+    # Once a check of a lone candidate's run has failed, a new hand-off the lead accepts, or the lead's broken base,
+    # ends the rest of the run: the queue stops what it started, by the pid it recorded, and writes nothing more for it.
+    # Far past every deadline below: only the queue's stop ends these checks.
+    DEADLINE = 15.0
+
+    def setUp(self) -> None:
+        super().setUp()
+        poll = mock.patch.object(queue, "SUPERSEDE_POLL_SECONDS", 0.2)
+        poll.start()
+        self.addCleanup(poll.stop)
+
+    def lanes(self, adopter: Adopter) -> None:
+        state = state_tool.read_state(adopter.state)
+        lanes = [{"id": "lane-1", "title": "Lane 1", "focus": "", "state": "working", "waitingOn": None,
+                  "since": state_tool.now()}]
+        state_tool.patch(adopter.state, writer="lead", version=state["version"], changes={"lanes": lanes},
+                         assignments={"/meta/handoffsNeedAcceptance": True})
+
+    def supersede(self, adopter: Adopter) -> str:
+        """The lane hands off a fixed head and the lead accepts it; returns the new head."""
+        head = adopter.lane_commit("feature", {"src/candidate.txt": "fixed\n"})
+        state_tool.handoff(adopter.state, lane="lane-1", subject="feature", head=head, change_request="cr")
+        state_tool.accept_handoff(adopter.state, "feature")
+        return head
+
+    def when(self, ready: Callable[[], bool], act: Callable[[], None]) -> threading.Thread:
+        """Run ``act`` beside the queue once ``ready`` holds."""
+        def wait() -> None:
+            deadline = time.monotonic() + self.DEADLINE
+            while time.monotonic() < deadline and not ready():
+                time.sleep(0.05)
+            act()
+        thread = threading.Thread(target=wait)
+        thread.start()
+        self.addCleanup(thread.join, self.DEADLINE)
+        return thread
+
+    def assertGone(self, pid: int) -> None:
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(pid, 0)
+
+    def assertSuperseded(self, adopter: Adopter, document: dict, head: str, phase: str) -> dict:
+        self.assertEqual(document["stop"]["reason"], "superseded", document["stop"])
+        self.assertFalse(document["stop"]["queueStopped"])
+        row = adopter.item("feature")
+        self.assertEqual((row["stage"], row["head"]), ("queued", head))
+        [superseded] = self.journal(adopter, "check.superseded")
+        self.assertEqual(superseded["data"]["phase"], phase)
+        for kind in ("check.finished", "candidate.stopped", "base.rerun.finished", "base.broken"):
+            self.assertEqual(self.journal(adopter, kind), [], kind)
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])
+        return superseded
+
+    def test_a_new_hand_off_ends_the_rest_of_the_checks_once_one_failed(self) -> None:
+        unit = check_entry("unit", "--fail-with", "test_real", parallelSafe=True)
+        slow = check_entry("slow", "--hang-once", parallelSafe=True)
+        late = check_entry("late")
+        adopter = self.adopter({"alwaysRun": [unit, slow, late], "parallelChecks": 2, "checkOutput": FAILURE_OUTPUT})
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        self.lanes(adopter)
+        Path(str(adopter.log) + ".hang").write_text("")
+        started = Path(str(adopter.log) + ".started")
+        heads: list[str] = []
+        self.when(lambda: started.exists() and self.journal(adopter, "check.failed"),
+                  lambda: heads.append(self.supersede(adopter)))
+        began = time.monotonic()
+        document = self.run_queue(adopter, "feature")[-1].document()
+        self.assertLess(time.monotonic() - began, self.DEADLINE)
+        self.assertGone(int(started.read_text()))
+        superseded = self.assertSuperseded(adopter, document, heads[0], "checks")
+        self.assertEqual(superseded["because"], [self.journal(adopter, "handoff.accepted")[0]["id"]])
+        # The checks still running or yet to start read superseded; the third never started; no re-run began.
+        self.assertEqual([(check["id"], check["state"]) for check in adopter.item("feature")["checks"]],
+                         [("unit", "failed"), ("slow", "superseded"), ("late", "superseded"), ("fallback", "superseded")])
+        self.assertNotIn("check late", adopter.log.read_text())
+        self.assertEqual(self.journal(adopter, "base.rerun.started"), [])
+        self.assertEqual(len(self.journal(adopter, "check.failed")), 1)
+
+    def test_a_new_hand_off_ends_the_base_re_run(self) -> None:
+        adopter = self.stoppable("die")
+        self.lanes(adopter)
+        pids = lambda: [path for path in adopter.log.parent.glob(adopter.log.name + ".pid-*")
+                        if not path.name.endswith(".tmp")]
+        heads: list[str] = []
+        self.when(lambda: bool(pids()), lambda: heads.append(self.supersede(adopter)))
+        began = time.monotonic()
+        document = self.run_queue(adopter, "feature")[-1].document()
+        self.assertLess(time.monotonic() - began, self.DEADLINE)
+        self.assertGone(int(pids()[0].read_text()))
+        superseded = self.assertSuperseded(adopter, document, heads[0], "base-rerun")
+        [stopped] = self.journal(adopter, "base.rerun.stopped")
+        self.assertIn(f"entry {superseded['id']}", stopped["data"]["why"])
+        self.assertEqual(stopped["data"]["head"], superseded["data"]["head"])
+        self.assertEqual(state_tool.read_state(adopter.state)["meta"].get("baseReruns") or [], [])
+
+    def test_an_acceptance_between_the_verdicts_read_and_its_stop_write_leaves_the_row_queued(self) -> None:
+        adopter = self.stoppable("die", armed=0)
+        self.lanes(adopter)
+        heads: list[str] = []
+        results = self.run_queue(adopter, "feature",
+                                 seams={"before_stop_write": lambda runner, subject: heads.append(self.supersede(adopter))})
+        superseded = self.assertSuperseded(adopter, results[-1].document() | {"stop": {"reason": "superseded",
+                                                                                         "queueStopped": False}},
+                                           heads[0], "base-rerun")
+        # The verdict reached candidate_failed, but it and its stop wrote nothing once the row moved.
+        self.assertEqual(results[-1].document()["stop"]["reason"], "check_failed")
+        self.assertEqual(state_tool.read_state(adopter.state)["meta"].get("baseReruns") or [], [])
+        self.assertEqual(superseded["data"]["by"], self.journal(adopter, "handoff.accepted")[0]["id"])
+
+    def test_the_lead_naming_the_base_broken_ends_the_re_run_and_the_queue_journals_no_second_break(self) -> None:
+        for name in ("while it runs", "before its verdict is written"):
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.stoppable("die" if name == "while it runs" else "exit:1")
+                base = adopter.tip("main")
+
+                def broken() -> None:
+                    state_tool.lead_base_broken(adopter.state, head=base, check="stop", test="test_real",
+                                                why="it fails on main for the lead too", self_repair=True)
+
+                if name == "while it runs":
+                    self.when(lambda: bool(list(adopter.log.parent.glob(adopter.log.name + ".pid-1"))), broken)
+                    results = self.run_queue(adopter, "feature")
+                else:
+                    results = self.run_queue(adopter, "feature", seams={"before_stop_write": lambda *_: broken()})
+                [lead] = self.journal(adopter, "base.broken")
+                self.assertEqual((lead["data"]["source"], lead["data"]["check"]), ("lead", "stop"))
+                [stopped] = self.journal(adopter, "candidate.stopped")
+                self.assertEqual(stopped["because"], [lead["id"]])
+                self.assertEqual(self.journal(adopter, "base.rerun.finished"), [])
+                row = adopter.item("feature")
+                self.assertEqual((row["stage"], row["supersededAt"]), ("stopped", row["head"]))
+                if name == "while it runs":
+                    self.assertEqual(results[-1].document()["stop"]["reason"], "superseded")
+                    [rerun] = self.journal(adopter, "base.rerun.stopped")
+                    self.assertIn(f"for entry {lead['id']}", rerun["data"]["why"])
 
 
 class BaseRepairTests(MergeQueueTestCase):

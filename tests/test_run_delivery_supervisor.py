@@ -6192,3 +6192,137 @@ class LeadSuiteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LeadEndsAFailedRunTests(unittest.TestCase):
+    """The lead ends a failed candidate's run early: by accepting a new hand-off, or by naming the base broken."""
+
+    run_quietly = True
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def fixture(self) -> Fixture:
+        """FX-2 handed off, accepted and queued; FX-3 the same, behind it."""
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        supervised(fx)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.checkouts = {}
+        for key, lane in (("FX-2", "lane-1"), ("FX-3", "lane-2")):
+            self.checkouts[key] = hand_off(fx, key, lane)
+            code, out = fx.flow("lead-accept", key, cwd=fx.main)
+            self.assertEqual(code, 0, out)
+        return fx
+
+    @staticmethod
+    def runner(fx: Fixture, element: str | None, values: dict) -> None:
+        version = str(record(fx)["state"]["version"])
+        state_tool(fx, "patch", "--writer", "runner", "--version", version,
+                   *(["--element", element] if element else []), "--set", json.dumps(values))
+
+    def checking(self, fx: Fixture, rerun: bool) -> str:
+        """FX-2's run, as the queue writes it, with its first check failed and, with ``rerun``, its base re-run running.
+        Returns the base head."""
+        base = sh("git", "rev-parse", "origin/feature/FX-1", cwd=fx.main).stdout.strip()
+        self.runner(fx, "queue[subject=FX-2]", {"/stage": "checking", "/checks": [{"id": "unit", "state": "failed"},
+                                                                                 {"id": "slow", "state": "running"}]})
+        now = {"subject": "FX-2", "title": "FX-2", "startedAt": "2026-11-17T10:00:00Z", "steps": []}
+        if rerun:
+            now["baseRerun"] = {"startedAt": "2026-11-17T10:05:00Z", "checks": ["unit"]}
+        self.runner(fx, None, {"/meta/checking/now": now})
+        state_tool(fx, "journal", "--kind", "check.started", "--subject", "FX-2",
+                   "--data", json.dumps({"base": {"ref": "feature/FX-1", "head": base}}))
+        started = str(kinds(fx, "check.started")[-1]["id"])
+        state_tool(fx, "journal", "--kind", "check.failed", "--subject", "FX-2", "--because", started, "--data",
+                   json.dumps({"check": "unit", "timedOut": False, "failing": ["t"], "more": 0, "log": "logs/u.log"}))
+        if rerun:
+            state_tool(fx, "journal", "--kind", "base.rerun.started", "--subject", "FX-2", "--because", started,
+                       "--data", json.dumps({"checks": ["unit"], "base": {"ref": "feature/FX-1", "head": base}}))
+        return base
+
+    @staticmethod
+    def row(fx: Fixture, key: str = "FX-2") -> dict:
+        return next(q for q in record(fx)["state"]["queue"] if q["subject"] == key)
+
+    def hand_off_fix(self, fx: Fixture, wt: Path) -> str:
+        """The lane's fix for FX-2: a second commit, reviewed in round 2, gated, pushed and handed off."""
+        (wt / "src/one.txt").write_text("one, fixed\n")
+        commit(wt, "FX-2: fix")
+        for argv in (("gate", "FX-2"), ("review-prepare", "FX-2", "--round", "2")):
+            code, out = fx.flow(*argv, cwd=wt)
+            self.assertEqual(code, 0, out)
+        write_results(wt / ".orchestration/review/FX-2", 2, "FX-2", fx.lenses(wt))
+        code, out = fx.flow("review-reduce", "FX-2", "--round", "2", cwd=wt)
+        self.assertEqual(code, 0, out)
+        sh("git", "push", "-q", "origin", "HEAD:feature/FX-2", cwd=wt)
+        url = self.row(fx)["changeRequest"]
+        code, out = fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)
+        self.assertEqual(code, 0, out)
+        return sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+
+    def test_accepting_a_new_hand_off_ends_the_failed_run_in_one_write(self) -> None:
+        fx = self.fixture()
+        old = self.row(fx)["head"]
+        self.checking(fx, rerun=False)
+        head = self.hand_off_fix(fx, self.checkouts["FX-2"])
+        # Until the lead accepts it, the row is the queue's, at the head it checks.
+        self.assertEqual((self.row(fx)["stage"], self.row(fx)["head"], self.row(fx)["pending"]), ("checking", old, True))
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        row = self.row(fx)
+        self.assertEqual((row["stage"], row["head"], row["reportedRounds"]), ("queued", head, 2))
+        self.assertEqual([(c["id"], c["state"]) for c in row["checks"]], [("unit", "failed"), ("slow", "superseded")])
+        [superseded] = kinds(fx, "check.superseded")
+        accepted = kinds(fx, "handoff.accepted")[-1]
+        self.assertEqual((superseded["data"]["head"], superseded["data"]["by"], superseded["data"]["phase"]),
+                         (old, accepted["id"], "checks"))
+
+    def test_lead_base_broken_ends_the_re_run_at_its_head_and_a_self_repair_hand_off_becomes_the_repair(self) -> None:
+        fx = self.fixture()
+        old = self.row(fx)["head"]
+        base = self.checking(fx, rerun=True)
+        code, out = fx.flow("lead-base-broken", "--head", base[:12], "--check", "unit", "--test", "t",
+                            "--why", "it fails on the base in the lead's own run", "--self-repair", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("ended the base re-run of FX-2", out)
+        [broken] = kinds(fx, "base.broken")
+        self.assertEqual({key: broken["data"].get(key) for key in ("source", "head", "check", "test")},
+                         {"source": "lead", "head": base, "check": "unit", "test": "t"})
+        [superseded] = kinds(fx, "check.superseded")
+        self.assertEqual((superseded["data"]["phase"], superseded["data"]["by"]), ("base-rerun", broken["id"]))
+        self.assertEqual((self.row(fx)["stage"], self.row(fx)["supersededAt"]), ("stopped", old))
+        # The lane hands off its fix; accepting it names it the repair.
+        head = self.hand_off_fix(fx, self.checkouts["FX-2"])
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        row = self.row(fx)
+        self.assertEqual((row["stage"], row["head"]), ("queued", head))
+        self.assertIn("repair", row)
+        self.assertNotIn("repair", self.row(fx, "FX-3"))
+
+    def test_lead_base_broken_names_another_repair_or_none_and_leaves_a_re_run_at_another_head(self) -> None:
+        fx = self.fixture()
+        self.checking(fx, rerun=True)
+        other = "0" * 40
+        sh("git", "fetch", "-q", "origin", cwd=fx.main)
+        first = sh("git", "rev-list", "--max-parents=0", "origin/feature/FX-1", cwd=fx.main).stdout.split()[0]
+        code, out = fx.flow("lead-base-broken", "--head", first, "--check", "unit", "--test", "t", "--why", "w",
+                            "--repair", "FX-3", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(kinds(fx, "base.broken")), 1)
+        self.assertEqual(kinds(fx, "check.superseded"), [])
+        self.assertEqual(self.row(fx)["stage"], "checking", "a re-run at another head goes on")
+        self.assertIn("repair", self.row(fx, "FX-3"))
+        # --self-repair with no re-run at that head is refused, and so is a head that isn't a commit.
+        code, out = fx.flow("lead-base-broken", "--head", first, "--check", "unit", "--test", "t", "--why", "w",
+                            "--self-repair", cwd=fx.main)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("--self-repair names the candidate under it", out)
+        code, out = fx.flow("lead-base-broken", "--head", other, "--check", "unit", "--test", "t", "--why", "w",
+                            cwd=fx.main)
+        self.assertNotEqual(code, 0, out)
+        self.assertEqual(len(kinds(fx, "base.broken")), 1)

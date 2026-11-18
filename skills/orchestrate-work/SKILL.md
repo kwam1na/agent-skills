@@ -267,6 +267,15 @@ through the held queue; its merge journals `base.repaired`, and every
 `base.repaired` puts back the candidates the break stopped, with no
 `--requeue`.
 
+A failed candidate's run can end early. Once one of its checks has failed, a
+new hand-off the lead accepts journals `check.superseded` and queues the new
+head, and the queue stops the rest of the run: its remaining checks or its
+base re-run. When the lead knows the cause or holds the fix, `delivery_state.py
+base-broken --head H --check ID --test T --why W [--self-repair]` names the
+base broken before the re-run's verdict, and ends a lone candidate's re-run at
+that head. The lead's entry is then the evidence for the base's state. See
+"Ending a failed run early" and "A broken base" in the guide.
+
 ## The merge queue
 
 The lead owns every merge through the runner, `merge_queue.py`. Run it with

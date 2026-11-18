@@ -216,6 +216,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `check.started` | None: checking is transient, and its outcome posts with `candidate.merged` or `candidate.stopped`. | nowhere | - |
 | `check.finished` | None: its outcome posts with `candidate.merged` or `candidate.stopped`. | nowhere | - |
 | `check.failed` | None: its outcome posts with `candidate.stopped` once the failure is classified. | nowhere | - |
+| `check.superseded` | None: the acceptance or the broken main line that ended the run posts on its own. | nowhere | - |
 | `check.retried` | On the flake's tracking reference: one more retry, naming the candidate and the failing tests, as evidence for fixing the flake. | the ticket, or the epic | Check retried |
 | `check.reused` | None: the candidate's work item already says it was handed off and is being checked; the reused check shows in the record and the views. | nowhere | - |
 | `check.carried` | None: the candidate's work item already says it was handed off and is being checked; the carried checks and the base commits they were not run on show in the record and the views. | nowhere | - |
@@ -1213,6 +1214,25 @@ an `environmentProfile` or the binding's `environment`, and don't run a
 lane's full suite on the machine while the queue checks. Confirm a break on a
 quiet machine before you fix forward.
 
+The lead may name the base broken before a re-run's verdict, with
+run-delivery's `lead-base-broken --head H --check ID --test T --why W
+[--repair KEY | --self-repair]`, which runs the state tool's `base-broken`. It
+journals `base.broken` with source `lead`, the check, the test and the reason.
+When the re-run the checking panel shows runs at H for a lone candidate whose
+check failed, the same write journals `check.superseded`, phase `base-rerun`,
+naming the break, and stops that candidate as `base_broken`, and the queue ends
+the re-run (see "Ending a failed run early"). A re-run at another head goes on.
+Ending a re-run early is sound only when the lead knows the cause or holds the
+fix: the same test fails on the base in the lead's own run, say, or the fix is
+already written. The lead's entry is then the evidence for the base's state, in
+place of the re-run's verdict, so its `--why` says how the lead knows.
+`--repair KEY` names another queued candidate the repair, as `repair
+--subject` does. `--self-repair` says the candidate under the re-run holds its
+own fix: its row keeps its failed head as `supersededAt`, `base.repaired` never
+queues that head again, and the lead's acceptance of its next hand-off at
+another head names it the repair, so `serve` takes it alone and its merge
+journals `base.repaired`. With neither, the repair step above applies.
+
 ## Binding guide
 
 A repository adopts this workflow with one binding file,
@@ -1670,6 +1690,33 @@ binding declares may change.
   for each pair of candidate head and base head, and the lead's wait does not
   wake for it. A second stopped re-run at the same pair stops the candidate as
   `base_rerun_stopped`, journaled as `candidate.stopped`.
+  A re-run that a new hand-off or the lead's broken base ended is not one of
+  these: it journals `base.rerun.stopped` naming the `check.superseded` entry,
+  and the old head is never queued again (see "Ending a failed run early").
+- **Ending a failed run early.** Once a check of a lone candidate's run has
+  failed (`check.failed`), the run won't merge, and what is left of it, the rest
+  of its checks and any base re-run, only diagnoses. A lane may then hand off a
+  new head while the row is still `checking`. The state tool takes it as
+  pending, beside the row, which stays at the checked head until the lead
+  accepts it, and `carry-review` and `lead-accept` read the hand-off's own head.
+  Before any check of the run has failed, and for a batch's member, a new head
+  is refused with `handoff_invalid`, as before. Accepting it moves the row to
+  the new head as `queued` and journals `check.superseded` in one write: the
+  base, the old head, the acceptance's entry as `by`, and the phase, `checks` or
+  `base-rerun`. The queue reads the journal every 2 seconds while the run is
+  checking. On that entry it stops every check process group it started, by the
+  pid it recorded, and journals no `check.failed`, `check.finished` or verdict;
+  it starts no base re-run, and in the `base-rerun` phase it journals
+  `base.rerun.stopped` naming the entry. The checks the run was still running or
+  had yet to start read `superseded` on the row, and the result's stop is
+  `superseded`. A verdict reached after that write is dropped: the verdict, its
+  `base.rerun.finished` and its stop go through one write that re-reads the row,
+  and write nothing once the row has left the checked head or a
+  `check.superseded` names it. With no new hand-off, the run completes and
+  reports every failure, as before. The line map's checking panel says, while a
+  lone candidate's re-run runs, which check failed, that the re-run decides
+  whether the base or the candidate broke it, when it should end by that check's
+  last recorded time, and both ways to end it sooner.
 - **Queue estimates.** The state tool's `show` adds a position and an expected
   start for each candidate waiting at `queued`. The start counts what remains
   of the run in progress once (a batch is one run), then one median run for
