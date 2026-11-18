@@ -690,15 +690,30 @@ describe("what the hosted cut does not publish", () => {
     };
     return { dom, document, why, open };
   }
-  it("says a reason is not published where one is, and none was recorded where none is", () => {
+  it("says a stop's and a break's reason in the supervisor's published words, and words none from the record", () => {
     const body = hostedBody();
+    const needs = body.needs as Record<string, unknown>;
+    needs.items = [
+      { holding: false, source: "queue", text: "APP-2 stopped", clears: "a new head", kind: "stopped", who: "lead",
+        subject: "APP-2", said: { headline: "Native evidence stopped in its checks", why: "The suite failed at its head.",
+          clears: "Clears with a new head.", who: "The lead" } },
+      { holding: false, source: "fullHealth", text: "the base is broken", clears: "a repair", kind: "baseBroken",
+        who: "lead", said: { headline: "The base broke at its last full run", why: "fullHealth: test_parser failed.",
+          clears: "Clears when the base is repaired.", who: "The lead" } },
+    ];
     projection(body);
     const page = drawn(body, true);
     try {
-      expect(page.why("Native evidence stopped")).toBe(UNPUBLISHED);
-      expect(page.why("Never journaled stopped")).toBe(NONE);
-      expect(page.why("Lane two is blocked")).toBe(NONE);
-      expect(page.why("The main line is broken")).toBe(UNPUBLISHED);
+      expect(page.why("Native evidence stopped in its checks")).toBe("The suite failed at its head.");
+      expect(page.why("The base broke at its last full run")).toBe("fullHealth: test_parser failed.");
+      for (const title of ["Native evidence stopped", "Never journaled stopped", "Lane two is blocked", "The main line is broken"]) {
+        expect(page.why(title)).toBeNull();
+      }
+      const listed = page.document.querySelector(".needs-you")!.textContent;
+      expect(listed).not.toContain(UNPUBLISHED);
+      expect(listed).not.toContain(NONE);
+      // The plan's base flag still words the break from the record, so the hosted cut still says it is not published.
+      expect(page.why("The base is broken")).toBe(UNPUBLISHED);
     } finally {
       page.dom.window.close();
     }
@@ -727,7 +742,7 @@ describe("what the hosted cut does not publish", () => {
     const local = drawn(body, false);
     try {
       expect(local.document.querySelector(".ck-note")).not.toBeNull();
-      expect(local.why("The main line is broken")).toBe(NONE);
+      expect(local.why("The main line is broken")).toBeNull();
       expect(local.open("APP-2").querySelector("details.mh")).not.toBeNull();
       expect(local.open("APP-5").textContent).toContain("Review evidence unavailable or stale");
     } finally {
@@ -739,7 +754,7 @@ describe("what the hosted cut does not publish", () => {
       digest: { head: "Nothing has landed yet.", line: "" }, chapters: [], beats: [], threads: [], tones: [] };
     const page = drawn(told, true);
     try {
-      expect(page.why("The main line is broken")).toBe(NONE);
+      expect(page.why("The main line is broken")).toBeNull();
       expect(page.open("APP-5").textContent).toContain("Review evidence unavailable or stale");
     } finally {
       page.dom.window.close();
