@@ -45,6 +45,31 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
   stale claims when a story lands.
 - **`lead-assign`'s co-change warning missed files stories needed.** `hosted-snapshot.schema.json` and the pins in
   `tests/test_registry.py` and `tests/test_run_delivery.py` surfaced mid-story, one grant at a time. Open.
+- **Adjacent spans of one lane count as separate.** Lane 2 held `tests/test_waits.py` 588 and 589 as two grants, and an
+  edit replacing both was refused at review-prepare. They were merged into one claim by hand. Open.
+- **Ownership problems surface one refusal at a time.** Lanes learned of a missing grant only when review-prepare or
+  the queue refused it, and then asked again, so one story took several round trips. Open.
+
+- **No preview of the queue's ownership check.** Before re-queuing after a regrant, the lead merged each candidate
+  into `main` with `git merge-tree` and ran `region_ownership.problems` by script, to see whether the queue would
+  refuse it. Open: a lead command that runs the queue's region check on a candidate without queuing it.
+- **No view of which claimed lines a lane is changing.** To carve a span safely, the lead read each lane's working
+  diff by script (`git diff -U0` in its checkout) to learn whether the lines another lane asked for were in use.
+  Open: the record or a command could show each lane's touched lines against its claims.
+
+**Proposal: spans follow the work.** Spans and grants were the largest source of lead work in this delivery: about
+40 stale spans regranted by script after landings, 3 carves that left lines unowned, and a dozen requests corrected by
+a line. One unit of work would close most of it:
+
+1. On `candidate.merged`, release the landed story's spans and carry its lane's other spans to the new base, with the
+   boundary checks the lead ran by hand.
+2. `lead-own --carve PATH --base B --give LANE:START-END`, applied whole or not at all, in place of revoke-then-grant.
+3. Merge a lane's touching spans on grant.
+4. A lane command that checks its committed diff against its claims and lists every file and line it still needs, in
+   one go.
+
+Granting by quoted line or anchor, with edge widening and the end-of-file rule, stays V26-3570. A lane reading its own
+grants from the record (`lane-grants`) belongs with V26-3571.
 
 ### The merge queue and checks
 

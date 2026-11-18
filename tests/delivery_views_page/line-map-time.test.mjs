@@ -94,7 +94,7 @@ test("recovered landings show source time, unknowns, and sit in the story at the
   const page = pageWithRuns(document, {}, { config: { spec: "delivery-views-config/1", runs: REPLAYED_RUNS } });
   const [initial, earlier, unknown] = await openPage(page, { now: "2026-10-22T07:10:00Z", steps: [
     { click: '.stop-btn[data-subject="PAY-1"]' }, { click: '.stop-btn[data-subject="PAY-3"]' }] });
-  expect(initial.app.querySelector("#now .fact")?.textContent).toBe("Last landedLatest mergePAY-2 · 15 minutes ago");
+  expect(initial.app.querySelector("#now .facts > .fact:nth-child(2)")?.textContent).toBe("Last landedLatest mergePAY-2 · 15 minutes ago");
   expect(earlier.app.querySelector("#detail .d-meta").textContent).toContain("Landed yesterday at 10:00 pm");
   expect(unknown.app.querySelector("#detail .d-meta").textContent).toContain("Landed · time unknown");
   // In the story a recovered landing sits at the instant it happened, not when it was found.
