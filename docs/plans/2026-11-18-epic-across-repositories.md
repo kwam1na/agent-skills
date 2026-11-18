@@ -140,11 +140,14 @@ its stub left in, and the finish line follows it.
    - Only a `read` entry changes a sibling story's stage or journals anything about its stories. A `stale`,
      `unavailable`, `incompatible` or `other-epic` entry updates `lastOutcome` and `lastAttemptAt` only, whatever
      stages its body shows.
-   - A sibling snapshot that is itself older than `snapshotMaxAgeSeconds` is refused whole by the freshness gate
-     (Decision 3), so it changes nothing in the record. That is the second way a read is stale, and it is enforced
-     before the record is touched.
+   - A sibling snapshot that is itself older than `snapshotMaxAgeSeconds` is refused by the freshness gate
+     (Decision 3). That is the second way a read is stale. The refusal applies none of its stories or stages and
+     journals nothing about them, but it does set each sibling it names to `lastOutcome: stale` and updates
+     `lastAttemptAt`. So both ways a read can be stale reach the record the same way.
    - A sibling is fresh when its `lastOutcome` is `read`. Views and `waits` decide "not fresh" from `lastOutcome`
-     alone, and say when the last `read` was taken.
+     alone, and never compare times with a clock.
+   - Every sibling group on every view shows when its last `read` was taken, whatever its `lastOutcome`. If `serve`
+     stops refreshing, nothing marks the sibling stale, but the reader can still see how old the last read is.
    - A sibling story reads landed when its stage is `merged`, or `settled` for a planned entry, the same test as
      `_landed_subjects`.
    - The first `read` showing a story landed journals `sibling.landed` once, with `subject`, `sibling` and
@@ -201,7 +204,7 @@ its stub left in, and the finish line follows it.
     sibling, an `after` key held by no story and no sibling raises a `sibling` wait.
     - **Every same-epic sibling's `lastOutcome` is `read`:** the sentence says no sibling lists the key, and the
       wait has `needsSomeone: true`, because the lead has to add the sibling or fix the key.
-    - **Any sibling not fresh or never read:** the sentence says that sibling hasn't been read yet, and
+    - **Any same-epic sibling not fresh or never read:** the sentence says that sibling hasn't been read yet, and
       `needsSomeone` is false, so the lead isn't told to fix a key that may be right.
 
     Either way the story is held. In a record without siblings, such a key is ignored, as today. That pins today's
@@ -293,14 +296,16 @@ V26-3603. Every reader test uses a loopback receiver that records each request's
    - (a) `current` says `stale: true` with a recent `sourceConfirmedAt`, and the body is not terminal. It reads as
      `stale`, `reconcile` leaves the stored stage at `building`, and no `sibling.landed` is journaled.
    - (b) `current` says `stale: false`, but the sibling snapshot's `readAt` is older than `snapshotMaxAgeSeconds`.
-     `reconcile` refuses it, the stored stage stays `building`, and no `sibling.landed` is journaled.
+     `reconcile` refuses it, the stored stage stays `building`, no `sibling.landed` is journaled, and the
+     sibling's `lastOutcome` is `stale`.
 
    A fresh read then journals `sibling.landed` once, with `firstSeenAt` equal to that read's `readAt`. A later read
    journals nothing more.
 10. A sibling whose last cut is terminal (`delivery.closed` last among the viewer's terminal kinds), with a story at
     `merged`, and whose `current` says `stale: true`, reads as `read` with `terminal: true`. It journals
     `sibling.landed` and is drawn as read, not stale. A body that reopens after `delivery.closed`, with a later
-    `lane.assigned`, read stale is `stale`.
+    `lane.assigned`, read stale is `stale`. So is a terminal body whose `current` names a newer pointer than the
+    body read.
 11. With a binding declaring `siblingSnapshot`, `serve`'s refresh runs it with `{stateDirectory}` filled in and
     applies the result. `doctor` names a record with siblings whose binding has no `siblingSnapshot`.
 12. The hosted projection of a record with siblings has no `siblings` member and validates as `/2`.
@@ -320,12 +325,19 @@ V26-3072. Each case is checked on the line map, the Markdown view and the built-
     - (d) Own stories all merged, and a sibling never read: "<name> couldn't be read (never read)", never the done
       headline.
     - (e) Own stories not all landed: today's headline, with neither the part-done nor the done headline.
+    - (f) Own stories all merged, and the sibling's `lastOutcome` is `unavailable`, then `stale`, with every story
+      landed in its last kept read: "<name> couldn't be read (last read <at>)", never the done headline.
+    - (g) Own stories all merged, with one fresh same-epic sibling whose stories have all landed and one
+      `other-epic` sibling whose earlier read holds open stories: the usual done headline, and the `other-epic`
+      sibling isn't named.
 15. A V26-3363 outside child that a sibling holds is drawn in that sibling's group, and one no sibling holds stays
     in "Elsewhere".
 16. With no `--scope` set, a tracker snapshot showing a `started` child whose subject a sibling's last read lists
     adds nothing to the record. A tracker-added copy of it already in the record as lane-less building work is
-    cleared, journaled once with "held by sibling <name>". A story of this delivery with the same subject is never
-    cleared.
+    cleared, journaled once with "held by sibling <name>", and a second sweep journals nothing more. With the
+    sibling's `lastOutcome` then `unavailable`, its last kept read still listing the subject, a tracker snapshot
+    showing the child `started` adds nothing and doesn't re-add the cleared copy. A story of this delivery with the
+    same subject is never cleared.
 17. A record with no siblings renders byte for byte as the current goldens.
 
 V26-3604:
