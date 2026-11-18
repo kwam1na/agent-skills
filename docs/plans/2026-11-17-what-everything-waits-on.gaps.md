@@ -49,6 +49,10 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
   main into claude/KEY" to the lane's branch. After a stop, the lane's fix sits on the older head, so its push isn't a
   fast-forward. And `lead-authorize-base-merge` refuses the sync commit, because it isn't on `main`. This happened to
   V26-3552 (cherry-picked onto the sync) and V26-3555 (authorized base merge plus one force-push). Open.
+- **A base merge that regenerates digests can't carry its review.** Resolving `provenance.lock.json` in V26-3426's
+  authorized base merge reran the writer, which changed nine digests the branch's own files feed. The hand-off then
+  refused to carry round 3's review, because a lane-owned file had changed, and the story spent a round on generated
+  output. Open: treat a regenerable file that matches its regenerator's output as unchanged for carrying a review.
 - **A provenance listing change is caught only in the queue, after acceptance.** V26-3552 was stopped for adding
   `wait-words.json`. Fix: V26-3565 (lane 3, this delivery).
 - **Tests outside a lane's files go unrun until the queue runs them.** `tests.test_registry` (V26-3552) and
