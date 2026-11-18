@@ -24,8 +24,5 @@
   ],
   "hooks": {
     "lead.may-stop": "enforce"
-  },
-  "review": {
-    "bound": 5
   }
 }

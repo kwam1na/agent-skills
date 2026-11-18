@@ -29,14 +29,8 @@ patch(
   "    return evidence && keptReview(evidence) ? keptReview(evidence).candidateRef : undefined;",
   "    if (hostedCut(doc)) { var sent = nativeReviews[item.subject]; return isObject(sent) ? sent.candidateRef : undefined; }\n    return evidence && keptReview(evidence) ? keptReview(evidence).candidateRef : undefined;",
 );
-patch(
-  'stopped ? toldLine(doc, stopped) : "No reason recorded."',
-  'stopped ? (toldLine(doc, stopped) || (hostedCut(doc) ? UNPUBLISHED : "")) : "No reason recorded."',
-);
-patch(
-  'toldLine(doc, lastBase) || "No reason recorded."',
-  'toldLine(doc, lastBase) || (hostedCut(doc) ? UNPUBLISHED : "No reason recorded.")',
-);
+// A stopped piece's and a broken base's reasons are not patched: the page draws them only from the supervisor's
+// published needs list, already in words, and from a closed page's left-open block, which the hosted page never carries.
 patch(
   'toldLine(doc, events[events.length - 1]) || "No reason recorded."',
   'toldLine(doc, events[events.length - 1]) || (hostedCut(doc) ? UNPUBLISHED : "No reason recorded.")',

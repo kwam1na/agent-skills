@@ -1143,9 +1143,9 @@ test("a closed delivery's bar, dots, stops, legend and attention all agree with 
   expect([...app.querySelectorAll(".line-legend span")].map((entry) => entry.textContent)).toEqual(["Landed", "Not landed", "Both landed"]);
   expect(stop.app.querySelector("#detail").textContent).not.toMatch(/Needs the lead first|Position 1 in line/);
   // What was true at the close stays, under words that don't ask for anything; a silent source and a hold don't.
-  const attention = app.querySelector("#now .attention");
+  const attention = app.querySelector("#now .left-open");
   expect(attention.querySelector(".ah").textContent).toBe("Left open at close");
-  expect([...attention.querySelectorAll(".a1")].map((row) => row.textContent).sort()).toEqual(["The main line is broken", "Work D stopped"]);
+  expect([...attention.querySelectorAll(".a1")].map((row) => row.textContent).sort()).toEqual(["D was stopped", "The main line is broken"]);
   // The count keeps its number when the same closed record is pushed again.
   const again = await open(render(document, plan), { store: { read: "pending" }, steps: [{ push: document }, { push: document }] });
   expect(again[2].app.querySelector("#left .left-number").textContent).toBe("5pieces not landed");

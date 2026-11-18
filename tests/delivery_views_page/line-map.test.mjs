@@ -109,13 +109,9 @@ test("draws the run as a line map, chapter by chapter", async () => {
   expect(now.querySelector(".checking .ck-count")?.textContent).toBe("3/6");
   expect(now.querySelector(".checking .ck-chosen > summary")?.textContent).toBe("3 done, 2 waiting · started 6m ago");
   expect(checking).toContain("Up next: Keep the order number on the receipt page · Record the payment provider's reference");
-  const attention = now.querySelector(".attention").textContent;
-  expect(attention).toContain("Show a calm message when the card is declined stopped");
-  expect(attention).toContain("checkout end-to-end failed: declined card shows the retry button, declined card keeps the cart");
-  expect(attention).toContain("Backend is blocked");
-  expect(attention).toContain("Waiting on the dev backend lease");
-  expect(attention).toContain("its change request closed without merging");
-  expect(attention).toContain("The forge is not answering");
+  // A stopped piece, a blocked lane, a source's report and a silent source reach the supervisor's "Needs you", which this
+  // record has none of: the page draws no list of its own.
+  expect(now.querySelector(".attention, .needs-you")).toBeNull();
   expect(now.querySelector(".since")?.textContent).toBe("Saved viewUpdated just nowbase aaaaaaa");
 
   // The line: one row per lane, a stop per piece, drawn by where the piece stands.
@@ -1047,7 +1043,7 @@ test("shows a lead's status whole, and a broken main line as needing attention",
   document.journal.push({ at: "2026-10-22T05:08:00Z", id: 11, kind: "base.broken", lane: null, subject: null, data: { source: "queue", detail: "Typecheck fails on main" } });
   const [{ app }] = await open(document);
   expect(app.querySelector(".say")?.textContent).toBe("Pausing merges · back after the deploy");
-  expect(app.querySelector(".attention")?.textContent).toContain("The main line is brokenTypecheck fails on main");
+  expect(app.querySelector(".attention")).toBeNull();  // the supervisor's "Needs you" names the break; the page words none
 });
 
 test("keeps a newer push over a late read, and works with a store that cannot subscribe or report status", async () => {

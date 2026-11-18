@@ -429,9 +429,10 @@ class NeedsYouTests(unittest.TestCase):
     """The supervisor's "Needs you" list gains a wait only when someone must act, and never holds the close for it."""
 
     def needs(self, document: dict, items: list[dict]) -> list[dict]:
+        """The items as the close and the friction note read them; the facts a row is drawn from are NeedsYouRowTests'."""
         listed = [dict(item) for item in items]
         added = run_delivery.waits_needing(SimpleNamespace(release=PRODUCT_ROOT), document, listed)
-        return listed + added
+        return [{name: item[name] for name in ("holding", "source", "clears", "text")} for item in listed + added]
 
     def test_a_stopped_blocker_is_one_item_carrying_how_many_wait_on_it_and_holds_nothing(self) -> None:
         document = record()
@@ -475,6 +476,170 @@ class NeedsYouTests(unittest.TestCase):
         listed = self.needs(document, [])
         self.assertEqual([(item["text"], item["holding"]) for item in listed],
                          [("APP-2 is free to start. Lane 1 is idle.", False), ("APP-3 is free to start. Lane 3 is idle.", False)])
+
+
+class NeedsYouRowTests(unittest.TestCase):
+    """Each "Needs you" item carries the facts its row is drawn from, who must act, and its row's words from the table:
+    a headline, a why, what clears it and who acts. Its text, which the close and the friction note read, is unchanged."""
+
+    RELEASE = SimpleNamespace(release=PRODUCT_ROOT)
+
+    def said(self, document: dict, items: list[dict]) -> list[dict]:
+        return run_delivery.say_needs(self.RELEASE, document, [dict(item) for item in items])
+
+    def test_a_blocked_lane_names_who_its_question_waits_on_and_the_story_it_is_on(self) -> None:
+        document = record()
+        row(document, "lane-2").update(state="blocked", focus="which API", waitingOn="lead")
+        row(document, "lane-1").update(state="blocked", focus="the copy", waitingOn="operator")
+        row(document, "lane-3").update(state="blocked", focus="its schema", waitingOn="lane-2")
+        items = {item["lane"]: item for item in run_delivery.lane_needs(document["state"])}
+        self.assertEqual({lane: item["who"] for lane, item in items.items()},
+                         {"lane-1": "operator", "lane-2": "lead", "lane-3": "lane-2"})
+        for name in ("user", "You"):
+            row(document, "lane-1")["waitingOn"] = name
+            self.assertEqual(run_delivery.lane_needs(document["state"])[0]["who"], "operator", name)
+        # A stopped piece is on the lane it was assigned to, whatever lane it now names.
+        queue(document, "APP-3", "stopped", lane=None, assignedLane="lane-3")
+        self.assertEqual(run_delivery.lane_story(document["state"], "lane-3")["subject"], "APP-3")
+        self.assertEqual(items["lane-2"]["subject"], "APP-1")
+        self.assertNotIn("subject", items["lane-1"])
+        self.assertEqual(items["lane-2"]["text"], "lane-2 is blocked: which API")
+        [said] = self.said(document, [items["lane-2"]])
+        self.assertEqual(said["said"], {"headline": "Lane 2 is blocked on APP-1", "why": "which API",
+                                        "clears": "Clears when Lane 2's state changes.", "who": "The lead"})
+        self.assertEqual((said["state"], said["since"]), ("review", "2026-11-17T10:00:00Z"))
+        self.assertNotIn("fields", said)
+        lane_three = self.said(document, [items["lane-3"]])[0]["said"]
+        self.assertEqual(lane_three["who"], "Lane 2")
+
+    def test_a_story_that_waits_carries_its_blocker_with_that_storys_lane_and_state(self) -> None:
+        document = record()
+        [said] = self.said(document, [{"holding": False, "source": "s", "text": "t", "clears": "c", "kind": "free",
+                                       "who": "lead", "subject": "APP-2"}])
+        self.assertEqual((said["lane"], said["state"]), ("lane-1", "planned"))
+        self.assertEqual(said["blocker"], {"subject": "APP-1", "state": "review", "lane": "lane-2"})
+
+    def test_what_the_record_itself_shows_needs_someone_becomes_items_that_hold_nothing(self) -> None:
+        document = record()
+        queue(document, "APP-1", "stopped", checks=[{"id": "e2e", "title": "end to end", "state": "failed"}])
+        stop = journal(document, "candidate.stopped", "APP-1", lane="lane-2")
+        meta = document["state"]["meta"]
+        meta["hold"] = {"reason": "the base is broken", "at": "2026-11-17T11:00:00Z"}
+        meta["sourceReports"] = [{"subject": "APP-3", "note": "its ticket moved"}]
+        meta["sources"] = {"tracker": {"status": "stale", "reason": "it timed out", "lastReadAt": "2026-11-17T11:30:00Z"},
+                           "forge": {"status": "fresh"}}
+        items = run_delivery.record_needs(document, [])
+        self.assertEqual([item["kind"] for item in items], ["paused", "stopped", "report", "stale"])
+        self.assertFalse(any(item["holding"] for item in items))
+        said = {item["kind"]: item for item in self.said(document, items)}
+        self.assertEqual(said["stopped"]["said"]["headline"], "APP-1 was stopped")
+        self.assertEqual(said["stopped"]["said"]["why"], "end to end failed")
+        self.assertEqual((said["stopped"]["since"], said["stopped"]["source"]), (stop["at"], f"journal entry {stop['id']} (candidate.stopped)"))
+        self.assertEqual(said["paused"]["said"]["why"], "the base is broken")
+        self.assertEqual(said["report"]["said"]["headline"], "A report for the lead on APP-3")
+        self.assertEqual(said["stale"]["said"], {"headline": "The tracker is not answering", "why": "it timed out",
+                                                 "clears": "Clears when the tracker answers again.", "who": "The lead"})
+        # A stop with no failed check is said in the story's words for its entry.
+        planned(document, "APP-4")
+        queue(document, "APP-4", "stopped")
+        quiet = journal(document, "candidate.stopped", "APP-4", {"reason": "check_failed", "detail": "Its review is for an older head.",
+                                                                  "stage": "checking"}, lane="lane-2")
+        [item] = [entry for entry in self.said(document, run_delivery.record_needs(document, [])) if entry.get("subject") == "APP-4"]
+        self.assertEqual(item["said"]["why"], run_delivery.entry_said(quiet))
+        self.assertTrue(item["said"]["why"])
+        # The queue's own hold already says serving is paused, so the record's hold adds nothing beside it.
+        self.assertNotIn("paused", [item["kind"] for item in run_delivery.record_needs(document, [{"kind": "runnerHold"}])])
+
+    def needs_you(self, document: dict) -> list[dict]:
+        """needs_you itself on a record, with nothing outside the record answering: no tracker, no fullHealth run, a
+        listener running, and no log or resolution on disk."""
+        here = SimpleNamespace(release=PRODUCT_ROOT, state=Path("/nonexistent"), flow_log=Path("/nonexistent"),
+                               delivery="APP", forge={})
+        with mock.patch.multiple(run_delivery, tracker_conf=lambda c: {}, base_head=lambda c: None,
+                                 full_health_running=lambda c: None, read_log=lambda *a, **k: [],
+                                 lead_listener=lambda *a, **k: {"pid": 1}, only_full_health_breaks=lambda journal: False), \
+                mock.patch.object(run_delivery.tracker_publisher, "needs_you", lambda *a, **k: []):
+            return run_delivery.needs_you(here, document)
+
+    def test_a_stop_with_no_failed_check_and_a_break_are_said_in_their_entries_story_words_as_written_or_reworded(self) -> None:
+        for detail in ("Its review is for an older head.", "Other words."):
+            document = record()
+            queue(document, "APP-1", "stopped")
+            stop = journal(document, "candidate.stopped", "APP-1", {"reason": "check_failed", "detail": detail, "stage": "checking"},
+                           lane="lane-2")
+            broken = journal(document, "base.broken", None, {"source": "queue", "detail": detail})
+            said = {item["kind"]: item["said"]["why"] for item in self.needs_you(document)}
+            self.assertEqual((said["stopped"], said["baseBroken"]),
+                             (f"{run_delivery.entry_said(stop)} 2 pieces wait on it.", run_delivery.entry_said(broken)[:300]), detail)
+            self.assertTrue(detail in said["stopped"] and detail in said["baseBroken"], said)
+
+    def test_a_stopped_story_others_wait_on_is_one_item_carrying_their_count_in_its_why(self) -> None:
+        document = record()
+        queue(document, "APP-1", "stopped")
+        items = run_delivery.record_needs(document, [])
+        items += run_delivery.waits_needing(self.RELEASE, document, items)
+        [said] = self.said(document, items)
+        self.assertEqual(said["said"]["why"], "2 pieces wait on it.")
+        self.assertNotIn("waiting", said)
+
+    def test_every_kind_needs_you_gives_is_said_by_the_table_with_its_own_headline(self) -> None:
+        source = (PRODUCT_ROOT / "skills/run-delivery/scripts/run_delivery.py").read_text(encoding="utf-8")
+        body = source[source.index("def tracker_item("):source.index("NEEDS_FILE = ")]
+        # Each kind, with who it names, as needs_you and its helpers write it.
+        found = re.findall(r'"kind": "(\w+)"(?: if \w+ else "(\w+)")?,(?:\s*\n\s*)? ?(?:"who": "(\w+)")?', body)
+        kinds = {kind for pair in found for kind in pair[:2] if kind}
+        table = json.loads(WORDS.read_text(encoding="utf-8"))["needsYou"]["templates"]
+        for name in ("headline", "why", "clears"):
+            self.assertEqual(kinds - set(table[name]["cases"]), set(), name)
+        self.assertEqual(kinds, set(table["headline"]["cases"]))
+        self.assertEqual({pair[0]: pair[2] for pair in found if pair[2] and pair[0] == "drafts"}, {"drafts": "operator"})
+        # The items about one story name it, so their rows draw its stop: the merge not accepted, and a blocker on a story.
+        self.assertRegex(body, r'"kind": "unaccepted",\s*"who": "lead", "subject": item\["subject"\]')
+        self.assertRegex(body, r'"kind": "runnerHold" if runners else "blocker", "who": "lead"[^\n]*\n\s*\*\*\(\{"subject": entry\["subject"\]\} if entry\.get\("subject"\) else \{\}\)')
+        # Each kind's headline, from the facts its producer gives it.
+        document = record()
+        given = {
+            "trackerLag": ({"detail": "The tracker publisher hasn't posted journal entries 4"}, {}, "The tracker is behind the record"),
+            "trackerLedger": ({"detail": "APP-1: the move isn't offered"}, {}, "A tracker update needs a hand"),
+            "healthRunning": ({"head": "a" * 40}, {}, "The full health run is under way at aaaaaaa"),
+            "healthFailed": ({"head": "b" * 40, "detail": "1 failed"}, {}, "The full health run failed at bbbbbbb"),
+            "healthFlaky": ({"head": "c" * 40, "tests": ["t.T.test_a"]}, {}, "Flaky tests failed the full health run at ccccccc"),
+            "baseBroken": ({"detail": "Main is red"}, {}, "The main line is broken"),
+            "baseHealth": ({"detail": "Main is red"}, {}, "The main line is broken"),
+            "baseFocused": ({"detail": "Main is red", "source": "main"}, {}, "The main line is broken, under the focused posture"),
+            "unaccepted": ({}, {"subject": "APP-1"}, "APP-1 merged before it was accepted"),
+            "runnerHold": ({"entry": 7, "detail": "a break"}, {}, "The queue holds serving"),
+            "blocker": ({"entry": 7, "detail": "the API"}, {"subject": "APP-1"}, "Blocker 7 on APP-1"),
+            "listener": ({"detail": "Lane 1 can't reach the lead."}, {}, "The lead isn't listening"),
+            "flapping": ({"name": "publisher", "log": "p.log"}, {}, "The supervisor's publisher won't stay up"),
+            "drafts": ({"subjects": ["APP-1", "APP-2"]}, {}, "APP-1 and APP-2 wait to be marked ready"),
+            "laneBlocked": ({"focus": "which API"}, {"lane": "lane-2", "subject": "APP-1"}, "Lane 2 is blocked on APP-1"),
+            "laneAsks": ({"focus": "which API"}, {"lane": "lane-2"}, "Lane 2 waits on the lead"),
+            "stopped": ({"detail": "e2e failed"}, {"subject": "APP-1"}, "APP-1 was stopped"),
+            "free": ({}, {"subject": "APP-2", "lane": "lane-1"}, "APP-2 is free to start"),
+            "paused": ({"reason": "a break"}, {}, "Serving is paused"),
+            "report": ({"about": "APP-3", "detail": "moved"}, {}, "A report for the lead on APP-3"),
+            "stale": ({"name": "tracker", "reason": "timed out"}, {}, "The tracker is not answering"),
+        }
+        self.assertEqual(set(given), kinds)
+        items = [{"holding": False, "source": "s", "text": "t", "clears": "c", "kind": kind, "who": "lead", "fields": fields, **facts}
+                 for kind, (fields, facts, _) in given.items()]
+        said = self.said(document, items)
+        self.assertEqual({item["kind"]: item["said"]["headline"] for item in said}, {kind: words for kind, (_, _, words) in given.items()})
+        self.assertTrue(all(item["said"]["clears"] for item in said))
+
+    def test_the_list_opens_with_one_sentence_counting_whom_its_items_wait_on_and_what_holds_the_finish(self) -> None:
+        summary = lambda *items: run_delivery.needs_summary(self.RELEASE, [{"holding": held, "who": who} for held, who in items])
+        self.assertEqual(summary(), "Nothing needs anyone, and nothing is holding up the finish.")
+        self.assertEqual(summary((True, "lead")), "1 thing needs the lead, and it's holding up the finish.")
+        self.assertEqual(summary((False, "lead"), (False, "lead")), "2 things need the lead. Nothing is holding up the finish.")
+        self.assertEqual(summary((True, "lead"), (False, "operator"), (True, "lane-2")),
+                         "1 thing needs you, 1 thing needs the lead and 1 thing needs Lane 2, and 2 of them are holding up the finish.")
+        self.assertEqual(summary((True, "lead"), (False, "lead")), "2 things need the lead, and 1 of them is holding up the finish.")
+        self.assertEqual(summary((True, "lead"), (True, "operator")),
+                         "1 thing needs you and 1 thing needs the lead, and all of them are holding up the finish.")
+        self.assertEqual(run_delivery.needs_words(self.RELEASE),
+                         {"heading": "Waiting on someone", "holding": "Holding up the finish", "age": "for {age}"})
 
 
 class ListeningTests(unittest.TestCase):
@@ -585,9 +750,11 @@ class TableTests(unittest.TestCase):
         self.assertEqual(table["schemaVersion"], "wait-words/1")
         for group in ("stages", "waits", "lanes", "holding", "needsYou", "listening"):
             self.assertIn("templates", table[group])
-        self.assertEqual(set(table["waits"]["templates"]), {"order", "files", "review", "held"})
-        self.assertEqual(set(table["lanes"]["templates"]), {"order", "files", "held", "waiting"})
-        self.assertEqual(set(table["needsYou"]["templates"]), {"count", "free", "stopped"})
+        self.assertEqual(set(table["waits"]["templates"]), {"order", "files", "claim", "slot", "review", "held"})
+        self.assertEqual(set(table["lanes"]["templates"]), {"order", "files", "claim", "held", "waiting"})
+        self.assertEqual(set(table["needsYou"]["templates"]), {"count", "free", "stopped", "headline", "why", "clears", "who",
+                                                               "whom", "part", "summary", "heading", "holding", "age",
+                                                               "leftOpen"})
         self.assertEqual(state_tool.wait_said(table, "needsYou", "count", {"count": 1}), "1 piece waits on it.")
         self.assertEqual(state_tool.wait_said(table, "needsYou", "count", {"count": 3}), "3 pieces wait on it.")
 
@@ -613,7 +780,7 @@ def marked(table: dict) -> dict:
 # The fixed words of the real templates, each of which a view may show only inside a marked sentence.
 FIXED = ("Waits for", "before it finishes", "Held by the lead", "is next on", "Waited on by", "free to start", "pieces wait on it",
          "piece waits on it", "was stopped.", "can't reach the lead", "watching again")
-MARK = re.compile(r"⟦([a-zA-Z]+\.[a-zA-Z]+(?:\.[a-z0-9]+)?)⟧")
+MARK = re.compile(r"⟦([a-zA-Z]+\.[a-zA-Z]+(?:\.[a-zA-Z0-9]+)?)⟧")
 
 
 class MarkerTests(unittest.TestCase):
@@ -707,6 +874,22 @@ class MarkerTests(unittest.TestCase):
         queue(stopped, "APP-1", "stopped")
         [item] = run_delivery.waits_needing(SimpleNamespace(release=PRODUCT_ROOT), stopped, [])
         self.assertRegex(item["text"], r"^⟦needsYou\.stopped⟧ APP-1 was stopped\. ⟦needsYou\.count⟧ 2 pieces wait on it\.$")
+
+    def test_every_word_of_a_needs_you_row_and_of_the_list_is_the_tables(self) -> None:
+        document = self.document
+        queue(document, "APP-1", "stopped")
+        row(document, "lane-3").update(state="blocked", focus="its schema", waitingOn="operator")
+        release = SimpleNamespace(release=PRODUCT_ROOT)
+        items = run_delivery.lane_needs(document["state"]) + run_delivery.record_needs(document, [])
+        said = run_delivery.say_needs(release, document, items + run_delivery.waits_needing(release, document, items))
+        self.assertEqual({item["kind"] for item in said}, {"laneBlocked", "stopped"})
+        for item in said:
+            for name, words in item["said"].items():
+                self.assertRegex(words, rf"^⟦needsYou\.{name}(\.[a-zA-Z0-9]+)?⟧", (item["kind"], name))
+        self.assertRegex(run_delivery.needs_summary(release, said), r"^⟦needsYou\.summary\.one⟧ ⟦needsYou\.part\.1⟧ 1 thing needs ⟦needsYou\.whom\.operator⟧ you")
+        self.assertEqual(run_delivery.needs_words(release), {"heading": "⟦needsYou.heading⟧ Waiting on someone",
+                                                             "holding": "⟦needsYou.holding⟧ Holding up the finish",
+                                                             "age": "⟦needsYou.age⟧ for {age}"})
 
 
 class WrapperTests(unittest.TestCase):

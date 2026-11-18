@@ -858,6 +858,15 @@ def breaks_since_repair(journal: list[dict]) -> list[dict]:
     return [entry for entry in journal if entry["id"] > since and entry["kind"] == "base.broken"]
 
 
+def slot_doing(subcommand: str, subjects: list[str]) -> dict | None:
+    """What a queue command holds the base's merge slot for, as its holder and waiter files say: a release, or the
+    check or merge of its first candidate."""
+    if subcommand == "release":
+        return {"what": "release"}
+    what = {"run": "check", "batch": "check", "check": "check", "merge": "merge"}.get(subcommand)
+    return {"what": what, "subject": subjects[0]} if what and subjects else None
+
+
 class Runner:
     """One runner invocation against one repository.
 
@@ -2953,6 +2962,8 @@ class Runner:
         self.check_regions(item, anchor, base_head, synced)
         self.merging.add(subject)
         self.set_item(subject, stage="merging")
+        if getattr(self, "slot_lock", None) is not None:
+            delivery_state.slot_doing(self.slot_lock, {"what": "merge", "subject": subject})
         context = context.with_values(
             branch=branch, head=synced, expectedHead=synced, baseHead=base_head, treeSha=self.tree(synced),
             checkMode="single" if batch_synced is None else "batch",
@@ -3437,9 +3448,10 @@ class Runner:
             shutil.rmtree(self._bootstrap_hooks, ignore_errors=True)
 
     @contextlib.contextmanager
-    def slot(self) -> Iterator[None]:
+    def slot(self, doing: dict | None = None) -> Iterator[None]:
         """Hold the base's merge slot, which every delivery's queue and lead commands on this machine share, for the
-        whole command; held past the wait, the command attempts nothing, as when another runner holds the queue."""
+        whole command, saying in its files what for (``doing``); held past the wait, the command attempts nothing, as
+        when another runner holds the queue."""
         wait = self.slot_wait
         if wait is None:
             wait = 0.0
@@ -3462,8 +3474,12 @@ class Runner:
             return
         try:
             with delivery_state.merge_slot(self.repository, self.base, delivery=delivery, timeout=wait,
-                                           after_merge=self.after_merge):
-                yield
+                                           after_merge=self.after_merge, doing=doing) as lock:
+                self.slot_lock = lock
+                try:
+                    yield
+                finally:
+                    self.slot_lock = None
         except delivery_state.StateError as error:
             if error.code == "slot_held":
                 raise Stop("queue_locked", f"{error}; nothing was attempted, and serve tries again") from None
@@ -3471,7 +3487,7 @@ class Runner:
 
     def run_command(self, subcommand: str, subjects: list[str], approved_by: str | None = None) -> list[Result]:
         try:
-            with self.slot(), self.locked():
+            with self.slot(slot_doing(subcommand, subjects)), self.locked():
                 # A state that cannot be read or written is reported by the subcommand itself, as before.
                 with contextlib.suppress(delivery_state.StateError, OSError):
                     self.recover_interrupted()

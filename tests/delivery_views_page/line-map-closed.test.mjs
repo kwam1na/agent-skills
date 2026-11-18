@@ -179,7 +179,7 @@ test("a finished close, a record with no marks, a mark for an earlier close and 
   // A live supervisor still closing it: its own list shows what the close waits on, and nothing names a resume.
   const [live] = await open(closing({ needs: LIVE_NEEDS() }));
   expect(live.app.querySelector("#now .close-partway")).toBeNull();
-  expect(live.app.querySelector("#now .needs-you .needs-kind").textContent).toBe("Holds the close");
+  expect(live.app.querySelector("#now .needs-you .needs-row").classList.contains("is-holding")).toBe(true);
   expect(live.text).not.toContain("lead-run --resume");
   // Its list gone stale, or the supervisor stopped, it reads as stopped partway.
   expect(await partway(closing({ needs: LIVE_NEEDS({ running: false }) }))).not.toBeNull();
