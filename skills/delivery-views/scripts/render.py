@@ -1048,6 +1048,26 @@ NEEDS_TEXT = 600
 _MOMENT = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$")
 
 
+# What a "Needs you" row is drawn from beside its words: its facts, each text when present, and the story it waits on.
+NEED_FACTS = ("kind", "who", "lane", "subject", "state", "since")
+NEED_SAID = ("headline", "why", "clears", "who")
+NEEDS_WORDS = ("heading", "holding", "age")
+
+
+def need_row(item: dict, cut) -> dict:
+    """One item as the page reads it: holding, its source, text and what clears it, and the facts and words its row
+    is drawn from where they are text. Anything else the item carries is left out."""
+    row = {"holding": item["holding"], **{name: cut(item[name]) for name in ("source", "text", "clears")}}
+    row.update({name: cut(item[name]) for name in NEED_FACTS if isinstance(item.get(name), str)})
+    blocker = item.get("blocker")
+    if isinstance(blocker, dict) and isinstance(blocker.get("subject"), str):
+        row["blocker"] = {name: cut(blocker[name]) for name in ("subject", "lane", "state") if isinstance(blocker.get(name), str)}
+    said = item.get("said")
+    if isinstance(said, dict):
+        row["said"] = {name: cut(said[name]) for name in NEED_SAID if isinstance(said.get(name), str)}
+    return row
+
+
 def read_needs_block(state_directory: Path) -> dict | None:
     """The page's "Needs you" block: None when no supervisor wrote a list, {"unreadable": True} for one that can't be
     trusted, or the list as written, its texts cut to their share. The page decides whether it is current."""
@@ -1072,10 +1092,15 @@ def read_needs_block(state_directory: Path) -> dict | None:
         return {"unreadable": True}
     cut = lambda value: value if len(value) <= NEEDS_TEXT else value[:NEEDS_TEXT - 1] + "…"
     block = {"running": written["running"], "at": written["at"],
-             "items": [{"holding": item["holding"], **{name: cut(item[name]) for name in ("source", "text", "clears")}}
-                       for item in items[:NEEDS_ITEMS]]}
+             "items": [need_row(item, cut) for item in items[:NEEDS_ITEMS]]}
     if written["running"]:
         block["staleAfter"] = written["staleAfter"]
+    # The list's own words: its opening sentence, and its heading, holding mark and age form, each text or left out.
+    if isinstance(written.get("summary"), str):
+        block["summary"] = cut(written["summary"])
+    if isinstance(written.get("words"), dict):
+        block["words"] = {name: cut(value) for name, value in written["words"].items()
+                          if name in NEEDS_WORDS and isinstance(value, str)}
     if len(items) > NEEDS_ITEMS:
         block["more"] = len(items) - NEEDS_ITEMS
     return block
@@ -1108,6 +1133,60 @@ def with_waits(document: dict) -> dict:
         return {**document, **({"waits": found} if found else {}), **({"waitedOn": holding} if holding else {})}
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return document
+
+
+# The entries that reopen a closed delivery, as the page reads them.
+REOPENING = ("lane.assigned", "candidate.handed", "check.started")
+
+
+def left_open(document: dict) -> dict | None:
+    """What a closed delivery left open, from its record: each stopped piece, the base when its last word is a break,
+    and each source's report, with its heading and each row's headline and why said from the table of wait sentences.
+    None while the delivery is open, when nothing was left open, or when the record can't be read for it."""
+    try:
+        journal = [entry for entry in document.get("journal") or [] if isinstance(entry, dict)]
+        closed = None
+        for entry in journal:
+            closed = entry if entry.get("kind") == "delivery.closed" else None if entry.get("kind") in REOPENING else closed
+        if closed is None:
+            return None
+        table = review_state.load_wait_words()
+        state = document["state"]
+
+        def said(entry: dict) -> str:
+            try:
+                made = review_state.journal_words.words(entry)
+            except review_state.journal_words.WordsError:
+                return ""
+            return made["line"] or made["head"]
+
+        rows = []
+        for item in state.get("queue") or []:
+            if not isinstance(item, dict) or item.get("stage") != "stopped":
+                continue
+            failed = [f"{check.get('title') or check.get('id')} {'timed out' if check.get('state') == 'timed_out' else 'failed'}"
+                      for check in item.get("checks") or [] if isinstance(check, dict) and check.get("state") in ("failed", "timed_out")]
+            stops = [e for e in journal if e.get("kind") == "candidate.stopped" and e.get("subject") == item.get("subject")]
+            rows.append({"kind": "stopped", "subject": item["subject"], "lane": item.get("assignedLane", item.get("lane")),
+                         "state": "stopped", "detail": "; ".join(failed) or (said(stops[-1]) if stops else "")})
+        base = [e for e in journal if e.get("kind") in ("base.broken", "base.repaired")]
+        if base and base[-1]["kind"] == "base.broken":
+            rows.append({"kind": "baseBroken", "detail": said(base[-1])})
+        meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
+        for report in meta.get("sourceReports") or []:
+            if isinstance(report, dict):
+                rows.append({"kind": "report", "about": str(report.get("subject") or ""), "detail": str(report.get("note") or "")})
+        if not rows:
+            return None
+        shown = []
+        for row in rows:
+            fields = {name: value for name, value in row.items() if value not in ("", None)}
+            words = {**fields, "who": "lead", "whom": review_state.wait_said(table, "needsYou", "whom", {"who": "lead"})}
+            shown.append({**{name: row[name] for name in ("kind", "subject", "lane", "state") if row.get(name)},
+                          "said": {name: review_state.wait_said(table, "needsYou", name, words) for name in ("headline", "why")}})
+        return {"heading": review_state.wait_said(table, "needsYou", "leftOpen", {}), "rows": shown}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
 
 
 def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
@@ -1146,8 +1225,12 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
         "runs": config["runs"] is not None,
         "lenses": config["lenses"],
     }
-    return {"document": document, "runs": runs, "reviews": reviews, "view": view,
+    data = {"document": document, "runs": runs, "reviews": reviews, "view": view,
             "links": page_links(document, runs, config, reviews), "plan": plan, "needs": needs}
+    if story:
+        # What a closed delivery left open goes with the story too: the published cut tells none.
+        data["leftOpen"] = left_open(document)
+    return data
 
 
 def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
@@ -1176,6 +1259,8 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
         f'<script type="application/json" id="delivery-view">{embed(view)}</script>',
         *([f'<script type="application/json" id="delivery-plan">{embed(plan)}</script>'] if plan is not None else []),
         *([f'<script type="application/json" id="delivery-needs">{embed(needs)}</script>'] if needs is not None else []),
+        *([f'<script type="application/json" id="delivery-left-open">{embed(data["leftOpen"])}</script>']
+          if data.get("leftOpen") is not None else []),
         f"<script>\n{_asset('run-summary.js')}{_asset('line-map.js')}</script>",
         "</body>",
         "</html>",

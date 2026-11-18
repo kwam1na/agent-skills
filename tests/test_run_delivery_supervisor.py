@@ -3380,6 +3380,9 @@ class LeadListenerTests(unittest.TestCase):
     you", the live view and the status line say so."""
 
     run_quietly = True
+    # Every wait here is told the machine is calm, so it wakes on the record alone whatever the machine's load, free
+    # disk or swap: thresholds no machine reaches, given last so they win over any the printed command carries.
+    CALM = ("--load-multiple", "1000000000", "--min-free-bytes", "0", "--swap-growth-bytes", str(2 ** 62))
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -3407,7 +3410,7 @@ class LeadListenerTests(unittest.TestCase):
         return shlex.split(lines[0])
 
     def start_lead_wait(self, fx: Fixture, *argv: str) -> subprocess.Popen:
-        proc = subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-wait", *argv], cwd=fx.main, env=fx.env,
+        proc = subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-wait", *argv, *self.CALM], cwd=fx.main, env=fx.env,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         def stop() -> None:
             if proc.poll() is None:
@@ -3457,7 +3460,7 @@ class LeadListenerTests(unittest.TestCase):
                                                                  str(self.last_id(fx)), "--output", str(output)])
         self.assertIn(f"the lead isn't listening: no lead-wait runs while lane-1 (assigned)", out)
         # The printed command runs as it stands: here it times out, and its result names the next one.
-        done = subprocess.run([*words, "--timeout", "0.2", "--poll", "0.05"], cwd=fx.main, env=fx.env,
+        done = subprocess.run([*words, "--timeout", "0.2", "--poll", "0.05", *self.CALM], cwd=fx.main, env=fx.env,
                               capture_output=True, text=True, timeout=120)
         self.assertEqual(done.returncode, 3, done.stdout + done.stderr)
         result = json.loads(done.stdout)
@@ -3473,7 +3476,7 @@ class LeadListenerTests(unittest.TestCase):
         words = self.printed(out)
         self.assertEqual(words[words.index("lead-wait") + 1:], result["restart"])
         self.assertEqual(words[words.index("--after") + 1], str(result["through"]))
-        woke = subprocess.run([*words, "--timeout", "5"], cwd=fx.main, env=fx.env, capture_output=True, text=True,
+        woke = subprocess.run([*words, "--timeout", "5", *self.CALM], cwd=fx.main, env=fx.env, capture_output=True, text=True,
                               timeout=120)
         self.assertEqual(woke.returncode, 0, woke.stdout + woke.stderr)
         self.assertIn(handed, [event["id"] for event in json.loads(woke.stdout)["events"]])
@@ -3562,14 +3565,14 @@ class LeadListenerTests(unittest.TestCase):
 
     def test_lead_wait_is_the_wait_and_ends_with_it(self) -> None:
         fx, _ = self.fixture()
-        code, out = fx.flow("lead-wait", "--timeout", "0.2", "--poll", "0.05", cwd=fx.main)
+        code, out = fx.flow("lead-wait", "--timeout", "0.2", "--poll", "0.05", *self.CALM, cwd=fx.main)
         self.assertEqual(code, 3, out)
         result = json.loads(out)  # one document, the wait's, with nothing after it
         self.assertEqual(result["through"], self.last_id(fx))
         self.assertIn(f"--output={(fx.tmp / 'flow-log/FX-1.wait.json').resolve()}", result["restart"])
         self.assertFalse((fx.tmp / "record/lead-wait.json").exists())
         # The one-word --delivery form is run-delivery's, and the wait still gets what follows it.
-        code, out = fx.flow("lead-wait", "--delivery=FX-1", "--timeout", "0.2", "--poll", "0.05", cwd=fx.main)
+        code, out = fx.flow("lead-wait", "--delivery=FX-1", "--timeout", "0.2", "--poll", "0.05", *self.CALM, cwd=fx.main)
         self.assertEqual(code, 3, out)
         self.assertEqual(json.loads(out)["restart"][2:6], ["--timeout", "0.2", "--poll", "0.05"])
         # A usage error is the wait's, and starts nothing.

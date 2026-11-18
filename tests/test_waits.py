@@ -429,9 +429,10 @@ class NeedsYouTests(unittest.TestCase):
     """The supervisor's "Needs you" list gains a wait only when someone must act, and never holds the close for it."""
 
     def needs(self, document: dict, items: list[dict]) -> list[dict]:
+        """The items as the close and the friction note read them; the facts a row is drawn from are NeedsYouRowTests'."""
         listed = [dict(item) for item in items]
         added = run_delivery.waits_needing(SimpleNamespace(release=PRODUCT_ROOT), document, listed)
-        return listed + added
+        return [{name: item[name] for name in ("holding", "source", "clears", "text")} for item in listed + added]
 
     def test_a_stopped_blocker_is_one_item_carrying_how_many_wait_on_it_and_holds_nothing(self) -> None:
         document = record()
@@ -475,6 +476,87 @@ class NeedsYouTests(unittest.TestCase):
         listed = self.needs(document, [])
         self.assertEqual([(item["text"], item["holding"]) for item in listed],
                          [("APP-2 is free to start. Lane 1 is idle.", False), ("APP-3 is free to start. Lane 3 is idle.", False)])
+
+
+class NeedsYouRowTests(unittest.TestCase):
+    """Each "Needs you" item carries the facts its row is drawn from, who must act, and its row's words from the table:
+    a headline, a why, what clears it and who acts. Its text, which the close and the friction note read, is unchanged."""
+
+    RELEASE = SimpleNamespace(release=PRODUCT_ROOT)
+
+    def said(self, document: dict, items: list[dict]) -> list[dict]:
+        return run_delivery.say_needs(self.RELEASE, document, [dict(item) for item in items])
+
+    def test_a_blocked_lane_names_who_its_question_waits_on_and_the_story_it_is_on(self) -> None:
+        document = record()
+        row(document, "lane-2").update(state="blocked", focus="which API", waitingOn="lead")
+        row(document, "lane-1").update(state="blocked", focus="the copy", waitingOn="operator")
+        row(document, "lane-3").update(state="blocked", focus="its schema", waitingOn="lane-2")
+        items = {item["lane"]: item for item in run_delivery.lane_needs(document["state"])}
+        self.assertEqual({lane: item["who"] for lane, item in items.items()},
+                         {"lane-1": "operator", "lane-2": "lead", "lane-3": "lane-2"})
+        self.assertEqual(items["lane-2"]["subject"], "APP-1")
+        self.assertNotIn("subject", items["lane-1"])
+        self.assertEqual(items["lane-2"]["text"], "lane-2 is blocked: which API")
+        [said] = self.said(document, [items["lane-2"]])
+        self.assertEqual(said["said"], {"headline": "Lane 2 is blocked on APP-1", "why": "which API",
+                                        "clears": "Clears when Lane 2's state changes.", "who": "The lead"})
+        self.assertEqual((said["state"], said["since"]), ("review", "2026-11-17T10:00:00Z"))
+        self.assertNotIn("fields", said)
+        lane_three = self.said(document, [items["lane-3"]])[0]["said"]
+        self.assertEqual(lane_three["who"], "Lane 2")
+
+    def test_a_story_that_waits_carries_its_blocker_with_that_storys_lane_and_state(self) -> None:
+        document = record()
+        [said] = self.said(document, [{"holding": False, "source": "s", "text": "t", "clears": "c", "kind": "free",
+                                       "who": "lead", "subject": "APP-2"}])
+        self.assertEqual((said["lane"], said["state"]), ("lane-1", "planned"))
+        self.assertEqual(said["blocker"], {"subject": "APP-1", "state": "review", "lane": "lane-2"})
+
+    def test_what_the_record_itself_shows_needs_someone_becomes_items_that_hold_nothing(self) -> None:
+        document = record()
+        queue(document, "APP-1", "stopped", checks=[{"id": "e2e", "title": "end to end", "state": "failed"}])
+        stop = journal(document, "candidate.stopped", "APP-1", lane="lane-2")
+        meta = document["state"]["meta"]
+        meta["hold"] = {"reason": "the base is broken", "at": "2026-11-17T11:00:00Z"}
+        meta["sourceReports"] = [{"subject": "APP-3", "note": "its ticket moved"}]
+        meta["sources"] = {"tracker": {"status": "stale", "reason": "it timed out", "lastReadAt": "2026-11-17T11:30:00Z"},
+                           "forge": {"status": "fresh"}}
+        items = run_delivery.record_needs(document, [])
+        self.assertEqual([item["kind"] for item in items], ["paused", "stopped", "report", "stale"])
+        self.assertFalse(any(item["holding"] for item in items))
+        said = {item["kind"]: item for item in self.said(document, items)}
+        self.assertEqual(said["stopped"]["said"]["headline"], "APP-1 was stopped")
+        self.assertEqual(said["stopped"]["said"]["why"], "end to end failed")
+        self.assertEqual((said["stopped"]["since"], said["stopped"]["source"]), (stop["at"], f"journal entry {stop['id']} (candidate.stopped)"))
+        self.assertEqual(said["paused"]["said"]["why"], "the base is broken")
+        self.assertEqual(said["report"]["said"]["headline"], "A report for the lead on APP-3")
+        self.assertEqual(said["stale"]["said"], {"headline": "The tracker is not answering", "why": "it timed out",
+                                                 "clears": "Clears when the tracker answers again.", "who": "The lead"})
+        # The queue's own hold already says serving is paused, so the record's hold adds nothing beside it.
+        self.assertNotIn("paused", [item["kind"] for item in run_delivery.record_needs(document, [{"kind": "runnerHold"}])])
+
+    def test_a_stopped_story_others_wait_on_is_one_item_carrying_their_count_in_its_why(self) -> None:
+        document = record()
+        queue(document, "APP-1", "stopped")
+        items = run_delivery.record_needs(document, [])
+        items += run_delivery.waits_needing(self.RELEASE, document, items)
+        [said] = self.said(document, items)
+        self.assertEqual(said["said"]["why"], "2 pieces wait on it.")
+        self.assertNotIn("waiting", said)
+
+    def test_the_list_opens_with_one_sentence_counting_whom_its_items_wait_on_and_what_holds_the_finish(self) -> None:
+        summary = lambda *items: run_delivery.needs_summary(self.RELEASE, [{"holding": held, "who": who} for held, who in items])
+        self.assertEqual(summary(), "Nothing needs anyone, and nothing is holding up the finish.")
+        self.assertEqual(summary((True, "lead")), "1 thing needs the lead, and it's holding up the finish.")
+        self.assertEqual(summary((False, "lead"), (False, "lead")), "2 things need the lead. Nothing is holding up the finish.")
+        self.assertEqual(summary((True, "lead"), (False, "operator"), (True, "lane-2")),
+                         "1 thing needs you, 1 thing needs the lead and 1 thing needs Lane 2, and 2 of them are holding up the finish.")
+        self.assertEqual(summary((True, "lead"), (False, "lead")), "2 things need the lead, and 1 of them is holding up the finish.")
+        self.assertEqual(summary((True, "lead"), (True, "operator")),
+                         "1 thing needs you and 1 thing needs the lead, and all of them are holding up the finish.")
+        self.assertEqual(run_delivery.needs_words(self.RELEASE),
+                         {"heading": "Waiting on someone", "holding": "Holding up the finish", "age": "for {age}"})
 
 
 class ListeningTests(unittest.TestCase):
@@ -587,7 +669,9 @@ class TableTests(unittest.TestCase):
             self.assertIn("templates", table[group])
         self.assertEqual(set(table["waits"]["templates"]), {"order", "files", "review", "held"})
         self.assertEqual(set(table["lanes"]["templates"]), {"order", "files", "held", "waiting"})
-        self.assertEqual(set(table["needsYou"]["templates"]), {"count", "free", "stopped"})
+        self.assertEqual(set(table["needsYou"]["templates"]), {"count", "free", "stopped", "headline", "why", "clears", "who",
+                                                               "whom", "part", "summary", "heading", "holding", "age",
+                                                               "leftOpen"})
         self.assertEqual(state_tool.wait_said(table, "needsYou", "count", {"count": 1}), "1 piece waits on it.")
         self.assertEqual(state_tool.wait_said(table, "needsYou", "count", {"count": 3}), "3 pieces wait on it.")
 
@@ -613,7 +697,7 @@ def marked(table: dict) -> dict:
 # The fixed words of the real templates, each of which a view may show only inside a marked sentence.
 FIXED = ("Waits for", "before it finishes", "Held by the lead", "is next on", "Waited on by", "free to start", "pieces wait on it",
          "piece waits on it", "was stopped.", "can't reach the lead", "watching again")
-MARK = re.compile(r"⟦([a-zA-Z]+\.[a-zA-Z]+(?:\.[a-z0-9]+)?)⟧")
+MARK = re.compile(r"⟦([a-zA-Z]+\.[a-zA-Z]+(?:\.[a-zA-Z0-9]+)?)⟧")
 
 
 class MarkerTests(unittest.TestCase):
@@ -707,6 +791,22 @@ class MarkerTests(unittest.TestCase):
         queue(stopped, "APP-1", "stopped")
         [item] = run_delivery.waits_needing(SimpleNamespace(release=PRODUCT_ROOT), stopped, [])
         self.assertRegex(item["text"], r"^⟦needsYou\.stopped⟧ APP-1 was stopped\. ⟦needsYou\.count⟧ 2 pieces wait on it\.$")
+
+    def test_every_word_of_a_needs_you_row_and_of_the_list_is_the_tables(self) -> None:
+        document = self.document
+        queue(document, "APP-1", "stopped")
+        row(document, "lane-3").update(state="blocked", focus="its schema", waitingOn="operator")
+        release = SimpleNamespace(release=PRODUCT_ROOT)
+        items = run_delivery.lane_needs(document["state"]) + run_delivery.record_needs(document, [])
+        said = run_delivery.say_needs(release, document, items + run_delivery.waits_needing(release, document, items))
+        self.assertEqual({item["kind"] for item in said}, {"laneBlocked", "stopped"})
+        for item in said:
+            for name, words in item["said"].items():
+                self.assertRegex(words, rf"^⟦needsYou\.{name}(\.[a-zA-Z0-9]+)?⟧", (item["kind"], name))
+        self.assertRegex(run_delivery.needs_summary(release, said), r"^⟦needsYou\.summary\.one⟧ ⟦needsYou\.part\.1⟧ 1 thing needs ⟦needsYou\.whom\.operator⟧ you")
+        self.assertEqual(run_delivery.needs_words(release), {"heading": "⟦needsYou.heading⟧ Waiting on someone",
+                                                             "holding": "⟦needsYou.holding⟧ Holding up the finish",
+                                                             "age": "⟦needsYou.age⟧ for {age}"})
 
 
 class WrapperTests(unittest.TestCase):

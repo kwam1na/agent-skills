@@ -160,18 +160,37 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .ck-chosen:not([open]) > summary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ck-chosen > summary:hover, .ck-chosen > summary:focus-visible { color: var(--ink); }
 
-/* Needs attention */
+/* A close that stopped partway, and what a closed delivery left open: a heading, then a sentence or rows. */
 .attention { max-width: 62ch; display: grid; gap: 10px; }
 .attention .ah { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--held); }
-.attention ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.attention li { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 10px; align-items: baseline; }
-.attention .g { color: var(--held); }
-.attention .g.wait { color: var(--wait); }
-.attention .a1 { font-weight: 600; overflow-wrap: anywhere; }
-.attention .a2 { color: var(--soft); font-size: 14px; overflow-wrap: anywhere; }
-.needs-you .needs-group { display: grid; gap: 8px; }
-.needs-you .needs-kind { font-size: 13px; color: var(--soft); }
+/* What a closed delivery left open asks nothing of anyone, so its heading is quiet. */
+.attention.left-open .ah { color: var(--soft); }
+/* What needs someone: one list under a neutral heading, opened by one sentence. Each row is drawn in the line's own
+   marks: a faint stroke of its lane's line with the story's stop on it, and for a wait the blocker's stop joined by a
+   hairline. Holding rows lead at full weight; the rest follow quieter. Red is only ever a stopped stop's. */
+.needs-you { max-width: 72ch; display: grid; gap: 10px; }
+.needs-you .ah { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--soft); }
+.needs-you .needs-summary { margin: 0; font-size: 15px; }
 .needs-you .needs-none, .needs-you .needs-more { margin: 0; color: var(--soft); font-size: 14px; }
+.needs-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.needs-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; align-items: start; }
+.needs-row .a1 { font-weight: 600; overflow-wrap: anywhere; }
+.needs-row .a2 { color: var(--soft); font-size: 14px; overflow-wrap: anywhere; }
+.needs-row.is-quiet .a1 { font-weight: 500; color: var(--soft); }
+.needs-row.is-quiet .nr-mark { opacity: .7; }
+.nr-mark { position: relative; display: flex; align-items: flex-start; width: 88px; padding-top: 2px; }
+.nr-stroke { position: absolute; left: 0; right: 0; top: 10px; height: 2px; border-radius: 1px; background: color-mix(in oklab, var(--c) 30%, transparent); }
+.nr-stop { position: relative; display: grid; justify-items: center; gap: 3px; padding: 0 8px; }
+.nr-stop .stop-btn { position: relative; top: 0; width: 16px; height: 16px; cursor: default; }
+.nr-stop .stop-btn:hover { transform: none; }
+.nr-key { font: 450 11px/14px var(--mono); color: var(--soft); white-space: nowrap; }
+.nr-hair { margin-top: 10px; width: 18px; height: 1px; background: var(--edge); }
+.nr-meta { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; color: var(--soft); }
+.nr-who { color: var(--ink); font-weight: 550; }
+.nr-holding { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); }
+.nr-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--wait); display: inline-block; }
+.nr-age { font-size: 13px; color: var(--soft); white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 560px) { .needs-row { grid-template-columns: auto minmax(0, 1fr); } .nr-age { grid-column: 2; text-align: left; } }
 
 /* Journey and freshness */
 /* The end mark is centred on the track's end, so the track stops short of the edge by half the mark. */
@@ -326,7 +345,7 @@ svg.d-stage-icon.is-merged { width: 16px; height: 16px; border: 0; border-radius
 .issue-link { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); cursor: default; }
 .issue-link:hover, .issue-link:focus-visible { color: var(--ink); text-decoration-color: currentColor; }
 a.issue-link { color: inherit; cursor: pointer; }
-/* Failures read like the Needs attention list: colour only in the marks, the words in ink and soft grey. */
+/* Failures read like a "Needs you" row: colour only in the marks, the words in ink and soft grey. */
 .ck-verdict { margin: 0; font-size: 15px; }
 .ck-verdict b { font-weight: 600; }
 .ck-verdict span { color: var(--soft); font-size: 14px; }

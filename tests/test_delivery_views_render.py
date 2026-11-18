@@ -1022,6 +1022,24 @@ class NeedsBlockTests(unittest.TestCase):
         self.assertTrue(block["items"][0]["source"].endswith("…"))
         self.assertEqual(block["items"][0]["text"], "item 0")
 
+    def test_a_rows_facts_and_words_and_the_lists_own_words_pass_through_and_nothing_else(self) -> None:
+        item = {"holding": True, "source": "s", "text": "t", "clears": "c", "kind": "stopped", "who": "lead",
+                "lane": "lane-1", "subject": "APP-1", "state": "stopped", "since": "2026-01-01T00:00:00Z",
+                "blocker": {"subject": "APP-0", "lane": "lane-2", "state": "review", "extra": "x"},
+                "said": {"headline": "h", "why": "w" * 700, "clears": "c", "who": "The lead", "extra": "x"},
+                "fields": {"detail": "x"}, "waiting": 2}
+        written = self.listed([item])
+        written.update(summary="1 thing needs the lead.", words={"heading": "H", "holding": "M", "age": "for {age}", "x": "y"})
+        self.write(written)
+        block = render.read_needs_block(self.state)
+        [row] = block["items"]
+        self.assertEqual(set(row), {"holding", "source", "text", "clears", "kind", "who", "lane", "subject", "state", "since",
+                                    "blocker", "said"})
+        self.assertEqual(row["blocker"], {"subject": "APP-0", "lane": "lane-2", "state": "review"})
+        self.assertEqual(set(row["said"]), {"headline", "why", "clears", "who"})
+        self.assertEqual(len(row["said"]["why"]), render.NEEDS_TEXT)
+        self.assertEqual((block["summary"], block["words"]), ("1 thing needs the lead.", {"heading": "H", "holding": "M", "age": "for {age}"}))
+
     def test_a_stopped_list_needs_no_stale_after(self) -> None:
         written = self.listed([], running=False)
         del written["staleAfter"]
@@ -1046,6 +1064,40 @@ class NeedsBlockTests(unittest.TestCase):
             with self.subTest(bad=bad):
                 self.write(self.listed([bad]))
                 self.assertEqual(render.read_needs_block(self.state), {"unreadable": True})
+
+class LeftOpenTests(unittest.TestCase):
+    """What a closed delivery left open, from its record and in the table's words: each stopped piece, the base when its
+    last word is a break, and each source's report. An open delivery, or a closed one that left nothing open, has none."""
+
+    def record(self, *kinds: str) -> dict:
+        journal = [{"id": n, "at": f"2026-01-01T00:0{n}:00Z", "kind": kind, "lane": None, "subject": None, "data": {}}
+                   for n, kind in enumerate(kinds, 1)]
+        return {"state": {"meta": {}, "lanes": [], "planned": [], "queue": [
+            {"subject": "APP-1", "lane": "lane-1", "stage": "stopped", "checks": [{"id": "e2e", "title": "end to end", "state": "failed"}]},
+            {"subject": "APP-2", "lane": "lane-1", "stage": "merged", "checks": []}]}, "journal": journal}
+
+    def test_a_closed_delivery_names_what_it_left_open_in_the_tables_words(self) -> None:
+        document = self.record("delivery.closed")
+        document["state"]["meta"]["sourceReports"] = [{"subject": "APP-3", "note": "its ticket moved"}]
+        self.assertEqual(render.left_open(document), {"heading": "Left open at close", "rows": [
+            {"kind": "stopped", "subject": "APP-1", "lane": "lane-1", "state": "stopped",
+             "said": {"headline": "APP-1 was stopped", "why": "end to end failed"}},
+            {"kind": "report", "said": {"headline": "A report for the lead on APP-3", "why": "its ticket moved"}}]})
+        broken = self.record("base.broken", "delivery.closed")
+        broken["journal"][0]["data"] = {"source": "queue", "detail": "Main is red"}
+        self.assertEqual([row["said"]["headline"] for row in render.left_open(broken)["rows"]],
+                         ["APP-1 was stopped", "The main line is broken"])
+        self.assertEqual([row["kind"] for row in render.left_open(self.record("base.broken", "base.repaired", "delivery.closed"))["rows"]],
+                         ["stopped"])
+
+    def test_an_open_or_reopened_delivery_and_one_that_left_nothing_open_have_none(self) -> None:
+        self.assertIsNone(render.left_open(self.record()))
+        self.assertIsNone(render.left_open(self.record("delivery.closed", "lane.assigned")))
+        quiet = self.record("delivery.closed")
+        quiet["state"]["queue"] = []
+        self.assertIsNone(render.left_open(quiet))
+        self.assertIsNone(render.left_open({"journal": [{"kind": "delivery.closed"}]}))
+
 
 STORIES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "delivery-views" / "story"
 NARRATED = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "narrator"
