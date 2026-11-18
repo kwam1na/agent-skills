@@ -865,18 +865,30 @@ class SiblingWaitTests(unittest.TestCase):
         ranked = lambda document, snapshot: {entry["subject"]: entry for entry in
                                              state_tool.next_for_lane(document["state"], "lane-1", snapshot, hints)}
         landed, building = self.after_sibling(self.sibling(stage="merged")), self.after_sibling(self.sibling())
-        for snapshot in (None, {"items": [{"subject": "APP-4", "state": "backlog"}]},
-                         {"items": [{"subject": "APP-4", "state": "backlog"}, {"subject": "MOB-7", "state": "started"}]}):
-            with self.subTest(snapshot=snapshot):
-                self.assertFalse(ranked(landed, snapshot)["APP-4"]["blocked"], ranked(landed, snapshot)["APP-4"]["reason"])
-                self.assertTrue(ranked(building, snapshot)["APP-4"]["blocked"])
+        for stage in ("merged", "settled"):
+            done = self.after_sibling(self.sibling(stage=stage))
+            for snapshot in (None, {"items": [{"subject": "APP-4", "state": "backlog"}]},
+                             {"items": [{"subject": "APP-4", "state": "backlog"}, {"subject": "MOB-7", "state": "started"}]}):
+                with self.subTest(stage=stage, snapshot=snapshot):
+                    self.assertFalse(ranked(done, snapshot)["APP-4"]["blocked"], ranked(done, snapshot)["APP-4"]["reason"])
+                    self.assertTrue(ranked(building, snapshot)["APP-4"]["blocked"])
         # The tracker's blockedBy still has to say done itself (Decision 13).
         blocked_by = {"items": [{"subject": "APP-4", "state": "backlog", "blockedBy": ["MOB-7"]},
                                 {"subject": "MOB-7", "state": "started"}]}
         self.assertTrue(ranked(landed, blocked_by)["APP-4"]["blocked"])
-        # Another epic's sibling frees nothing.
+        # Another epic's sibling frees nothing, though it shows the story landed: here the unlisted wait holds it.
         self.assertTrue(ranked(self.after_sibling(dict(self.sibling(stage="merged"), lastOutcome="other-epic")),
                                None)["APP-4"]["blocked"])
+
+    def test_a_hints_blocker_only_another_epics_sibling_shows_landed_stays_open(self) -> None:
+        """No after key names it, so no wait does: next alone decides, and another epic's read frees nothing."""
+        document = self.after_sibling(dict(self.sibling(stage="merged"), lastOutcome="other-epic"))
+        planned(document, "APP-4").pop("after")
+        self.assertEqual(of(document, "APP-4"), [])
+        [entry] = [entry for entry in state_tool.next_for_lane(document["state"], "lane-1", None,
+                                                              {"items": {"APP-4": {"blockers": ["MOB-7"]}}})
+                   if entry["subject"] == "APP-4"]
+        self.assertTrue(entry["blocked"], entry["reason"])
 
     def test_an_idle_lane_next_on_the_story_says_it_waits_on_the_sibling(self) -> None:
         document = self.after_sibling(self.sibling())
