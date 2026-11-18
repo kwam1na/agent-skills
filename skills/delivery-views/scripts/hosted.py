@@ -798,6 +798,165 @@ def stop(directory):
     raise PublishError('owner_stop_timeout')
 
 
+# Sibling deliveries: read another repository's published cut the way the trusted viewer does, with no credential.
+
+SIBLING_SNAPSHOT = 'sibling-snapshot/1'
+SIBLING_SECONDS = 10
+SIBLING_CURRENT_BYTES = 4096
+SIBLING_LINK = re.compile(r'^(https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?|http://127\.0\.0\.1:[0-9]{1,5})'
+                          r'/d/([a-f0-9]{64})$')
+SIBLING_STALE_AFTER_MS = 120000
+# The viewer's terminal test: the last of these in a cut's journal is delivery.closed.
+TERMINAL_KINDS = ('delivery.closed', 'lane.assigned', 'candidate.handed', 'check.started')
+
+
+class SiblingRead(Exception):
+    """Why a sibling read failed: unavailable or incompatible, as the trusted viewer says it."""
+    def __init__(self, outcome):
+        super().__init__(outcome)
+        self.outcome = outcome
+
+
+def sibling_get(origin, path, limit, deadline):
+    """GET ``origin + path`` with no credential and no redirect, bounded in bytes and time; the bytes, or SiblingRead.
+
+    The request carries only Accept: no Authorization, no Cookie, whatever the
+    environment holds. A redirect, an HTTP error, a timeout or any network
+    failure is unavailable; a wrong content type or an oversized answer is
+    incompatible, as the viewer reads them.
+    """
+    parts = urlsplit(origin)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise SiblingRead('unavailable')
+    connection = (http.client.HTTPSConnection(parts.hostname, parts.port or 443, timeout=remaining,
+                                              context=ssl.create_default_context()) if parts.scheme == 'https'
+                  else http.client.HTTPConnection(parts.hostname, parts.port, timeout=remaining))
+    try:
+        connection.putrequest('GET', path, skip_accept_encoding=True)
+        connection.putheader('Accept', 'application/json')
+        connection.endheaders()
+        response = connection.getresponse()
+        if response.status != 200:
+            raise SiblingRead('unavailable')
+        if response.getheader('Content-Type', '').split(';')[0].strip() != 'application/json':
+            raise SiblingRead('incompatible')
+        data = bytearray()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SiblingRead('unavailable')
+            if connection.sock:
+                connection.sock.settimeout(remaining)
+            chunk = response.read1(min(65536, limit + 1 - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+            if len(data) > limit:
+                raise SiblingRead('incompatible')
+        return bytes(data)
+    except (OSError, http.client.HTTPException, TimeoutError):
+        raise SiblingRead('unavailable') from None
+    finally:
+        connection.close()
+
+
+def sibling_current(origin, public_id, deadline):
+    """The sibling's current receipt, checked as the viewer checks it."""
+    try:
+        row = json.loads(sibling_get(origin, f'/d/{public_id}/current', SIBLING_CURRENT_BYTES, deadline))
+    except (ValueError, UnicodeError, RecursionError):
+        raise SiblingRead('incompatible') from None
+    count = lambda key: integer(row.get(key)) if isinstance(row, dict) else False
+    if (not isinstance(row, dict) or row.get('protocolVersion') != PROTOCOL or row.get('rendererVersion') != RENDERER
+            or not all(count(key) for key in ('epoch', 'sequence', 'publishedAt', 'sourceConfirmedAt', 'serverNow'))
+            or row['epoch'] < 1 or row['sequence'] < 1
+            or not all(isinstance(row.get(key), str) and HEX.fullmatch(row[key]) for key in ('digest', 'sourceFingerprint'))
+            or row.get('staleAfterMs') != SIBLING_STALE_AFTER_MS or not isinstance(row.get('stale'), bool)
+            or row['sourceConfirmedAt'] > row['serverNow']):
+        raise SiblingRead('incompatible')
+    return row
+
+
+def terminal_cut(value):
+    """Whether a cut is a confirmed close: delivery.closed is the last of the viewer's terminal kinds in its journal."""
+    last = None
+    for entry in value['document'].get('journal', []):
+        if isinstance(entry, dict) and entry.get('kind') in TERMINAL_KINDS:
+            last = entry['kind']
+    return last == 'delivery.closed'
+
+
+def sibling_stories(state):
+    """The sibling's stories from its cut's planned and queue: a queued story's stage over a planned one's."""
+    stories = {}
+    for name in ('planned', 'queue'):
+        for row in state.get(name, []):
+            story = {'subject': row['subject'], 'title': row.get('title', ''), 'stage': row['stage']}
+            if row.get('changeRequest'):
+                story['changeRequest'] = row['changeRequest']
+            stories[row['subject']] = story
+    return list(stories.values())
+
+
+def read_sibling(name, link, parent, *, timeout=SIBLING_SECONDS):
+    """One sibling-snapshot/1 entry: read ``link``'s current cut, then its body by digest, as the viewer does.
+
+    The body's bytes must hash to the digest current names, validate as the
+    hosted snapshot this generation publishes, and carry current's fingerprint;
+    anything else is incompatible. A cut whose tracker parent isn't ``parent``
+    is other-epic and carries no stories. A cut the service calls stale is
+    stale, unless it is a confirmed terminal cut and current, read again, names
+    nothing newer: the viewer retains such a cut rather than labelling it stale.
+    """
+    entry = {'name': name, 'link': link, 'readAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+    matched = SIBLING_LINK.fullmatch(link) if isinstance(link, str) else None
+    if not matched:
+        return {**entry, 'outcome': 'unavailable'}
+    origin, public_id = matched.group(1), matched.group(2)
+    deadline = time.monotonic() + timeout
+    try:
+        meta = sibling_current(origin, public_id, deadline)
+        data = sibling_get(origin, f"/d/{public_id}/snapshots/{meta['digest']}", public.MAX_BYTES, deadline)
+        if hashlib.sha256(data).hexdigest() != meta['digest']:
+            raise SiblingRead('incompatible')
+        try:
+            value = json.loads(data)
+            public.validate(value)
+        except (ValueError, UnicodeError, RecursionError, public.ProjectionError):
+            raise SiblingRead('incompatible') from None
+        if value['sourceFingerprint'] != meta['sourceFingerprint']:
+            raise SiblingRead('incompatible')
+        state = value['document']['state']
+        stale = meta['stale'] or meta['serverNow'] - meta['sourceConfirmedAt'] >= SIBLING_STALE_AFTER_MS
+        terminal = terminal_cut(value)
+        if terminal and stale:
+            try:
+                again = sibling_current(origin, public_id, deadline)
+                newer = (again['epoch'], again['sequence']) > (meta['epoch'], meta['sequence'])
+            except SiblingRead:
+                newer = True  # a cut that can't be confirmed current isn't retained
+            terminal = not newer
+    except SiblingRead as failed:
+        return {**entry, 'outcome': failed.outcome}
+    meta_row = state.get('meta', {})
+    kept = {key: meta_row[key] for key in ('trackerParent', 'updatedAt', 'closing') if key in meta_row}
+    if meta_row.get('trackerParent') != parent:
+        return {**entry, 'outcome': 'other-epic', **kept}
+    outcome = 'stale' if stale and not terminal else 'read'
+    return {**entry, 'outcome': outcome, **kept, 'stale': stale, 'terminal': terminal,
+            'stories': sibling_stories(state)}
+
+
+def read_siblings(directory, *, timeout=SIBLING_SECONDS):
+    """A sibling-snapshot/1 read of every sibling the record in ``directory`` names, each with its own deadline."""
+    record = read_json(Path(directory) / 'state.json', optional=True) or {}
+    parent = (record.get('meta') or {}).get('trackerParent')
+    rows = [row for row in record.get('siblings') or [] if isinstance(row, dict)]
+    return {'schemaVersion': SIBLING_SNAPSHOT, 'takenAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            'siblings': [read_sibling(row.get('name'), row.get('link'), parent, timeout=timeout) for row in rows]}
+
+
 def generation(arguments):
     return Path(arguments.generation or Path(__file__).resolve().parents[3]).absolute()
 
@@ -989,15 +1148,24 @@ def start(arguments,inputs):
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation',choices=['start','status','retry','stop','watch','collect','request'])
+    parser.add_argument('operation',choices=['start','status','retry','stop','watch','collect','request','siblings'])
     views.add_input_arguments(parser)
-    parser.add_argument('--key',required=True)
+    parser.add_argument('--key')
     parser.add_argument('--generation')
     parser.add_argument('--generation-target')
     parser.add_argument('--archive-root')
     parser.add_argument('--record-root')
     parser.add_argument('--resume',action='store_true')
     arguments=parser.parse_args(argv)
+    if arguments.operation=='siblings':
+        # Reads only other deliveries' public cuts: no configuration, key or credential of this repository's.
+        if not arguments.state_dir:parser.error('siblings needs --state-dir')
+        directory=Path(arguments.state_dir).absolute()
+        if not directory.is_dir():print(json.dumps({'error':'source_path'}));return 1
+        try:answer=read_siblings(directory)
+        except (PublishError,OSError,ValueError,TypeError,AttributeError):print(json.dumps({'error':'source_invalid'}));return 1
+        print(json.dumps(answer,ensure_ascii=False,sort_keys=True));return 0
+    if not arguments.key:parser.error('the following arguments are required: --key')
     try:
         inputs=load_inputs(arguments)
         directory=inputs.state_directory

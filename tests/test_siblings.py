@@ -222,9 +222,9 @@ class SiblingTests(unittest.TestCase):
         bare = self.tmp / "bare"
         state_tool.init(bare, "Bare")
         refusals = [(bare, "web", f"https://views.example.com/d/{'a' * 64}"),
-                    (self.record, "web", f"http://views.example.com/d/{'a' * 64}"),
-                    (self.record, "web", f"http://localhost:8080/d/{'a' * 64}"),
                     (self.record, "web", f"https://views.example.com/d/{'a' * 63}"),
+                    (self.record, "web", f"https://views.example.com/x/{'a' * 64}"),
+                    (self.record, "web", f"views.example.com/d/{'a' * 64}"),
                     (self.record, "web", f"https://user@views.example.com/d/{'a' * 64}"),
                     (self.record, "web", f"https://views.example.com/d/{'a' * 64}?x=1"),
                     (self.record, "mobile", f"https://views.example.com/d/{'a' * 64}"),
@@ -242,17 +242,28 @@ class SiblingTests(unittest.TestCase):
         self.assertEqual(len(self.journal("sibling.added")), 2)
 
     def test_lead_sibling_is_the_lead_command_that_names_and_removes_one(self) -> None:
-        parsed = run_delivery.parser().parse_args(["lead-sibling", "add", "--link", self.link, "--name", "web"])
-        self.assertIs(parsed.fn, run_delivery.lead_sibling)
+        with mock.patch.object(run_delivery, "lead_sibling") as command, \
+                mock.patch.object(run_delivery, "receive_hosted_credentials"), \
+                mock.patch.object(run_delivery, "quarantine_hosted_checkout"), \
+                mock.patch.object(run_delivery, "cfg", side_effect=run_delivery.Stop("no configuration here")):
+            # The status lines a lead command prints after it read the configuration, which this case has none of.
+            run_delivery.main(["lead-sibling", "add", "--link", self.link, "--name", "web"])
+            run_delivery.main(["lead-sibling", "remove", "--name", "web"])
+        self.assertEqual([(call.args[0].action, call.args[0].name, call.args[0].link) for call in command.call_args_list],
+                         [("add", "web", self.link), ("remove", "web", None)])
         fake = SimpleNamespace(release=PRODUCT_ROOT, state=self.record)
         with mock.patch.object(run_delivery, "cfg", return_value=fake), \
                 mock.patch("builtins.print") as printed:
             run_delivery.lead_sibling(SimpleNamespace(action="add", link=f"https://views.example.com/d/{'b' * 64}",
                                                       name="web"))
             self.assertIn("web", " ".join(str(call.args[0]) for call in printed.call_args_list))
+            # Plain http is refused but from a loopback receiver, before the record is read.
+            for link in ("http://views.example.com/d/" + "b" * 64, "http://localhost:8080/d/" + "b" * 64,
+                         "ftp://views.example.com/d/" + "b" * 64):
+                with self.subTest(link=link), self.assertRaises(run_delivery.Stop):
+                    run_delivery.lead_sibling(SimpleNamespace(action="add", link=link, name="api"))
             with self.assertRaises(run_delivery.Stop):
-                run_delivery.lead_sibling(SimpleNamespace(action="add", link="http://views.example.com/d/" + "b" * 64,
-                                                          name="api"))
+                run_delivery.lead_sibling(SimpleNamespace(action="add", link=self.link, name="mobile"))
             run_delivery.lead_sibling(SimpleNamespace(action="remove", link=None, name="web"))
         self.assertEqual([row["name"] for row in state_tool.read_state(self.record)["siblings"]], ["mobile"])
 

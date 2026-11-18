@@ -521,6 +521,22 @@ run the sync loop in this order:
 
    - **Forge, otherwise.** List the epic's change requests with the host's own
      forge tools.
+   - **Siblings, with a bound command.** A sibling is another repository's
+     delivery of the same epic, which the lead names by its hosted live view's
+     link with run-delivery's `lead-sibling`, journaled as `sibling.added` or
+     `sibling.removed`; a record with no `meta.trackerParent` names none. When
+     the binding declares `state.siblingSnapshot`, the same shape, `serve`
+     runs it as a third source, and it prints a `sibling-snapshot/1` read of
+     each sibling: delivery-views' `hosted.py siblings --state-dir
+     {stateDirectory}` is the ready-made one. Reconcile applies it entry by
+     entry. Only a `read` entry changes a sibling's stories, and the first
+     read showing one landed journals `sibling.landed` once, at that read's
+     time; a `stale`, `unavailable`, `incompatible` or `other-epic` entry, or
+     a read older than `snapshotMaxAgeSeconds`, which counts as `stale`, sets
+     only the sibling's `lastOutcome` and `lastAttemptAt`, and the tracker
+     and forge snapshots beside it still apply.
+     A sibling of another epic journals `sibling.mismatched` once for each
+     parent it names.
    - **With `serve` running,** steps 1 and 2 need no lead: every
      `state.refreshSeconds` (180 when absent, at most 86400; 0 turns it off),
      between turns and whether or not it is held, `serve` runs each declared
@@ -529,8 +545,8 @@ run the sync loop in this order:
      failed source's last fresh one still counts. An idle refresh writes
      nothing. The record's `meta.sources` says, per source, `observed`,
      `stale` (with `lastReadAt`, the last read the record took in, and the
-     reason) or `not_observed` when the binding declares no command, and
-     changes only when that does. What reconcile could not settle, such as a
+     reason) or `not_observed` when the binding declares no command (siblings
+     only once the binding declares theirs), and changes only when that does. What reconcile could not settle, such as a
      change request closed without merging, goes to `meta.sourceReports` for
      the lead. The status line names a stale source, when it was last read,
      and the first report. A run in progress delays the next read, and

@@ -50,6 +50,10 @@ INVENTORY = {
         _key("_journal_recovery", {"candidate.merged"}): 1,
         _key("take_snapshot", {"snapshot.retaken"}): 1,
         _key("take_snapshot", {"snapshot.stale"}): 1,
+        _key("_apply_siblings", {"sibling.landed"}): 1,
+        _key("_apply_siblings", {"sibling.mismatched"}): 1,
+        _key("set_sibling", {"sibling.added"}): 1,
+        _key("set_sibling", {"sibling.removed"}): 1,
     }),
     "merge_queue.py": Counter({
         _key("Runner.recover_interrupted", {"candidate.stopped"}): 1,

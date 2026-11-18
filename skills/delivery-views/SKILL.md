@@ -928,6 +928,39 @@ bodies enter archives. Live pending status retains the public URL and preceding
 receipt; active archive polling tolerates bounded unavailability before strict
 post-exit identity/status checks.
 
+### Reading sibling deliveries
+
+`hosted.py siblings` reads the sibling deliveries a record names, each from its
+hosted live view, and prints one `sibling-snapshot/1`. Declare it as the
+binding's `state.siblingSnapshot`, and `serve` runs it on its refresh:
+
+```json
+"siblingSnapshot": {
+  "argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/hosted.py", "siblings", "--state-dir", "{stateDirectory}"],
+  "timeoutSeconds": 60
+}
+```
+
+It needs no `hosted` member, key or token: it reads public cuts only. Each
+sibling is read the way the trusted viewer reads one: `current`, then the body
+by its digest, whose bytes must hash to that digest, validate as the
+`hosted-delivery-snapshot/2` this generation publishes and carry `current`'s
+fingerprint. Another renderer version, a body the schema refuses or a failed
+digest or fingerprint check is `incompatible`, which the hosted page words as
+needing a compatible snapshot. A network failure, an HTTP error status, a
+timeout of ten seconds per sibling or any redirect is `unavailable`. A body
+whose tracker parent is not the record's is `other-epic`, with no stories. The
+requests carry no `Authorization` or `Cookie` header, whatever the environment
+holds, never use the publishing client, and follow no redirect. A link is read
+over HTTPS, or from `http://127.0.0.1:<port>`, a loopback test receiver.
+
+A body the service calls stale reads as `stale`, unless it is a confirmed
+terminal cut: the last of `delivery.closed`, `lane.assigned`,
+`candidate.handed` and `check.started` in its journal is `delivery.closed`, and
+`current`, read again, names no newer cut. That reads as `read` with
+`terminal: true`, as the viewer retains a completed delivery, so a closed
+sibling's last stories still land.
+
 ### Installed archive qualification
 
 The publisher, public projection and snapshot schema ship together in every

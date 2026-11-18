@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "737a7b899146e2c821496f1d834b086859323387aa4c411ead6bf05edb4484cf"
+          "sha256": "81c4180e3972987ad85895ca8892770ce218147100d1fbe81a6593e439e5c1bf"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -234,7 +234,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/hosted.py",
-          "sha256": "3987c576eab78df7fd33dd498bc61f207109b57128fb6930d25d289952f107ff"
+          "sha256": "c8cae7b61329336bbd36a8a05701e3323b33265f88168de170f1af1ac85bffa5"
         },
         {
           "path": "skills/delivery-views/scripts/public_projection.py",
@@ -510,19 +510,19 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "1efc043d93c3053cc2e9f6320a68fd37970d9a3b2db7dc93c710d5126bd829b9"
+          "sha256": "e2f20eab9512d399d4f30a7d633f374877af836811278593924ba448629efd67"
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
-          "sha256": "9d1765b4aa5dd3e5041ae7d68284f0e041370d964d3ee7e971de4915df077c83"
+          "sha256": "0b78186277b703fe9e38eed15b9654e6394c210a447b438cf51d1d44bd2df46d"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "af90154f17cbf5fe4bea8f089cec0d47370ff9cbaf7a7584430776dbc1f2d6a0"
+          "sha256": "38f9c3f2f613e6ba8351865197b5cb17e1f6aff7b3d280d36a7f762e84f60cb9"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "4cb3c039e65c857018ca9f03baf2c10b67f3d33674df4e3f6d6cff7aa693d4ed"
+          "sha256": "8c261257e8f672beba1cd1b3d955e0e68cf33bc89fa48cb97d6b89a7594bb1a0"
         },
         {
           "path": "skills/orchestrate-work/references/story.schema.json",
@@ -534,7 +534,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "f8ab486e83dfe0b5e200299c70d10507fec4a895cc0d4c4bf8c4dcef0cf108e9"
+          "sha256": "f0d40a47143bbb818cb6f878d146794c609e8d5edb0d2bfa9523f013ff8206d5"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
@@ -1123,7 +1123,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "2ad5b4baa1288c25fd84ec0f713b5045ebd4d7a419d0e07cefc5fdc06a5185cf"
+          "sha256": "9cd45f105cef1633b89a67f1c8c78d927cdc4a069f35c58f449cfcfc54efb406"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
