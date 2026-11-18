@@ -793,12 +793,12 @@ class SiblingWaitTests(unittest.TestCase):
                 return {"state": state_tool.read_state(directory), "journal": state_tool.read_journal(directory)}
 
             apply("building")
-            first = shown()["state"]["siblings"][0]["readAt"]
             for stale in (dict(outcome="stale"), dict(age=2000)):
                 with self.subTest(stale=stale):
                     apply("merged", **stale)
+                    began = shown()["state"]["siblings"][0]["lastAttemptAt"]
                     [wait] = of(shown(), "APP-4")
-                    self.assertEqual(wait["words"], f"Waits for MOB-7 to land in mobile. Last read {first}.")
+                    self.assertEqual(wait["words"], f"Waits for MOB-7 to land in mobile. Stale since {began}.")
                     self.assertTrue(self.ranked(shown(), "lane-1")["APP-4"]["blocked"])
             after = shown()["journal"][-1]["id"]
             apply("merged")
@@ -889,6 +889,22 @@ class SiblingWaitTests(unittest.TestCase):
                                                               {"items": {"APP-4": {"blockers": ["MOB-7"]}}})
                    if entry["subject"] == "APP-4"]
         self.assertTrue(entry["blocked"], entry["reason"])
+
+    def test_a_wait_on_a_sibling_not_fresh_says_since_when_its_outcome_began(self) -> None:
+        """Read fresh and unchanged for two hours, then unavailable: the wait gives the time it turned unavailable,
+        never the time of the last read that changed it. A wait on a fresh sibling says nothing about time."""
+        row = self.sibling()
+        row.update(readAt="2026-11-18T10:05:00Z", lastOutcome="unavailable", lastAttemptAt="2026-11-18T12:05:00Z")
+        [wait] = of(self.after_sibling(row), "APP-4")
+        self.assertEqual(wait["words"], "Waits for MOB-7 to land in mobile. Couldn't be read since 2026-11-18T12:05:00Z.")
+        self.assertNotIn("10:05", wait["words"])
+        for outcome, said in (("stale", "Stale since"), ("incompatible", "Needs a compatible snapshot since")):
+            with self.subTest(outcome=outcome):
+                [wait] = of(self.after_sibling(dict(row, lastOutcome=outcome)), "APP-4")
+                self.assertEqual(wait["words"], f"Waits for MOB-7 to land in mobile. {said} 2026-11-18T12:05:00Z.")
+        [fresh] = of(self.after_sibling(self.sibling()), "APP-4")
+        self.assertEqual(fresh["words"], "Waits for MOB-7 to land in mobile. Building.")
+        self.assertNotRegex(fresh["words"], r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
     def test_an_idle_lane_next_on_the_story_says_it_waits_on_the_sibling(self) -> None:
         document = self.after_sibling(self.sibling())
