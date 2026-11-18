@@ -11007,6 +11007,8 @@ class Supervisor:
         self.held_lines: list[str] | None = []
         # The handlers its own signal handler stands in front of.
         self.before_signals: dict[int, object] = {}
+        # The signal it took, so a stop whose exception Python lost is still honoured: see honour_signal.
+        self.signalled: int | None = None
         self.restarts: dict[str, list[float]] = {}
         self.address: str | None = None
         self.handle = None
@@ -11189,12 +11191,19 @@ class Supervisor:
         if not (status.get("pid") == os.getpid() and status.get("state") == "stopped"):
             with contextlib.suppress(OSError):
                 write_supervisor_status(self.c.state, os.getpid(), False, "signal", signal.Signals(number).name)
+        self.signalled = number
         before = self.before_signals.get(number, signal.SIG_DFL)
         if callable(before):
             before(number, frame)
             return
         signal.signal(number, signal.SIG_DFL)
         os.kill(os.getpid(), number)
+
+    def honour_signal(self) -> None:
+        """Do again what a signal it took did: the exception its handler raised can be lost, as when the handler runs
+        inside a finalizer or a load that drops it, and the supervisor would run on past its stop."""
+        if self.signalled is not None:
+            self.on_signal(self.signalled, None)
 
     def stop_children(self) -> None:
         for proc in self.children.values():
@@ -11241,6 +11250,7 @@ class Supervisor:
                  ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:
+            self.honour_signal()
             if self.lose():
                 return False
             try:
@@ -11411,10 +11421,12 @@ class Supervisor:
             while True:
                 number += 1
                 closed = self.one_pass(number)
+                self.honour_signal()
                 if closed or self.once or self.stop_asked() or self.lose():
                     break
                 deadline = time.monotonic() + supervisor_pass_seconds(c)
                 while time.monotonic() < deadline and not self.stop_asked():
+                    self.honour_signal()
                     if self.lose():
                         break
                     self.keep_alive()
