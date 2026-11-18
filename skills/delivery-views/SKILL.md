@@ -483,8 +483,9 @@ shape: its ticket's start doesn't move it. A child with no value of any scoped k
 flagged `unmarked`. Without `--scope`, every child is in scope, as before.
 
 A child a sibling delivery holds is left to it, with or without `--scope`:
-when its subject is in any sibling's last kept read, whatever that sibling's
-latest outcome, and no story of this delivery holds it, `reconcile` never adds
+when its subject is in any sibling's last kept read, even while that sibling
+can't be read, unless it now reads as another epic's, and no story of this
+delivery holds it, `reconcile` never adds
 it or reports on it, and clears a copy the sweep added earlier the same way,
 journaling `work.cleared` once with "held by sibling <name>". Only a tracker
 snapshot's pass clears one. The views draw it in that sibling's group rather
