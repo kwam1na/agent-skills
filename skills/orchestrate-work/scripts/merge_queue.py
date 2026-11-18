@@ -305,6 +305,13 @@ def pattern_regex(pattern: str) -> re.Pattern[str]:
     return re.compile("".join(parts) + r"\Z")
 
 
+def listing_change(before: set[str], after: set[str]) -> str:
+    """What one side did to a listing, as ``added a, b; removed c``."""
+    changes = [f"added {', '.join(sorted(after - before))}" if after - before else "",
+               f"removed {', '.join(sorted(before - after))}" if before - after else ""]
+    return "; ".join(filter(None, changes))
+
+
 def matches_any(path: str, patterns: Iterable[str]) -> bool:
     return any(pattern_regex(pattern).match(path) for pattern in patterns)
 
@@ -1729,8 +1736,10 @@ class Runner:
         ``side`` the checkout option that selects it: the base is the incoming
         side when a candidate syncs, and the checkout's own side when a batch
         merges a candidate into the tree it has accumulated. A conflicted path
-        with a listing takes the base side only when the candidate left its
-        listing as the merge base had it.
+        with a listing compares the three versions' listings: it takes the base
+        side when the candidate left its listing as the merge base had it, the
+        candidate's side when only the candidate changed it, and stops when both
+        did. The regenerators then refresh the digests of whichever side it took.
         """
         merged = self.git("merge", "--no-ff", "--no-commit", "--no-edit", other, cwd=checkout, check=False)
         conflicts = sorted(set(filter(None, self.git(
@@ -1742,21 +1751,25 @@ class Runner:
             self.git("merge", "--abort", cwd=checkout, check=False)
             raise Stop("source_conflict", f"{against} conflicts outside the regenerable paths", outside)
         listings = {entry["path"]: entry["argv"] for entry in self.binding["regenerable"].get("listings", [])}
+        taken: dict[str, tuple[str, str]] = {}
         if any(path in listings for path in conflicts):
             # The candidate is the side that isn't the base's: the incoming commit in a batch, the checkout's own in a sync.
             candidate = other if other != base_side else self.rev("HEAD", cwd=checkout)
+            candidate_side = "--ours" if side == "--theirs" else "--theirs"
             merge_base = self.git("merge-base", base_side, candidate, cwd=checkout).stdout.strip()
             try:
                 for path in conflicts:
-                    if path in listings:
-                        self.check_listing(checkout, path, listings[path], merge_base, base_side, candidate, context)
+                    if path in listings and self.listing_side(
+                            checkout, path, listings[path], merge_base, base_side, candidate, against, context) == "candidate":
+                        taken[path] = (candidate, candidate_side)
             except Stop:
                 self.git("merge", "--abort", cwd=checkout, check=False)
                 raise
         for path in conflicts:
-            # Take the base side; a path the base deleted stays deleted.
-            if self.git("cat-file", "-e", f"{base_side}:{path}", cwd=checkout, check=False).returncode == 0:
-                self.git("checkout", side, "--", path, cwd=checkout)
+            # Take the base side unless the listing chose the candidate's; a path that side deleted stays deleted.
+            commit, option = taken.get(path, (base_side, side))
+            if self.git("cat-file", "-e", f"{commit}:{path}", cwd=checkout, check=False).returncode == 0:
+                self.git("checkout", option, "--", path, cwd=checkout)
                 self.git("add", "--", path, cwd=checkout)
             else:
                 self.git("rm", "--quiet", "--force", "--", path, cwd=checkout)
@@ -1798,10 +1811,29 @@ class Runner:
         self.listed_outputs(checkout, path, argv, base, "base", context)
         after = set(self.listed_outputs(checkout, path, argv, candidate, "candidate", context))
         if after != before:
-            changes = [f"added {', '.join(sorted(after - before))}" if after - before else "",
-                       f"removed {', '.join(sorted(before - after))}" if before - after else ""]
-            raise Stop("source_conflict", f"the candidate changed the outputs {path} lists ({'; '.join(filter(None, changes))}); "
+            raise Stop("source_conflict", f"the candidate changed the outputs {path} lists ({listing_change(before, after)}); "
                        "resolve it by hand, taking the candidate's side, and hand off again", [path])
+
+    def listing_side(
+        self, checkout: Path, path: str, argv: list[str], merge_base: str, base: str, candidate: str, against: str,
+        context: Context | None,
+    ) -> str:
+        """The side a conflicted ``path`` takes, by what its three versions list.
+
+        ``base`` when the candidate lists what the merge base did, ``candidate``
+        when only the candidate changed the listing, and a stop when both sides
+        did: regeneration refreshes digests, but never adds or removes an output.
+        """
+        before = set(self.listed_outputs(checkout, path, argv, merge_base, "merge base", context))
+        at_base = set(self.listed_outputs(checkout, path, argv, base, "base", context))
+        after = set(self.listed_outputs(checkout, path, argv, candidate, "candidate", context))
+        if after == before:
+            return "base"
+        if at_base == before:
+            return "candidate"
+        raise Stop("source_conflict", f"both the candidate and {against} changed the outputs {path} lists (the candidate "
+                   f"{listing_change(before, after)}; {against} {listing_change(before, at_base)}); resolve it by hand, "
+                   "keeping both sides' outputs, and hand off again", [path])
 
     def run_pass(self, subject: str, item: dict, checkout: Path, context: Context, inputs: dict) -> None:
         timeout = self.binding["checkTimeoutSeconds"]
