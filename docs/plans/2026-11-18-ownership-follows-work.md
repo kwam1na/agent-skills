@@ -244,6 +244,10 @@ V26-3591, in `tests/test_region_claims.py`:
   latest merge's id.
 - A record started by `lead-init` holds a settled id of 0. After one pass with no merge, its first story lands, and the
   next pass settles that merge, with `ownership.released` for the story's claim.
+- A record with no settled id and no `candidate.merged`, a `lead-init` record with the field removed, standing in for
+  one from an earlier release, gets a settled id of 0 from its first pass. A story with its own claim then lands, and
+  the next pass settles that merge, with `ownership.released` for the story's claim and the settled id equal to that
+  merge's id.
 - A grant on a file where another lane's claim no longer maps succeeds and prints that claim as needing a regrant. On
   the same fixture, with the record unchanged each time, a grant whose own span doesn't map to the current base is
   refused, and so is a grant that overlaps a third claim that does map, naming it.
