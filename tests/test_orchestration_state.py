@@ -6743,7 +6743,8 @@ class FactsReviewReaderTests(unittest.TestCase):
                  "writer_not_owned"),
                 ("for another lane's story", {"lane": "lane-2", "writer": "lane", "data": {**merge, "by": "lane"}},
                  "writer_not_owned"),
-                ("by: lane from the lead", {"lane": "lane-1", "data": {**merge, "by": "lane"}}, "entry_invalid")):
+                ("by: lane from the lead", {"lane": "lane-1", "data": {**merge, "by": "lane"}}, "entry_invalid"),
+                ("from the runner", {"lane": "lane-1", "writer": "runner", "data": merge}, "writer_not_owned")):
             with self.subTest(name), self.assertRaises(state_tool.StateError) as refused:
                 state_tool.append_journal(self.directory, kind="base.merge.authorized", subject="work-a", **fields)
             self.assertEqual(refused.exception.code, code)

@@ -2524,9 +2524,11 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         lock, source = "provenance.lock.json", "src/one-file.txt"
         (m / "tools/list_outputs.py").write_text(
             "import json, sys\nprint(json.dumps(sorted(entry['path'] for entry in json.load(sys.stdin)['outputs'])))\n")
+        added, unlisted = "added.lock.json", "unlisted.lock.json"
         (m / ".agents/orchestration.json").write_text(json.dumps({"regenerable": {
-            "paths": [lock], "regenerators": [["true"]],
-            "listings": [{"path": lock, "argv": [sys.executable, "-B", "tools/list_outputs.py"]}]}}, indent=2))
+            "paths": [lock, added, unlisted], "regenerators": [["true"]],
+            "listings": [{"path": path, "argv": [sys.executable, "-B", "tools/list_outputs.py"]} for path in (lock, added)]
+            + [{"path": unlisted, "argv": [sys.executable, "-c", "print('{}')"]}]}}, indent=2))
 
         def listed(*outputs):
             return json.dumps({"outputs": [{"path": path, "sha": sha} for path, sha in outputs]}, indent=2) + "\n"
@@ -2538,7 +2540,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
             return sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
 
-        first = base_moves({lock: listed(("a", "1")), source: "start\n"})
+        first = base_moves({lock: listed(("a", "1")), source: "start\n", unlisted: "start\n"})
         wt = fx.lane("FX-2")
 
         def candidate(parent, files):
@@ -2587,11 +2589,26 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         with self.subTest("a listed path in conflict, where the base changed its listing and the candidate only digests"):
             candidate(digests, {lock: listed(("a", "9"))})
             passes("only the base changed the listing, and the queue takes its side")
-        base_moves({source: "base again\n"})
+        again = base_moves({source: "base again\n"})
         with self.subTest("a head that conflicts in a listed path and a source file"):
             candidate(digests, {lock: listed(("a", "9")), source: "story\n"})
             out = refused(source)
             self.assertNotIn(f"conflicts with origin/feature/FX-1 at {both[:10]} in {lock}", out)
+
+        def unjudged(*said):
+            code, out = handoff()
+            self.assertEqual(code, 2, out)
+            for text in (*said, "base-merge FX-2"):
+                self.assertIn(text, out)
+
+        adding = base_moves({added: listed(("x", "1"))})
+        with self.subTest("a listed path both sides added, absent at the merge base"):
+            candidate(again, {added: listed(("y", "1"))})
+            unjudged(f"{added} is absent at the merge base")
+        base_moves({unlisted: "base\n"})
+        with self.subTest("a listed path whose listing prints no JSON array"):
+            candidate(adding, {unlisted: "story\n"})
+            unjudged(f"the listing of {unlisted}", "didn't print a JSON array")
 
     def test_a_lane_merges_the_base_before_hand_off_and_the_review_carries(self) -> None:
         """Decision 3: `base-merge` journals the lane's own authorization and prints the merge and its finish. The merge
@@ -2670,6 +2687,13 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             refuses("did not authorize", "handoff", "FX-2", "--pr", url)
             sh("git", "reset", "-q", "--hard", reviewed, cwd=wt)
             sh("git", "push", "-q", "--force", "origin", "HEAD:feature/FX-2", cwd=wt)
+        with self.subTest("a last round that asked for changes, so nothing aligned to carry"):
+            asked = review / "round-2.json"
+            asked.write_text(json.dumps({"round": 2, "outcome": "changes-requested", "entries": [
+                {"lens": "lens.outcome-correctness", "binding": {"subjectRef": "FX-2", "candidateRef": reviewed}}]}))
+            refuses("has no aligned review round", "base-merge", "FX-2")
+            asked.unlink()
+            self.assertFalse([e for e in self.shown(record)["journal"] if e["kind"] == "base.merge.authorized"])
         with self.subTest("a checkout neither at the reviewed head nor at a head carried from it"):
             sh("git", "commit", "-q", "--allow-empty", "-m", "FX-2: a lane commit", cwd=wt)
             refuses("is neither", "base-merge", "FX-2")
@@ -2715,6 +2739,15 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                 saved["queue"] = [{**row, "stage": stage} if row["subject"] == "FX-2" else row for row in saved["queue"]]
                 stored.write_text(json.dumps(saved, indent=2) + "\n")
                 refuses(f"FX-2 is {stage}", "base-merge", "FX-2")
+        with self.subTest("a story the queue stopped merges the moved base itself"):
+            saved = json.loads(stored.read_text())
+            saved["queue"] = [{**row, "stage": "stopped", "assignedLane": "lane-1"} if row["subject"] == "FX-2" else row
+                              for row in saved["queue"]]
+            stored.write_text(json.dumps(saved, indent=2) + "\n")
+            third = base_appends("a", "c", "d", "e")
+            flow("base-merge", "FX-2", cwd=wt)
+            entry = [e for e in self.shown(record)["journal"] if e["kind"] == "base.merge.authorized"][-1]
+            self.assertEqual((entry["data"]["baseCommits"], entry["data"]["by"]), ([third], "lane"))
 
     def test_lane_and_lead_flow_end_to_end(self) -> None:
         fx = self.fixture()

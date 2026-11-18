@@ -4639,7 +4639,7 @@ def check_base_conflict(c, key: str, head: str) -> None:
     for path in conflicts:
         if path not in listings:
             continue
-        before, at_base, after = (set(listed_outputs(c, path, listings[path], commit, which))
+        before, at_base, after = (set(listed_outputs(c, key, path, listings[path], commit, which))
                                   for commit, which in ((merge_base, "merge base"), (base, "base"), (head, "HEAD")))
         if after != before and at_base != before:
             raise Stop(f"HEAD conflicts with {c.base_ref} at {base[:10]} in {path}, and both this story and the base "
@@ -4647,12 +4647,12 @@ def check_base_conflict(c, key: str, head: str) -> None:
                        f"{queue.listing_change(before, at_base)}): {merge_hint}, keeping both sides' outputs")
 
 
-def listed_outputs(c, path: str, argv: list[str], commit: str, which: str) -> list[str]:
+def listed_outputs(c, key: str, path: str, argv: list[str], commit: str, which: str) -> list[str]:
     """The outputs one version of a listed path lists, as the queue reads them: its listing command, given the file."""
     shown = run(["git", "show", f"{commit}:{path}"], check=False)
     if shown.returncode != 0:
         raise Stop(f"{path} is absent at the {which} ({commit[:10]}), so the queue can't compare its listings: merge the "
-                   f"base before you hand off, with `{flow_command()} base-merge`")
+                   f"base before you hand off, with `{flow_command()} base-merge {key}`")
     timeout = float((c.binding or {}).get("checkTimeoutSeconds") or 600)
     try:
         done = run([str(part) for part in argv], cwd=repo(), check=False, input=shown.stdout, timeout=timeout)
@@ -4661,7 +4661,7 @@ def listed_outputs(c, path: str, argv: list[str], commit: str, which: str) -> li
         listed = None
     if not isinstance(listed, list) or not all(isinstance(entry, str) for entry in listed):
         raise Stop(f"the listing of {path} at the {which} ({commit[:10]}) didn't print a JSON array of paths, so the "
-                   f"queue would stop on it: merge the base before you hand off, with `{flow_command()} base-merge`")
+                   f"queue would stop on it: merge the base before you hand off, with `{flow_command()} base-merge {key}`")
     return listed
 
 
