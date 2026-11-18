@@ -67,8 +67,10 @@ Checked against `main` at `bb54fe4` on 2026-11-18:
 4. **The set is fixed at round 1, in the round metas.** Every round's meta records `lenses` and `lensesReason`, and
    rounds after the first copy both from round 1's meta. A later round without `--lenses` keeps round 1's set. A later
    round with `--lenses` naming the same set is accepted, and one naming a different set is refused, naming round 1's
-   set. `--restart` of round 1 may change the set and reason, and the restart's entry in the meta's `restarts` records
-   the old ones. The journal is unchanged: `review.started` already carries `lenses`, which now holds the story's set,
+   set. A later round of a story prepared before this change, whose round 1 meta has no `lensesReason`, records every
+   declared lens, plan-only lenses included, and no `lensesReason`. `--restart` of round 1 may change the set and
+   reason, and the restart's entry in the meta's `restarts` records the old ones. A restart discards the results of
+   the lenses the previous meta named, so a result left from an earlier set is never reduced. The journal is unchanged: `review.started` already carries `lenses`, which now holds the story's set,
    and no new field is journaled, because `journal-kinds.json` closes that entry's data and changing it is a
    record-shape change. Every story-review loop that iterates `c.lenses` today iterates the story's set instead: the
    restart's discards, the briefs, the reduction's results and refusals, the checkout removal, and `journal_returns`.
@@ -144,7 +146,11 @@ through `review.lenses`'s `use`; `lens.p`, a plan-only lens through `review.lens
   `review.use` that narrows a mandated lens are each a config conflict.
 - `review-reduce` refuses a meta whose set isn't round 1's. `handoff` refuses a last round missing a lens of the set.
 - A story prepared before this change (a round 1 meta with every declared lens and no `lensesReason`) reduces and
-  hands off as today, and one whose legacy meta lists fewer lenses is refused, as today.
+  hands off as today, and one whose legacy meta lists fewer lenses is refused, as today. From the same legacy round 1,
+  round 2 prepared with no `--lenses` succeeds, writes briefs for every declared lens, `lens.p` and `lens.h`
+  included, and its meta carries no `lensesReason`; that round 2 reduces and hands off.
+- Round 1 prepared with the pair and `lens.x`, restarted with the pair and `lens.b`, then restarted again with the
+  pair and `lens.x`: the first attempt's `lens.x` result was discarded at the first restart and is not reduced.
 - `doctor` prints one line per declared lens with its use and where it was declared: `lens.h` as `plan`, from
   `harness.config.ts`; `lens.b` as `plan, story`, from the own config. `config`'s row shows the use.
 - `lead-brief` lists `lens.x` and `lens.b`, each with its charter's purpose, and leaves out `lens.p` and `lens.h`. One
@@ -159,6 +165,8 @@ In `tests/test_run_delivery_supervisor.py`, with a fixture declaring two extra s
   against the restart's set.
 - A pre-change story, whose round 1 `review.started` names every declared lens and whose meta has no `lensesReason`,
   is accepted as today, and `lead-accept` prints `reason not found` rather than failing.
+- A hand-off whose story has no round-1 `review.started` in the journal is checked against every declared lens.
+- The reason is printed when only the kept lane evidence holds round 1's meta, the lane checkout having gone.
 
 In `tests/test_run_delivery_plan_review.py`, with the same plan-only, story-only, both-use and harness lenses:
 
