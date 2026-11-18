@@ -20,6 +20,17 @@
         "--check"
       ],
       "timeoutSeconds": 300
+    },
+    {
+      "id": "catalogue",
+      "argv": [
+        ".venv/bin/python",
+        "-B",
+        "-m",
+        "unittest",
+        "tests.test_own_deliveries.StandingBinding"
+      ],
+      "timeoutSeconds": 300
     }
   ],
   "hooks": {
