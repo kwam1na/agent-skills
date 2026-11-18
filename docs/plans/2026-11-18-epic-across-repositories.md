@@ -122,7 +122,9 @@ its stub left in, and the finish line follows it.
      holds. It follows no redirect: any 3xx reads as `unavailable`.
 
    `reconcile` applies the snapshot under its existing freshness gate, which refuses a sibling snapshot older than
-   `snapshotMaxAgeSeconds` as it refuses a tracker or forge snapshot. `serve` refreshes it on `refreshSeconds`.
+   `snapshotMaxAgeSeconds`. Unlike a refused tracker or forge snapshot, which raises out of `reconcile` and writes
+   nothing, a refused sibling snapshot is handled per entry (Decision 6). Tracker and forge snapshots in the same
+   call still apply. `serve` refreshes it on `refreshSeconds`.
    `waits`, `next` and every view read siblings from the record only, so `waits` keeps its "no clock, no network"
    contract.
 4. **Version skew is refused, never half-read.** The reader accepts exactly the hosted snapshot version that its own
@@ -157,8 +159,8 @@ its stub left in, and the finish line follows it.
    that has siblings in its record but no `siblingSnapshot` command.
 8. **The combined view is a chapter, not a new page.** The live line map, the Markdown view and the built-in page
    gain an "Across repositories" chapter:
-   - one group per sibling, with its name, a link to its live view, its stories with their stage words, and its
-     last read;
+   - one group per sibling, with its name, a link to its live view, its stories with their stage words, and the
+     time of its last read, whatever its `lastOutcome` (Decision 6);
    - a sibling that isn't `read` and fresh is drawn unavailable, with the reason and the time of its last good read;
    - the chapter is collapsed by default, as the "Elsewhere" section is.
 
@@ -313,8 +315,8 @@ V26-3603. Every reader test uses a loopback receiver that records each request's
 V26-3072. Each case is checked on the line map, the Markdown view and the built-in page:
 
 13. A record with two siblings, one `read` and one `unavailable`, draws an "Across repositories" chapter with both
-    groups. The unavailable group shows its reason and the time of its last good read. A sibling never read shows
-    "never read".
+    groups. The read group shows the time of its last read. The unavailable group shows its reason and the time of
+    its last good read. A sibling never read shows "never read".
 14. Headline cases:
     - (a) Own stories all merged, and a fresh sibling with two open stories: "This repository's part is done.
       <name> has 2 open." The delivery still closes.
@@ -352,7 +354,8 @@ V26-3604:
     last read, and `next` still doesn't offer the story. A fresh read then clears it.
 22. With the sibling `read`, an `after` key held by no story and no sibling raises a wait with
     `needsSomeone: true`, and it shows in "Needs you". With the sibling `unavailable` or never read, the same key
-    raises a wait that says the sibling hasn't been read yet, with `needsSomeone: false`.
+    raises a wait that says the sibling hasn't been read yet, with `needsSomeone: false`. With one same-epic sibling
+    `read` and one `other-epic` sibling, the key raises the `needsSomeone: true` wait.
 23. With the tracker's `blockedBy` still open and the sibling's story `merged` in a fresh read, `next` doesn't offer
     the story. Once both say done, it does.
 24. `lead-plan change --after` accepts a sibling's story key and still refuses a key held by nothing. `lead-setup`'s
