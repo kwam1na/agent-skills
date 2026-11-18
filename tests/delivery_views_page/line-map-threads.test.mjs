@@ -281,14 +281,17 @@ test("results a moment apart don't pile up: only the latest waits, so the row tu
 
 test("a check that fails while the row is turning is told by its entry alone, arriving at once, with no second telling queued", async () => {
   const page = pageWithRuns(checking(0), {}, { config: CONFIG });
-  const snapshots = await openPage(page, { now: "2026-10-22T05:10:00Z", store: {}, motion: {}, quicker: 4,
-    steps: [{ push: checking(1) }, { push: checking("failed") }, { wait: 1500 }] });
-  const [, , failedNow, after] = snapshots;
+  // At the page's own pace, so both writes after the failure land inside the first handoff.
+  const snapshots = await openPage(page, { now: "2026-10-22T05:10:00Z", store: {}, motion: {},
+    steps: [{ push: checking(1) }, { push: checking("failed") }, { push: checking("failed") }, { wait: 2500 }] });
+  const [, , failedNow, again, after] = snapshots;
   const entry = failedNow.app.querySelector('.ck-fails li[data-check="checkout end-to-end"]');
   expect(entry.classList.contains("arriving")).toBe(false);
   // With nothing running after it, the card shows no running row, as with no row turning: the kept row goes, and no
   // running check is left on the card once its turn would have played out.
   expect(runRows(failedNow)).toEqual([]);
+  // Dropped for good: another write of the same record inside the handoff brings no running row back.
+  expect(runRows(again)).toEqual([]);
   expect(runRows(after)).toEqual([]);
 });
 
