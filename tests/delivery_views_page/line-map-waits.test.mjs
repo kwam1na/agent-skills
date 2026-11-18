@@ -101,3 +101,49 @@ test("the built-in page says the same sentences under the story and under the la
   expect(freed.window.document.querySelectorAll("#app .wait")).toHaveLength(0);
   freed.window.close();
 });
+
+test("a lane waiting on another story is drawn as progress, with what it waits for, and isn't blocked", async () => {
+  const document = record();
+  document.state.lanes[0] = { ...lane("lane-1", "waiting"), waitingOn: "APP-1", waitingFrom: { state: "working", at: "2026-11-17T11:00:00Z" } };
+  const [first] = await openPage(pageWithRuns(document, {}, { config: CONFIG }), { now: NOW });
+  const chip = person(first.app, "lane-1").querySelector(".chip");
+  expect(chip.textContent).toBe("Waiting");
+  expect(chip.classList.contains("waiting")).toBe(true);
+  expect(chip.classList.contains("blocked")).toBe(false);
+  expect([...person(first.app, "lane-1").querySelectorAll(".wait")].map((line) => line.textContent))
+    .toEqual(["Lane 1 waits for APP-1 to land before it finishes APP-2."]);
+});
+
+test("each lane keeps its id's colour wherever the record lists it", async () => {
+  const drawn = async (document) => {
+    const [first] = await openPage(pageWithRuns(document, {}, { config: CONFIG }), { now: NOW });
+    const rows = [...first.app.querySelectorAll(".person")].map((row) => [row.querySelector("h3").textContent, row.style.getPropertyValue("--c")]);
+    const lines = [...first.app.querySelectorAll(".line")].map((line) => [line.querySelector(".name b").textContent, line.style.getPropertyValue("--c")]);
+    return { rows, lines };
+  };
+  const inOrder = await drawn(record());
+  expect(inOrder.rows).toEqual([["Waits", "var(--l1)"], ["Renderer", "var(--l2)"]]);
+  const swapped = record();
+  swapped.state.lanes.reverse();
+  // The rows follow the record's order; a lane's colour follows its id.
+  const moved = await drawn(swapped);
+  expect(moved.rows).toEqual([["Renderer", "var(--l2)"], ["Waits", "var(--l1)"]]);
+  expect(new Map(moved.lines)).toEqual(new Map(inOrder.lines));
+});
+
+test("lanes named other than lane-N get distinct colours that follow their ids", async () => {
+  const named = (document) => {
+    const renamed = JSON.parse(JSON.stringify(document).replaceAll("lane-1", "api").replaceAll("lane-2", "web"));
+    return renamed;
+  };
+  const colours = async (document) => {
+    const [first] = await openPage(pageWithRuns(document, {}, { config: CONFIG }), { now: NOW });
+    return new Map([...first.app.querySelectorAll(".person")].map((row) => [row.querySelector("h3").textContent, row.style.getPropertyValue("--c")]));
+  };
+  const inOrder = await colours(named(record()));
+  expect(inOrder.get("Waits") !== inOrder.get("Renderer")).toBe(true);
+  const swapped = named(record());
+  swapped.state.lanes.reverse();
+  expect(await colours(swapped)).toEqual(inOrder);
+});
+

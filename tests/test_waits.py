@@ -350,6 +350,17 @@ class LaneTests(unittest.TestCase):
         self.assertEqual(files["words"], "Lane 3 is next on APP-3, which waits for APP-1 to land. "
                                          "Lane 2 holds skills/render.py for it.")
 
+    def test_a_waiting_lane_with_no_story_of_its_own_left_says_only_what_it_waits_for(self) -> None:
+        document = record()
+        row(document, "lane-3").update(state="waiting", waitingOn="APP-1")
+        merge(document, "APP-1")
+        self.assertEqual(of(document, "lane-3"), [], "the landing it waited for is the end of the wait")
+        document = record()
+        planned(document, "APP-3")["lane"] = "lane-1"
+        row(document, "lane-3").update(state="waiting", waitingOn="APP-1")
+        [wait] = of(document, "lane-3")
+        self.assertEqual((wait["cause"], wait["words"]), ("lane", "Lane 3 waits for APP-1 to land."))
+
     def test_a_lane_at_work_says_nothing_of_its_next_story(self) -> None:
         document = record()
         row(document, "lane-1")["state"] = "working"
@@ -575,7 +586,7 @@ class TableTests(unittest.TestCase):
         for group in ("stages", "waits", "lanes", "holding", "needsYou", "listening"):
             self.assertIn("templates", table[group])
         self.assertEqual(set(table["waits"]["templates"]), {"order", "files", "review", "held"})
-        self.assertEqual(set(table["lanes"]["templates"]), {"order", "files", "held"})
+        self.assertEqual(set(table["lanes"]["templates"]), {"order", "files", "held", "waiting"})
         self.assertEqual(set(table["needsYou"]["templates"]), {"count", "free", "stopped"})
         self.assertEqual(state_tool.wait_said(table, "needsYou", "count", {"count": 1}), "1 piece waits on it.")
         self.assertEqual(state_tool.wait_said(table, "needsYou", "count", {"count": 3}), "3 pieces wait on it.")
@@ -600,7 +611,7 @@ def marked(table: dict) -> dict:
 
 
 # The fixed words of the real templates, each of which a view may show only inside a marked sentence.
-FIXED = ("Waits for", "Held by the lead", "is next on", "Waited on by", "free to start", "pieces wait on it",
+FIXED = ("Waits for", "before it finishes", "Held by the lead", "is next on", "Waited on by", "free to start", "pieces wait on it",
          "piece waits on it", "was stopped.", "can't reach the lead", "watching again")
 MARK = re.compile(r"⟦([a-zA-Z]+\.[a-zA-Z]+(?:\.[a-z0-9]+)?)⟧")
 
@@ -615,13 +626,22 @@ class MarkerTests(unittest.TestCase):
         self.copy = Path(folder.name) / "wait-words.json"
         self.copy.write_text(json.dumps(marked(json.loads(WORDS.read_text(encoding="utf-8"))), ensure_ascii=False),
                              encoding="utf-8")
-        for module in (state_tool, views.review_state):
+        # Every loaded copy of the state tool, so a module another test loaded first reads the marked table too.
+        copies = {id(module): module for module in (state_tool, views.review_state, *list(sys.modules.values()))
+                  if getattr(module, "WAIT_WORDS_FILE", None) is not None and hasattr(module, "load_wait_words")}
+        for module in copies.values():
             patcher = mock.patch.object(module, "WAIT_WORDS_FILE", self.copy)
             patcher.start()
             self.addCleanup(patcher.stop)
         self.document = record()
         journal(self.document, "story.held", "APP-4", {"text": "the budget"})
         row(self.document, "lane-2")["state"] = "idle"
+        # A lane waiting on a story before it finishes its own.
+        self.document["state"]["lanes"].append({"id": "lane-4", "title": "Spare", "focus": "", "state": "waiting",
+                                                "waitingOn": "APP-1", "since": "2026-11-17T10:00:00Z",
+                                                "waitingFrom": {"state": "working", "at": "2026-11-17T11:00:00Z"}})
+        self.document["state"]["planned"].append({"subject": "APP-5", "title": "Spare work", "lane": "lane-4",
+                                                  "stage": "building"})
 
     def check(self, shown: str, sentences: list[str]) -> None:
         """Every sentence is shown whole, carrying its marker; what is left once they are taken out holds no wait words."""
@@ -640,7 +660,7 @@ class MarkerTests(unittest.TestCase):
         document = render_state.with_waits(self.document)
         reached = {MARK.search(words).group(1) for words in self.sentences(document)}
         self.assertEqual(reached, {"waits.order", "waits.files", "waits.held", "lanes.order", "lanes.files", "lanes.held",
-                                   "holding.story"})
+                                   "lanes.waiting", "holding.story"})
         stage = next(wait["words"] for wait in document["waits"] if wait["cause"] == "order" and wait["subject"] == "APP-2")
         self.assertIn("⟦stages.where.review⟧", stage)
 
