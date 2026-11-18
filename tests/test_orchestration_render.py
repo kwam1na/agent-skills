@@ -613,11 +613,11 @@ EMPTY_STATE = {
 }
 PINNED_EMPTY_VIEWS = {
     "delivery.md": "b5eacc9b0d03fc036d219eca434188b86136421f6187692534f5d67f68cdc855",
-    "delivery.html": "6b0ed092fe57c16a3d1d5c9133fc94c77fbb63956c431068b9eba1054a76349d",
+    "delivery.html": "246de950078486d16d389cf237b22661ae6b7bd9219d26fdeb998f88e9ae345b",
 }
 PINNED_VIEWS = {
     "delivery.md": "2fc32135cd66da2136a144514b9ae7d9a78f93704b0350dd5df3ab0bf74ce29e",
-    "delivery.html": "3d3d892cfab9f1a956e431e89562e0295bd1db0edfa241b97cd75ba6202d4db4",
+    "delivery.html": "941c56ba88efeee573fd2bdee62ce06ff0be61459eb19b9b981bf18ebcb7a299",
 }
 
 
@@ -1093,6 +1093,119 @@ class TicketViewTests(unittest.TestCase):
         view = render_state.render_markdown({"state": FIXED_STATE, "journal": FIXED_JOURNAL})
         self.assertNotIn("summary:", view)
         self.assertIn(render_state._markdown_text("change-2: " + HOSTILE), view)
+
+
+# The last read that changed a sibling, and when its latest outcome began.
+READ_AT = "2026-10-20T15:50:00Z"
+ATTEMPT_AT = "2026-10-20T15:55:00Z"
+SIBLING_LINK = "https://views.example/d/" + "a" * 64
+
+
+def sibling_row(name: str, stages: tuple[str, ...], outcome: str | None = "read") -> dict:
+    """A sibling as reconcile leaves it: its last kept read's stories, and its latest read's outcome; None never read."""
+    row = {"name": name, "link": SIBLING_LINK, "addedAt": "2026-10-20T15:00:00Z"}
+    if outcome is not None:
+        row.update(lastOutcome=outcome, lastAttemptAt=ATTEMPT_AT)
+        row.update(readAt=READ_AT, stories=[{"subject": f"API-{index}", "title": f"Backend {index}", "stage": stage}
+                                            for index, stage in enumerate(stages, 1)])
+    return row
+
+
+def sibling_document(*rows: dict, landed: bool = True, outside: list | None = None) -> dict:
+    """The fixed state with every own story landed, or one still building, and the given siblings."""
+    state = copy.deepcopy(FIXED_STATE)
+    state["meta"]["trackerParent"] = "APP-10"
+    for item in state["queue"]:
+        item["stage"] = "merged"
+    for item in state.get("planned", []):
+        item["stage"] = "settled"
+    if not landed:
+        state["queue"][0]["stage"] = "checking"
+    if rows:
+        state["siblings"] = list(rows)
+    if outside is not None:
+        state["outside"] = outside
+    return {"state": state, "journal": FIXED_JOURNAL}
+
+
+class AcrossViewTests(unittest.TestCase):
+    """The Markdown view prints what the record's sibling deliveries show, as the state wrapper words it once."""
+
+    def view(self, document: dict) -> str:
+        return render_state.render_markdown(document)
+
+    def part_done(self, view: str) -> str | None:
+        found = [line for line in view.splitlines() if line.startswith(render_state._markdown_text(render_state.PART_DONE))]
+        return found[0] if found else None
+
+    def test_each_sibling_has_a_group_with_since_when_it_is_as_it_is(self) -> None:
+        view = self.view(sibling_document(sibling_row("backend", ("building", "merged")),
+                                          sibling_row("payments", ("review",), "unavailable"),
+                                          sibling_row("web", (), None)))
+        section = view[view.index("## Across repositories"):view.index("## Lanes")]
+        text = render_state._markdown_text
+        unreached = "couldn't be read since " + ATTEMPT_AT
+        self.assertEqual(section.splitlines()[2:], [
+            f"- backend · {text(SIBLING_LINK)} · {text('no change since ' + READ_AT)}",
+            f"  - API-1: {text('Backend 1')}, building",
+            f"  - API-2: {text('Backend 2')}, merged",
+            f"- payments · {text(SIBLING_LINK)} · {text(unreached)}",
+            f"  - API-1: {text('Backend 1')}, review",
+            f"- web · {text(SIBLING_LINK)} · never read",
+            ""])
+        self.assertLess(view.index("## Planned"), view.index("## Across repositories"))
+
+    def test_the_headline_cases(self) -> None:
+        text = render_state._markdown_text
+        cases = {
+            "a fresh sibling with two open": ((sibling_row("backend", ("building", "review", "merged")),), True,
+                                              "This repository's part is done. backend has 2 open."),
+            "every sibling fresh and landed": ((sibling_row("backend", ("merged", "settled")),), True, None),
+            "unavailable with two open": ((sibling_row("backend", ("building", "review"), "unavailable"),), True,
+                                          f"This repository's part is done. backend has 2 open, couldn't be read since {ATTEMPT_AT}."),
+            "never read": ((sibling_row("backend", (), None),), True,
+                           "This repository's part is done. backend couldn't be read (never read)."),
+            "own stories not all landed": ((sibling_row("backend", ("building",)),), False, None),
+            "unavailable, all landed": ((sibling_row("backend", ("merged",), "unavailable"),), True,
+                                        f"This repository's part is done. backend couldn't be read since {ATTEMPT_AT}."),
+            "stale, all landed": ((sibling_row("backend", ("merged",), "stale"),), True,
+                                  f"This repository's part is done. backend couldn't be read since {ATTEMPT_AT}."),
+            "another epic's sibling isn't named": ((sibling_row("backend", ("merged",)),
+                                                    sibling_row("legacy", ("building",), "other-epic")), True, None),
+        }
+        for name, (rows, landed, expected) in cases.items():
+            with self.subTest(name):
+                found = self.part_done(self.view(sibling_document(*rows, landed=landed)))
+                self.assertEqual(found, None if expected is None else text(expected))
+                across = render_state.across(sibling_document(*rows, landed=landed))
+                self.assertEqual(" ".join(across.get("partDone", [])) or None, expected)
+
+    def test_another_epic_s_sibling_is_drawn_without_stories(self) -> None:
+        view = self.view(sibling_document(sibling_row("legacy", ("building",), "other-epic")))
+        section = view[view.index("## Across repositories"):view.index("## Lanes")]
+        self.assertIn(render_state._markdown_text("delivers another epic since " + ATTEMPT_AT), section)
+        self.assertNotIn("API-1", section)
+
+    def test_an_outside_child_a_sibling_holds_is_drawn_in_its_group_and_the_rest_stay_elsewhere(self) -> None:
+        outside = [{"subject": "API-1", "title": "[Backend] Login API", "state": "started", "status": "In Progress"},
+                   {"subject": "OPS-4", "title": "Alerting", "state": "backlog", "status": "To Do"}]
+        view = self.view(sibling_document(sibling_row("backend", ("building",)), outside=outside))
+        section = view[view.index("## Elsewhere in APP-10"):view.index("## Lanes")]
+        self.assertEqual(section.splitlines()[2:], [f"- OPS-4: Alerting, {render_state._markdown_text('To Do')}", ""])
+        # Without siblings, every outside child is elsewhere.
+        view = self.view(sibling_document(outside=outside))
+        self.assertNotIn("## Across repositories", view)
+        section = view[view.index("## Elsewhere in APP-10"):view.index("## Lanes")]
+        self.assertEqual([line[:7] for line in section.splitlines()[2:4]], ["- API-1", "- OPS-4"])
+
+    def test_a_record_with_no_siblings_renders_as_before(self) -> None:
+        document = {"state": FIXED_STATE, "journal": FIXED_JOURNAL}
+        self.assertIsNone(render_state.across(document))
+        self.assertIs(render_state.with_across(document), document)
+        self.assertNotIn("Across repositories", self.view(document))
+        empty = copy.deepcopy(document)
+        empty["state"]["siblings"] = []
+        self.assertEqual(self.view(empty), self.view(document))
 
 
 class LiveClient:

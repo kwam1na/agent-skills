@@ -75,7 +75,9 @@ python3 -B .agent-skills/current/skills/delivery-views/scripts/views_common.py c
 `scripts/render.py line-map` reads the delivery record on stdin and prints one
 page: the delivery told in six chapters (now, the line, who, what's left, what
 happened, parked), and a seventh, the plan, when the delivery has one (see
-"The plan chapter" below), with a detail panel for each piece of work. Its style and
+"The plan chapter" below), and one more, across repositories, while the record
+names sibling deliveries (see "What the views show of siblings" below), with a
+detail panel for each piece of work. Its style and
 program are the skill's `assets/line-map.css`, `assets/line-map.js`,
 `assets/run-summary.css` and `assets/run-summary.js`, inlined into the page, and
 it loads only its three typefaces from Google Fonts. It
@@ -479,6 +481,14 @@ lane, or planned work with the plan's order, files, change request or run. A
 lane-less story of this delivery that the tracker marks outside keeps its
 shape: its ticket's start doesn't move it. A child with no value of any scoped kind stays in scope,
 flagged `unmarked`. Without `--scope`, every child is in scope, as before.
+
+A child a sibling delivery holds is left to it, with or without `--scope`:
+when its subject is in any sibling's last kept read, whatever that sibling's
+latest outcome, and no story of this delivery holds it, `reconcile` never adds
+it or reports on it, and clears a copy the sweep added earlier the same way,
+journaling `work.cleared` once with "held by sibling <name>". Only a tracker
+snapshot's pass clears one. The views draw it in that sibling's group rather
+than under "Elsewhere".
 
 Each `--status-state "<status name>=<state>"`, repeatable, reads that status
 as `backlog`, `started`, `completed` or `canceled` in place of its category.
@@ -993,6 +1003,33 @@ terminal cut: the last of `delivery.closed`, `lane.assigned`,
 `current`, read again, names no newer cut. That reads as `read` with
 `terminal: true`, as the viewer retains a completed delivery, so a closed
 sibling's last stories still land.
+
+### What the views show of siblings
+
+The state wrapper words what the record's siblings show once, as the
+document's `across`, and the line map, the Markdown view and the built-in page
+print those words. A record with no siblings draws exactly as before.
+
+- **Across repositories.** One group per sibling, folded shut: its name, linked
+  to its live view, its stories at the stages its last kept read showed, and a
+  time. A sibling's `readAt` is the last read that changed it, and
+  `lastAttemptAt` is when its latest outcome began. A fresh sibling says "no
+  change since <readAt>"; any other says its outcome "since <lastAttemptAt>":
+  "couldn't be read", "stale", "needs a compatible snapshot" or "delivers
+  another epic". A sibling no read has reached says "never read". A sibling of
+  another epic shows no stories. The line map adds the chapter after What's
+  left, the Markdown view and the built-in page after Planned.
+- **The headline.** Until every one of this delivery's own stories has landed
+  it is unchanged. Once they have, a same-epic sibling with open stories in its
+  last kept read, one never read, or one not fresh adds its sentence, and the
+  views say "This repository's part is done." with those sentences in place of
+  a done headline: "<name> has N open." ("..., couldn't be read since <at>."
+  when it isn't fresh), "<name> couldn't be read (never read).", or "<name>
+  couldn't be read since <at>.". Every same-epic sibling fresh with everything
+  landed leaves the usual done headline. The delivery still closes by itself.
+- **Elsewhere.** An outside child a drawn sibling's stories hold appears in that
+  sibling's group; the rest stay under "Elsewhere in KEY", which the Markdown
+  view and the built-in page now draw too.
 
 ### Installed archive qualification
 
