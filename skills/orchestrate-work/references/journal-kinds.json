@@ -1547,6 +1547,10 @@
         },
         "token": {
           "type": "token"
+        },
+        "by": {
+          "type": "name",
+          "optional": true
         }
       },
       "because": {
@@ -1555,10 +1559,16 @@
       "answers": [],
       "opensThread": false,
       "words": {
-        "head": "The lead let {lane:lane} merge the main line into {subject}",
+        "head": {
+          "by": "by",
+          "cases": {
+            "lane": "{lane:lane} chose to merge the main line into {subject}"
+          },
+          "otherwise": "The lead let {lane:lane} merge the main line into {subject}"
+        },
         "line": "{baseCommits:list:commit}, from {reviewed:commit}"
       },
-      "explain": "The lead allowed a lane to bring exact commits from the main line into its piece.",
+      "explain": "Exact commits from the main line were allowed into a piece: by the lead, or by its lane before it handed the piece off.",
       "tracker": null,
       "instruction": "None: the lane runs the merge the lead authorized, and its hand-off posts with `candidate.handed`."
     },

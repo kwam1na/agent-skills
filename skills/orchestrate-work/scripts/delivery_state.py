@@ -2212,7 +2212,8 @@ def append_journal(
     """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset.
 
     ``data`` holds the kind's facts, in the shape the registry gives it, and ``because`` and ``answers``
-    name earlier entries by id. A base.merge.authorized entry's token is the tool's own, added here.
+    name earlier entries by id. A base.merge.authorized entry's token is the tool's own, added here. The lead writes
+    one, or the story's assigned lane its own, before hand-off, with ``by: lane``; an entry without ``by`` is the lead's.
     """
     if isinstance(kind, str) and kind.startswith(RESERVED_PREFIX):
         raise StateError("kind_reserved", f"{kind} is reserved: kinds beginning {RESERVED_PREFIX} are an adopter's own, "
@@ -2226,17 +2227,22 @@ def append_journal(
     with file_lock(directory / STATE_LOCK):
         current = read_state(directory, for_write=True)
         if writer == "lane":
-            if kind not in LANE_REVIEW_KINDS:
-                raise StateError("writer_not_owned", f"a lane journals only its review ({', '.join(LANE_REVIEW_KINDS)}); "
-                                 "the tool journals its hand-off")
+            if kind not in LANE_REVIEW_KINDS and kind != AUTHORIZATION_KIND:
+                raise StateError("writer_not_owned", f"a lane journals only its review ({', '.join(LANE_REVIEW_KINDS)}) "
+                                 f"and its own {AUTHORIZATION_KIND}; the tool journals its hand-off")
             owner = next((entry.get("assignedLane", entry["lane"]) if entry["stage"] == "stopped" else entry["lane"]
                           for entry in [*current["queue"], *current.get("planned", [])] if entry["subject"] == subject), None)
             if lane is None or owner != lane:
                 raise StateError("writer_not_owned", f"{subject} is not {lane}'s work")
         entries = read_journal(directory)
         if kind == AUTHORIZATION_KIND:
-            if writer is not None:
-                raise StateError("writer_not_owned", "only the lead authorizes a base merge")
+            if writer == "lane" and data.get("by") != "lane":
+                raise StateError("writer_not_owned", "a lane authorizes only its own base merge, with by: lane; "
+                                 "any other is the lead's")
+            if writer not in (None, "lane"):
+                raise StateError("writer_not_owned", "only the lead, or a lane its own, authorizes a base merge")
+            if writer is None and "by" in data:
+                raise StateError("entry_invalid", "by: lane is a lane's own authorization; the lead's carries no by")
             if "token" in data:
                 raise StateError("entry_invalid", "a base merge authorization's token is the tool's own")
             item = next((row for row in [*current["queue"], *current.get("planned", [])]

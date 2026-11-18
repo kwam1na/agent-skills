@@ -6721,6 +6721,49 @@ class FactsReviewReaderTests(unittest.TestCase):
         found = self.evidence()
         self.assertEqual((found["evidence"], found["carriedFrom"], found["carriedTo"]), ("captured", HEAD_B, HEAD_C))
 
+    def test_a_lane_authorizes_its_own_base_merge_only_with_by_lane(self) -> None:
+        """A lane journals base.merge.authorized for its own assigned story, with `by: lane`, and nothing else; its words
+        say the lane chose the merge, and its hand-off carries the review as a lead's does."""
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.directory = self.root / "state"
+        state_tool.init(self.directory, "A lane's own base merge")
+        state_tool.patch(self.directory, writer="lead", version=1, changes={
+            "lanes": [lane("lane-1"), lane("lane-2")],
+            "planned": [{"subject": "work-a", "title": "A", "lane": "lane-1", "stage": "review"},
+                        {"subject": "work-b", "title": "B", "lane": "lane-2", "stage": "review"}]})
+        self.facts_round(1)
+        self.facts_round(2)
+        capture = self.capture([review_round(1, HEAD_A, finding=True), review_round(2, HEAD_B, resolved=True)])
+        merge = {"reviewed": HEAD_B, "baseCommits": [HEAD_D]}
+        for name, fields, code in (
+                ("without by", {"lane": "lane-1", "writer": "lane", "data": merge}, "writer_not_owned"),
+                ("by anything but lane", {"lane": "lane-1", "writer": "lane", "data": {**merge, "by": "lead"}},
+                 "writer_not_owned"),
+                ("for another lane's story", {"lane": "lane-2", "writer": "lane", "data": {**merge, "by": "lane"}},
+                 "writer_not_owned"),
+                ("by: lane from the lead", {"lane": "lane-1", "data": {**merge, "by": "lane"}}, "entry_invalid")):
+            with self.subTest(name), self.assertRaises(state_tool.StateError) as refused:
+                state_tool.append_journal(self.directory, kind="base.merge.authorized", subject="work-a", **fields)
+            self.assertEqual(refused.exception.code, code)
+        self.assertEqual([e["kind"] for e in state_tool.read_journal(self.directory)].count("base.merge.authorized"), 0)
+        authorized = state_tool.append_journal(self.directory, kind="base.merge.authorized", subject="work-a",
+                                               lane="lane-1", writer="lane", data={**merge, "by": "lane"})
+        self.assertEqual({key: value for key, value in authorized["data"].items() if key != "token"},
+                         {**merge, "by": "lane"})
+        self.assertEqual(state_tool.journal_errors(state_tool.read_journal(self.directory)), [])
+        said = state_tool.journal_words.words(authorized)
+        self.assertEqual(said["head"], "Lane 1 chose to merge the main line into work-a")
+        lead = state_tool.append_journal(self.directory, kind="base.merge.authorized", subject="work-a", lane="lane-1",
+                                         data=merge)
+        self.assertEqual(state_tool.journal_words.words(lead)["head"], "The lead let Lane 1 merge the main line into work-a")
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_C, change_request="cr", rounds=2,
+                           base_merge=merge)
+        handed = state_tool.read_journal(self.directory)[-1]
+        self.assertEqual(handed["data"]["carry"], {"from": HEAD_B, "to": HEAD_C, "digest": capture["data"]["digest"],
+                                                   "baseCommits": [HEAD_D]})
+
     def test_rounds_with_only_their_facts_are_counted_captured_and_matched(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

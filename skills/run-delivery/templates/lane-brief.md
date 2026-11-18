@@ -25,13 +25,16 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 - When the lead completes `lead-sync --merge`, start newly assigned stories from the moved `{{base_ref}}`.
   Existing story branches follow the lead's base-merge authorization and review rules.
 - The merge queue normally syncs your branch with `{{base_ref}}`. The tool reads the plan, brief and settings from
-  that remote base while you work. Before merging the base into your story branch, wait for the lead to record the
-  authorization for your story, reviewed head and exact base commits with `lead-authorize-base-merge`.
-  Use the lead's printed merge commands with their authorization trailer. If a merge stops on a conflict, resolve it,
-  `git add` the files, and finish it with the printed `git commit` command, so its message keeps the trailer. If the story's own change reads the same after each merge as before it,
-  hand-off keeps the aligned review and records the merge, whoever owns what the base changed. Run gates and any
-  required in-app and PR checks at the new head. A lane commit, an unauthorized merge or a merge that changes the
-  story's own change needs a new review.
+  that remote base while you work. A base that moved without a conflict needs nothing from you. Hand-off refuses a
+  head that conflicts with the current base, naming the files: merge the base yourself, in this order. Run
+  `{{flow}} base-merge <key>`, which records your authorization. Run the merge command it prints; if it stops on a
+  conflict, resolve it, `git add` the files, and finish it with the printed `git commit` command, so its message
+  keeps the trailer. Rerun the gates and any required in-app and PR checks at the new head. Push. Hand off. If the
+  base moves again with a conflict, run `base-merge` again from the merged head. Once the queue holds your story, a
+  base merge is the lead's: wait for the lead to record it with `lead-authorize-base-merge`, and use the lead's
+  printed commands the same way. If the story's own change reads the same after each merge as before it,
+  hand-off keeps the aligned review and records the merge, whoever owns what the base changed. A lane commit, an
+  unauthorized merge or a merge that changes the story's own change needs a new review.
 - Branch: `{{branch}}`. Commit subjects start with the story key.
 - Never touch: {{never_touch}}. Change only the files your lane owns (below, and `lanes.<lane>.owns` in
   the delivery file). The lead refuses a hand-off that changes anything else.
