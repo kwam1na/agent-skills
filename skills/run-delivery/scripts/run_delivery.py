@@ -4442,19 +4442,55 @@ def catalogue_ids(c) -> list[str]:
             if isinstance(entry, dict) and isinstance(entry.get("id"), str)]
 
 
-def check_ids(c, text: str, what: str) -> list[str]:
-    """A comma-separated list of the binding's catalogue ids, each once, in the order given; refused naming any other."""
-    known = catalogue_ids(c)
-    if not known:
+def catalogue_additions(c, ref: str, cwd: Path | None = None) -> dict[str, dict]:
+    """The catalogue entries a candidate adds, by id, in its binding's order: each entry of selection.catalogue in
+    the binding committed at `ref` whose id the base's catalogue lacks and no binding check of the base's uses. Read
+    with git, never from a working tree, so an uncommitted edit adds nothing; a binding missing at `ref`, or one that
+    doesn't parse, adds nothing either."""
+    shown = run(["git", "show", f"{ref}:.agents/orchestration.json"], cwd=cwd, check=False)
+    try:
+        head = json.loads(shown.stdout) if shown.returncode == 0 else {}
+    except ValueError:
+        head = {}
+    selection = head.get("selection") if isinstance(head, dict) else None
+    entries = selection.get("catalogue") if isinstance(selection, dict) else None
+    taken = set(catalogue_ids(c)) | {str(check.get("id")) for name in ("alwaysRun", "fallback")
+                                     for check in (c.binding or {}).get(name) or [] if isinstance(check, dict)}
+    added: dict[str, dict] = {}
+    for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str) and entry["id"] not in taken:
+            added.setdefault(entry["id"], entry)
+    return added
+
+
+def handed_additions(c, key: str, head: str, cwd: Path | None = None) -> dict[str, dict]:
+    """The entries the handed head's committed binding adds to the catalogue, read in the checkout at `cwd` once the
+    head's objects are there: the story's branch is fetched when they aren't."""
+    if run(["git", "cat-file", "-e", f"{head}^{{commit}}"], cwd=cwd, check=False).returncode != 0:
+        run(["git", "fetch", "-q", c.remote, c.branch(key)], cwd=cwd, check=False)
+    return catalogue_additions(c, head, cwd=cwd)
+
+
+def check_ids(c, text: str, what: str, added: dict[str, dict] | None = None) -> list[str]:
+    """A comma-separated list of catalogue ids, each once, in the order given: the base's catalogue ids and the
+    entries the candidate adds (`catalogue_additions`); refused naming any other, and both catalogues."""
+    known, added = catalogue_ids(c), added or {}
+    if not known and not added:
         raise Stop(f"{what} takes catalogue ids, and the binding declares no selection.catalogue")
     names = [name.strip() for name in text.split(",")]
     if not all(names) or len(set(names)) != len(names):
         raise Stop(f"{what} is a comma-separated list of catalogue ids, each once: {text!r}")
-    unknown = [name for name in names if name not in known]
+    unknown = [name for name in names if name not in known and name not in added]
     if unknown:
-        raise Stop(f"{what} names checks the binding's catalogue doesn't have: {', '.join(unknown)} (it has "
-                   f"{', '.join(known)})")
+        raise Stop(f"{what} names checks in neither the base's catalogue nor the one at the candidate's head: "
+                   f"{', '.join(unknown)} (the base's has {', '.join(known) or 'none'}; the head adds "
+                   f"{', '.join(added) or 'none'})")
     return names
+
+
+def checks_shown(names: list[str], added: dict[str, dict]) -> str:
+    """The checks as a hand-off shows them: each id the candidate's own diff adds to the catalogue marked so."""
+    return ", ".join(f"{name} (added by this story)" if name in added else name for name in names)
 
 
 def provider_selects(c) -> bool:
@@ -4467,10 +4503,11 @@ def fallback_ids(c) -> list[str]:
     return [str(entry.get("id")) for entry in (c.binding or {}).get("fallback") or [] if isinstance(entry, dict)]
 
 
-def proposed_checks(c, changed: list[str], named: list[str]) -> list[str]:
+def proposed_checks(c, changed: list[str], named: list[str], added: dict[str, dict] | None = None) -> list[str]:
     """What lead-accept proposes when the lead chose nothing: the catalogue ids of the test modules the diff changes,
-    then the checks the lane named at hand-off, each once. select adds the guards and the readers' checks."""
-    known = set(catalogue_ids(c))
+    then the checks the lane named at hand-off, each once, from the base's catalogue and the entries the candidate
+    adds. select adds the guards and the readers' checks."""
+    known = set(catalogue_ids(c)) | set(added or {})
     ids = [f"tests.{match.group(1)}" for path in changed
            for match in [re.fullmatch(r"tests/(test_\w+)\.py", path)] if match]
     ids += list(named)
@@ -4632,7 +4669,8 @@ def handoff(args) -> None:
         raise Stop("a hand-off needs --pr, the story's open PR; a story that needs no change hands off with "
                    "--no-change --evidence")
     review_conf = pr_review_config()  # refused here, before anything else, when review.pr is malformed
-    ran = check_ids(c, args.checks, "--checks") if args.checks is not None else []
+    added = catalogue_additions(c, "HEAD")
+    ran = check_ids(c, args.checks, "--checks", added) if args.checks is not None else []
     folder = review_dir(key)
     head = clean_head()
     git("fetch", "-q", c.remote, c.base_branch)
@@ -4727,7 +4765,7 @@ def handoff(args) -> None:
         "- review rounds: " + "; ".join(f"r{o['round']} {o['outcome']}" for o in outcomes) + " (review evidence captured)"
         + (f"; history: {'; '.join(histories)}" if histories else ""),
         f"- validation: {validation}",
-        *([f"- checks run: {', '.join(ran)}"] if ran else []),
+        *([f"- checks run: {checks_shown(ran, added)}"] if ran else []),
         *([f"- PR review: {pr_line}"] if pr_line else []),
         "- in-app checks: " + ("; ".join(lines) or "none required"),
         "- run: none",
@@ -7878,18 +7916,21 @@ def accept_story(c, args) -> None:
         raise Stop("the binding names a provider, so a candidate with no lead selection runs the provider's answer, "
                    "and the fallback only when the provider can't give one: --full-suite can't promise the fallback; "
                    "choose the checks with --checks")
-    chosen = check_ids(c, args.checks, "--checks") if args.checks is not None else None
     doc = load_state()
     item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
     waiting = next((p for p in doc["state"].get("planned", []) if p["subject"] == key and p.get("noChange")), None)
     if not item and waiting:
+        if args.checks is not None:
+            check_ids(c, args.checks, "--checks")  # refused as before; a no-change story runs no checks
         accept_no_change(c, key, waiting)
         return
     if not item:
         raise Stop(f"{key} is not in the queue; the lane has not handed it off")
+    merged = item["stage"] == "merged"
+    added = handed_additions(c, key, item["head"]) if not merged and lead_selects(c) and not args.full_suite else {}
+    chosen = check_ids(c, args.checks, "--checks", added) if args.checks is not None else None
     problems, decisions = [], []
     # Work merged outside the queue skipped the lead's acceptance; its decisions can still be recorded, once.
-    merged = item["stage"] == "merged"
     if merged and item.get("reportedRounds") is None:
         raise Stop(f"{key} merged with no hand-off, so there are no claims to check: journal your decision on it")
     if merged:
@@ -7992,7 +8033,7 @@ def accept_story(c, args) -> None:
     proposal = None
     if lead_selects(c) and not merged and chosen is None and not args.full_suite:
         # Under lead selection, a candidate accepted with no choice would check on the fallback: the lead says which.
-        proposal = proposed_checks(c, changed, item.get("namedChecks") or [])
+        proposal = proposed_checks(c, changed, item.get("namedChecks") or [], added)
         if provider_selects(c):
             problems.append(f"choose {key}'s checks: the binding enables lead selection, and a candidate accepted with "
                             "none checks on the provider's selection, widened to the fallback "
@@ -8044,10 +8085,12 @@ def accept_story(c, args) -> None:
     before = item.get("leadSelection") if item else None
     if chosen is not None and not merged and not problems:
         # Through the state tool's own select, with its validation, guards and readers (read from this checkout, the
-        # one the command runs in): what it refuses, this refuses.
+        # one the command runs in): what it refuses, this refuses. A base catalogue id goes as its id, and an entry the
+        # candidate adds as the head binding's object, unchanged, in the order chosen.
         reason = args.reason or f"chosen at acceptance from {key}'s diff and its hand-off's checks"
+        listed = [added[name] if name in added else name for name in chosen]
         done = state_tool("select", "--subject", key, "--binding", str(c.binding_path), "--head", head, "--checks",
-                          ",".join(chosen), "--reason", reason, check=False)
+                          json.dumps(listed), "--reason", reason, check=False)
         answer = json.loads(done.stdout or "{}") if done.stdout.strip().startswith("{") else {}
         if done.returncode != 0:
             problems.append(f"the selection was refused: {answer.get('error') or (done.stderr or done.stdout).strip()[-400:]}")
