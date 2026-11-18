@@ -748,6 +748,9 @@ from the plan and the repository's own instructions, and keep everything else.
    unit, and tell them not to spawn subagents. Resume the same reviewers each
    round until both approve, within `$review-work`'s round bound. At the
    bound, stop and report the blocker to the lead.
+   A round forced by a base merge counts against that bound: a merge forces
+   one only when the story's own change reads differently after it, so that
+   round is about the story.
 4. Run the repository's compounding check: `<compounding check>`.
 5. Open a draft change request: `<change request command>`, titled
    `<title pattern>`, with a body of Summary, Why, Validation, then the
