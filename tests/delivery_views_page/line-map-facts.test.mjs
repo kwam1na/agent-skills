@@ -234,3 +234,30 @@ test("the facts share one grid through subgrid, stack on a phone, and nothing on
   }
 });
 
+
+test("the kicker ends with how long the delivery has run, a time element that says its start, and a closed one's whole span", async () => {
+  const at = async (now) => {
+    const [shown] = await openPage(pageWithRuns(underway(), {}, { config: FORGE }), { now, store: false });
+    return shown.app.querySelector("#now .kicker time.kicker-time");
+  };
+  // The record's first entry is minute 10, 06:10 UTC; the clock reads on, so a later look says a longer run.
+  const time = await at(NOW);
+  expect(time.textContent).toBe("delivering · 5 h 50 min");
+  expect(time.getAttribute("datetime")).toBe(minute(10));
+  expect(time.getAttribute("title")).toMatch(/^Started .+ \(2026-10-30 06:10:00 UTC\)$/);
+  expect(time.parentNode.textContent).toMatch(/ · delivering · 5 h 50 min$/);
+  expect((await at("2026-10-30T06:40:00Z")).textContent).toBe("delivering · 30 min");
+  // A journal that no longer holds its first entry has no honest start, so the kicker says no duration.
+  const trimmed = underway();
+  trimmed.journal = trimmed.journal.slice(1);
+  const [cut] = await openPage(pageWithRuns(trimmed, {}, { config: FORGE }), { now: NOW, store: false });
+  expect(cut.app.querySelector("#now .kicker time")).toBeNull();
+  // A closed delivery says the span from its first entry to its close, with both ends on hover.
+  const folder = path.join(CORPUS, "delivery-records-epic");
+  const page = renderPage(readJson(path.join(folder, "document.json")), { config: readJson(path.join(CORPUS, "linked-config.json")),
+    runsCommands: readJson(path.join(folder, "runs-commands.json")) });
+  const [closed] = await openPage(page, { now: NOW, store: false });
+  const span = closed.app.querySelector("#now .kicker time.kicker-time");
+  expect(span.textContent).toMatch(/^delivered in \d+ (h|min|days)/);
+  expect(span.getAttribute("title")).toMatch(/^From .+ UTC\) to .+ UTC\)$/);
+});

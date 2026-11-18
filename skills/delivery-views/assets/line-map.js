@@ -597,6 +597,20 @@
     // The tracker item the delivery's work is listed under, linked when the renderer linked it.
     if (text(meta.trackerParent)) { add(kicker, kicker.firstChild ? " · " : null, issue(text(meta.trackerParent))); }
     else if (!kicker.firstChild) { add(kicker, el("span", "headline", pageTitle())); }
+    // How long the delivery has run, from the record's first entry: to now while it delivers, to its close once delivered.
+    // The start, and for a closed one the end, read on pointing at it, in local time with UTC beside it.
+    var first = list(doc.journal).filter(isObject)[0];
+    var begun = first && first.id === 1 ? seconds(first.at) : null;
+    var ended = closed ? seconds(eventTime(closed)) : Date.now() / 1000;
+    if (begun !== null && ended !== null && ended >= begun) {
+      var minutes = Math.round((ended - begun) / 60), hours = Math.floor(minutes / 60);
+      var lasted = minutes < 60 ? minutes + " min" : hours < 48 ? hours + " h" + (minutes % 60 ? " " + minutes % 60 + " min" : "") : Math.round(hours / 24) + " days";
+      var stamp = function (at) { var date = new Date(at * 1000); return date.toLocaleString() + " (" + date.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC") + ")"; };
+      var time = el("time", "kicker-time", closed ? "delivered in " + lasted : "delivering · " + lasted);
+      time.setAttribute("datetime", text(first.at));
+      time.setAttribute("title", closed ? "From " + stamp(begun) + " to " + stamp(ended) : "Started " + stamp(begun));
+      add(kicker, " · ", time);
+    }
     var nodes = [kicker, title];
     // The outcome, then how much of the plan is proven and how often it changed, linked to the plan chapter.
     var planLink = planNow(doc);
