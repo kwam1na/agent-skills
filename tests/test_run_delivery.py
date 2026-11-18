@@ -6670,7 +6670,7 @@ def troubleshooting_section() -> str:
 
 DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candidate step", "configuration", "release generation",
                  "host hooks", "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
-                 "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
+                 "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token", "tracker snapshot scope",
                  "snapshots and publishers", "hosted delivery", "in-app adapters", "in-app adapter contract", "video evidence tools",
                  "Node", "harness configuration", "knowledge library properties", "delivery file", "plan chapter", "added stories' reasons",
                  "plan sections", "story files", "story readiness", "story summaries", "context sections", "finish lines",

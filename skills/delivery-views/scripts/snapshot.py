@@ -3,6 +3,8 @@
 
     python3 -B snapshot.py --kind jira --site <https origin> --parent <key> --user-env <name> --token-env <name>
         [--canceled-statuses "Won't Do,Duplicate"] [--blocks-link Blocks]
+        [--scope "component=Mobile App" ...] [--status-state "Ready for QA=completed" ...]
+        [--state-dir <state directory>] [--check]
     python3 -B snapshot.py --kind bitbucket --workspace <w> --repo <r> --binding <path> --subject-pattern <regex>
         --token-env <name> [--user-env <name>] [--since <ISO time>] [--host bitbucket.org]
     python3 -B snapshot.py --kind linear --parent <identifier> --token-env <name>
@@ -44,6 +46,8 @@ from views_common import ConfigError, repository_root
 MAX_ITEMS = 500
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_RETRIES = 2
+# How many pages of a site-wide list, such as its labels, doctor's check reads before it gives up.
+MAX_LIST_PAGES = 20
 DEFAULT_TIMEOUT_SECONDS = 25
 SUMMARY_LIMIT = 1000
 COMMIT = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
@@ -274,10 +278,99 @@ def flatten_adf(node: object) -> str:
 
 
 JIRA_STATES = {"new": "backlog", "indeterminate": "started", "done": "completed"}
+TRACKER_STATES = ("backlog", "started", "completed", "canceled")
+SCOPE_KINDS = ("component", "label", "prefix")
+# A summary's own marker, for --scope prefix=: a bracketed tag, as "[Backend]", or one word and a colon, as "Mobile:".
+LEADING_MARKER = re.compile(r"^\s*(\[[^\]\n]+\]|[^\s:\[\]]+:)")
+
+
+def _scopes(values: list[str] | None) -> list[tuple[str, str]]:
+    """Each --scope "<kind>=<value>" as (kind, value)."""
+    scopes = []
+    for value in values or []:
+        kind, equals, wanted = value.partition("=")
+        kind, wanted = kind.strip(), wanted.strip()
+        if not equals or kind not in SCOPE_KINDS or not wanted:
+            raise Failure(f"usage: --scope takes <kind>=<value>, with kind one of {', '.join(SCOPE_KINDS)}: "
+                          f"{_shown(value)}")
+        scopes.append((kind, wanted))
+    return scopes
+
+
+def _status_states(values: list[str] | None, canceled: set[str]) -> dict[str, str]:
+    """Each --status-state "<status name>=<state>" as a map; the last = splits, so a name may hold one."""
+    mapped: dict[str, str] = {}
+    for value in values or []:
+        name, equals, state = value.rpartition("=")
+        name, state = name.strip(), state.strip()
+        if not equals or not name or state not in TRACKER_STATES:
+            raise Failure(f"usage: --status-state takes <status name>=<state>, with state one of "
+                          f"{', '.join(TRACKER_STATES)}: {_shown(value)}")
+        if mapped.get(name, state) != state:
+            raise Failure(f"usage: --status-state maps {_shown(name)} twice, to {mapped[name]} and {state}")
+        if name in canceled and state != "canceled":
+            raise Failure(f"usage: {_shown(name)} is in --canceled-statuses and mapped to {state} by --status-state")
+        mapped[name] = state
+    return mapped
+
+
+def _listed(state_dir: str | None, cwd: Path | None) -> set[str]:
+    """The subjects the delivery's own plan lists, from plan.json in the state directory; none without one.
+
+    The delivery file wins over the tracker: a story it lists stays in scope whatever the tracker marks it with."""
+    if not state_dir:
+        return set()
+    try:
+        base = Path(state_dir)
+        path = (base if base.is_absolute() else repository_root(cwd) / base) / "plan.json"
+        if not path.is_file():
+            return set()
+        plan = json.loads(path.read_text(encoding="utf-8"))
+        units = plan["units"]
+        subjects = {unit["subject"] for unit in units}
+    except (ConfigError, OSError, UnicodeDecodeError, ValueError, KeyError, TypeError, RecursionError) as error:
+        raise Failure(f"the plan could not be read through --state-dir {state_dir}: {type(error).__name__}") from None
+    if not all(isinstance(subject, str) and subject for subject in subjects):
+        raise Failure("the plan lists a subject that is not text")
+    return subjects
+
+
+def _marks(key: str, fields: dict, kinds: set[str]) -> dict[str, list[str]]:
+    """The values of each scoped kind a child carries: its components, its labels, its summary's marker."""
+    marks: dict[str, list[str]] = {}
+    if "component" in kinds:
+        components = fields.get("components")
+        if components is None:
+            components = []
+        if not isinstance(components, list):
+            raise Failure(f"{_shown(key)}'s components are not a list")
+        marks["component"] = [_text(entry.get("name") if isinstance(entry, dict) else None,
+                                    f"{_shown(key)}'s component name") for entry in components]
+    if "label" in kinds:
+        labels = fields.get("labels")
+        if labels is None:
+            labels = []
+        if not isinstance(labels, list):
+            raise Failure(f"{_shown(key)}'s labels are not a list")
+        marks["label"] = [_text(label, f"{_shown(key)}'s label") for label in labels]
+    if "prefix" in kinds:
+        found = LEADING_MARKER.match(fields.get("summary") or "")
+        marks["prefix"] = [found.group(1)] if found else []
+    return marks
+
+
+def _in_scope(fields: dict, marks: dict[str, list[str]], scopes: list[tuple[str, str]]) -> bool:
+    summary = (fields.get("summary") or "").lstrip().casefold()
+    for kind, wanted in scopes:
+        if kind == "prefix" and summary.startswith(wanted.casefold()):
+            return True
+        if kind != "prefix" and wanted in marks[kind]:
+            return True
+    return False
 
 
 def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport, deadline: float,
-                  clock: Callable[[], float], sleep: Callable[[float], None]) -> dict:
+                  clock: Callable[[], float], sleep: Callable[[float], None], cwd: Path | None = None) -> dict:
     site = args.site.rstrip("/")
     if _origin(site)[0] != "https" or not _origin(site)[1] or urllib.parse.urlsplit(site).path:
         raise Failure("--site must be an https origin, such as https://example.atlassian.net")
@@ -285,11 +378,16 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
         raise Failure("usage: --parent must be an issue key, such as APP-10")
     client = Client(site, _authorization(environ, args.token_env, args.user_env), transport, deadline, clock, sleep)
     canceled = {name.strip() for name in (args.canceled_statuses or "").split(",") if name.strip()}
+    scopes = _scopes(args.scope)
+    mapped = _status_states(args.status_state, canceled)
+    kinds = {kind for kind, _ in scopes}
+    listed = _listed(args.state_dir, cwd) if scopes else set()
     issues: list[dict] = []
     token = None
     while True:
         # The transitions say which moves each issue's status offers, so readiness can be read from the snapshot.
-        query = {"jql": f"parent = {args.parent}", "fields": "summary,description,status,issuelinks",
+        query = {"jql": f"parent = {args.parent}",
+                 "fields": "summary,description,status,issuelinks" + (",components,labels" if scopes else ""),
                  "expand": "transitions", "maxResults": "100"}
         if token:
             query["nextPageToken"] = token
@@ -310,13 +408,25 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
             raise Failure(f"the search listed {_shown(key)} twice")
         keys.add(key)
     items = []
+    outside = []
     for issue in issues:
         key = issue["key"]
         fields = issue.get("fields")
         if not isinstance(fields, dict):
             raise Failure(f"{_shown(key)} has no fields")
-        state, name = _jira_state(key, fields, canceled)
+        state, name = _jira_state(key, fields, canceled, mapped)
         item = {"subject": key, "title": _text(fields.get("summary"), f"{_shown(key)}'s summary"), "state": state}
+        if scopes:
+            # In scope when the delivery's plan lists it or it matches any --scope; outside when it carries a value of
+            # a scoped kind and matches none; unmarked, and still in scope, when it carries no such value at all.
+            marks = _marks(key, fields, kinds)
+            unmarked = not any(marks.values())
+            if not unmarked and key not in listed and not _in_scope(fields, marks, scopes):
+                outside.append({**item, "status": name, "marks": {kind: values for kind, values in marks.items()
+                                                                  if values}})
+                continue
+            if unmarked:
+                item["unmarked"] = True
         transitions = issue.get("transitions")
         if isinstance(transitions, list):
             # Only with the issue's transitions expanded: its own status name and the moves offered from it.
@@ -357,22 +467,79 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
     except Failure:
         answer = None
     snapshot = {"source": "tracker", "items": items}
+    if scopes:
+        snapshot["outside"] = outside
+    if mapped:
+        snapshot["statusStates"] = mapped
     if answer is not None:
         fields = answer.get("fields") if isinstance(answer, dict) else None
         if not isinstance(fields, dict):
             raise Failure(f"{_shown(args.parent)} has no fields")
-        snapshot["parent"] = {"subject": args.parent, "state": _jira_state(args.parent, fields, canceled)[0]}
+        snapshot["parent"] = {"subject": args.parent, "state": _jira_state(args.parent, fields, canceled, mapped)[0]}
+    if args.check:
+        return jira_check(args, client, site, snapshot, scopes, mapped)
     return snapshot
 
 
-def _jira_state(key: str, fields: dict, canceled: set[str]) -> tuple[str, str]:
-    """An issue's state, and its status's own name, from its status category or a status named as canceled."""
+def _pages(client: "Client", url: str, where: str) -> list:
+    """Every value of an offset-paged Jira list, such as the site's labels."""
+    values: list = []
+    for _ in range(MAX_LIST_PAGES):
+        page = client.get(f"{url}?{urllib.parse.urlencode({'startAt': len(values), 'maxResults': 1000})}")
+        if not isinstance(page, dict) or not isinstance(page.get("values"), list):
+            raise Failure(f"the {where} answer holds no values list")
+        values.extend(page["values"])
+        if page.get("isLast") is not False or not page["values"]:
+            return values
+    raise Failure(f"the {where} list runs past {MAX_LIST_PAGES} pages")
+
+
+def jira_check(args: argparse.Namespace, client: "Client", site: str, snapshot: dict,
+               scopes: list[tuple[str, str]], mapped: dict[str, str]) -> dict:
+    """What doctor reports about --scope and --status-state, in place of the snapshot: each value or status the project
+    doesn't know, the In Progress statuses --status-state leaves to their category, and the in-scope children that
+    carry no value of a scoped kind."""
+    project = urllib.parse.quote(args.parent.rsplit("-", 1)[0])
+    unknown: list[str] = []
+    wanted = {kind: [value for scoped, value in scopes if scoped == kind] for kind in ("component", "label")}
+    if wanted["component"]:
+        answer = client.get(f"{site}/rest/api/3/project/{project}/components")
+        if not isinstance(answer, list):
+            raise Failure("the project's components answer is not a list")
+        names = {entry.get("name") for entry in answer if isinstance(entry, dict)}
+        unknown += [f"component {value}" for value in wanted["component"] if value not in names]
+    if wanted["label"]:
+        labels = set(_pages(client, f"{site}/rest/api/3/label", "labels"))
+        unknown += [f"label {value}" for value in wanted["label"] if value not in labels]
+    unmapped: list[str] = []
+    if mapped:
+        answer = client.get(f"{site}/rest/api/3/project/{project}/statuses")
+        if not isinstance(answer, list):
+            raise Failure("the project's statuses answer is not a list")
+        statuses: dict[str, str] = {}
+        for kind in answer:
+            for status in (kind.get("statuses") if isinstance(kind, dict) else None) or []:
+                category = status.get("statusCategory") if isinstance(status, dict) else None
+                if isinstance(status, dict) and isinstance(status.get("name"), str) and isinstance(category, dict):
+                    statuses.setdefault(status["name"], category.get("key"))
+        unknown += [f"status {name}" for name in mapped if name not in statuses]
+        unmapped = sorted(name for name, category in statuses.items()
+                          if category == "indeterminate" and name not in mapped)
+    unmarked = [item["subject"] for item in snapshot["items"] if item.get("unmarked")] if scopes else []
+    return {"check": "tracker-scope/1", "unknown": unknown, "unmapped": unmapped, "unmarked": unmarked}
+
+
+def _jira_state(key: str, fields: dict, canceled: set[str], mapped: dict[str, str] | None = None) -> tuple[str, str]:
+    """An issue's state, and its status's own name: a status --status-state maps by name, else one named as canceled,
+    else its status category."""
     status = fields.get("status")
     category = status.get("statusCategory") if isinstance(status, dict) else None
     category_key = category.get("key") if isinstance(category, dict) else None
     name = status.get("name") if isinstance(status, dict) else None
     if not isinstance(name, str) or not isinstance(category_key, str):
         raise Failure(f"{_shown(key)} has no status or status category")
+    if mapped and name in mapped:
+        return mapped[name], name
     if name in canceled:
         return "canceled", name
     if category_key in JIRA_STATES:
@@ -879,6 +1046,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--parent")
     parser.add_argument("--canceled-statuses")
     parser.add_argument("--blocks-link", default="Blocks")
+    parser.add_argument("--scope", action="append")
+    parser.add_argument("--status-state", action="append")
+    parser.add_argument("--check", action="store_true")
     parser.add_argument("--workspace")
     parser.add_argument("--repo")
     parser.add_argument("--binding")
@@ -920,15 +1090,18 @@ def run(argv: list[str], *, environ: dict, transport: Transport = urllib_transpo
         now = _moment(args.now, "--now") if args.now else datetime.datetime.now(datetime.timezone.utc)
         deadline = clock() + args.timeout_seconds
         args.host = args.host or HOSTS.get(args.kind)
+        for name in ("scope", "status_state", "check"):
+            if args.kind != "jira" and getattr(args, name):
+                raise Failure(f"usage: --{name.replace('_', '-')} is for --kind jira only")
         if args.kind == "jira":
-            document = jira_snapshot(args, environ, transport, deadline, clock, sleep)
+            document = jira_snapshot(args, environ, transport, deadline, clock, sleep, cwd)
         elif args.kind == "bitbucket":
             document = bitbucket_snapshot(args, environ, transport, deadline, clock, sleep, cwd)
         elif args.kind == "linear":
             document = linear_snapshot(args, environ, transport, deadline, clock, sleep)
         else:
             document = github_snapshot(args, environ, transport, deadline, clock, sleep, cwd)
-        snapshot = {"takenAt": now.strftime("%Y-%m-%dT%H:%M:%SZ"), **document}
+        snapshot = document if "check" in document else {"takenAt": now.strftime("%Y-%m-%dT%H:%M:%SZ"), **document}
         try:
             json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
         except UnicodeEncodeError:

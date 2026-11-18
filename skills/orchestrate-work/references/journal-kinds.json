@@ -1806,6 +1806,31 @@
       "tracker": null,
       "instruction": "None: the follow-up is its own ticket, and the decision that deferred its note posted with `decision.recorded`."
     },
+    "work.cleared": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Cleared from the record",
+      "data": {
+        "from": {
+          "type": "name"
+        },
+        "why": {
+          "type": "prose"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{subject} was cleared from the record",
+        "line": "{why}"
+      },
+      "explain": "The tracker sweep removed work it had added itself, because that work belongs to another delivery.",
+      "tracker": null,
+      "instruction": "None: the work belongs to another delivery, and its ticket is that delivery's to update."
+    },
     "snapshot.stale": {
       "altitude": "bookkeeping",
       "tone": "note",

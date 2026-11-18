@@ -3631,6 +3631,17 @@ def check_snapshot(snapshot: object, name: str, max_age: float, *, parent: str |
         if snapshot["source"] == "tracker":
             errors += [f"/items: {problem}" for problem in dependency_problems(
                 [(item["subject"], item.get("blockedBy", [])) for item in snapshot["items"]], parent)]
+        for member in ("outside", "statusStates"):
+            if member in snapshot and snapshot["source"] != "tracker":
+                errors.append(f"/{member}: only a tracker snapshot carries it")
+        errors += [f"/items/{index}/unmarked: only a tracker snapshot carries it"
+                   for index, item in enumerate(snapshot["items"]) if "unmarked" in item and snapshot["source"] != "tracker"]
+        outside = [item["subject"] for item in snapshot.get("outside", [])]
+        if len(outside) != len(set(outside)):
+            errors.append("/outside: each subject appears once")
+        both = sorted(set(outside) & set(subjects))
+        if both:
+            errors.append(f"/outside: {', '.join(both)} {'is' if len(both) == 1 else 'are'} in items too")
         if "parent" in snapshot and snapshot["source"] != "tracker":
             errors.append("/parent: only a tracker snapshot carries it")
         elif "parent" in snapshot and parent is not None and snapshot["parent"]["subject"] != parent:
@@ -3704,10 +3715,45 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
         """Where planned work stands, as a report names it."""
         return "in review" if entry["stage"] == "review" else entry["stage"]
 
+    # A scoped tracker snapshot lists another repository's children apart, as outside. Work this delivery holds as its
+    # own stays in scope whatever the tracker marks it with; only what the sweep itself added is cleared.
+    added_by = {entry["subject"] for entry in journal if entry["kind"] == "story.added"}
+    scoped = [snapshot for snapshot in snapshots if snapshot["source"] == "tracker" and "outside" in snapshot]
+    outside = {item["subject"]: item for snapshot in scoped for item in snapshot["outside"]}
+
+    def tracker_added(entry: dict) -> bool:
+        """Planned work the sweep added from the tracker: building with no lane, no plan order or files, no change
+        request and no run, and never added as a story of the delivery."""
+        return (entry["lane"] is None and entry["stage"] == "building" and entry.get("trackerStarted") is True
+                and not any(name in entry for name in ("after", "files", "changeRequest", "runId"))
+                and entry["subject"] not in added_by)
+
+    def own(subject: str) -> bool:
+        return queued(subject) is not None or (planned(subject) is not None and not tracker_added(planned(subject)))
+
+    for subject in outside:
+        if own(subject):
+            continue
+        why = "outside this delivery's scope"
+        if planned(subject) is not None:
+            lead["planned"] = [entry for entry in lead["planned"] if entry["subject"] != subject]
+            changes.append({"subject": subject, "change": f"{why}: cleared from the planned work", "recovery": False,
+                            "cleared": {"from": "planned", "why": why}})
+        if any(entry["id"] == subject and entry.get("reference") in (subject, None) for entry in lead["followups"]):
+            lead["followups"] = [entry for entry in lead["followups"]
+                                 if not (entry["id"] == subject and entry.get("reference") in (subject, None))]
+            changes.append({"subject": subject, "change": f"{why}: cleared from the follow-ups", "recovery": False,
+                            "cleared": {"from": "followups", "why": why}})
+
+    def mapped_back(snapshot: dict, item: dict) -> bool:
+        """The ticket's status is one the snapshot's maker was told reads as started: work sent back."""
+        return snapshot.get("statusStates", {}).get(item.get("status")) == "started"
+
     # The tracker first, whatever the order given: work it adds is then there
     # for the forge to link, so one pass reaches the fixed point.
     for snapshot in sorted(snapshots, key=lambda snapshot: snapshot["source"] != "tracker"):
-        for item in snapshot["items"]:
+        mine = [item for item in snapshot.get("outside", []) if own(item["subject"])]
+        for item in [*snapshot["items"], *mine]:
             subject, word = item["subject"], item["state"]
             title = item.get("title") or subject
             if snapshot["source"] == "tracker":
@@ -3724,6 +3770,9 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                         change(subject, "started in the tracker but not in the record: added as planned work, building")
                     elif word == "completed":
                         report(subject, "completed in the tracker but never recorded")
+                elif (word == "started" and queued(subject) and queued(subject)["stage"] == "merged"
+                      and mapped_back(snapshot, item)):
+                    report(subject, f"returned after merge ({item['status']}): assign a fix")
                 elif planned(subject) and planned(subject)["stage"] == "settled":
                     pass  # closed with no change needed: whatever the tracker says, the record holds it settled
                 elif word == "started" and not known:
@@ -3812,7 +3861,17 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
     if not lead["planned"] and "planned" not in state:
         del lead["planned"]
     changed = {key: value for key, value in lead.items() if value != state.get(key, [] if key == "planned" else None)}
+    if scoped:
+        # What the views draw as "Elsewhere": the outside children this delivery doesn't hold, as the tracker shows them.
+        kept = [{name: item[name] for name in ("subject", "title", "state", "status", "marks") if name in item}
+                for item in outside.values() if not own(item["subject"])]
+        kept.sort(key=lambda item: item["subject"])
+        if kept != state.get("outside", []):
+            changed["outside"] = kept if kept else None
     tickets = _ticket_changes(state.get("tickets", {}), listed, lead)
+    for entry in changes:
+        if "cleared" in entry and entry["subject"] in state.get("tickets", {}) and not own(entry["subject"]):
+            tickets[entry["subject"]] = None  # The views keep a ticket's words only for work the record holds.
     if tickets:
         changed["tickets"] = tickets
         moved = {entry["subject"] for entry in changes}
@@ -3905,6 +3964,9 @@ def reconcile(
                 continue
             raise
         break
+    for entry in changes:  # Each clearing once, after the write that made it; the next sweep finds nothing to clear.
+        if "cleared" in entry:
+            append_journal(directory, kind="work.cleared", subject=entry["subject"], data=entry.pop("cleared"))
     if recoveries:
         _recover(directory, recoveries, changes, reports)
     if not changes:
@@ -4720,7 +4782,7 @@ def next_for_lane(state: dict, lane: str, snapshot: dict | None, hints: dict | N
     if not any(entry["id"] == lane for entry in state["lanes"]):
         raise StateError("lane_unknown", f"there is no lane {lane}")
     declared = {} if hints is None else hints["items"]
-    tracker = {item["subject"]: item for item in (snapshot or {"items": []})["items"]}
+    tracker = {item["subject"]: item for item in [*(snapshot or {}).get("items", []), *(snapshot or {}).get("outside", [])]}
     # The plan's order and the files other lanes hold are the record's own waits, as every view shows them.
     derived: dict[str, list[dict]] = {}
     for wait in waits({"state": state}):

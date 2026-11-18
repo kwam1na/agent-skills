@@ -1166,6 +1166,66 @@
           }
         }
       },
+      "outside": {
+        "description": "The tracker's children of the parent that a scoped tracker snapshot puts outside this delivery: another repository's work, with its state, status and the values that place it elsewhere, for the views' \"Elsewhere\" section. Optional; reconcile keeps it from the last tracker snapshot that carries an outside list, and never adds these as planned work or follow-ups.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "subject",
+            "state"
+          ],
+          "properties": {
+            "subject": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "backlog",
+                "started",
+                "completed",
+                "canceled"
+              ]
+            },
+            "status": {
+              "type": "string",
+              "minLength": 1
+            },
+            "marks": {
+              "description": "The values of each scoped kind the item carries, by kind: its components, its labels, or its summary's own marker.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "component": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "label": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "prefix": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       "finish": {
         "type": "array",
         "items": {
@@ -3332,6 +3392,10 @@
               "type": "string",
               "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
               "description": "Forge merges only: verified source occurrence time, no later than takenAt. Omit when unknown."
+            },
+            "unmarked": {
+              "description": "Tracker snapshots only, optional: true when the snapshot is scoped and the item carries no value of any scoped kind, such as no component. It stays in scope, flagged, so a forgotten tag shows rather than vanishing.",
+              "const": true
             }
           }
         }
@@ -3356,6 +3420,78 @@
               "canceled"
             ]
           }
+        }
+      },
+      "outside": {
+        "description": "Tracker snapshots only, optional: the parent's children a scope puts outside this delivery, because each carries a value of a scoped kind and matches none. Present whenever the snapshot is scoped, empty when none is outside. reconcile never adds these as planned work or follow-ups, never reports on them, and clears a copy it added earlier.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "subject",
+            "state"
+          ],
+          "properties": {
+            "subject": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "backlog",
+                "started",
+                "completed",
+                "canceled"
+              ]
+            },
+            "status": {
+              "type": "string",
+              "minLength": 1
+            },
+            "marks": {
+              "description": "The values of each scoped kind the item carries, by kind: its components, its labels, or its summary's own marker.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "component": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "label": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "prefix": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "statusStates": {
+        "description": "Tracker snapshots only, optional: the states the snapshot's maker was told to read named statuses as, by status name, in place of their category. reconcile reports a merged story whose ticket moves to a status mapped to started.",
+        "type": "object",
+        "additionalProperties": {
+          "enum": [
+            "backlog",
+            "started",
+            "completed",
+            "canceled"
+          ]
         }
       }
     },
