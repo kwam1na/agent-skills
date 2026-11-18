@@ -1,0 +1,223 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3619",
+  "headline": "Keep lane ownership in step with the work",
+  "baseBranch": "integrate/ownership-follows-work",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-18-ownership-follows-work.md",
+  "laneBrief": "docs/plans/2026-11-18-ownership-follows-work.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-18-ownership-follows-work.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/orchestrate-work/scripts/region_ownership.py",
+        "skills/orchestrate-work/scripts/merge_queue.py",
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "skills/orchestrate-work/references/schemas.json",
+        "skills/orchestrate-work/references/journal-kinds.json",
+        "skills/orchestrate-work/references/orchestration-guide.md",
+        "skills/run-delivery/scripts/run_delivery.py",
+        "skills/run-delivery/SKILL.md",
+        "skills/run-delivery/templates/lane-brief.md",
+        "tests/test_region_claims.py",
+        "tests/test_region_grants.py",
+        "tests/test_journal_kinds.py",
+        "tests/test_journal_shape.py",
+        "tests/fixtures/journal-kinds/*"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/delivery-views/scripts/render.py",
+        "skills/delivery-views/assets/line-map.js",
+        "skills/delivery-views/assets/line-map.css",
+        "skills/delivery-views/SKILL.md",
+        "skills/run-delivery/references/config.md",
+        "tests/test_ownership_lock_race.py",
+        "tests/test_lane_changes.py",
+        "tests/delivery_views_page/*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3591": {
+      "title": "Make region spans follow the work: release on landing, carve in one step, and let a lane check its own claims",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3591-1",
+          "text": "c1: When a story lands, its spans are released, and its lane's other spans are re-based to the new base or named as needing a regrant. No claim is left that blocks a later grant on its file."
+        },
+        {
+          "id": "v26-3591-2",
+          "text": "c2: A carve either takes effect whole or changes nothing, including under a concurrent record write."
+        },
+        {
+          "id": "v26-3591-3",
+          "text": "c3: Granting a span that touches one of the same lane's spans on the same file leaves one span."
+        },
+        {
+          "id": "v26-3591-4",
+          "text": "c4: A lane can list, in one command, every line its diff changes outside its claims."
+        },
+        {
+          "id": "v26-3591-5",
+          "text": "c5: The lead can see whether the queue would refuse a candidate's ownership, and which claimed lines each lane's diff touches."
+        }
+      ]
+    },
+    "V26-3570": {
+      "title": "Make region grants show and resolve their lines, so a wrong span can't pass unnoticed",
+      "lane": "lane-1",
+      "after": [
+        "V26-3591"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3570-1",
+          "text": "c1: Every region grant prints the granted span's first and last lines at the base."
+        },
+        {
+          "id": "v26-3570-2",
+          "text": "c2: An anchor resolves to its enclosing block at the base, and an ambiguous or missing anchor is refused, naming the candidates."
+        },
+        {
+          "id": "v26-3570-3",
+          "text": "c3: A span that would cut a statement in two is refused, naming it."
+        },
+        {
+          "id": "v26-3570-4",
+          "text": "c4: An insertion at a span's edge is made legal by widening, and the widening is printed."
+        },
+        {
+          "id": "v26-3570-5",
+          "text": "c5: The lane brief asks lanes for anchors or quoted lines."
+        }
+      ]
+    },
+    "V26-3476": {
+      "title": "Prove ownership transfers wait for lead acceptance with a deterministic race fixture",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3476-1",
+          "text": "c1: The test exercises the normal lead acceptance and ownership commands with explicit process signals."
+        },
+        {
+          "id": "v26-3476-2",
+          "text": "c2: The production implementation passes."
+        },
+        {
+          "id": "v26-3476-3",
+          "text": "c3: Removing the ownership lock makes the fixture fail."
+        }
+      ]
+    },
+    "V26-3564": {
+      "title": "Say when a lane changes a file it doesn't hold, and show shared files when lanes split them",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3564-1",
+          "text": "c1: A pushed change to a file its lane doesn't hold appears in \"Needs you\" naming the lane and file, and clears when the change is gone or the file is granted."
+        },
+        {
+          "id": "v26-3564-2",
+          "text": "c2: A change to a regenerable shared file raises nothing."
+        },
+        {
+          "id": "v26-3564-3",
+          "text": "c3: With region claims in the record, the live page offers the files view, and its shelf, solid and hollow spines, shared splits and file reading match the record and the lanes' branches."
+        },
+        {
+          "id": "v26-3564-4",
+          "text": "c4: With no region claims, the page shows no files view."
+        },
+        {
+          "id": "v26-3564-5",
+          "text": "c5: A lane branch that can't be read leaves the view and the item saying so, rather than showing stale changes as current."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "All four stories land on integrate/ownership-follows-work through its merge queue",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide’s integration review says, and merged into main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at main’s head after the integration merge, inside tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-18"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The operator approves this plan before `lead-setup`.",
+      "state": "done",
+      "who": "Kwamina"
+    },
+    {
+      "id": "approval-2",
+      "text": "The operator grants lanes `push` and `draftPullRequests`, and the lead `readyPullRequests` (granted 2026-11-18).",
+      "state": "done",
+      "who": "Kwamina"
+    },
+    {
+      "id": "approval-3",
+      "text": "The operator approves merging `integrate/ownership-follows-work` into `main` after its review.",
+      "state": "waiting"
+    }
+  ],
+  "outOfScope": [
+    "A lane reading its grants from the record (V26-3571).",
+    "Changing how regions are checked at review preparation, acceptance or in the queue, beyond reporting every problem at once (Decision 6). An insertion at the end of a file still needs a whole-file claim.",
+    "A statement check for languages other than Python (Decision 11).",
+    "Refusing anything on a lane's pushed branch. V26-3564 shows; acceptance still decides.",
+    "Granting against each lane's own merge base. Decision 4's `--base` is the lead's common commit, as today.",
+    "`lead-assign`'s co-change warning missing files a story needed (V26-3553's gap log). It is not closed here.",
+    "A release tag."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}

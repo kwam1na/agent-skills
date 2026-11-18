@@ -2,7 +2,7 @@
   "schemaVersion": "orchestration-binding/1",
   "base": {
     "remote": "origin",
-    "ref": "main"
+    "ref": "integrate/ownership-follows-work"
   },
   "bases": [
     "main",
@@ -737,6 +737,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_lane_changes",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_lane_changes.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_lane_changes.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_lane_rows",
         "argv": [
           ".venv/bin/python",
@@ -1025,6 +1043,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_ownership_lock_race",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_ownership_lock_race.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_ownership_lock_race.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_product_descriptors",
         "argv": [
           ".venv/bin/python",
@@ -1182,6 +1218,42 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_receipt.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_region_claims",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_region_claims.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_region_claims.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_region_grants",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_region_grants.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_region_grants.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600

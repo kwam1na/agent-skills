@@ -42,9 +42,10 @@ Checked against `main` at `a904245` on 2026-11-18:
 
 - Both plan lenses align.
 - Each story's acceptance criteria hold, proven by the tests named under Scenarios.
-- All four stories land on `main` through the merge queue.
-- The full local suite passes on macOS with Python 3.11 at `main`'s head after the last landing, run with
-  `--workers 4 --budget tests/suite-budget.json`, inside the budget.
+- All four stories land on `integrate/ownership-follows-work` through its merge queue.
+- The integration base has been reviewed for `main`, as **Reviewing an integration base for the default branch** in
+  the orchestrate-work guide describes, and merged into `main`. The full local suite has passed on macOS with Python
+  3.11 at `main`'s head after that merge, run with `--workers 4 --budget tests/suite-budget.json`, inside the budget.
 - This delivery's own grants, hand-offs and queue run on the installed generation, so they can't show the new
   behaviour. The fixture tests are the proof.
 - Tagging a release is not this delivery's. Every change is additive, a minor version, released at the next batch
@@ -75,9 +76,10 @@ Checked against `main` at `a904245` on 2026-11-18:
    the same patch as the claims, so a restarted supervisor neither skips nor repeats one. `lead-init` writes the
    settled id as 0 for a new record, and so does a pass that finds no settled id and no `candidate.merged` in the
    journal. Only a record that already holds a `candidate.merged` and no settled id, one started by an earlier
-   release, is seeded by the first pass with the latest `candidate.merged` id, and no earlier merge is settled. The pass journals its `ownership.released` and `ownership.carried` entries after
-   that patch, so a supervisor stopped between the two loses the entries, never the change. The settle takes the
-   ownership lock, as `lead-own` and `lead-accept` do.
+   release, is seeded by the first pass with the latest `candidate.merged` id, and no earlier merge is settled.
+   The pass journals its `ownership.released` and `ownership.carried` entries after that patch, so a supervisor
+   stopped between the two loses the entries, never the change. The settle takes the ownership lock, as `lead-own`
+   and `lead-accept` do.
 3. **A claim that no longer maps doesn't block a grant on its file.** `lead-own --region` checks overlap against the
    claims that map at the current base. It grants past one that doesn't, and prints it as needing a regrant, rather
    than refusing. The state tool's same-base overlap check is unchanged.
@@ -165,13 +167,13 @@ Checked against `main` at `a904245` on 2026-11-18:
     current. With no region claims, the page shows no such view.
 18. **The catalog and profile sentences are the lead's.** Each story changes the one-line `degradedBehavior` of
     `catalog.json` and the one-line `description` of each `profiles/*.json`, so the lanes would conflict there. The
-    lead writes each story's sentence in one commit on `main`, pushed with `lead-push` right after the story lands.
-    `provenance.lock.json` stays regenerable: each lane runs the writer.
-19. **The lead enters the new test modules before lanes start.** `tests/test_own_deliveries.py` pins
-    `CATALOGUE_MODULES` against the test modules on disk both ways, and `.agents/orchestration.json`'s
-    `selection.catalogue` must match it. Before the first assignment, the lead commits the four new modules on `main`
-    as stubs, each with only its module docstring, and enters them in both lists in the same commit. Each lane then
-    owns its modules whole, and no lane touches either list.
+    lead writes each story's sentence in one commit on the integration base, pushed with `lead-push` right after the
+    story lands. `provenance.lock.json` stays regenerable: each lane runs the writer.
+19. **The lead enters the new test modules before lanes start.** `tests/test_own_deliveries.py` pins `CATALOGUE_MODULES`
+    against the test modules on disk both ways, and `.agents/orchestration.json`'s `selection.catalogue` must match it.
+    Before the first assignment, the lead commits the four new modules on the integration base as stubs, each with only
+    its module docstring, and enters them in both lists in the same commit. Each lane then owns its modules whole, and
+    no lane touches either list.
 
 ## Out of scope
 
@@ -188,6 +190,7 @@ Checked against `main` at `a904245` on 2026-11-18:
 
 - The operator approves this plan before `lead-setup`.
 - The operator grants lanes `push` and `draftPullRequests`, and the lead `readyPullRequests` (granted 2026-11-18).
+- The operator approves merging `integrate/ownership-follows-work` into `main` after its review.
 
 ## Execution posture and sensors
 
@@ -368,8 +371,8 @@ Lane 1, tier 1, not blocked. Test-first. Files: `skills/orchestrate-work/scripts
 
 Implement Decisions 1 to 8. Add `ownership.released`, `ownership.carried` and `ownership.carved` to the kind registry
 with their vectors, their rows in the orchestration guide's tracker table, and the new journal calls in
-`tests/test_journal_shape.py`'s inventory. Add `claims-check`, `lead-claims` and the carve to `SKILL.md`'s command table and its Lane
-ownership section.
+`tests/test_journal_shape.py`'s inventory. Add `claims-check`, `lead-claims` and the carve to `SKILL.md`'s
+command table and its Lane ownership section.
 
 ### V26-3570. Make region grants show and resolve their lines, so a wrong span can't pass unnoticed
 
