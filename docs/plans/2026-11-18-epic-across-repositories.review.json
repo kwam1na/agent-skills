@@ -1,0 +1,127 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-18-epic-across-repositories.md",
+  "planSha256": "a68f4909d109ff74739e73b27560081963cdad9b0a590dcdf3bb8dca222ddac7",
+  "planCommit": "9ffe341315c76a5994ddb5db2d56c1278d1ce463",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "f8c2e920e9a535afe22be132a7f11f52c71cf18d",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-18T18:56:57.467307Z",
+      "finishedAt": "2026-11-18T19:01:28.203173Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "9d99ea50b6214edfb4d0f5382475cffc69548477",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-18T19:03:26.059821Z",
+      "finishedAt": "2026-11-18T19:05:04.728937Z",
+      "open": [
+        "adversarial-testing-r2-1",
+        "adversarial-testing-r2-2",
+        "adversarial-testing-r2-3"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "c30c10af1b86ea04a2c49e91362981b4a36e802d",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-18T19:05:36.605177Z",
+      "finishedAt": "2026-11-18T19:07:48.912826Z",
+      "open": [
+        "adversarial-testing-r3-1"
+      ]
+    },
+    {
+      "round": 4,
+      "candidate": "9ffe341315c76a5994ddb5db2d56c1278d1ce463",
+      "outcome": "aligned",
+      "startedAt": "2026-11-18T19:08:10.232801Z",
+      "finishedAt": "2026-11-18T19:08:48.772959Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "epic-across-repositories.plan",
+        "candidateRef": "9ffe341315c76a5994ddb5db2d56c1278d1ce463",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree 0701c4830b9148159386e852e7258d5da54d2f42 at candidateRef 9ffe341315c76a5994ddb5db2d56c1278d1ce463. The start check passed: `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty. The end check passed with the same tree and an empty porcelain. I made no probes or mutants, so there was nothing to revert.",
+          "This is a verification round. The delta is `git diff c30c10af1b86ea04a2c49e91362981b4a36e802d..9ffe341315c76a5994ddb5db2d56c1278d1ce463` and it touches only docs/plans/2026-11-18-epic-across-repositories.md. It changes the closing paragraph of Decision 3, the first bullet of Decision 8, and scenarios 13 and 22. No finding from this lens was open going into the round: r1-1 to r1-4 were closed in round 2, and rounds 2 and 3 raised none. So resolvedFindings is empty.",
+          "Round 3's first P3 note is adopted. Decision 3 now says a refused sibling snapshot is handled per entry, unlike the tracker or forge refusal, which raises and writes nothing. It also says tracker and forge snapshots in the same call still apply. That removes the conflict between Decision 3 and Decision 6's `lastOutcome: stale` write. It also keeps a stale sibling snapshot from stopping tracker and forge being applied in refresh (delivery_state.py:4859-4900).",
+          "Round 2's P3 note about Decision 12 is now pinned by a test. Scenario 22 checks that with one same-epic sibling `read` and one `other-epic` sibling, the key raises the `needsSomeone: true` wait. That matches the 'same-epic' wording of Decision 12.",
+          "Decision 8's first bullet and scenario 13 now show each group's last-read time whatever its `lastOutcome`. That matches Decision 6's rule that a stopped `serve` stays visible through how old the last read is.",
+          "Reviewing the delta found no new P0 or P1. Round 3's second P3 note is not taken up, and it stays a note: Decision 10 still counts a sibling's last kept read even after its `lastOutcome` turns `other-epic`. That needs a sibling's delivery to be re-parented mid-delivery, and those stories still draw in that sibling's group, so no concrete wrong outcome follows.",
+          "Declined, as in earlier rounds: a possible failure in waited_on or a view lookup for a wait whose `on` is outside the record. I could not state a concrete crash path from the plan text.",
+          "Scope: the plan only. The brief scoped no sensors and no test files, so I ran no tests and did no mutation or fault injection.",
+          "Model class: claude-opus-5-5 (Opus 5.5), running as a native subagent. This host exposes no progress or permission signals, which is a recorded limitation. Realization basis: host-convention.",
+          "Approval conditions: this round raises no findings, so there are no approval conditions to state."
+        ]
+      },
+      "resultSha256": "1c683b1ebe8680da73762dc371b7ac8f50a41ae67f0a67fc5871a6f2a0ff79bd"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "epic-across-repositories.plan",
+        "candidateRef": "9ffe341315c76a5994ddb5db2d56c1278d1ce463",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r3-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. Scenario 13, which is checked on the line map, the Markdown view and the built-in page, now asserts that the read group shows the time of its last read. Decision 8's group bullet now matches Decision 6: the time of the last read shows whatever the lastOutcome. The mutation that shows readAt only for groups whose lastOutcome isn't read now fails scenario 13."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA 0701c4830b9148159386e852e7258d5da54d2f42. Start check: git rev-parse HEAD^{tree} returned 0701c4830b9148159386e852e7258d5da54d2f42 and git status --porcelain was empty. End check: the same tree SHA, and git status --porcelain was empty.",
+          "Delta derived with git diff c30c10af1b86ea04a2c49e91362981b4a36e802d..9ffe341315c76a5994ddb5db2d56c1278d1ce463. It changes only docs/plans/2026-11-18-epic-across-repositories.md: Decision 3's freshness-gate paragraph, Decision 8's group bullet, scenario 13 and scenario 22.",
+          "Carried finding re-checked: adversarial-testing-r3-1 was adopted as its approval condition states and is fixed.",
+          "Delta reviewed: scenario 22's added case (one same-epic sibling read, one other-epic sibling, which raises the needsSomeone: true wait) closes the round 3 P2 note on Decision 12's same-epic qualifier.",
+          "P2 note (not filed): Decision 3 now says that when a sibling snapshot is refused for age, tracker and forge snapshots in the same reconcile call still apply, but no scenario passes them together. Mutation: reconcile writes lastOutcome stale, then raises for the whole call as it does for a stale tracker snapshot, dropping a fresh forge snapshot passed alongside. Scenario 9(b) stays green. The next refresh recovers, and this touches no central claim, so it is recorded here rather than filed.",
+          "Model class: Claude Opus (claude-opus-5-5), running as a native subagent. The host exposes no progress or permission signals to this lens, so none were emitted.",
+          "Realization basis: host-convention.",
+          "Scope: plan review only. No sensors or test files were run, as the brief names none, and no mutants were planted. Each mutation is argued against the plan's own scenarios, within the delta and the lines it depends on.",
+          "Approval conditions: no findings raised this round, so none apply."
+        ]
+      },
+      "resultSha256": "ecbab007fcad4dc0e4913101caf3d8c78cf54c410c7632d5aed5bfcbfb06c7fe"
+    }
+  ],
+  "residualRisks": [
+    "4 review rounds; findings open after each round: 8, 3, 1, 0."
+  ]
+}
