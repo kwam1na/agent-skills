@@ -7271,6 +7271,142 @@ class ReusedCheckTests(MergeQueueTestCase):
         # Its reasons say why it was selected, not how it runs.
         self.assertEqual(queue.check_definition({**full, "reasons": ["other"]}, binding), digest)
 
+class SlotDoingTests(MergeQueueTestCase):
+    """A queue command's merge slot files say what it holds or waits for the slot to do: a candidate's check, then its
+    merge, or a release."""
+
+    run_quietly = True
+
+    def holder(self, adopter: Adopter) -> dict | None:
+        return state_tool.slot_holder(state_tool.merge_slot_path(adopter.operator, "main"))
+
+    def test_a_run_holds_the_slot_for_its_candidates_check_then_says_it_is_merging_it(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        at_merge: list = []
+        merging: list = []
+        original = queue.delivery_state.slot_doing
+
+        def noted(lock: Path, doing: dict) -> None:
+            original(lock, doing)
+            merging.append(self.holder(adopter))
+
+        with mock.patch.object(queue.delivery_state, "slot_doing", noted):
+            results = self.run_queue(adopter, "feature", seams={"before_merge": lambda runner, subject:
+                                                                 at_merge.append(self.holder(adopter))})
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(at_merge[0]["doing"], {"what": "check", "subject": "feature"})
+        self.assertEqual([said["doing"] for said in merging], [{"what": "merge", "subject": "feature"}])
+        self.assertEqual(merging[0]["pid"], os.getpid())
+        self.assertIsNone(self.holder(adopter))
+
+    def test_a_release_holds_the_slot_for_a_release(self) -> None:
+        adopter = self.adopter()
+        head = adopter.lane_commit("feature", {"src/app.txt": "elsewhere\n"})
+        run("fetch", "--quiet", "origin", cwd=adopter.operator)
+        held: list = []
+        original = queue.delivery_state.merge_slot
+
+        def noted(*args, **kwargs):
+            held.append(kwargs.get("doing"))
+            return original(*args, **kwargs)
+
+        with mock.patch.object(queue.delivery_state, "merge_slot", noted):
+            document = adopter.runner().run_command("release", [head], "operator")[0].document()
+        self.assertEqual(document["stop"]["reason"], "ref_not_on_base")
+        self.assertEqual(held, [{"what": "release"}])
+
+    def test_a_queue_waiting_for_a_held_slot_says_in_its_waiter_file_which_check_it_waits_to_run(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        ready, release = self.directory / "held", self.directory / "release"
+        holder = subprocess.Popen([PY, "-B", "-c", HOLD_SLOT, str(SCRIPTS), str(adopter.operator), "main", "Delivery C",
+                                   str(ready), str(release)])
+        self.addCleanup(lambda: (holder.poll() is None and holder.kill(), holder.wait(30)))
+        deadline = time.monotonic() + 30
+        while not ready.exists():
+            self.assertIsNone(holder.poll())
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.02)
+        lock = state_tool.merge_slot_path(adopter.operator, "main")
+        results: list = []
+        turn = threading.Thread(target=lambda: results.extend(self.run_queue(adopter, "feature", slot_wait=30)))
+        turn.start()
+        try:
+            while not state_tool.slot_parties(lock)["waiters"] and time.monotonic() < deadline:
+                time.sleep(0.02)
+            parties = state_tool.slot_parties(lock)
+            self.assertEqual(parties["holder"]["delivery"], "Delivery C")
+            self.assertNotIn("doing", parties["holder"])
+            [waiter] = parties["waiters"]
+            self.assertEqual((waiter["pid"], waiter["doing"]), (os.getpid(), {"what": "check", "subject": "feature"}))
+        finally:
+            release.write_text("")
+            turn.join(120)
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(state_tool.slot_parties(lock), {"holder": None, "waiters": []})
+
+    def test_each_queue_command_says_what_it_holds_the_slot_for(self) -> None:
+        self.assertEqual({command: queue.slot_doing(command, ["a", "b"]) for command in ("run", "batch", "check", "merge",
+                                                                                         "release", "evidence")},
+                         {"run": {"what": "check", "subject": "a"}, "batch": {"what": "check", "subject": "a"},
+                          "check": {"what": "check", "subject": "a"}, "merge": {"what": "merge", "subject": "a"},
+                          "release": {"what": "release"}, "evidence": None})
+        self.assertIsNone(queue.slot_doing("run", []))
+
+    def test_a_holder_file_whose_process_is_gone_holds_nothing_and_a_waiter_is_told_once(self) -> None:
+        adopter = self.adopter()
+        lock = state_tool.merge_slot_path(adopter.operator, "main")
+        gone = subprocess.Popen([PY, "-c", "pass"])
+        gone.wait()
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        (lock.parent / "main.holder").write_text(json.dumps({"delivery": "Delivery C", "pid": gone.pid, "since": "x"}))
+        self.assertEqual(state_tool.slot_parties(lock), {"holder": None, "waiters": []})
+        ready, release = self.directory / "held", self.directory / "release"
+        holder = subprocess.Popen([PY, "-B", "-c", HOLD_SLOT, str(SCRIPTS), str(adopter.operator), "main", "Delivery C",
+                                   str(ready), str(release)])
+        self.addCleanup(lambda: (holder.poll() is None and holder.kill(), holder.wait(30)))
+        deadline = time.monotonic() + 30
+        while not ready.exists():
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.02)
+        told: list = []
+        # Three tries within the wait, then past it: the command is told once, its waiter file already written.
+        ticks = iter([0, 0, 0, 0])
+        with self.assertRaises(state_tool.StateError) as raised:
+            with state_tool.merge_slot(adopter.operator, "main", delivery="Fixture delivery", timeout=1,
+                                       on_wait=lambda taken: told.append(state_tool.slot_parties(lock)["waiters"]),
+                                       sleep=lambda seconds: None, clock=lambda: next(ticks, 5)):
+                pass
+        self.assertEqual(raised.exception.code, "slot_held")
+        self.assertEqual(len(told), 1)
+        self.assertEqual([waiter["pid"] for waiter in told[0]], [os.getpid()])
+        # Taking the slot once the holder lets go tells it once more, holding now and no longer waiting.
+        told.clear()
+        ticks = iter([0, 0])
+
+        def let_go(seconds: float) -> None:
+            release.write_text("")
+            holder.wait(30)
+
+        with state_tool.merge_slot(adopter.operator, "main", delivery="Fixture delivery", timeout=1, sleep=let_go,
+                                   clock=lambda: next(ticks, 0), on_wait=lambda taken: told.append((taken, state_tool.slot_parties(lock)))):
+            pass
+        self.assertEqual([(taken, (said["holder"] or {}).get("pid")) for taken, said in told],
+                         [(False, holder.pid), (True, os.getpid())])
+        self.assertEqual(told[1][1]["waiters"], [])
+
+    def test_a_doing_outside_the_six_is_refused_before_the_slot_is_taken(self) -> None:
+        adopter = self.adopter()
+        lock = state_tool.merge_slot_path(adopter.operator, "main")
+        for doing in ({"what": "deploy"}, {"what": "check", "subject": 7}):
+            with self.subTest(doing=doing):
+                with self.assertRaises(state_tool.StateError) as raised:
+                    with state_tool.merge_slot(adopter.operator, "main", delivery="Delivery C", timeout=0, doing=doing):
+                        pass
+                self.assertEqual(raised.exception.code, "slot_doing_invalid")
+                self.assertIsNone(state_tool.slot_holder(lock))
+
 
 if __name__ == "__main__":
     unittest.main()

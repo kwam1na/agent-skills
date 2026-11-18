@@ -7316,7 +7316,9 @@ def lead_sync(args) -> None:
     try:
         # The base's merge slot first, which every delivery on this machine shares, then this delivery's queue lock.
         with delivery_state.file_lock(supervisor_lock_path(c)), \
-                delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery, timeout=args.wait_seconds), \
+                delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery, timeout=args.wait_seconds,
+                                          doing={"what": "sync"},
+                                          on_wait=lambda taken: say_peer_waits(c, 0 if taken else args.wait_seconds)), \
                 delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
             published = remote_head(c.base_branch)
             if published not in (intent["oldHead"], intent.get("preparedHead")):
@@ -7426,7 +7428,10 @@ def lead_upgrade_writer(args) -> None:
         # slot, as the queue does, within the binding's check timeout, around the transition's queue lock.
         with delivery_state.file_lock(supervisor_lock_path(c)), \
                 delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery,
-                                          timeout=float(c.binding.get("checkTimeoutSeconds", 0))):
+                                          timeout=float(c.binding.get("checkTimeoutSeconds", 0)),
+                                          doing={"what": "upgrade"},
+                                          on_wait=lambda taken: say_peer_waits(
+                                              c, 0 if taken else float(c.binding.get("checkTimeoutSeconds", 0)))):
             result = state_tool("writer-upgrade", "--writer", "lead", "--expected", args.expected,
                                 "--reason", args.reason)
             pinned = json.loads(result.stdout)["state"]["meta"]["writerGeneration"]
@@ -7462,7 +7467,8 @@ def lead_push(args) -> None:
 
     print(f"Waiting for the merge queue's lock to publish {c.base_branch}.", flush=True)
     try:
-        with delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery, timeout=args.wait_seconds), \
+        with delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery, timeout=args.wait_seconds,
+                                       doing={"what": "push"}), \
                 delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
             git("fetch", "-q", c.remote, c.base_branch)
             current = remote_head(c.base_branch)
@@ -10142,7 +10148,7 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
             added.append({"holding": False, "source": f"{on}'s waits", "clears": f"{on} put back, landing or settling",
                           "text": delivery_state.wait_said(table, "needsYou", "stopped", {"subject": on}) + " " + count,
                           "kind": "stopped", "who": "lead", "subject": on, "waiting": len(waiting), "fields": {"detail": ""}})
-    for free in delivery_state.free_to_start(doc, found, words=table):
+    for free in delivery_state.free_to_start(doc, [*found, *peer_waits_said(c)], words=table):
         # A story free to start is in "Needs you" itself, so what waits on it is counted on its item.
         waiting = list(dict.fromkeys(wait["subject"] for wait in found
                                      if wait["on"] == free["subject"] and (wait["subject"] not in lanes or wait["cause"] == "lane")))
@@ -10182,6 +10188,63 @@ def write_needs(c, items: list[dict] | None, number: int, started: float) -> Non
             os.replace(staging, path)
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+PEER_WAITS_FILE = "peer-waits.json"
+
+
+def peer_waits_said(c) -> list[dict]:
+    """This delivery's waits on its peers as the views say them: the last write's, while it is fresh. A pass writes
+    them before it derives "Needs you", so a story the views say waits on another delivery is never free to start. A
+    context with no record folder has none."""
+    if getattr(c, "state", None) is None:
+        return []
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import render_state
+    said = render_state.fresh_peer_waits(c.state)
+    return said["waits"] if said else []
+
+
+def write_peer_waits(c, lasting: float = 0) -> str:
+    """Replace the record's waits on the other deliveries on its base, and theirs on it, which renderers add to the
+    record's own while the file is fresh: from the registry, each peer's claims and planned files, and the merge
+    slot's holder and waiter files, as `delivery_state.peer_waits` derives them. Stale, like "Needs you", once one
+    pass is overdue, or ``lasting`` seconds on when that is later."""
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+    peers = [{"key": peer["key"], "state": json_object(Path(peer["state"]) / "state.json")}
+             for peer in peer_deliveries(c) if peer["status"] != "unreadable"]
+    try:
+        slot = delivery_state.slot_parties(delivery_state.merge_slot_path(c.root, c.base_branch))
+    except delivery_state.StateError:
+        slot = {"holder": None, "waiters": []}
+    document = load_state()
+    if not isinstance(document.get("state"), dict):
+        return "skipped: the record has no state to derive from"
+    found = delivery_state.peer_waits(document, c.delivery, peers, slot)
+    at = datetime.datetime.now(datetime.timezone.utc)
+    interval = supervisor_pass_seconds(c)
+    written = {"spec": "delivery-peer-waits/1", "at": at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "staleAfter": (at + datetime.timedelta(seconds=max(2 * interval, lasting))).strftime(
+                   "%Y-%m-%dT%H:%M:%SZ"), **found}
+    path = c.state / PEER_WAITS_FILE
+    staging = path.with_name(f".{PEER_WAITS_FILE}.{os.getpid()}")
+    staging.write_text(json.dumps(written, indent=2) + "\n")
+    os.replace(staging, path)
+    return f"{len(found['waits'])} wait(s) on other deliveries, {len(found['waitedOn'])} on this one"
+
+
+def say_peer_waits(c, lasting: float) -> None:
+    """Write this delivery's waits on its peers for a lead command that parks the supervisor and then waits for the
+    merge slot: no pass runs while it waits, so the command says its own wait as it starts, fresh for as long as it may
+    wait, and again once it takes the slot, fresh then only until a pass is overdue. A write that fails stops
+    nothing."""
+    with contextlib.suppress(Stop, ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError):
+        write_peer_waits(c, lasting)
 
 
 def removed_subjects(c) -> set[str]:
@@ -11007,7 +11070,6 @@ class Supervisor:
         self.held_lines: list[str] | None = []
         # The handlers its own signal handler stands in front of.
         self.before_signals: dict[int, object] = {}
-        # The signal it took, so a stop whose exception Python lost is still honoured: see honour_signal.
         self.signalled: int | None = None
         self.restarts: dict[str, list[float]] = {}
         self.address: str | None = None
@@ -11200,8 +11262,8 @@ class Supervisor:
         os.kill(os.getpid(), number)
 
     def honour_signal(self) -> None:
-        """Do again what a signal it took did: the exception its handler raised can be lost, as when the handler runs
-        inside a finalizer or a load that drops it, and the supervisor would run on past its stop."""
+        """A signal's raise can be lost where Python cannot raise, as while it compiles a module a pass imports:
+        CPython before 3.14 drops it there. The recorded signal is honoured at the pass's next step or wait."""
         if self.signalled is not None:
             self.on_signal(self.signalled, None)
 
@@ -11247,7 +11309,8 @@ class Supervisor:
                  ("lenses", lambda: journal_lens_returns(c)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
-                 ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
+                 ("peerWaits", lambda: write_peer_waits(c)), ("publish", lambda: render_views(c, only="publishers")),
+                 ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:
             self.honour_signal()

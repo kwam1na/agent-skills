@@ -750,8 +750,8 @@ class TableTests(unittest.TestCase):
         self.assertEqual(table["schemaVersion"], "wait-words/1")
         for group in ("stages", "waits", "lanes", "holding", "needsYou", "listening"):
             self.assertIn("templates", table[group])
-        self.assertEqual(set(table["waits"]["templates"]), {"order", "files", "review", "held"})
-        self.assertEqual(set(table["lanes"]["templates"]), {"order", "files", "held", "waiting"})
+        self.assertEqual(set(table["waits"]["templates"]), {"order", "files", "claim", "slot", "review", "held"})
+        self.assertEqual(set(table["lanes"]["templates"]), {"order", "files", "claim", "held", "waiting"})
         self.assertEqual(set(table["needsYou"]["templates"]), {"count", "free", "stopped", "headline", "why", "clears", "who",
                                                                "whom", "part", "summary", "heading", "holding", "age",
                                                                "leftOpen"})

@@ -378,6 +378,8 @@ def render_markdown(document: dict) -> str:
         f"# {_markdown_text(meta['headline'])}",
         "",
         *_status_lines(document.get("status")),
+        *[f"- {_markdown_text(text)}" for text in [*waiting.get("lead", []), *holding.get("lead", [])]],
+        *([""] if waiting.get("lead") or holding.get("lead") else []),
         f"Updated {_markdown_text(meta['updatedAt'])} · state version {_markdown_text(state['version'])}",
         f"Base head {_markdown_text(meta['baseHead'])} · released head {_markdown_text(meta['releasedHead'])}",
         "",
@@ -431,7 +433,8 @@ def render_markdown(document: dict) -> str:
             rows.append(f"  - {_markdown_text(_estimate_text(estimates[item['subject']]))}")
         rows.extend(f"  - {_markdown_text(text)}" for text in _selection_texts(item))
         rows.extend(f"  - {_markdown_text(_check_text(check))}" for check in item["checks"])
-        rows.extend(f"  - {_markdown_text(text)}" for text in holding.get(item["subject"], []))
+        rows.extend(f"  - {_markdown_text(text)}" for text in [*waiting.get(item["subject"], []),
+                                                               *holding.get(item["subject"], [])])
     lines += _markdown_section("Queue", rows, "The queue is empty.")
 
     rows = []
@@ -542,6 +545,43 @@ def _waits_by(document: dict, name: str) -> dict[str, list[str]]:
     return said
 
 
+# What this delivery waits on in the other deliveries on its base, and theirs on it: written beside the record by each
+# supervisor pass, and added to the record's own waits only while it is fresh.
+PEER_WAITS_FILE = "peer-waits.json"
+PEER_WAITS_LIMIT_BYTES = 256 * 1024
+
+
+def fresh_peer_waits(directory: Path, *, clock: object = None) -> dict | None:
+    """``peer-waits.json``'s waits and waitedOn while the file is fresh, or None for no file, a stale one or one that
+    can't be read."""
+    path = directory / PEER_WAITS_FILE
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > PEER_WAITS_LIMIT_BYTES:
+            return None
+        written = json.loads(path.read_text(encoding="utf-8"))
+        stale = datetime.datetime.strptime(written["staleAfter"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=datetime.timezone.utc)
+        moment = clock() if callable(clock) else datetime.datetime.now(datetime.timezone.utc)
+        if written.get("spec") != "delivery-peer-waits/1" or stale <= moment:
+            return None
+        return {name: [wait for wait in written.get(name) or [] if isinstance(wait, dict)
+                       and isinstance(wait.get("subject"), str) and isinstance(wait.get("words"), str)]
+                for name in ("waits", "waitedOn")}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def with_peer_waits(document: dict, directory: Path, *, clock: object = None) -> dict:
+    """The record with the waits on other deliveries ``peer-waits.json`` holds added to its own, while the file is
+    fresh. With no file, a stale one or one that can't be read, it is the record as it was: it says nothing about other
+    deliveries."""
+    said = fresh_peer_waits(directory, clock=clock)
+    if said is None:
+        return document
+    added = {name: [*(document.get(name) or []), *said[name]] for name in said if said[name]}
+    return {**document, **added}
+
+
 def with_story(shown: dict, directory: Path) -> dict:
     """The record with its story, as every view and the live stream carry it. A story that cannot be told is left out."""
     plan = None
@@ -550,7 +590,7 @@ def with_story(shown: dict, directory: Path) -> dict:
         plan = read if isinstance(read, dict) else None
     except (OSError, ValueError):
         pass
-    shown = with_waits(shown)
+    shown = with_peer_waits(with_waits(shown), directory)
     try:
         return {**shown, "story": narrator.narrate(shown["journal"], state=shown["state"], plan=plan)}
     except (ValueError, KeyError, TypeError):
@@ -802,6 +842,12 @@ _PAGE_PROGRAM = """
       parts.push(el("p", "Status: " + doc.status.text +
         (doc.status.source === "override" ? " (set by the lead, until " + show(doc.status.expiresAt) + ")" : ""), "status"));
     }
+    /* What the lead waits on in another delivery, and what waits on the lead: the state tool's sentences. */
+    ["waits", "waitedOn"].forEach(function (name) {
+      (isArray(doc[name]) ? doc[name] : []).forEach(function (wait) {
+        if (isObject(wait) && wait.subject === "lead" && typeof wait.words === "string") { parts.push(el("p", wait.words, "wait")); }
+      });
+    });
 
     parts.push(el("h2", "Checking"));
     var now = meta.checking.now;
@@ -858,7 +904,7 @@ _PAGE_PROGRAM = """
       var estimate = Object.prototype.hasOwnProperty.call(estimates, item.subject) ? estimates[item.subject] : null;
       if (isObject(estimate)) { entry.appendChild(el("div", estimateText(estimate), "detail")); }
       selectionTexts(item).forEach(function (text) { entry.appendChild(el("div", text, "detail")); });
-      withWaits(entry, item.subject, ["waitedOn"]);
+      withWaits(entry, item.subject, ["waits", "waitedOn"]);
       item.checks.forEach(function (check) {
         if ((isArray(check.failures) && check.failures.length) || typeof check.log === "string" ||
             typeof check.reusedFrom === "string" || Object.prototype.hasOwnProperty.call(check, "node")) {
@@ -1759,7 +1805,10 @@ class LiveView:
 
     def watch_key(self) -> tuple:
         keys = []
-        for name in (CHANGES_FILE, STATE_FILE, JOURNAL_FILE, PLAN_FILE):
+        for name in (CHANGES_FILE, STATE_FILE, JOURNAL_FILE, PEER_WAITS_FILE, PLAN_FILE):
+            if name == PLAN_FILE:
+                # The waits on other deliveries go when their file goes stale, though nothing writes it.
+                keys.append(fresh_peer_waits(self.directory) is not None)
             try:
                 stat = (self.directory / name).stat()
                 keys.append((stat.st_size, stat.st_mtime_ns))

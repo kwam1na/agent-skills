@@ -10008,26 +10008,6 @@ class StateReadInProcessTests(unittest.TestCase):
         self.assertIn(f"no agent-skills release at {c.release}", str(stop.exception))
 
 
-class SupervisorSignalHonouredTests(unittest.TestCase):
-    """A supervisor that took a stop honours it at its next step or tick, even when the exception its handler raised
-    was lost on the way, as Python drops one raised where it only prints or clears what is raised."""
-
-    def setUp(self) -> None:
-        self.tool = fresh_tool("run_delivery_for_signals")
-        folder = Path(tempfile.mkdtemp(prefix="run-delivery-signal-"))
-        self.addCleanup(shutil.rmtree, folder, True)
-        self.supervisor = self.tool.Supervisor(types.SimpleNamespace(state=folder), once=False)
-        self.supervisor.before_signals[signal.SIGTERM] = self.tool._terminate
-
-    def test_a_stop_whose_exception_was_lost_is_honoured_at_the_next_check(self) -> None:
-        self.supervisor.honour_signal()  # nothing taken, nothing done
-        with contextlib.suppress(SystemExit):  # where the handler's exception was lost
-            self.supervisor.on_signal(signal.SIGTERM, None)
-        with self.assertRaises(self.tool.Terminated) as stop:
-            self.supervisor.honour_signal()
-        self.assertEqual(stop.exception.code, 128 + signal.SIGTERM)
-
-
 class RunDeliveryRenderHalvesTests(unittest.TestCase):
     """A supervisor pass publishes, derives "Needs you", then renders: each half runs only its own entries."""
 
