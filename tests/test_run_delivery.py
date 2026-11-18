@@ -2137,7 +2137,14 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         flow("lead-push")
         owned_base = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
         sh(*authorize(owned_base), cwd=wt)
-        refuse("changes lane-owned file src/one-unrelated.txt")
+        # Who owns what the base touched doesn't matter: the story's own change reads the same.
+        sh("git", "push", "-q", "--force", "origin", "HEAD:feature/FX-2", cwd=wt)
+        code, out = fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertNotIn("review the new head", out)
+        self.assertIn("gates ran at", out)
+        sh("git", "reset", "-q", "--hard", reviewed, cwd=wt)
+        sh("git", "push", "-q", "--force", "origin", "HEAD:feature/FX-2", cwd=wt)
 
         sh("git", "revert", "--no-edit", owned_base, cwd=m)
         (m / file).write_text("upstream\n" + "".join(lines[:14] + ["owned upstream edit\n"] + lines[15:]))
@@ -2166,11 +2173,16 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertIn("gates ran at", out)
         flow("gate", "FX-2", cwd=wt)
         flow("handoff", "FX-2", "--pr", url, cwd=wt)
-        flow("lead-own", "--grant", "src/app.txt", "--lane", "lane-1")
+        # lead-accept checks the carry again: a region claim granted after hand-off, at the current base, can't map
+        # across the merges from the reviewed head's base, so the carry is refused there.
+        claim = ["src/app.txt", "--lane", "lane-1", "--base", second, "--start", 1, "--end", 2]
+        flow("lead-own", "--region", *claim)
         code, out = fx.flow("lead-accept", "FX-2", cwd=m)
         self.assertEqual(code, 1, out)
-        self.assertIn("review carry refused: the base merge changes lane-owned file src/app.txt", out)
+        self.assertIn("review carry refused: src/app.txt [1, 2)", out)
         self.assertTrue(self.shown(fx.tmp / "record")["state"]["queue"][0]["pending"])
+        flow("lead-own", "--revoke-region", *claim)
+        flow("lead-own", "--grant", "src/app.txt", "--lane", "lane-1")
         flow("lead-own", "--revoke", "src/app.txt", "--lane", "lane-1")
         owned = [(e["kind"], e["lane"], e["data"], e.get("because"), e.get("answers")) for e in self.shown(record)["journal"]
                  if e["kind"] in ("ownership.granted", "ownership.revoked") and "span" not in e["data"]]
@@ -2318,6 +2330,190 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             hand = next(e for e in self.shown(fx.tmp / "record")["journal"] if e["kind"] == "candidate.handed")
             self.assertEqual((hand["data"]["carry"]["from"], hand["data"]["carry"]["to"],
                               hand["data"]["carry"]["baseCommits"]), (reviewed, head, [upstream, second]))
+
+    def test_a_base_merge_carries_the_review_when_the_storys_own_change_reads_the_same(self) -> None:
+        """The carry compares the story's own change before and after each base merge, both ways, with a separator
+        an append adds to the line before it read as one marker. Who owns what the base touched doesn't matter."""
+        fx = self.assigned_fixture()
+        m = fx.main
+        delivery = m / ".agents/deliveries/FX-1.json"
+        data = json.loads(delivery.read_text())
+        data["stories"]["FX-2"]["inApp"] = "none"
+        delivery.write_text(json.dumps(data, indent=2))
+        listed, objects, text, comma = ("src/one-list.json", "src/one-objects.json", "src/one-text.txt",
+                                        "src/one-comma.txt")
+
+        def array(*items):
+            return "[\n" + ",\n".join(items) + "\n]\n"
+
+        def element(name):
+            return "  {\n" + f'    "id": "{name}"\n' + "  }"
+
+        crlf, binary = "src/one-crlf.json", "src/one-image.bin"
+
+        def windows(*items):
+            return array(*items).replace("\n", "\r\n")
+
+        start = {listed: array('  "a"'), objects: array(element("a")), text: "t1\nt2\nt3\nt4\n", comma: "x\ny\n",
+                 "src/one-other.txt": "other\n", crlf: windows('  "a"'), binary: b"\0base\0"}
+
+        def write(root, files):
+            for path, content in files.items():
+                if content is None:
+                    (root / path).unlink()
+                elif isinstance(content, bytes):
+                    (root / path).write_bytes(content)
+                else:
+                    (root / path).write_text(content)
+
+        write(m, start)
+        commit(m, "Add lane-owned files")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+
+        def flow(*args, cwd=m):
+            code, out = fx.flow(*args, cwd=cwd)
+            self.assertEqual(code, 0, out)
+            return out
+
+        wt = fx.lane("FX-2")
+        story = {listed: array('  "a"', '  "b"'), objects: array(element("a"), element("b")), text: "t1\nt2\nt4\n",
+                 comma: "x,\ny\n", crlf: windows('  "a"', '  "b"'), binary: b"\0story\0"}
+        write(wt, story)
+        commit(wt, "FX-2: append, delete a line, add a separator")
+        reviewed = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        review = wt / ".orchestration/review/FX-2"
+        review.mkdir(parents=True)
+        (review / "context.md").write_text("- fixture evidence\n")
+        flow("gate", "FX-2", cwd=wt)
+        flow("review-prepare", "FX-2", "--round", 1, cwd=wt)
+        write_results(review, 1, "FX-2", fx.lenses(wt))
+        flow("review-reduce", "FX-2", "--round", 1, cwd=wt)
+        flow("push", "FX-2", cwd=wt)
+        body = fx.tmp / "body.md"
+        body.write_text("Summary\n")
+        url = "https://forge.test/pr/1"
+        flow("open-pr", "FX-2", "--title", "FX-2: one", "--body-file", body, cwd=wt)
+        # The base appends its own element to both arrays and changes a lane-owned file the story never touched.
+        write(m, {listed: array('  "a"', '  "c"'), objects: array(element("a"), element("c")),
+                  crlf: windows('  "a"', '  "c"'), "src/one-other.txt": "other, from the base\n"})
+        commit(m, "Append to the arrays in the base")
+        flow("lead-push")
+        first = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+
+        def authorize(commit):
+            sh("git", "reset", "-q", "--hard", reviewed, cwd=wt)
+            out = flow("lead-authorize-base-merge", "FX-2", "--reviewed", reviewed, "--base", commit).splitlines()
+            return (shlex.split(next(line for line in out if line.startswith("git merge "))),
+                    shlex.split(next(line for line in out if line.startswith("git commit "))))
+
+        merge, finish = authorize(first)
+        kept = {listed: array('  "a"', '  "c"', '  "b"'), objects: array(element("a"), element("c"), element("b")),
+                crlf: windows('  "a"', '  "c"', '  "b"')}
+
+        def resolve(merge=merge, finish=finish, modes=None, **changes):
+            """The authorized merge, resolved by keeping both appends, then `changes` (path: content, or None to drop)
+            and `modes` (path: mode)."""
+            sh("git", "reset", "-q", "--hard", reviewed, cwd=wt)
+            self.assertNotEqual(sh(*merge, cwd=wt, check=False).returncode, 0, "the fixture's merge was meant to conflict")
+            write(wt, {**kept, **changes})
+            for path, mode in (modes or {}).items():
+                (wt / path).chmod(mode)
+            sh("git", "add", "-A", cwd=wt)
+            sh(*finish, cwd=wt)
+            return sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+
+        def handoff():
+            sh("git", "push", "-q", "--force", "origin", "HEAD:feature/FX-2", cwd=wt)
+            return fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)
+
+        def carries(why):
+            code, out = handoff()
+            self.assertEqual(code, 2, out)
+            self.assertNotIn("review the new head", out, why)
+            self.assertIn("gates ran at", out, why)  # the carry held; only the gates at the new head are missing
+
+        def refused(*said):
+            code, out = handoff()
+            self.assertEqual(code, 2, out)
+            self.assertIn("review the new head", out)
+            for text in said:
+                self.assertIn(text, out)
+            return out
+
+        with self.subTest("both sides append to the same arrays, one-line, multi-line and CRLF, and both are kept"):
+            resolve()
+            carries("appends kept on both sides didn't carry, or the base's lane-owned change refused it")
+        with self.subTest("a resolution that drops the story's added line"):
+            merged = resolve(**{listed: array('  "a"', '  "c"')})
+            out = refused(f"the base merge {merged} changes the story delta for {listed}", '+  "b"')
+            self.assertLessEqual(len(out.splitlines()), 30, out)
+        with self.subTest("a resolution that adds a line inside the story's change"):
+            added = [f'  "z{n}"' for n in range(12)]
+            resolve(**{listed: array('  "a"', '  "c"', '  "b"', *added)})
+            out = refused(listed, '+  "z0"', "... 4 more")  # 14 lines after the merge, shown to 10
+            self.assertNotIn('+  "z10"', out)
+        with self.subTest("a resolution that keeps a line the story deleted"):
+            resolve(**{text: "t1\nt2\nt3\nt4\n"})
+            refused(text, "-t3")
+        with self.subTest("two paths differ: the refusal names each"):
+            resolve(**{text: "t1\nt2\nt3\nt4\n", comma: "x\ny\n"})
+            refused(f"changes the story delta for {comma}, {text}")
+        with self.subTest("a resolution that keeps both elements but drops the separator on the base's last line"):
+            resolve(**{listed: '[\n  "a",\n  "c"\n  "b"\n]\n'})
+            refused(f"changes the story delta for {listed}", "separator appended to the preceding line")
+        with self.subTest("a story that only appends a separator, which the resolution loses"):
+            resolve(**{comma: "x\ny\n"})
+            refused(comma, "separator appended to the preceding line")
+        with self.subTest("a resolution that extends the story's separated line further"):
+            resolve(**{comma: "x, extra\ny\n"})
+            refused(f"changes the story delta for {comma}", "+x, extra")
+        with self.subTest("a resolution that keeps other bytes in the story's binary file"):
+            resolve(**{binary: b"\0other\0"})
+            refused(f"changes the story delta for {binary}")
+        with self.subTest("a resolution that changes a path outside the story's delta"):
+            resolve(**{"src/one-extra.txt": "extra\n"})
+            refused("src/one-extra.txt")
+        with self.subTest("a story file whose mode differs after the merge"):
+            resolve(modes={text: 0o755})
+            refused(text, "100644 -> 100755")
+        (m / "src/app.txt").write_text("a second base fix\n")
+        commit(m, "A second base fix")
+        flow("lead-push")
+        second = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        merge_second, finish_second = authorize(second)
+        with self.subTest("two base merges, the first clean and the second dropping a story line"):
+            resolve()
+            sh(*merge_second, "--no-commit", cwd=wt)
+            (wt / listed).write_text(array('  "a"', '  "c"'))
+            sh("git", "add", "-A", cwd=wt)
+            sh(*finish_second, cwd=wt)
+            dropped = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+            refused(f"the base merge {dropped} changes the story delta for {listed}", '+  "b"')
+        with self.subTest("two base merges that both keep the story's change carry"):
+            resolve()
+            sh(*merge_second, cwd=wt)
+            carries("two clean base merges didn't carry")
+        (m / text).chmod(0o755)
+        commit(m, "Make a story file executable in the base")
+        flow("lead-push")
+        merge_mode, finish_mode = authorize(sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip())
+        with self.subTest("a resolution that puts back the old mode of a story file the base changed"):
+            resolve(merge=merge_mode, finish=finish_mode, modes={text: 0o644})
+            refused(text, "100755 -> 100644")
+
+    def test_the_separator_marker_takes_each_added_line_once_in_order(self) -> None:
+        """Decision 1's pairing: a removed line and the same line with a trailing `,` read as one marker, matched in
+        order of appearance, each added line used once; in a CRLF file the `,` sits before the carriage return."""
+        marker = "(separator appended to the preceding line)"
+        for hunk, expected in (
+                (["-x", "-x", "+x,"], [marker, "-x"]),
+                (["-x", "-y", "+y,", "+x,"], [marker, marker]),
+                (["-x", "+x, extra"], ["-x", "+x, extra"]),
+                (["-x", "+x,,"], ["-x", "+x,,"]),
+                (["-x\r", "+x,\r", "+b\r"], [marker, "+b\r"]),
+                (["+x,"], ["+x,"])):
+            with self.subTest(hunk=hunk):
+                self.assertEqual(self.call("separator_marked", hunk), expected)
 
     def test_lane_and_lead_flow_end_to_end(self) -> None:
         fx = self.fixture()
@@ -3065,7 +3261,10 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertIn("Use the lead's printed merge commands with their authorization trailer. If a merge stops on a "
                       "conflict, resolve it, `git add` the files, and finish it with the printed `git commit` command, so "
                       "its message keeps the trailer.", brief)
-        self.assertIn("an unauthorized merge or a merge that changes the story diff or owned content needs a new review.", brief)
+        self.assertIn("If the story's own change reads the same after each merge as before it, hand-off keeps the aligned "
+                      "review and records the merge, whoever owns what the base changed.", brief)
+        self.assertIn("A lane commit, an unauthorized merge or a merge that changes the story's own change needs a new "
+                      "review.", brief)
 
     def test_video_evidence_is_recorded_required_and_published(self) -> None:
         missing = [tool for tool in ("ffmpeg", "ffprobe") if not shutil.which(tool)]
@@ -11546,6 +11745,13 @@ class EvidenceNoteWordingTests(unittest.TestCase):
                          "in any case), // and has lead-accept print the last round's notes")):
             with self.subTest(phrase=phrase[:50]):
                 self.assertIn(phrase, text)
+
+
+class BaseMergeRoundWordingTests(unittest.TestCase):
+    def test_a_round_forced_by_a_base_merge_counts_against_the_bound(self) -> None:
+        guide = " ".join((ROOT / "skills/orchestrate-work/references/orchestration-guide.md").read_text().split())
+        self.assertIn("A round forced by a base merge counts against that bound: a merge forces one only when the "
+                      "story's own change reads differently after it, so that round is about the story.", guide)
 
 
 class FinishLineWordingTests(unittest.TestCase):

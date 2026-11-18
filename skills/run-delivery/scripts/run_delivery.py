@@ -4592,41 +4592,81 @@ def base_merge_tokens(merge: str) -> list[str]:
     return values
 
 
-def delta_entries(helper, root: Path, before: str, after: str) -> dict[bytes, bytes]:
+SEPARATOR_APPENDED = "(separator appended to the preceding line)"
+
+
+def delta_entries(helper, root: Path, before: str, after: str) -> dict[bytes, tuple[bytes, bytes, bytes]]:
+    """Each path the diff changes, with its (old mode, new mode, status). Blob ids are left out: a file both sides
+    changed has a different post-image either way."""
     data = helper.git(root, "diff", "--raw", "-z", "--no-renames", "--no-abbrev",
                       "--ignore-submodules=none", before, after).stdout
     tokens = data.split(b"\0")[:-1]
-    return dict(zip(tokens[1::2], tokens[::2], strict=True))
+    entries = {}
+    for meta, path in zip(tokens[::2], tokens[1::2], strict=True):
+        old_mode, new_mode, _, _, status = meta.lstrip(b":").split(b" ")
+        entries[path] = (old_mode, new_mode, status)
+    return entries
 
 
-def region_delta(helper, root: Path, path: str, base: str, head: str, claims: list[dict]) -> list[list[bytes]]:
-    # Ownership validation confines each hunk to a single mapped span. Adjust
-    # each span's candidate bounds by edits before and within it.
-    helper.check_change(root, path, base, head, claims)
-    _, old = helper.entry(root, base, path)
-    _, new = helper.entry(root, head, path)
-    edits = helper.hunks(root, old, new)
-    lines = helper.lines(root, new)
-    result = []
-    for claim in claims:
-        start, end = helper.mapped(root, claim, base)
-        before = sum(added - removed for first, removed, added in edits if first < start)
-        within = sum(added - removed for first, removed, added in edits if start <= first < end)
-        result.append(lines[start - 1 + before:end - 1 + before + within])
-    return result
+def delta_hunks(helper, root: Path, before: str, after: str, path: bytes) -> list[list[bytes]]:
+    """A path's `--unified=0` hunks from before to after, each as its removed and added lines, without line numbers or
+    context. Within a hunk, a removed line that comes back added with only a trailing `,` is the separator an append
+    adds to the line before it: the pair, matched in order of appearance, reads as one marker."""
+    data = helper.git(root, "-c", "core.quotePath=false", "diff", "--unified=0", "--no-renames", "--no-color",
+                      "--no-ext-diff", "--no-textconv", "--binary", "--diff-algorithm=myers",
+                      "--ignore-submodules=none", before, after, "--",
+                      os.fsdecode(path)).stdout  # the helper reads pathspecs literally
+    hunks: list[list[bytes]] = []
+    body = False
+    for line in data.split(b"\n"):
+        if line.startswith(b"@@") or line == b"GIT binary patch":
+            hunks.append([])
+            body = True
+            if line.startswith(b"@@"):
+                continue
+        if body and line:
+            hunks[-1].append(line)
+    return [separator_marked(hunk) for hunk in hunks]
+
+
+def separator_marked(hunk: list) -> list:
+    """One hunk's removed and added lines, bytes or str, with each removed line that comes back added with only a
+    trailing `,` (before the carriage return, in a CRLF file) read as one marker: the separator an append adds to the line
+    before it. Removed lines are paired in order of appearance, each with the first added line still unpaired."""
+    if not hunk:
+        return []
+    same = (lambda text: text) if isinstance(hunk[0], str) else (lambda text: text.encode())
+    minus, plus, comma, cr = same("-"), same("+"), same(","), same("\r")
+    marked = list(hunk)
+    taken: set[int] = set()
+    for index, line in enumerate(hunk):
+        if not line.startswith(minus):
+            continue
+        content = line[1:]
+        separated = plus + (content[:-1] + comma + cr if content.endswith(cr) else content + comma)
+        match = next((other for other, added in enumerate(hunk) if other not in taken and added == separated), None)
+        if match is not None:
+            taken.add(match)
+            marked[index] = same(SEPARATOR_APPENDED)
+    return [line for index, line in enumerate(marked) if index not in taken]
+
+
+def shown_lines(lines: list[bytes], limit: int = 10) -> list[str]:
+    text = [line.decode("utf-8", "replace") for line in lines[:limit]]
+    if len(lines) > limit:
+        text.append(f"... {len(lines) - limit} more")
+    return text or ["(nothing)"]
 
 
 def check_base_merge_delta(c, state: dict, lane: str, prior: str, head: str, old_base: str, new_base: str) -> None:
+    """Decision 1's carry: the story's own change, `old_base..prior`, reads the same as `new_base..head`. The same
+    paths, each with the same status and modes and the same hunks in order, compared both ways. Who owns what the base
+    touched doesn't matter; a region claim must still map from the old base to the new one, for ownership."""
     helper = _region_ownership()
-    ownership = c.effective_ownership(state)
     regions = [claim for claim in state.get("laneRegions", []) if claim["lane"] == lane]
-    by_path = collections.defaultdict(list)
-    for claim in regions:
-        by_path[claim["path"]].append(claim)
+    differing = []
+    first = None
     try:
-        for path in helper.changed_paths(c.root, old_base, new_base):
-            if lane in owners_of(ownership, path):
-                raise Stop(f"the base merge changes lane-owned file {path}")
         for claim in regions:
             start, end = helper.mapped(c.root, claim, old_base)
             # Verify the transition itself even when the claim was originally
@@ -4636,18 +4676,36 @@ def check_base_merge_delta(c, state: dict, lane: str, prior: str, head: str, old
                          for base, tip in ((old_base, prior), (new_base, head)))
         for raw_path in sorted(before.keys() | after.keys()):
             path = os.fsdecode(raw_path)
-            if raw_path not in before or raw_path not in after:
-                raise Stop(f"the base merge changes the story delta for {path}")
-            if path in by_path:
-                old = region_delta(helper, c.root, path, old_base, prior, by_path[path])
-                new = region_delta(helper, c.root, path, new_base, head, by_path[path])
-                if old == new:
-                    continue
-            elif before[raw_path] == after[raw_path]:
+            old = (before.get(raw_path),
+                   delta_hunks(helper, c.root, old_base, prior, raw_path) if raw_path in before else [])
+            new = (after.get(raw_path),
+                   delta_hunks(helper, c.root, new_base, head, raw_path) if raw_path in after else [])
+            if old == new:
                 continue
-            raise Stop(f"the base merge changes the story delta for {path}")
+            differing.append(path)
+            if first is None:
+                first = (path, old, new)
     except helper.RegionError as error:
         raise Stop(str(error)) from error
+    if not differing:
+        return
+    path, (old_meta, old_hunks), (new_meta, new_hunks) = first
+    lines = [f"the base merge {head} changes the story delta for {', '.join(differing)}"]
+    if old_meta != new_meta:
+        def meta(entry):
+            if entry is None:
+                return "unchanged by the story"
+            old_mode, new_mode, status = (part.decode() for part in entry)
+            return f"status {status}, mode {old_mode} -> {new_mode}"
+        lines.append(f"{path}: before the merge {meta(old_meta)}; after it {meta(new_meta)}")
+    index = next((n for n in range(max(len(old_hunks), len(new_hunks)))
+                  if old_hunks[n:n + 1] != new_hunks[n:n + 1]), None)
+    if index is not None:
+        lines.append(f"{path}, the first hunk that differs, before the merge:")
+        lines += ["  " + line for line in shown_lines((old_hunks[index:index + 1] or [[]])[0])]
+        lines.append("after it:")
+        lines += ["  " + line for line in shown_lines((new_hunks[index:index + 1] or [[]])[0])]
+    raise Stop("\n".join(lines))
 
 
 def verify_base_merge(c, key: str, lane: str, reviewed: str, head: str, doc: dict) -> dict:

@@ -33,8 +33,10 @@ From the lead checkout, run `lead-authorize-base-merge KEY --reviewed HEAD --bas
 Repeat `--base` to authorize multiple exact base commits. Give the lane the printed merge commands, which bind
 the authorization to the resulting commits through their commit-message trailer. The lane runs them and reruns
 its gates and any required in-app and PR checks at its new head. Hand-off carries the original review when
-each first-parent commit since review is an authorized two-parent base merge and both the story delta and
-lane-owned content stayed unchanged. The hand-off records the reviewed and handed heads and the base commits.
+each first-parent commit since review is an authorized two-parent base merge and the story's own change reads
+the same after each merge as before it: the same paths, statuses and modes, and the same removed and added lines
+in each hunk, where a separator an append adds to the line before it reads as one marker. Who owns what the base
+changed does not matter. The hand-off records the reviewed and handed heads and the base commits.
 Use `lead-carry-review` for its existing queued-work flow.
 
 A legacy record reads assignments and ownership from the delivery file until the lead runs `lead-own --seed`.

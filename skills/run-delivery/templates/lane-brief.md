@@ -28,9 +28,10 @@ assemble briefs, round files or records by hand, and don't edit what they write.
   that remote base while you work. Before merging the base into your story branch, wait for the lead to record the
   authorization for your story, reviewed head and exact base commits with `lead-authorize-base-merge`.
   Use the lead's printed merge commands with their authorization trailer. If a merge stops on a conflict, resolve it,
-  `git add` the files, and finish it with the printed `git commit` command, so its message keeps the trailer. If the story diff and your owned content are unchanged, hand-off keeps the aligned review
-  and records the merge. Run gates and any required in-app and PR checks at the new head. A lane commit, an unauthorized
-  merge or a merge that changes the story diff or owned content needs a new review.
+  `git add` the files, and finish it with the printed `git commit` command, so its message keeps the trailer. If the story's own change reads the same after each merge as before it,
+  hand-off keeps the aligned review and records the merge, whoever owns what the base changed. Run gates and any
+  required in-app and PR checks at the new head. A lane commit, an unauthorized merge or a merge that changes the
+  story's own change needs a new review.
 - Branch: `{{branch}}`. Commit subjects start with the story key.
 - Never touch: {{never_touch}}. Change only the files your lane owns (below, and `lanes.<lane>.owns` in
   the delivery file). The lead refuses a hand-off that changes anything else.
