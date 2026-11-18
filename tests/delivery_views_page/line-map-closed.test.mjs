@@ -1,5 +1,5 @@
 // What a closed delivery's line map claims, pinned so that each of the page's closed-delivery rules turns a row red when
-// it breaks: the What's left count's starting number, the journey's ticks, a closed stop's detail, the dots, and the
+// it breaks: the What's left count's new number, the journey's ticks, a closed stop's detail, the dots, and the
 // wording that must not read as work still to come.
 import { test } from "node:test";
 
@@ -18,20 +18,19 @@ function open(page, scenario = {}) {
 const landed = (subject, at = 10) => [[at, "approve", subject], [at + 1, "candidate.handed", subject], [at + 2, "candidate.merged", subject]];
 const close = [40, "delivery.closed", null];
 
-test("the What's left count starts from the number it showed and eases to the new one", async () => {
+test("the What's left count reads the new number at once and flips the digit that changed", async () => {
   const subjects = ["A", "B", "C", "D", "E"];
   const before = record({ queue: subjects.map((subject) => item(subject, subject === "A" ? "merged" : "queued")), journal: journal(landed("A")) });
   const after = record({ queue: subjects.map((subject) => item(subject, subject === "E" ? "queued" : "merged")),
     journal: journal(subjects.slice(0, 4).flatMap((subject, index) => landed(subject, 10 + index * 5))) });
-  const [first, pushed, midway, settled] = await open(render(before), {
-    store: {}, frames: true, steps: [{ push: after }, { frame: 150 }, { frame: 900 }] });
-  const number = (snapshot) => snapshot.app.querySelector("#left .left-number").firstChild.textContent;
-  expect(number(first)).toBe("4");
-  // Redrawn with three fewer to go, the count still reads where it stood until a frame moves it, then eases down.
-  expect(number(pushed)).toBe("4");
-  expect(pushed.app.querySelector("#left .left-number").className).toContain("ticking");
-  expect(number(midway)).toBe("3");
-  expect(number(settled)).toBe("1");
+  const [first, pushed] = await open(render(before), { store: {}, motion: {}, steps: [{ push: after }] });
+  const number = (snapshot) => snapshot.app.querySelector("#left .left-number").firstChild;
+  expect(number(first).textContent).toBe("4");
+  expect(number(first).querySelector(".flip")).toBeNull();
+  // Redrawn with three fewer to go, the count says the new number while its digit turns over from the old one.
+  expect(number(pushed).firstChild.data).toBe("1");
+  const digit = number(pushed).querySelector(".flip");
+  expect([digit.getAttribute("data-from"), digit.getAttribute("data-to")]).toEqual(["4", "1"]);
 });
 
 test("on a closed delivery with finish lines, the Pieces landed tick counts plan units that never reached the line", async () => {

@@ -75,7 +75,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 
 /* Being checked now */
 /* The checking sheet: what is being checked now, floating on the ground. */
-.checking { position: relative; isolation: isolate; max-width: 640px; display: grid; gap: 12px; padding: 22px 24px; border-radius: 14px; }
+.checking { position: relative; isolation: isolate; max-width: 640px; display: grid; align-content: start; gap: 12px; padding: 22px 24px; border-radius: 14px; }
 /* The sheet's surface is its own layer, so anything drawn behind the sheet sits under it rather than over it. */
 .checking::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--lift); box-shadow: var(--shadow-sheet); }
 .checking > * { min-width: 0; }
@@ -448,6 +448,12 @@ a.issue-link { color: inherit; cursor: pointer; }
 
 /* What's left: one number in the page's voice and a dot for every piece; a landed piece is ink. */
 .left-number { font-family: var(--display); font-weight: 300; font-size: clamp(96px, 18vw, 200px); line-height: .9; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+/* While a digit turns, its layer sits over the digit's measured place in the words, taking no room of its own. */
+.flipping { position: relative; }
+.flip { position: absolute; pointer-events: none; }
+/* The merge's layers are drawing only, shown while they move; a character a layer is not for keeps its place unseen. */
+.flip-in, .flip-out { opacity: 0; }
+.flip-hide { fill-opacity: 0; }
 .left-number small { font-family: var(--text); font-size: max(15px, .08em); letter-spacing: 0; color: var(--soft); font-weight: 400; margin-left: 12px; }
 .dots { display: flex; flex-wrap: wrap; gap: 6px; max-width: 560px; }
 .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--ink)); display: block; }
@@ -603,8 +609,27 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
   .chapter.arrive .inner > *:nth-child(5) { animation-delay: .24s; }
   .chapter.arrive .inner > *:nth-child(n+6) { animation-delay: .3s; }
   @keyframes rise { from { opacity: .25; transform: translateY(14px); } to { opacity: 1; transform: none; } }
-  .left-number.ticking { animation: settle var(--move) var(--ease); }
-  @keyframes settle { 0% { transform: translateY(-6px); } 100% { transform: none; } }
+  /* A changed digit flips: the words hide it while its layer rolls the old digit out below and the new one in from
+     above, each drawn with no words of its own. The new one stays until the words show their own digit again. */
+  ::highlight(flip-hold) { color: transparent; }
+  .flip::before, .flip::after { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; line-height: normal; }
+  .flip::before { content: attr(data-from); content: attr(data-from) / ""; animation: flip-out var(--move) var(--ease) both; }
+  .flip::after { content: attr(data-to); content: attr(data-to) / ""; animation: flip-in var(--move) var(--ease) both; }
+  /* A moving digit shows only within a band about the digits' own height, held still on the page as the digit moves
+     through it: the font's room above the figures and below the baseline is clipped off. */
+  .flip::before, .flip::after, .flip-in, .flip-out { --over: .1em; --under: .24em; }
+  @keyframes flip-in {
+    from { opacity: 1; transform: translateY(-100%); clip-path: inset(calc(100% + var(--over)) -0.1em calc(var(--under) - 100%)); }
+    to { opacity: 1; transform: none; clip-path: inset(var(--over) -0.1em var(--under)); } }
+  @keyframes flip-out {
+    from { opacity: 1; transform: none; clip-path: inset(var(--over) -0.1em var(--under)); }
+    to { opacity: 1; transform: translateY(100%); clip-path: inset(calc(var(--over) - 100%) -0.1em calc(100% + var(--under))); } }
+  /* A count drawn in the merge holds back its changed characters while its layers flip them, then shows them itself. */
+  .flip-in, .flip-out { transform-box: fill-box; }
+  .flip-in { animation: flip-in var(--move) var(--ease) backwards; }
+  .flip-out { animation: flip-out var(--move) var(--ease) both; }
+  .flip-gap { animation: flip-gap var(--move) step-end; }
+  @keyframes flip-gap { from, to { fill-opacity: 0; } }
   .dots i.closing { animation: close-dot var(--move) var(--ease) both; }
   @keyframes close-dot { 0% { transform: scale(1.6); } 60% { transform: scale(.8); } 100% { transform: scale(1); } }
   .left-groups b.changed { animation: flash-text var(--slow) var(--ease); }
