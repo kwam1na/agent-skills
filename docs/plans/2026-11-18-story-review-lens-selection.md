@@ -82,8 +82,9 @@ Checked against `main` at `bb54fe4` on 2026-11-18:
    set. A story whose round 1 meta has none was prepared before this change, and its set is every declared lens, so
    in-flight stories are checked as today. `review-reduce` refuses a meta whose `lenses` aren't the story's set.
    `handoff` refuses a last round whose entries aren't the story's set. `lead-accept` takes the story's set from the
-   latest `review.started` for round 1 in the journal, and with none, from every declared lens; it refuses a last
-   journaled round whose verdicts aren't that set.
+   latest `review.started` for round 1 in the journal. When round 1's meta, read as in Decision 7, has no
+   `lensesReason`, or there is no such entry, it uses every declared lens. It refuses a last journaled round whose
+   verdicts aren't that set.
 7. **The set is shown.** `review-prepare` prints the set and its reason. `handoff`'s message names the set and the
    reason. `lead-accept` prints the set and the reason before its decisions, so the lead can refuse an acceptance
    whose set is too thin. It reads the reason from round 1's meta in the story's review folder, where the hand-off
@@ -165,7 +166,10 @@ In `tests/test_run_delivery_supervisor.py`, with a fixture declaring two extra s
   against the restart's set.
 - A pre-change story, whose round 1 `review.started` names every declared lens and whose meta has no `lensesReason`,
   is accepted as today, and `lead-accept` prints `reason not found` rather than failing.
-- A hand-off whose story has no round-1 `review.started` in the journal is checked against every declared lens.
+- A hand-off whose story has no round-1 `review.started` in the journal is checked against every declared lens: one
+  carrying every declared lens is accepted, and one missing a declared lens is refused.
+- A pre-change story whose round-1 `review.started` names a lens no longer declared, with round 2 run on the current
+  declared set, is accepted.
 - The reason is printed when only the kept lane evidence holds round 1's meta, the lane checkout having gone.
 
 In `tests/test_run_delivery_plan_review.py`, with the same plan-only, story-only, both-use and harness lenses:
