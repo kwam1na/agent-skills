@@ -597,8 +597,34 @@
     // The tracker item the delivery's work is listed under, linked when the renderer linked it.
     if (text(meta.trackerParent)) { add(kicker, kicker.firstChild ? " · " : null, issue(text(meta.trackerParent))); }
     else if (!kicker.firstChild) { add(kicker, el("span", "headline", pageTitle())); }
+    // How long the delivery has run, from the record's first entry: to now while it delivers, to its close once delivered.
+    // The start, and for a closed one the end, read on pointing at it, in local time with UTC beside it.
+    var first = list(doc.journal).filter(isObject)[0];
+    var begun = first && first.id === 1 ? seconds(first.at) : null;
+    var ended = closed ? seconds(eventTime(closed)) : Date.now() / 1000;
+    if (begun !== null && ended !== null && ended >= begun) {
+      var minutes = Math.round((ended - begun) / 60), hours = Math.floor(minutes / 60);
+      var lasted = minutes < 60 ? minutes + " min" : hours < 48 ? hours + " h" + (minutes % 60 ? " " + minutes % 60 + " min" : "") : Math.round(hours / 24) + " days";
+      var stamp = function (at) { var date = new Date(at * 1000); return date.toLocaleString() + " (" + date.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC") + ")"; };
+      var time = el("time", "kicker-time", closed ? "delivered in " + lasted : "delivering · " + lasted);
+      time.setAttribute("datetime", text(first.at));
+      time.setAttribute("tabindex", "0");
+      // The page's own card says the ends, as a ticket's does, since nothing on the page carries a native tooltip.
+      var ends = closed ? [["Started", begun], ["Closed", ended]] : [["Started", begun]];
+      var showEnds = function () {
+        card.replaceChildren.apply(card, ends.map(function (end) { return el("div", "ic-s", end[0] + " " + stamp(end[1])); }));
+        placeCard(time);
+      };
+      time.addEventListener("mouseenter", showEnds);
+      time.addEventListener("focus", showEnds);
+      time.addEventListener("mouseleave", hideCard);
+      time.addEventListener("blur", hideCard);
+      add(kicker, " · ", time);
+    }
     var nodes = [kicker, title];
-    if (outcome) { nodes.push(el("p", "plan-now", outcome)); }
+    // The outcome, then how much of the plan is proven and how often it changed, linked to the plan chapter.
+    var planLink = planNow(doc);
+    if (outcome || planLink) { nodes.push(add(el("p", "plan-now"), outcome || null, planLink)); }
     var status = sayLine(doc, all);
     if (status) { nodes.push(el("p", "say", status)); }
     var panel = closed ? null : checkingPanel(doc, all);
@@ -610,8 +636,8 @@
     var partway = closeStoppedPartway(doc, closed);
     if (partway) { nodes.push(partway); }
     nodes.push(journey(doc, all, closed ? tally.landed : landed));
-    // Under the line, the same three facts in one shape: what landed last, how much of the plan is proven, and the record's state.
-    nodes.push(add(el("div", "facts"), lastLanded(doc, all), planNow(doc), since(doc, meta, closed)));
+    // Under the line, three facts in one shape: how many stories have landed, what landed last, and the record's state.
+    nodes.push(add(el("div", "facts"), storiesFact(all, closed ? tally : null), lastLanded(doc, all), since(doc, meta, closed)));
     var was = prev.checkingHeight;
     inner.replaceChildren.apply(inner, nodes);
     // A live update that changes the sheet's height, a check starting or a failure listed, eases it there instead of jumping.
@@ -640,13 +666,52 @@
     return add(el("div", "fact" + (cls ? " " + cls : "")), add(el("div", "fact-label"), label), add(el("div", "fact-value"), value),
       detail ? add(el("div", "fact-detail"), detail) : null);
   }
-  /** The piece that landed last, by its title, with its ticket and when. */
+  /**
+   * How far the delivery has come, from the record: the stories landed out of its total in the display face, a track in
+   * tones of the landed colour (landed, in the queue, being built), and a line counting the queue and the build. A
+   * closed delivery shows its final count.
+   */
+  function storiesFact(all, tally) {
+    var landed = tally ? tally.landed : all.filter(isLanded).length;
+    var total = tally ? tally.total : all.length;
+    // Only work that is moving is counted: a stopped piece is held, not queued, and a planned story not yet started is
+    // not being built.
+    var queued = tally ? 0 : all.filter(function (piece) { return !piece.planned && !isLanded(piece) && piece.item.stage !== "stopped"; }).length;
+    var building = tally ? 0 : all.filter(function (piece) { return piece.planned && (piece.item.stage === "building" || piece.item.stage === "review"); }).length;
+    var value = add(el("span", "fact-count"), String(landed), el("span", "fact-of", " of " + total + " landed"));
+    var track = el("span", "fact-track");
+    track.setAttribute("aria-hidden", "true");
+    [["landed", landed], ["queued", queued], ["building", building]].forEach(function (part) {
+      if (!part[1] || !total) { return; }
+      var span = el("i", "is-" + part[0]);
+      span.style.width = (part[1] / total * 100) + "%";
+      track.appendChild(span);
+    });
+    var said = [queued ? queued + " in the queue" : "", building ? building + " being built" : ""].filter(Boolean).join(" · ");
+    return fact("stories", "Stories", value, add(el("span", "fact-progress"), track, said ? el("span", "fact-said", said) : null));
+  }
+  /** A pull request as a fact's quiet reference: its number, linked to the forge when the renderer gave its address. */
+  function pullRef(changeRequest) {
+    var target = changeTarget(changeRequest);
+    if (!target) { return el("span", "fact-ref", text(changeRequest)); }
+    var link = el("a", "fact-ref", target.label);
+    link.setAttribute("href", target.href);
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+    link.setAttribute("aria-label", "Open pull request " + (typeof target.repository === "string" && target.repository ? target.repository + " " : "") + target.label);
+    return link;
+  }
+  /** The piece that landed last, by its title, with its ticket, its pull request when the forge snapshot knows it, and when. */
   function lastLanded(doc, all) {
     var landed = latestMerge(doc);
     if (!landed) { return null; }
     var item = all.filter(function (piece) { return piece.item.subject === landed.subject; })[0];
     var when = spoken(eventTime(landed));
-    var detail = text(landed.subject) ? add(el("span"), issue(text(landed.subject)), when ? " · " + when : null) : when;
+    var request = item && changeTarget(item.item.changeRequest) ? pullRef(item.item.changeRequest) : null;
+    var ticket = text(landed.subject) ? issue(text(landed.subject)) : null;
+    if (ticket) { ticket.classList.add("fact-ref"); }
+    var parts = [ticket, request, when].filter(Boolean);
+    var detail = parts.length ? add.apply(null, [el("span")].concat(parts.reduce(function (made, part, i) { return made.concat(i ? [" · ", part] : [part]); }, []))) : null;
     return fact("", "Last landed", item ? titleOf(doc, item.item) : text(landed.subject), detail);
   }
 
@@ -2220,7 +2285,7 @@
     var counts = planCounts(doc);
     var link = el("a", "plan-now-link", counts.proven + " of " + counts.total + " criteria proven");
     link.setAttribute("href", "#plan");
-    return fact("", "Plan", link, timesChanged(list(plan.changes).length).replace(/^plan /, ""));
+    return add(el("span", "plan-now-line"), link, " · " + timesChanged(list(plan.changes).length));
   }
 
   /** The criteria a finish line covers, or null when it covers proofs only, over every unit. */
