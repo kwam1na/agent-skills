@@ -93,6 +93,10 @@
         {
           "id": "v26-3620-2",
           "text": "The count leads the line under the name, in each open and closed state."
+        },
+        {
+          "id": "v26-3620-3",
+          "text": "The kicker is one line, the tracker link and Started ... ago or Closed after ..., with no state word, on desktop and phone widths."
         }
       ],
       "after": [
