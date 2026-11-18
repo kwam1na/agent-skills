@@ -443,10 +443,12 @@ for the whole run (25 when absent; set it below the binding's
 
 **Jira Cloud** (tracker): `--kind jira --site https://<site>.atlassian.net
 --parent {parent} --user-env JIRA_EMAIL --token-env JIRA_API_TOKEN
-[--canceled-statuses "Won't Do,Duplicate"] [--blocks-link Blocks]`. The
+[--canceled-statuses "Won't Do,Duplicate"] [--blocks-link Blocks]
+[--scope "component=Mobile App" ...] [--status-state "Ready for QA=completed" ...]
+[--state-dir {stateDirectory}]`. The
 parent's children come from the enhanced JQL search, paged by
 `nextPageToken`, with Basic email and API token. A status listed as canceled
-is `canceled`; otherwise its category maps `new` to `backlog`,
+is `canceled`, after any `--status-state` mapping; otherwise its category maps `new` to `backlog`,
 `indeterminate` to `started` and `done` to `completed`. The issue's summary
 is the title, its description flattened to plain text of at most 1000
 characters is the summary, and `blockedBy` holds the other children linked
@@ -456,6 +458,37 @@ tracker no longer has the parent, or answers it with something other than
 JSON, `parent` is left out and the children's snapshot still prints, so
 nothing says the parent closed. A JSON answer with no fields object, or with
 a status category it doesn't know, fails the snapshot.
+
+A Jira parent can span repositories, each delivering its own children. Each
+`--scope "<kind>=<value>"`, repeatable, keeps the children that carry it:
+`component=<name>` (the most reliable, since Jira can require a component),
+`label=<name>`, or `prefix=<marker>`, a summary starting with the marker,
+ignoring case. With `--state-dir {stateDirectory}`, every story the
+delivery's `plan.json` lists stays in scope too, whatever the tracker marks
+it with. A child that carries a value of a scoped kind and matches no
+`--scope` is listed under `outside`, with its state, status and `marks`, the
+values that place it there (for `prefix`, a leading `[Tag]` or `Word:`), and
+its summary and blockers.
+`reconcile` never adds an outside child as planned work or a follow-up and
+never reports on it. It clears a copy the sweep added earlier, planned work
+with no lane or a follow-up, journaling `work.cleared` once. It keeps
+`outside` in the record, and the line map shows it in a collapsed "Elsewhere
+in KEY" fold. An unscoped tracker snapshot empties it. Work of this delivery
+that the tracker marks outside is never cleared: queued work, work with a
+lane, or planned work with the plan's order, files, change request or run. A
+lane-less story of this delivery that the tracker marks outside keeps its
+shape: its ticket's start doesn't move it. A child with no value of any scoped kind stays in scope,
+flagged `unmarked`. Without `--scope`, every child is in scope, as before.
+
+Each `--status-state "<status name>=<state>"`, repeatable, reads that status
+as `backlog`, `started`, `completed` or `canceled` in place of its category.
+Map post-merge statuses in the In Progress category, such as Ready for QA, to
+`completed`. Map a status that sends work back, such as QA Return, to
+`started`: `reconcile` then reports a merged story whose ticket moves there,
+"returned after merge". The snapshot carries the map as `statusStates`.
+`--check` prints, in place of the snapshot, what run-delivery's `doctor`
+reports: each component, label or mapped status the project doesn't know,
+the In Progress statuses left unmapped, and the unmarked children.
 
 **Bitbucket Cloud** (forge): `--kind bitbucket --workspace <workspace>
 --repo <repository> --binding .agents/orchestration.json --state-dir

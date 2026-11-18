@@ -238,6 +238,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `plan.updated` | None: the plan chapter shows the rebuilt plan. | nowhere | - |
 | `cleanup.done` | None: a landed piece's branch and checkout are gone, and its merge already posted with `candidate.merged`. | nowhere | - |
 | `followup.filed` | None: the follow-up is its own ticket, and the decision that deferred its note posted with `decision.recorded`. | nowhere | - |
+| `work.cleared` | None: the work belongs to another delivery, and its ticket is that delivery's to update. | nowhere | - |
 | `snapshot.stale` | None: the last snapshot stands, and the views say how old it is. | nowhere | - |
 | `snapshot.retaken` | None: the views read the fresh snapshot. | nowhere | - |
 | `sibling.added` | None: the views show the sibling's stories once it is read. | nowhere | - |
