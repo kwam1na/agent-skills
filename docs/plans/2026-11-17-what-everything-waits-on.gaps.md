@@ -111,6 +111,23 @@ grants from the record (`lane-grants`) belongs with V26-3571.
   in V26-3554 by honouring a recorded signal at each step and wait. Separately, `run_delivery.py`'s state reader catches
   `BaseException` while it loads, which would also swallow a stop. Open.
 
+- **No command lists a delivery's open deferrals.** At close-out, the lead decoded each story's captured review
+  artifacts (base64 round outcomes under `review-artifacts/`) by script to gather about 80 deferred findings, because
+  cleanup had removed the lanes' review folders and nothing reports deferrals across stories. A deferral fixed in a later
+  round can't be told from one still open without reading both rounds. Open: a `lead-deferrals` that lists each
+  story's deferrals with their final state. Filed to V26-3594.
+- **No lead command marks a finish line the record can't prove.** The guide says the lead sets the line's `met` and
+  journals `finish.met`, but only the state tool does that, by hand (`patch --element finish[id=…]` and `journal`), and
+  `finish.met` takes no evidence, so the reason went into a separate decision the entry points at. Open: a
+  `lead-finish LINE --evidence T` that does both.
+- **Applying a release here turns `main` red until the attested-archive list learns it.** `tests/test_own_deliveries.py`
+  pins `ATTESTED_ARCHIVES`, and the apply's commit (c587bf66) didn't add linear-v3.1.0-rc.1, so the standing-binding
+  test failed on `main` until a later commit did. Nothing in the apply or `docs/own-deliveries.md` says to add it.
+  Repo: say so in that doc, or have the test read the receipt's attestation.
+- **"Waits shown" couldn't be shown on its own record.** The delivery ran its whole course on the installed release,
+  which has none of its views, and by the time the candidate was applied nothing was waiting. A line that needs a live
+  state should be checked while that state exists, on a delivery already running the release. Repo practice.
+
 ### The lead's loop
 
 - **`lead-push` refuses any change in the checkout,** including the operator-approved patch to the installed copy.

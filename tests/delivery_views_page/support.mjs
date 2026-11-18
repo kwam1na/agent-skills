@@ -161,7 +161,10 @@ export function planEnd(app) {
  *
  * `motion: { reduced? }` stands in for what jsdom lacks to move things: elements get a height that grows with what
  * they hold, `matchMedia` answers the reduced-motion query as `reduced` says, and each `animate` call is recorded, as
- * { target, keyframes, options }, in the result's `animations`.
+ * { target, keyframes, options }, in the result's `animations`. `CSS.highlights` is a registry of sets of ranges, and
+ * each snapshot's `held` lists the text of every range its `flip-hold` highlight holds.
+ *
+ * A `{ run }` step's function is given the page's window.
  */
 export async function openPage(page, scenario = {}) {
   const listeners = { push: [], status: [] };
@@ -206,6 +209,8 @@ export async function openPage(page, scenario = {}) {
         const reduced = Boolean(scenario.motion.reduced);
         window.matchMedia = (query) => ({ media: query, matches: query.includes("prefers-reduced-motion: reduce") && reduced,
           addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
+        window.Highlight = class Highlight extends Set {};
+        window.CSS = { highlights: new Map() };
         // A height that grows with what a reader would see: a closed <details> shows only its summary.
         const shown = (node) => [...node.children].reduce((sum, child) => sum + 1 + (child.tagName === "DETAILS" && !child.open
           ? [...child.children].filter((part) => part.tagName === "SUMMARY").reduce((inner, part) => inner + 1 + shown(part), 0)
@@ -275,8 +280,10 @@ export async function openPage(page, scenario = {}) {
   };
   const snapshot = () => {
     const copy = new JSDOM(`<main>${app.innerHTML}</main>`).window.document.querySelector("main");
+    const hold = dom.window.CSS?.highlights?.get("flip-hold");
     return { app: copy, text: copy.textContent ?? "", focused: focused(), source: app.getAttribute("data-source"),
-      titled: document.querySelectorAll("[title]").length };
+      titled: document.querySelectorAll("[title]").length,
+      held: hold ? [...hold].map((range) => range.startContainer.data.slice(range.startOffset, range.endOffset)) : [] };
   };
   const snapshots = [snapshot()];
   for (const step of scenario.steps || []) {
@@ -296,7 +303,7 @@ export async function openPage(page, scenario = {}) {
       frames = [];
       waiting.forEach((callback) => callback(clock));
     }
-    if ("run" in step) step.run();
+    if ("run" in step) step.run(dom.window);
     if ("asked" in step) {
       const deadline = Date.now() + 20000;
       while (fetched.length < step.asked) {

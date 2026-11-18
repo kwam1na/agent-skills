@@ -42,7 +42,7 @@
   var storyFilter = "all";
   var storyDepthChosen = null;
   // What the page last showed, so a change can be animated rather than just swapped in.
-  var prev = { runningCheck: null, stages: null, story: null, progress: null, lanes: null, open: null, byLane: null, parked: null, dots: null, selected: null, lineScroll: null,
+  var prev = { figures: Object.create(null), runningCheck: null, stages: null, story: null, progress: null, lanes: null, byLane: null, parked: null, dots: null, selected: null, lineScroll: null,
     checkingHeight: null };
   var lastGood = null;
   var nativeReviews = {};
@@ -82,19 +82,106 @@
     if (typeof requestAnimationFrame === "function") { requestAnimationFrame(function () { requestAnimationFrame(callback); }); } else { callback(); }
   }
   function replay(node, cls) { node.classList.remove(cls); void node.offsetWidth; node.classList.add(cls); }
-  function countTo(node, from, to) {
-    if (reduced() || from === null || from === to || typeof requestAnimationFrame !== "function" || typeof performance !== "object") {
-      node.firstChild.textContent = String(to);
-      return;
-    }
-    var start = performance.now();
-    var step = function (t) {
-      var k = Math.min(1, (t - start) / 900);
-      node.firstChild.textContent = String(Math.round(from + (to - from) * (1 - Math.pow(1 - k, 3))));
-      if (k < 1) { requestAnimationFrame(step); }
+  /**
+   * Words holding numbers, put into `node`. A number that changed since this place on the page was last drawn flips
+   * its changed digits over from the old ones, lined up from the right as on a counter, and a digit with none before
+   * it flips in from blank. The words stay one plain text, the new value, so the line never moves: while a digit turns,
+   * a highlight hides it and a layer drawn over its place, with no words of its own, rolls the old digit out and the
+   * new one in. A first draw, an unchanged number, words that now hold more numbers or fewer, a reader who asked for
+   * less motion and a browser without highlights get the words as they are.
+   */
+  function figures(node, key, words) {
+    var was = prev.figures[key];
+    prev.figures[key] = words;
+    node.textContent = words;
+    var registry = highlights();
+    if (typeof was !== "string" || was === words || reduced() || !registry) { return node; }
+    // Words that now hold more numbers or fewer say something else, and their numbers no longer pair up: no flip.
+    var old = was.match(/\d+/g) || [];
+    if (old.length !== (words.match(/\d+/g) || []).length) { return node; }
+    var turns = [];
+    var at = 0, offset = 0;
+    words.split(/(\d+)/).forEach(function (part, i) {
+      if (i % 2 === 1 && old[at] !== undefined) {
+        var from = old[at];
+        for (var d = 0; d < part.length; d += 1) {
+          var k = from.length - part.length + d;
+          var before = k >= 0 ? from.charAt(k) : "";
+          if (before !== part.charAt(d)) { turns.push({ at: offset + d, from: before, to: part.charAt(d) }); }
+        }
+      }
+      at += i % 2;
+      offset += part.length;
+    });
+    // Measured once the draw has put the words on the page.
+    if (turns.length) { Promise.resolve().then(function () { flip(node, turns, registry); }); }
+    return node;
+  }
+  function highlights() {
+    return typeof CSS === "object" && CSS && CSS.highlights && typeof Highlight === "function" && typeof StaticRange === "function" ? CSS.highlights : null;
+  }
+  /** A redraw mid-turn takes the turning words off the page; the digits it hid there are no longer held. */
+  function dropTurned() {
+    var hold = highlights() ? highlights().get("flip-hold") : null;
+    if (hold) { hold.forEach(function (range) { if (!range.startContainer.isConnected) { hold.delete(range); } }); }
+  }
+  function flip(node, turns, registry) {
+    var words = node.firstChild;
+    if (!node.isConnected || !words || words.nodeType !== 3) { return; }
+    var hold = registry.get("flip-hold");
+    if (!hold) { hold = new Highlight(); registry.set("flip-hold", hold); }
+    node.classList.add("flipping");
+    var box = node.getBoundingClientRect();
+    var digits = turns.map(function (turn) {
+      // Held as a static range: a live one taken off the page would fold into the page around it and look still there.
+      var range = new StaticRange({ startContainer: words, startOffset: turn.at, endContainer: words, endOffset: turn.at + 1 });
+      hold.add(range);
+      var digit = el("span", "flip");
+      digit.setAttribute("aria-hidden", "true");
+      digit.setAttribute("data-from", turn.from);
+      digit.setAttribute("data-to", turn.to);
+      var measure = document.createRange();
+      measure.setStart(words, turn.at);
+      measure.setEnd(words, turn.at + 1);
+      if (typeof measure.getBoundingClientRect === "function") {
+        var place = measure.getBoundingClientRect();
+        digit.style.left = place.left - box.left + "px";
+        digit.style.top = place.top - box.top + "px";
+        digit.style.width = place.width + "px";
+        digit.style.height = place.height + "px";
+      }
+      node.appendChild(digit);
+      return { range: range, digit: digit };
+    });
+    // The digits land together; then the words show their own digits again, in the same frame, and the layer goes.
+    digits[0].digit.addEventListener("animationend", function (event) {
+      if (event.animationName !== "flip-in") { return; }
+      digits.forEach(function (one) { hold.delete(one.range); node.removeChild(one.digit); });
+      node.classList.remove("flipping");
+    });
+  }
+  /**
+   * The same for a count drawn as SVG text, set in the page's monospace so its characters line up from the anchored
+   * right: the old characters that changed fall away under the new ones, each layer showing only within the count's line.
+   * The drawing's label says the final count, so the layers are drawing only.
+   */
+  function figureText(svg, key, attributes, words) {
+    var was = prev.figures[key];
+    prev.figures[key] = words;
+    var node = shape(svg, "text", attributes, words);
+    if (typeof was !== "string" || was === words || reduced()) { return node; }
+    var width = Math.max(was.length, words.length);
+    var changed = function (i) { return was.charAt(i - width + was.length) !== words.charAt(i - width + words.length); };
+    // A layer spells its words a character at a time, showing only the characters it is for.
+    var spell = function (target, chars, shown, hidden) {
+      chars.split("").forEach(function (char, j) { shape(target, "tspan", shown(width - chars.length + j) ? {} : { class: hidden }, char); });
+      return target;
     };
-    requestAnimationFrame(step);
-    replay(node, "ticking");
+    node.textContent = "";
+    spell(node, words, function (i) { return !changed(i); }, "flip-gap");
+    spell(shape(svg, "text", Object.assign({}, attributes, { class: attributes.class + " flip-out" })), was, changed, "flip-hide");
+    spell(shape(svg, "text", Object.assign({}, attributes, { class: attributes.class + " flip-in" })), words, changed, "flip-hide");
+    return node;
   }
 
   // How the page is configured, and the links the configuration allows, worked out by the renderer: the page
@@ -588,10 +675,10 @@
     var tally = closed ? closedTally(all) : null;
     if (closed && !tally.total) { add(title, all.length ? "Closed with nothing left to land." : "Closed with nothing on the line."); }
     else if (closed && tally.landed === tally.total) { add(title, "Delivered."); }
-    else if (closed) { add(title, "Closed with ", el("b", null, tally.landed + " of " + tally.total), " pieces landed."); }
+    else if (closed) { add(title, "Closed with ", figures(el("b"), "now", tally.landed + " of " + tally.total), " pieces landed."); }
     else if (!all.length) { add(title, "Nothing on the line yet."); }
     else if (landed === all.length) { add(title, "Every piece has landed."); }
-    else { add(title, el("b", null, landed + " of " + all.length), " pieces have landed."); }
+    else { add(title, figures(el("b"), "now", landed + " of " + all.length), " pieces have landed."); }
     var outcome = plan && isObject(plan.outcome) ? text(plan.outcome.summary) : "";
     var headline = text(meta.headline) || pageTitle();
     // The outcome is said once, under the headline: a record headline that only repeats it leaves the kicker to the ticket.
@@ -609,7 +696,7 @@
       var minutes = Math.round((ended - begun) / 60), hours = Math.floor(minutes / 60);
       var lasted = minutes < 60 ? minutes + " min" : hours < 48 ? hours + " h" + (minutes % 60 ? " " + minutes % 60 + " min" : "") : Math.round(hours / 24) + " days";
       var stamp = function (at) { var date = new Date(at * 1000); return date.toLocaleString() + " (" + date.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC") + ")"; };
-      var time = el("time", "kicker-time", closed ? "delivered in " + lasted : "delivering · " + lasted);
+      var time = figures(el("time", "kicker-time"), "kicker", closed ? "delivered in " + lasted : "delivering · " + lasted);
       time.setAttribute("datetime", text(first.at));
       time.setAttribute("tabindex", "0");
       // The page's own card says the ends, as a ticket's does, since nothing on the page carries a native tooltip.
@@ -683,7 +770,7 @@
     // not being built.
     var queued = tally ? 0 : all.filter(function (piece) { return !piece.planned && !isLanded(piece) && piece.item.stage !== "stopped"; }).length;
     var building = tally ? 0 : all.filter(function (piece) { return piece.planned && (piece.item.stage === "building" || piece.item.stage === "review"); }).length;
-    var value = add(el("span", "fact-count"), String(landed), el("span", "fact-of", " of " + total + " landed"));
+    var value = add(el("span", "fact-count"), figures(el("span"), "stories", String(landed)), figures(el("span", "fact-of"), "stories-of", " of " + total + " landed"));
     var track = el("span", "fact-track");
     track.setAttribute("aria-hidden", "true");
     [["landed", landed], ["queued", queued], ["building", building]].forEach(function (part) {
@@ -693,7 +780,7 @@
       track.appendChild(span);
     });
     var said = [queued ? queued + " in the queue" : "", building ? building + " being built" : ""].filter(Boolean).join(" · ");
-    return fact("stories", "Stories", value, add(el("span", "fact-progress"), track, said ? el("span", "fact-said", said) : null));
+    return fact("stories", "Stories", value, add(el("span", "fact-progress"), track, said ? figures(el("span", "fact-said"), "stories-said", said) : null));
   }
   /** A pull request as a fact's quiet reference: its number, linked to the forge when the renderer gave its address. */
   function pullRef(changeRequest) {
@@ -1389,13 +1476,13 @@
       var age = el("span", "nr-age");
       var since = seconds(item.since);
       if (since !== null && Date.now() / 1000 >= since && text(words.age)) {
-        age.textContent = text(words.age).replace("{age}", duration(Date.now() / 1000 - since));
+        figures(age, "need:" + [item.kind, item.who, item.lane, item.subject].map(text).join("/"), text(words.age).replace("{age}", duration(Date.now() / 1000 - since)));
         age.setAttribute("title", clock(item.since));
       }
       ul.appendChild(add(li, margin, body, age));
     });
     box.appendChild(ul);
-    if (typeof NEEDS.more === "number" && NEEDS.more > 0) { box.appendChild(el("p", "needs-more", NEEDS.more + " more not shown.")); }
+    if (typeof NEEDS.more === "number" && NEEDS.more > 0) { box.appendChild(figures(el("p", "needs-more"), "needs-more", NEEDS.more + " more not shown.")); }
     return box;
   }
 
@@ -1504,8 +1591,8 @@
     shape(svg, "path", { class: "mg-post", d: "M" + finishX + " " + (trunkY - 20) + "V" + (trunkY + 20) });
     shape(svg, "text", { class: "mg-label", x: finishX + 3, y: trunkY - 30, "text-anchor": "end" }, "Finish line");
     // The totals stack under the post, short enough to stay clear of the lanes turning in.
-    shape(svg, "text", { class: "mg-count", x: finishX + 3, y: trunkY + 38, "text-anchor": "end" }, landed + "/" + all.length + " landed");
-    if (finish.length) { shape(svg, "text", { class: "mg-count", x: finishX + 3, y: trunkY + 52, "text-anchor": "end" }, met + "/" + finish.length + " met"); }
+    figureText(svg, "merge-landed", { class: "mg-count", x: finishX + 3, y: trunkY + 38, "text-anchor": "end" }, landed + "/" + all.length + " landed");
+    if (finish.length) { figureText(svg, "merge-met", { class: "mg-count", x: finishX + 3, y: trunkY + 52, "text-anchor": "end" }, met + "/" + finish.length + " met"); }
     return svg;
   }
   /**
@@ -1581,6 +1668,9 @@
     var colours = laneColours(doc, all);
     var current = checkingNow(doc);
     var nowSubject = current && current.subject !== undefined && current.subject !== null ? String(current.subject) : null;
+    // The detail panel on the page now is replaced below, empty; a new piece's panel eases from this height, not that one's.
+    var shown = document.getElementById("detail");
+    var shownHeight = shown ? runHeldHeight(shown) : null;
     var nodes = [el("div", "kicker", "The line"), el("h2", "title", "Every piece of work merges into one main line."),
       el("p", "say", "Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.")];
     if (!all.length) {
@@ -1613,7 +1703,7 @@
       items.forEach(function (piece, i) { if (isLanded(piece)) { lastLanded = i; } });
       var solid = landedHere === items.length ? 100 : lastLanded < 0 ? 0 : 100 - (items.length - 1 - lastLanded + 0.5) * 100 / most;
       ends.push({ colour: colours[lane], done: landedHere === items.length });
-      add(row, add(el("div", "name"), el("b", null, lane ? names[lane] || lane : noLane(doc)), landedHere + " of " + items.length + " landed"));
+      add(row, add(el("div", "name"), el("b", null, lane ? names[lane] || lane : noLane(doc)), figures(el("span"), "lane:" + lane, landedHere + " of " + items.length + " landed")));
       var stops = el("div", "stops");
       var merged = function (k) { return k >= 0 && k < items.length && isLanded(items[k]); };
       items.forEach(function (piece, i) {
@@ -1682,7 +1772,7 @@
       all.filter(function (piece) { return stopKind(piece, nowSubject) === "now"; })[0] ||
       all.filter(function (piece) { return stopKind(piece, nowSubject) === "held"; })[0] ||
       all.filter(function (piece) { return stopKind(piece, nowSubject) !== "merged"; })[0] || all[0];
-    if (pick) { showDetail(doc, pick, colours, nowSubject); }
+    if (pick) { showDetail(doc, pick, colours, nowSubject, shownHeight); }
   }
 
   function stageTime(doc, item) {
@@ -1735,14 +1825,18 @@
     return { label: label, basis: basis, at: at };
   }
 
-  function showDetail(doc, piece, colours, nowSubject) {
+  /**
+   * A redraw passes the height the replaced panel had, `from`, or null on the first draw, which has none to ease from;
+   * a click shows a piece in the panel already there.
+   */
+  function showDetail(doc, piece, colours, nowSubject, from) {
     var detail = document.getElementById("detail");
     if (!detail) { return; }
     var item = piece.item;
     detail.style.setProperty("--c", colours[item.lane || ""] || "var(--soft)");
     var subject = subjectOf(item);
     var switched = prev.selected !== subject;
-    var from = runHeldHeight(detail);
+    if (from === undefined) { from = runHeldHeight(detail); }
     if (switched && !reduced()) { replay(detail, "swap"); }
     prev.selected = subject;
     // The lane that built the piece labels the panel, by the lane's own name: a lane's title follows its current work, so
@@ -2022,7 +2116,7 @@
       : !lanes.length ? "No one has reported in yet."
       : busy === lanes.length ? lanes.length + (lanes.length === 1 ? " lane is" : " lanes are") + " working on this."
       : busy + " of " + lanes.length + " lanes are working right now.";
-    var nodes = [el("div", "kicker", "Who's doing what"), el("h2", "title", heading)];
+    var nodes = [el("div", "kicker", "Who's doing what"), figures(el("h2", "title"), "who", heading)];
     var seen = Object.create(null);
     if (lanes.length) {
       nodes.push(el("p", "say", "Each lane " + (closed ? "was" : "is") + " a separate session working in parallel on its own part of the work."));
@@ -2067,14 +2161,13 @@
     var closedOut = closedEntry(doc);
     var tally = closedOut ? closedTally(all) : { landed: all.length - open.length, total: all.length, placed: all.length };
     var left = tally.total - tally.landed;
-    var number = el("div", "left-number", String(prev.open === null ? left : prev.open));
-    number.appendChild(el("small", null, closedOut && left ? (left === 1 ? "piece not landed" : "pieces not landed") : left === 1 ? "piece to go" : "pieces to go"));
-    countTo(number, prev.open, left);
+    var number = add(el("div", "left-number"), figures(el("span"), "left", String(left)),
+      el("small", null, closedOut && left ? (left === 1 ? "piece not landed" : "pieces not landed") : left === 1 ? "piece to go" : "pieces to go"));
     var wasOpen = prev.dots || {};
     var nowOpen = Object.create(null);
     // Nothing counts down once a delivery closes with every piece landed.
     var nodes = [el("div", "kicker", "What's left"), closedOut && !left ? el("h2", "title", tally.total || all.length ? "Nothing left to land." : "Nothing was on the line.") : number];
-    if (tally.total) { nodes.push(el("p", "say", tally.landed + " of " + tally.total + " pieces have landed.")); }
+    if (tally.total) { nodes.push(figures(el("p", "say"), "left-say", tally.landed + " of " + tally.total + " pieces have landed.")); }
     else if (!closedOut) { nodes.push(el("p", "say", "Nothing is planned yet.")); }
     if (tally.total) {
       var dots = el("div", "dots");
@@ -2151,7 +2244,6 @@
       nodes.push(el("div", "kicker", "The finish line"), after);
     }
     inner.replaceChildren.apply(inner, nodes);
-    prev.open = left;
     prev.dots = nowOpen;
   }
 
@@ -2315,9 +2407,9 @@
   function planNow(doc) {
     if (!plan) { return null; }
     var counts = planCounts(doc);
-    var link = el("a", "plan-now-link", counts.proven + " of " + counts.total + " criteria proven");
+    var link = figures(el("a", "plan-now-link"), "plan-now", counts.proven + " of " + counts.total + " criteria proven");
     link.setAttribute("href", "#plan");
-    return add(el("span", "plan-now-line"), link, " · " + timesChanged(list(plan.changes).length));
+    return add(el("span", "plan-now-line"), link, figures(el("span"), "plan-changes", " · " + timesChanged(list(plan.changes).length)));
   }
 
   /** The criteria a finish line covers, or null when it covers proofs only, over every unit. */
@@ -2382,7 +2474,7 @@
     // The count first, then what it counts: "10 of 21 criteria · review, merged".
     var words = line ? done + " of " + total + " " + noun + (kinds.length ? " · " + measured.toLowerCase() : " proven") +
       (either > done ? ", " + (either - done) + " more by waiver" : "") : "Not in the plan";
-    return add(box, head, bar, el("div", "pm-count", words), moved);
+    return add(box, head, bar, figures(el("div", "pm-count"), "meter:" + (line ? text(line.id) : text(recordLine.id)), words), moved);
   }
   /** One meter per finish line: the plan's, in order, then any the record has that the plan does not. */
   function planMeters(doc) {
@@ -2870,7 +2962,8 @@
       return;
     }
     var counts = planCounts(doc);
-    var title = add(el("h2", "title plan-title"), planTitle(doc, counts));
+    // The title is a row of parts; its words are one of them, so a digit that flips stays inside the words.
+    var title = add(el("h2", "title plan-title"), figures(el("span"), "plan-title", planTitle(doc, counts)));
     // A record says when the producer rewrote the plan. A live page fetches it and speaks only if that fails; a static
     // page holds the plan it was rendered with.
     var behind = null;
@@ -3329,6 +3422,7 @@
     if (parts.plan) { drawPlan(doc); }
     drawHappened(doc);
     drawParked(doc);
+    dropTurned();
     refocus(focus);
     keepPace();
   }

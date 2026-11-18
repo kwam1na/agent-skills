@@ -1,0 +1,101 @@
+{
+  "allowedHostOperations": [
+    "search",
+    "read"
+  ],
+  "failureOutcomes": {
+    "item-not-held": "unavailable",
+    "malformed": "malformed",
+    "search-not-ready": "retry",
+    "server-not-configured": "unavailable",
+    "server-not-set-up": "unavailable"
+  },
+  "fieldMappings": {
+    "itemRef": "item_id",
+    "kind": "type",
+    "scope": "project"
+  },
+  "maxHits": 5,
+  "operationMappings": [
+    {
+      "allowedOutputFields": [
+        "itemRef",
+        "title",
+        "date",
+        "kind",
+        "scope"
+      ],
+      "hostOperations": [
+        "search"
+      ],
+      "knowledgeOperation": "search-knowledge"
+    },
+    {
+      "allowedOutputFields": [
+        "itemRef",
+        "title",
+        "date",
+        "kind",
+        "scope",
+        "body"
+      ],
+      "hostOperations": [
+        "read"
+      ],
+      "knowledgeOperation": "read-knowledge"
+    }
+  ],
+  "outputPolicy": {
+    "forbiddenForwarding": [
+      "raw-host-payload",
+      "item-body-in-repository"
+    ]
+  },
+  "requestMappings": {
+    "project": "request scope, else properties project",
+    "tags": "properties tags"
+  },
+  "retryDelaySeconds": 60,
+  "schemaVersion": "agent-skills-hive-knowledge-adapter/1",
+  "transportBoundary": {
+    "forbiddenActionMarkers": {
+      "library-file-read": [
+        "library folder",
+        "library directory",
+        "library's files",
+        "data repository",
+        "items folder",
+        "projects.txt",
+        "tags.txt",
+        "cat ",
+        "open(",
+        "read_text"
+      ],
+      "library-git-access": [
+        "git -c",
+        "git checkout",
+        "git clone",
+        "git fetch",
+        "git grep",
+        "git log",
+        "git pull",
+        "git show"
+      ],
+      "other-server-tool": [
+        "draft",
+        "push",
+        "sessions",
+        "plugins"
+      ],
+      "search-engine-outside-server": [
+        "qmd",
+        "ripgrep",
+        "grep ",
+        "sqlite",
+        "embedding",
+        "vector index"
+      ]
+    },
+    "mode": "hive-mined-server-search-and-read-only"
+  }
+}
