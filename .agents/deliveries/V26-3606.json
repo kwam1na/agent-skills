@@ -97,6 +97,10 @@
         {
           "id": "v26-3620-3",
           "text": "The kicker is one line, the tracker link and Started ... ago or Closed after ..., with no state word, on desktop and phone widths."
+        },
+        {
+          "id": "v26-3620-4",
+          "text": "The page-behaviour tests and the history golden are updated to the new wording, and the hosted view renders the same."
         }
       ],
       "after": [
