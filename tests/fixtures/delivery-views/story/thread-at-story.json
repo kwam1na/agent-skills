@@ -262,7 +262,7 @@
       "label": "Hand-off checked",
       "words": {
         "head": "The lead checked the hand-off of A",
-        "line": "At e825ec5, after 2 review rounds. The fix is the one the stop asked for."
+        "line": "At e825ec5, after 2 review rounds, with 1 note"
       },
       "explain": "The lead read the lane's claim against the record before accepting it.",
       "items": []

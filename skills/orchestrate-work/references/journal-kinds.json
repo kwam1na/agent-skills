@@ -804,9 +804,9 @@
         "line": {
           "by": "noChange",
           "cases": {
-            "true": "No change needed, at {head:commit}[. {notes:list}]"
+            "true": "No change needed, at {head:commit}[, with {notes:count:note}]"
           },
-          "otherwise": "At {head:commit}, after {rounds:count:review round}[. {notes:list}]"
+          "otherwise": "At {head:commit}, after {rounds:count:review round}[, with {notes:count:note}]"
         }
       },
       "explain": "The lead read the lane's claim against the record before accepting it.",
@@ -921,7 +921,7 @@
       "opensThread": false,
       "words": {
         "head": "The lead chose the checks for {subject}",
-        "line": "Checks: {checks:list}, at {head:commit}[, {added:count:check} added]. {why}"
+        "line": "{checks:count:check} at {head:commit}[, {added:count:check} added]. {why}"
       },
       "explain": "The lead chose which checks a piece runs, from what it changes.",
       "tracker": null,
