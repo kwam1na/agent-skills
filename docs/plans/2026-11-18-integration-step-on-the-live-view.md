@@ -48,17 +48,18 @@ Checked against `main` at `e935fe4` on 2026-11-18:
    - `integration.merged` `{target, targetHead, head, conflicts}`: the target merged into the integration candidate.
      `head` is the merge commit, `conflicts` the paths resolved by hand (possibly empty).
    - `integration.suite` `{head, result, seconds, budgetSeconds?}`: one `lead-suite` run. `result` maps the run's exit:
-     0 is `passed`; 3 is `over-budget`, every test passed and the run went over the `--budget` it was given, which
-     doesn't hold a release; any other exit is `failed`; and `unreadable` is a run whose checkout or prepare step
-     failed before the suite started. `budgetSeconds` is the budget file's whole-run limit when `--budget` names one,
-     and absent otherwise. The flow log line carries the same `result`, so `over-budget` and `unreadable` are new
+     0 is `passed`; 3 is `over-budget` only when the run's argv carries `--budget FILE` and that file reads as
+     `suite-budget/1`: every test passed and the run went over, which doesn't hold a release; every other exit,
+     including a 3 without such a budget, is `failed`, since exit 3 means something else to another repository's
+     suite; and `unreadable` is a run whose checkout or prepare step
+     failed before the suite started. `budgetSeconds` is that file's `wallSeconds`, and absent otherwise. The flow log line carries the same `result`, so `over-budget` and `unreadable` are new
      values there too.
    - `integration.requested` `{changeRequest, head}`: the change request into the target, opened at `head`.
    - `integration.landed` `{target, head}`: that change request merged, `head` the target's new head.
    `review.round` gains an optional `head`, the candidate the round read. A round under the delivery's key is an
    integration review round.
 3. **Who writes them.** `lead-suite` journals `integration.suite` when the record has `meta.integration`, besides its
-   flow log line, which is unchanged. A new lead command, `lead-integrate`, journals the rest:
+   flow log line, which keeps its fields and carries the result Decision 2 names. A new lead command, `lead-integrate`, journals the rest:
    - `lead-integrate merged --head H [--conflict PATH]...` reads the target and its head from the record and the
      merge's second parent.
    - `lead-integrate round --round N --head H --verdict LENS=approve|changes... --findings P0,P1,P2,P3
@@ -101,7 +102,8 @@ Checked against `main` at `e935fe4` on 2026-11-18:
    and Rejoin. Each row says what the latest fact of its kind shows and names its head in the mono face, struck
    through when the head is superseded. Suite says `failed`, `unreadable` or `over-budget` in those words, with the
    seconds against the budget when it has one. Review shows each lens's latest verdict as a dot and says which lenses
-   ask for changes. Rejoin is ready only when a passing suite and an all-approve round stand at the same, current head:
+   ask for changes. A suite counts as passing for Rejoin when it is `passed` or `over-budget`, and never when it is
+   `failed` or `unreadable`. Rejoin is ready only when a passing suite and an all-approve round stand at the same, current head:
    it then names the change request, or says one can open, and that the merge is the operator's. Otherwise it names
    what is missing: a passing suite at the current head, an approving round at it, or both at one head. A row with no
    fact yet says what will make it. Without `meta.integration`, or after `integration.landed`, the block isn't drawn.
@@ -141,7 +143,7 @@ In `tests/test_run_delivery.py`, for the record and the commands:
 - `lead-init` on a delivery file with `integrationTarget` writes `meta.integration` with base, target and remote; one
   without writes none.
 - `lead-suite --at H` on such a record journals `integration.suite` with H and its result, for each exit: 0 `passed`,
-  3 `over-budget` with `budgetSeconds` from the `--budget` file, 1 `failed` (journalled before the command exits
+  3 under a `suite-budget/1` `--budget` file `over-budget` with its `wallSeconds`, 3 with no `--budget` `failed`, 1 `failed` (journalled before the command exits
   non-zero), and a prepare step that fails `unreadable`. The flow log line carries the same result each time. On a
   record without `meta.integration`, it journals nothing, and its flow log line is as before apart from the result
   values.
@@ -178,13 +180,16 @@ Page rows, in a new `tests/delivery_views_page/line-map-integration.test.mjs`:
   - merged, suite and a round at H1, then a suite at H3 (a recorded fix): the round's head is struck, the review stop
     hollow, the target in filled.
   - A round as the newest fact strikes an earlier suite.
-  - A suite at H2 (a fix), then a merge at H3: both the suite and any earlier round are struck.
+  - A suite at H2 (a fix), then a merge at H3: both the suite and any earlier round are struck, and so is the earlier
+    merge's Caught up head.
+  - A request at H1, then a suite at H2: the request is struck and its stop hollow.
 - Outcomes at the current head: a `failed` suite rings the suite stop in danger and Rejoin names a passing suite as
   missing; a round with one `changes` verdict rings the review stop in warning and Review names the lens; an
-  `over-budget` suite fills the stop and says so; a passing suite and an all-approve round at one head make Rejoin
+  `over-budget` suite fills the stop and says so, and with an all-approve round at the same head makes Rejoin ready; an
+  `unreadable` suite rings the stop in danger, says `unreadable`, and Rejoin names a passing suite as missing; a passing suite and an all-approve round at one head make Rejoin
   ready, and at different heads it names both at one head as missing.
-- The journey's share: exact numerator and denominator before any stop, with two stops filled, and after a later
-  fact supersedes a filled stop.
+- The journey's share: exact numerator and denominator before any stop, with two stops filled, after a later fact
+  supersedes a filled stop, and after `integration.landed`.
 - A `review.round` under the delivery's key on a record without `meta.integration` draws nothing.
 - Every existing golden case renders unchanged. A new `integration` golden case pins the page whole.
 
