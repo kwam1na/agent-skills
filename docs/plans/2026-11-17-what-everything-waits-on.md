@@ -629,6 +629,20 @@ one collapsed line, such as "Testing · 6 fixed". A note that ended any other wa
 The confirmation sentence counts every ending. Nothing changes in the round record or the journal. When the raising
 round's finding isn't on the page, the row falls back to its resolution, as today.
 
+### V26-3588. Show how many stories have landed, as the live view's first fact
+
+Lane 3, tier 3, not blocked. Test-first. Files: `skills/delivery-views/assets/line-map.js`,
+`skills/delivery-views/assets/line-map.css` and `tests/delivery_views_page/line-map-facts.test.mjs`.
+
+Added mid-delivery. The operator approved the design through live mocks built from the page's own elements.
+
+The facts row opens with a Stories fact: the landed count out of the delivery's total in the display serif, a thin
+track in tones of the landed colour (landed, in the queue, being built), and a detail line counting the queue and the
+build. All the counts come from the record, not the tracker. The row stays at three facts, Stories, Last landed and
+Live, because four read heavy. The Plan fact's link and change count move under the plan-now sentence. The facts share
+one grid, so labels, values and details line up across the columns, with more space between and a hairline above.
+Last landed's detail links the pull request beside the ticket when the forge snapshot knows it.
+
 ## Calls made
 
 The operator settled these on 2026-11-17, before drafting.
