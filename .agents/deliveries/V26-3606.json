@@ -115,6 +115,10 @@
         {
           "id": "v26-3624-1",
           "text": "A story's card shows a state line for each state, worked out from the record and journal, with the dot colour for moving, waiting or checked."
+        },
+        {
+          "id": "v26-3624-2",
+          "text": "Before hand-off, the card shows how the review ended (rounds, notes fixed or deferred) under the state line."
         }
       ],
       "after": [
