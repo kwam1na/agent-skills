@@ -24,22 +24,18 @@
     {
       "id": "guard-linear-qualification",
       "argv": [
-        ".venv/bin/python",
-        "-B",
-        "scripts/run-tests.py",
-        "--workers",
-        "4",
-        "-p",
-        "test_linear_qualification.py"
+        "sh",
+        "-c",
+        ".venv/bin/python -B scripts/run-tests.py --workers 4 -p test_linear_qualification.py"
       ],
       "timeoutSeconds": 900
     },
     {
       "id": "guard-registry",
       "argv": [
-        ".venv/bin/python",
-        "-B",
-        "tests/test_registry.py"
+        "sh",
+        "-c",
+        ".venv/bin/python -B tests/test_registry.py"
       ],
       "timeoutSeconds": 900
     }
