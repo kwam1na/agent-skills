@@ -210,6 +210,32 @@ class ProjectionTests(unittest.TestCase):
         with self.assertRaises(public.ProjectionError):
             public.validate(older)
 
+    def test_the_integration_step_publishes_its_kinds_by_identity_and_no_head_or_drift(self):
+        doc, runs = source()
+        doc['state']['meta']['integration'] = {'base': 'integrate/app', 'target': 'main', 'remote': 'origin'}
+        head, target = 'c' * 40, 'd' * 40
+        facts = {'integration.merged': {'target': 'main', 'targetHead': target, 'head': head, 'conflicts': ['a.py']},
+                 'integration.suite': {'head': head, 'result': 'over-budget', 'seconds': 12, 'budgetSeconds': 10},
+                 'integration.requested': {'changeRequest': 'https://forge.test/pull/7', 'head': head},
+                 'integration.landed': {'target': 'main', 'head': target}}
+        for number, (kind, data) in enumerate(facts.items(), start=2):
+            doc['journal'].append({'id': number, 'at': '2026-11-15T00:01:00Z', 'kind': kind, 'lane': None,
+                                   'subject': 'APP', 'data': data})
+        round_facts = copy.deepcopy(doc['journal'][0]['data'])
+        doc['journal'].append({'id': 6, 'at': '2026-11-15T00:02:00Z', 'kind': 'review.round', 'lane': None,
+                               'subject': 'APP', 'data': {**round_facts, 'head': head}})
+        value = public.project(doc, runs, config(), source_fingerprint='1' * 64)
+        public.validate(value)
+        self.assertEqual(value['document']['journal'][1:], [
+            *({'id': number, 'at': '2026-11-15T00:01:00Z', 'kind': kind, 'lane': None, 'subject': 'APP'}
+              for number, kind in enumerate(facts, start=2)),
+            {'id': 6, 'at': '2026-11-15T00:02:00Z', 'kind': 'review.round', 'lane': None, 'subject': 'APP',
+             'data': round_facts}])
+        published = json.dumps(value)
+        for private in (head, target, 'forge.test', 'drift'):
+            with self.subTest(private=private):
+                self.assertNotIn(private, published)
+
     def test_the_receiver_does_not_police_kinds_and_the_projection_does(self):
         # On purpose: the service accepts any kind by its name's shape, so a kind the registry gains needs no service
         # deploy. Only the projection publishes registered kinds.
