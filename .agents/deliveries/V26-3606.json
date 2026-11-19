@@ -80,6 +80,58 @@
       "after": [
         "V26-3606"
       ]
+    },
+    "V26-3620": {
+      "title": "Make the delivery's name the live view's headline, with the count under it and a one-line kicker",
+      "lane": "lane-1",
+      "why": "The operator chose this design for the live view's opening from mockups during this delivery and asked for it to join this delivery's work, after V26-3618 on the one lane.",
+      "criteria": [
+        {
+          "id": "v26-3620-1",
+          "text": "The live view's headline is the delivery's name, without a leading ticket key that the kicker already links."
+        },
+        {
+          "id": "v26-3620-2",
+          "text": "The count leads the line under the name, in each open and closed state."
+        },
+        {
+          "id": "v26-3620-3",
+          "text": "The kicker is one line, the tracker link and Started ... ago or Closed after ..., with no state word, on desktop and phone widths."
+        },
+        {
+          "id": "v26-3620-4",
+          "text": "The page-behaviour tests and the history golden are updated to the new wording, and the hosted view renders the same."
+        }
+      ],
+      "after": [
+        "V26-3618"
+      ]
+    },
+    "V26-3624": {
+      "title": "Say where a story is on its line-map card, with the lane's own words under it",
+      "lane": "lane-1",
+      "why": "The operator agreed this card design from an HTML mockup during this delivery, after V26-3618's card read Being built for the hour after its review was approved, and asked for it to join this delivery after V26-3620, which edits the same line-map files.",
+      "criteria": [
+        {
+          "id": "v26-3624-1",
+          "text": "A story's card shows a state line for each state, worked out from the record and journal, with the dot colour for moving, waiting or checked."
+        },
+        {
+          "id": "v26-3624-2",
+          "text": "Before hand-off, the card shows how the review ended (rounds, notes fixed or deferred) under the state line."
+        },
+        {
+          "id": "v26-3624-3",
+          "text": "The card shows the lane's own words and their age when the lane is on that story."
+        },
+        {
+          "id": "v26-3624-4",
+          "text": "Proofs left, hasn't been handed off and the review-counts sentence are gone, the rest of the card is kept, and the page tests cover each state."
+        }
+      ],
+      "after": [
+        "V26-3620"
+      ]
     }
   },
   "finish": [
