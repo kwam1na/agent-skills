@@ -425,6 +425,21 @@ def git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
     return run(["git", *args], cwd=cwd, check=check).stdout.strip()
 
 
+def tool_commit(*args: str, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
+    """A git command that makes a commit of the tool's own, run with no repository hook: `core.hooksPath` names an empty
+    folder under the git common directory's run-delivery folder, as the merge queue's bypass does, whatever the
+    binding's `hooks` says. The tool wrote what it commits, and a merge brings in commits that passed their own hooks."""
+    common = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=cwd))
+    empty = common / "run-delivery" / "empty-hooks"
+    empty.mkdir(parents=True, exist_ok=True)
+    for leftover in empty.iterdir():  # it stays empty: nothing put there ever runs
+        if leftover.is_dir() and not leftover.is_symlink():
+            shutil.rmtree(leftover)
+        else:
+            leftover.unlink()
+    return run(["git", "-c", f"core.hooksPath={empty}", *args], cwd=cwd, check=check)
+
+
 def repo() -> Path:
     return Path(git("rev-parse", "--show-toplevel"))
 
@@ -5952,7 +5967,7 @@ def lead_plan(args) -> None:
         said = f"{'added story' if new_story else args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip()
         if dropping:
             said = f"removed {args.criterion} from {change['subjects'][0]}"
-        git("commit", "-q", "-m", f"{c.delivery}: plan change {ids} ({said})", cwd=root)
+        tool_commit("commit", "-q", "-m", f"{c.delivery}: plan change {ids} ({said})", cwd=root)
         if planned_after is not None:  # as it stands now: a story registered since the check above stays planned
             patch_from(lambda doc: {"planned": [p for p in doc["state"].get("planned", [])
                                                 if p["subject"] not in change["subjects"]]}, "the plan change's planned work")
@@ -6000,7 +6015,7 @@ def plan_approval(c, raw: dict, args) -> None:
             c.load_delivery(c.delivery)
             raise
         git("add", str(c.delivery_path), cwd=c.root)
-        git("commit", "-q", "-m", f"{c.delivery}: approval {args.id} {args.state}", cwd=c.root)
+        tool_commit("commit", "-q", "-m", f"{c.delivery}: approval {args.id} {args.state}", cwd=c.root)
         rebuild_plan(c)
     print(f"approval {args.id}: {args.state}")
     print(f"committed the delivery file; push it so lanes see it: "
@@ -7880,7 +7895,7 @@ def lead_sync(args) -> None:
                     if merge_head and merge_head != intent["defaultHead"]:
                         raise Stop("the checkout holds another merge; inspect it before resuming")
                     if not merge_head:
-                        result = run(["git", "merge", "--no-ff", "--no-commit", intent["defaultHead"]], check=False)
+                        result = tool_commit("merge", "--no-ff", "--no-commit", intent["defaultHead"], check=False)
                         if result.returncode and not git("rev-parse", "-q", "--verify", "MERGE_HEAD", check=False):
                             raise Stop(result.stderr or result.stdout)
                     restore_move_installation(c, intent)
@@ -7917,7 +7932,7 @@ def lead_sync(args) -> None:
                 if git("rev-parse", "HEAD") == intent["oldHead"]:
                     if git("write-tree") != intent["preparedTree"]:
                         raise Stop("the prepared merge tree changed before commit; inspect it before resuming")
-                    git("commit", "-m", intent["reason"])
+                    tool_commit("commit", "-m", intent["reason"])
                 if (git("rev-parse", "HEAD^{tree}") != intent["preparedTree"]
                       or git("show", "-s", "--format=%P", "HEAD").split() != intent["parents"]
                       or git("show", "-s", "--format=%B", "HEAD") != intent["reason"]):

@@ -590,6 +590,18 @@ lead. Any other session, and a closed delivery, is neither, and both hooks allow
 - **What doctor reports.** Besides refusing a bad `hooks`, it reports as `warn`, without refusing, a host settings file
   that lacks an entry the receipt records, and a `python3` on `PATH` below 3.11, which the installed command runs.
 
+### The repository's git hooks
+
+These are not the host hooks above. run-delivery's own commits run none of the repository's git hooks: `lead-plan
+change` and `lead-plan approval`, which commit the delivery file and the plan, and `lead-sync --merge`, which merges
+the default branch and commits the prepared merge. Each runs git with `core.hooksPath` set to an empty folder,
+`run-delivery/empty-hooks` under the git common directory, as the merge queue does under `hooks: "bypass"`, and does so
+whatever the binding's `hooks` says. Every hook is skipped, `pre-commit`, `commit-msg` and a secret scanner's included,
+not only a formatter: the tool wrote the files it commits, and a merge brings in commits that already passed their
+authors' hooks. The setting is passed on the command line and never written to the repository's configuration. A
+commit a lane or the lead makes with plain git still runs every hook, and so does the operator checkout's fast-forward
+at close.
+
 ## The delivery posture
 
 `.agents/delivery-posture.json`, read from the tip of the delivery's own `<remote>/<base>` and nowhere else, decides
