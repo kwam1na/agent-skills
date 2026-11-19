@@ -332,6 +332,7 @@ V26-3564, in `tests/test_lane_changes.py` and `tests/delivery_views_page/line-ma
 | --- | --- | --- | --- |
 | 1 | 1 | V26-3591, V26-3570 | `skills/orchestrate-work/scripts/region_ownership.py`, `skills/orchestrate-work/scripts/merge_queue.py`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/journal-kinds.json`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/templates/lane-brief.md`, `tests/test_region_claims.py`, `tests/test_region_grants.py`, `tests/test_journal_kinds.py`, `tests/test_journal_shape.py`, `tests/fixtures/journal-kinds/` |
 | 1 | 2 | V26-3476, V26-3564 | `skills/delivery-views/scripts/render.py`, `skills/delivery-views/assets/line-map.js`, `skills/delivery-views/assets/line-map.css`, `skills/delivery-views/SKILL.md`, `skills/run-delivery/references/config.md`, `tests/test_ownership_lock_race.py`, `tests/test_lane_changes.py`, `tests/delivery_views_page/` |
+| 1 | 3 | V26-3589 | `skills/delivery-views/references/hosted-snapshot.schema.json`, `skills/delivery-views/scripts/public_projection.py`, `tests/test_run_delivery.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_hosted_projection.py`, `tests/fixtures/delivery-views/` |
 
 `run_delivery.py` is shared by lines. The installed generation has no carve, so before assigning V26-3564 the lead
 revokes lane 1's whole-file claim and grants spans with `lead-own --region`, against the current base, in one run
@@ -350,6 +351,14 @@ decides again before assigning. The spans:
 
 Every insertion point the assignment message names falls strictly inside the receiving lane's span. V26-3476 needs no
 `run_delivery.py` lines under Decision 14. If it does after all, the lead decides before granting any.
+
+V26-3589 joined on 2026-11-18 as lane 3, with its own reviewed plan,
+`docs/plans/2026-11-18-integration-step-on-the-live-view.md`. Its other files are other lanes' when it joins, so the
+lead moves them as they come free: `delivery_state.py`, `journal-kinds.json`, `schemas.json`, the orchestration guide,
+the journal tests and their vectors from lane 1 at once, since V26-3570 needs none of them; spans of `run_delivery.py`
+over `lead_init`, `lead_suite` and the `lead-suite` parser lines from lane 1 at once; and `line-map.js`, `line-map.css`,
+`render.py` and `tests/delivery_views_page/` from lane 2 once V26-3564 lands. Lane 3 starts with the record, the journal
+kinds and `lead-suite`, and draws the view after that move.
 
 `catalog.json` and `profiles/*` are the lead's (Decision 18), and so are `tests/test_own_deliveries.py` and
 `.agents/orchestration.json`'s catalogue (Decision 19). `provenance.lock.json` is regenerable.
@@ -398,3 +407,19 @@ Lane 2, tier 1, not blocked. Test-first. Files: `skills/run-delivery/scripts/run
 
 Implement Decisions 15 to 17. Describe `lane-changes.json` in run-delivery's `references/config.md` beside
 `needs-you.json`, and the files view in delivery-views' `SKILL.md`.
+
+### V26-3589. Show a delivery's integration step on the live view
+
+Lane 3, tier 1, not blocked. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+`skills/run-delivery/SKILL.md`, `skills/orchestrate-work/scripts/delivery_state.py`,
+`skills/orchestrate-work/references/journal-kinds.json`, `skills/orchestrate-work/references/schemas.json`,
+`skills/orchestrate-work/references/orchestration-guide.md`, `skills/delivery-views/assets/line-map.js`,
+`skills/delivery-views/assets/line-map.css`, `skills/delivery-views/scripts/render.py`,
+`skills/delivery-views/references/hosted-snapshot.schema.json`, `skills/delivery-views/scripts/public_projection.py`,
+`tests/test_run_delivery.py`, `tests/test_journal_kinds.py`, `tests/test_journal_shape.py`,
+`tests/fixtures/journal-kinds/`, `tests/test_delivery_views_render.py`,
+`tests/test_delivery_views_hosted_projection.py`, `tests/delivery_views_page/` and `tests/fixtures/delivery-views/`.
+
+Implement Decisions 1 to 9 of `docs/plans/2026-11-18-integration-step-on-the-live-view.md`, whose scenarios are this
+story's. In this delivery the catalog and profile sentences are the lead's (Decision 18 here), and the story lands on
+the integration base.
