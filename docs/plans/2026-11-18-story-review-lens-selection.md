@@ -213,3 +213,11 @@ Acceptance criteria:
 ### V26-3618. Wake the lead when the supervisor holds the finish, and clear a stale suite checkout before serve refuses on it
 
 Lane 1, tier 1, after V26-3606. Added mid-delivery: The operator added it to this delivery after the delivery's own merge queue was refused for about 12 minutes on another delivery's stale lead-suite checkout, and no wake reached the lead.
+
+### V26-3620. Make the delivery's name the live view's headline, with the count under it and a one-line kicker
+
+Lane 1, tier 1, after V26-3618. Added mid-delivery: The operator chose this design for the live view's opening from mockups during this delivery and asked for it to join this delivery's work, after V26-3618 on the one lane.
+
+### V26-3624. Say where a story is on its line-map card, with the lane's own words under it
+
+Lane 1, tier 1, after V26-3620. Added mid-delivery: The operator agreed this card design from an HTML mockup during this delivery, after V26-3618's card read Being built for the hour after its review was approved, and asked for it to join this delivery after V26-3620, which edits the same line-map files.

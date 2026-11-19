@@ -1008,6 +1008,9 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
   Before you switch, post what its outbox still holds and `ack` it under that generation, so nothing it posted is
   posted again. Then replace it in `state.publishers` with run-delivery's tracker publisher (`lead-setup` adds it),
   export the tracker's token (`LINEAR_API_KEY` for Linear), and commit the binding.
+- **`the record names sibling deliveries`**: the record names siblings with `lead-sibling`, and the binding has no
+  `state.siblingSnapshot` to read them. Add one that runs delivery-views' `hosted.py siblings --state-dir
+  {stateDirectory}`, and commit the binding; or remove the siblings with `lead-sibling remove`.
 - **`these in-app adapters don't resolve`**: install the build, serve or check program the line names, or correct
   `inApp`.
 - **`isn't writable`**: make the in-app lease's folder or the baseline folder writable, or point `inApp` elsewhere.

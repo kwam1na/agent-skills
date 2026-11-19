@@ -137,8 +137,11 @@ its stub left in, and the finish line follows it.
    for each sibling and parent pair.
 6. **What the record keeps, and what never frees a wait.** Freshness is decided once, when `reconcile` applies a
    read, and is written into the record. Nothing downstream needs a clock.
-   - For each sibling, the record keeps `stories` and `readAt` from its last `read` entry, and `lastOutcome` and
-     `lastAttemptAt` from its latest entry of any outcome.
+   - For each sibling, the record keeps `stories` and `readAt` from the last `read` entry that changed it, and
+     `lastOutcome` and `lastAttemptAt` from the entry that set its current outcome. A read that changes nothing
+     writes nothing, so an idle refresh leaves the record as it was. `readAt` is then the last read that changed the
+     sibling, and `lastAttemptAt` is when its current `lastOutcome` began. (Amended during delivery: see "Amendments
+     made during delivery".)
    - Only a `read` entry changes a sibling story's stage or journals anything about its stories. A `stale`,
      `unavailable`, `incompatible` or `other-epic` entry updates `lastOutcome` and `lastAttemptAt` only, whatever
      stages its body shows.
@@ -148,8 +151,9 @@ its stub left in, and the finish line follows it.
      `lastAttemptAt`. So both ways a read can be stale reach the record the same way.
    - A sibling is fresh when its `lastOutcome` is `read`. Views and `waits` decide "not fresh" from `lastOutcome`
      alone, and never compare times with a clock.
-   - Every sibling group on every view shows when its last `read` was taken, whatever its `lastOutcome`. If `serve`
-     stops refreshing, nothing marks the sibling stale, but the reader can still see how old the last read is.
+   - Every sibling group on every view shows a time, whatever its `lastOutcome`: "no change since <readAt>" for a
+     fresh sibling, and "<reason> since <lastAttemptAt>" for any other. If `serve` stops refreshing, the live view
+     stops with it, since `serve` hosts it.
    - A sibling story reads landed when its stage is `merged`, or `settled` for a planned entry, the same test as
      `_landed_subjects`.
    - The first `read` showing a story landed journals `sibling.landed` once, with `subject`, `sibling` and
@@ -159,20 +163,20 @@ its stub left in, and the finish line follows it.
    that has siblings in its record but no `siblingSnapshot` command.
 8. **The combined view is a chapter, not a new page.** The live line map, the Markdown view and the built-in page
    gain an "Across repositories" chapter:
-   - one group per sibling, with its name, a link to its live view, its stories with their stage words, and the
-     time of its last read, whatever its `lastOutcome` (Decision 6);
-   - a sibling that isn't `read` and fresh is drawn unavailable, with the reason and the time of its last good read;
+   - one group per sibling, with its name, a link to its live view, its stories with their stage words, and its
+     time in Decision 6's wording, whatever its `lastOutcome`;
+   - a sibling that isn't `read` and fresh is drawn unavailable, with "<reason> since <lastAttemptAt>";
    - the chapter is collapsed by default, as the "Elsewhere" section is.
 
    The headline changes only once every one of this delivery's own stories has landed. Before then it is today's
    headline, whatever the siblings say. Once they have landed, each same-epic sibling (any whose `lastOutcome` isn't
    `other-epic`) is counted:
    - **Fresh and all landed:** contributes nothing.
-   - **Open stories in its last kept read, whatever its `lastOutcome`:** "<name> has N open", with "last read <at>"
-     added when it isn't fresh.
+   - **Open stories in its last kept read, whatever its `lastOutcome`:** "<name> has N open", with ", couldn't be
+     read since <lastAttemptAt>" added when it isn't fresh, whatever the reason.
    - **Never read:** "<name> couldn't be read (never read)".
-   - **Not fresh, with no open stories in its last read:** "<name> couldn't be read (last read <at>)". Its last read
-     can't show stories added since.
+   - **Not fresh, with no open stories in its last read:** "<name> couldn't be read since <lastAttemptAt>". Its last
+     read can't show stories added since.
 
    If any sibling contributes, every view says "This repository's part is done." followed by each sibling's
    sentence, in place of a done headline. The done headline shows only when every same-epic sibling is fresh with
@@ -195,7 +199,7 @@ its stub left in, and the finish line follows it.
 11. **An `after` key may name a sibling's story.** `waits` gains the cause `sibling`, placed after `order` in
     `WAIT_CAUSES`. It is raised for an `after` key that no story of this delivery holds and that a sibling's stories
     hold unlanded. Its sentence in `wait-words.json` is "Waits for {on:ticket} to land in {sibling}. {where}", and
-    `{where}` says "last read {at}" when the sibling isn't fresh (Decision 6). `frees` is `landed`, and
+    `{where}` says "<reason> since <lastAttemptAt>" when the sibling isn't fresh (Decision 6). `frees` is `landed`, and
     `needsSomeone` is false.
     - `next` treats the key as an open blocker until the sibling's story reads landed.
     - `delivery_state.py wait` wakes on `sibling.landed`.
@@ -215,6 +219,23 @@ its stub left in, and the finish line follows it.
     tracker-only adopter orders across repositories. Where both the tracker and a sibling read speak, `next` treats
     the story as blocked until both say the blocker is done, as it already does for the plan's order beside
     `blockedBy`.
+
+## Amendments made during delivery
+
+- **Sibling read times (lead, 2026-11-18, recorded for the operator's review).** V26-3603 first updated `readAt` and
+  `lastAttemptAt` on every refresh, so an idle refresh with an unchanged sibling rewrote the record every 180s. That
+  broke the rule that an idle refresh writes nothing. V26-3604 made an unchanged read write nothing. A first version
+  of the wording kept "last read <readAt>" for a sibling that isn't fresh. It would have shown a sibling that sat
+  unchanged for hours and then failed as last read hours ago, when its last good read was minutes before it failed.
+  So the meanings and words became:
+  - `readAt` is the last read that changed the sibling, shown as "no change since <readAt>" while it's fresh;
+  - `lastAttemptAt` is when the current outcome began, shown as "<reason> since <lastAttemptAt>" otherwise.
+
+  V26-3072 drew the views that way, and V26-3622 brought the wait sentence and the schema descriptions into line.
+  Decisions 6, 8 and 11 and scenarios 13, 14 and 21 above carry the amended wording.
+- **V26-3622 was added mid-delivery** by `lead-plan change`, at the operator's choice of a lane fix with review.
+- **Record shape.** V26-3363 added the record's `outside` member and the `work.cleared` journal kind. The plan had
+  listed no record-shape change for that story. The release already goes out as an `-rc` candidate first.
 
 ## Out of scope
 
@@ -315,20 +336,20 @@ V26-3603. Every reader test uses a loopback receiver that records each request's
 V26-3072. Each case is checked on the line map, the Markdown view and the built-in page:
 
 13. A record with two siblings, one `read` and one `unavailable`, draws an "Across repositories" chapter with both
-    groups. The read group shows the time of its last read. The unavailable group shows its reason and the time of
-    its last good read. A sibling never read shows "never read".
+    groups. The read group shows "no change since <readAt>". The unavailable group shows "couldn't be read since
+    <lastAttemptAt>". A sibling never read shows "never read".
 14. Headline cases:
     - (a) Own stories all merged, and a fresh sibling with two open stories: "This repository's part is done.
       <name> has 2 open." The delivery still closes.
     - (b) Own stories all merged, and every sibling fresh with every story landed: the usual done headline, and no
       "part is done".
     - (c) Own stories all merged, and the sibling's `lastOutcome` is `unavailable` with two open stories in its last
-      kept read: "<name> has 2 open, last read <at>", never the done headline.
+      kept read: "<name> has 2 open", with "couldn't be read since <lastAttemptAt>", never the done headline.
     - (d) Own stories all merged, and a sibling never read: "<name> couldn't be read (never read)", never the done
       headline.
     - (e) Own stories not all landed: today's headline, with neither the part-done nor the done headline.
     - (f) Own stories all merged, and the sibling's `lastOutcome` is `unavailable`, then `stale`, with every story
-      landed in its last kept read: "<name> couldn't be read (last read <at>)", never the done headline.
+      landed in its last kept read: "<name> couldn't be read since <lastAttemptAt>", never the done headline.
     - (g) Own stories all merged, with one fresh same-epic sibling whose stories have all landed and one
       `other-epic` sibling whose earlier read holds open stories: the usual done headline, and the `other-epic`
       sibling isn't named.
@@ -350,8 +371,8 @@ V26-3604:
     `next` doesn't offer it.
 20. When a fresh read shows that story `merged`, the wait is gone, `next` offers the story, and `wait` returns on
     `sibling.landed`. No lead command ran.
-21. Scenario 9's two stale cases, each showing the story `merged`: the wait stays and says when the sibling was
-    last read, and `next` still doesn't offer the story. A fresh read then clears it.
+21. Scenario 9's two stale cases, each showing the story `merged`: the wait stays and says "stale since
+    <lastAttemptAt>", and `next` still doesn't offer the story. A fresh read then clears it.
 22. With the sibling `read`, an `after` key held by no story and no sibling raises a wait with
     `needsSomeone: true`, and it shows in "Needs you". With the sibling `unavailable` or never read, the same key
     raises a wait that says the sibling hasn't been read yet, with `needsSomeone: false`. With one same-epic sibling
@@ -450,6 +471,10 @@ Lane 2, tier 2, after V26-3603. Characterization-first. Files: `skills/orchestra
 
 Pin today's ignored-key behaviour first (scenario 18). Then add the `sibling` cause, `next`'s blocker, `wait`'s
 wake, and the `lead-plan` and `lead-setup` changes, by Decisions 11 to 13. Scenarios 18 to 24.
+
+### V26-3622. Word a sibling wait's time from when its outcome began, not its last changing read
+
+Lane 2, tier 2, after V26-3604. Added mid-delivery: V26-3604 deferred P2 outcome-correctness-r1-2: the wait sentence and the schema still say last read from readAt, which can understate recency by hours. The operator chose a lane fix with review.
 
 ## Calls made
 

@@ -1279,6 +1279,20 @@ def load_state() -> dict:
     return shown_record(cfg().release, cfg().state)
 
 
+def sibling_story_keys(state: Path | None) -> set[str]:
+    """The stories a same-epic sibling delivery holds in the last kept read of it by the record in ``state``: an `after`
+    key may name one. Empty without a record, or one that names no sibling."""
+    try:
+        record = json.loads((Path(state) / "state.json").read_text(encoding="utf-8")) if state else {}
+    except (OSError, ValueError):
+        return set()
+    rows = record.get("siblings") if isinstance(record, dict) else None
+    return {story["subject"] for row in (rows if isinstance(rows, list) else [])
+            if isinstance(row, dict) and row.get("lastOutcome") != "other-epic"
+            for story in (row.get("stories") if isinstance(row.get("stories"), list) else [])
+            if isinstance(story, dict) and isinstance(story.get("subject"), str)}
+
+
 def journal_entries(kind: str, subject: str) -> list[dict]:
     return [e for e in load_state()["journal"] if e.get("kind") == kind and e.get("subject") == subject]
 
@@ -5807,9 +5821,11 @@ def lead_plan(args) -> None:
         if args.lane not in c.lanes:
             raise Stop(f"--lane {args.lane} isn't a lane of {c.delivery}: {', '.join(c.lanes)}")
         after = args.after or []
-        strangers = [other for other in after if other not in stories]
+        held = sibling_story_keys(getattr(c, "state", None))
+        strangers = [other for other in after if other not in stories and other not in held]
         if strangers:
-            raise Stop(f"--after {', '.join(strangers)} isn't a story of {c.delivery}")
+            raise Stop(f"--after {', '.join(strangers)} isn't a story of {c.delivery} or of a sibling delivery it has "
+                       "read")
         problem = why_problem(c, args.why)
         if problem:
             raise Stop(f"{key} {problem}: --why is one line saying why it joins the delivery")
@@ -6658,10 +6674,16 @@ def draft_delivery(c, args, integration_target: str | None = None) -> None:
         stories[g["key"]] = story
     if not stories:
         raise Stop(f"the pattern matched no heading in {args.plan}")
+    try:
+        # A delivery drafted again may already keep a record that has read its siblings; a new one has none.
+        sibling_keys = sibling_story_keys(c.state_of(args.key, json.loads(path.read_text()) if path.exists() else {}))
+    except (OSError, ValueError, Stop):
+        sibling_keys = set()
     for subject, found in read.items():
-        unknown = [after for after in found["after"] if after not in stories]
+        unknown = [after for after in found["after"] if after not in stories and after not in sibling_keys]
         if unknown:
-            notes.append(f"plan story {subject} comes after {', '.join(unknown)}, which the plan has no story for")
+            notes.append(f"plan story {subject} comes after {', '.join(unknown)}, which neither the plan nor a known "
+                         "sibling delivery has a story for")
     lanes, missing = units_owns(text)
     if missing:
         notes.append(missing)
@@ -10559,6 +10581,14 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
             added.append({"holding": False, "source": f"{on}'s waits", "clears": f"{on} put back, landing or settling",
                           "text": delivery_state.wait_said(table, "needsYou", "stopped", {"subject": on}) + " " + count,
                           "kind": "stopped", "who": "lead", "subject": on, "waiting": len(waiting), "fields": {"detail": ""}})
+    for wait in found:
+        # An after key that neither a story here nor any sibling holds, with every sibling read fresh: the lead adds the
+        # sibling or fixes the key. It names no piece of this record, so no other item can carry it.
+        if (wait["cause"] == "sibling" and wait["needsSomeone"] and wait["subject"] not in lanes
+                and wait["on"] not in pieces):
+            added.append({"holding": False, "source": f"{wait['subject']}'s waits", "text": wait["words"],
+                          "clears": f"a sibling listing {wait['on']}, or {wait['subject']}'s after key changing",
+                          "kind": "sibling", "who": "lead", "subject": wait["subject"], "fields": {"on": wait["on"]}})
     for free in delivery_state.free_to_start(doc, [*found, *peer_waits_said(c)], words=table):
         # A story free to start is in "Needs you" itself, so what waits on it is counted on its item.
         waiting = list(dict.fromkeys(wait["subject"] for wait in found
@@ -12113,6 +12143,35 @@ def lead_hold(args) -> None:
           f"or with {flow_command()} lead-hold {args.key} --clear")
 
 
+# A sibling's hosted live view is read over HTTPS; plain http only from a loopback receiver, as hosted.py allows tests.
+SIBLING_SCHEME = re.compile(r"^(?:https://|http://127\.0\.0\.1:[0-9]{1,5}/)")
+
+
+def lead_sibling(args) -> None:
+    """Name a sibling delivery of the same epic by its hosted live view's link, as sibling.added, or remove one, as
+    sibling.removed. serve's refresh reads each one the record names through the binding's state.siblingSnapshot.
+    Refused, with nothing written, for a record with no tracker parent, a link that isn't a hosted live view, or a
+    name the record already holds or, for a removal, doesn't."""
+    if args.action == "add" and not SIBLING_SCHEME.match(args.link or ""):
+        raise Stop("a sibling is named by its hosted live view over HTTPS, https://<origin>/d/<64 hex>; plain http is "
+                   "taken only from http://127.0.0.1:<port>, a loopback test receiver")
+    c = cfg()
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+    try:
+        if args.action == "remove":
+            done = delivery_state.set_sibling(c.state, name=args.name, remove=True)
+            print(f"removed the sibling {args.name} (journal entry {done['entry']})")
+            return
+        done = delivery_state.set_sibling(c.state, name=args.name, link=args.link)
+    except delivery_state.StateError as error:
+        raise Stop(str(error)) from None
+    print(f"named {args.name} as a sibling delivery (journal entry {done['entry']}); serve's refresh reads it through "
+          f"the binding's state.siblingSnapshot")
+
+
 def lead_resolve(args) -> None:
     """Resolve the blocker a journal entry records, or ask the next pass to rerun a failed fullHealth, with the lead's
     reason. The resolution is the flow log's; the journal says so."""
@@ -12570,6 +12629,7 @@ class Doctor:
             ("gh", "gh", ("config",), self.gh),
             ("forge", "forge find", ("config", "gh"), self.forge),
             ("forge-write", "forge write access", ("config",), self.forge_write),
+            ("tracker-scope", "tracker snapshot scope", ("config", "binding"), self.tracker_scope),
             ("tracker-token", "tracker snapshot token", ("binding",), self.tracker_token),
             ("publishing", "snapshots and publishers", ("config", "binding"), self.publishing),
             ("hosted", "hosted delivery", ("config",), self.hosted),
@@ -12946,6 +13006,50 @@ class Doctor:
                                f"{', '.join(unset)}")
         return "ok", f"{', '.join(names) or 'no variables'} set"
 
+    def tracker_scope(self):
+        """The Jira snapshot's --scope and --status-state, against the project: run with --check, it names each
+        component, label or status the project doesn't know, the In Progress statuses left to their category, and the
+        in-scope children that carry no value of a scoped kind."""
+        spec = ((self.binding or {}).get("state") or {}).get("trackerSnapshot") or {}
+        argv = list(spec.get("argv") or [])
+        if not any(part in ("--scope", "--status-state") for part in argv):
+            return self.not_applicable("the tracker snapshot sets no --scope or --status-state")
+        if self.tracker_token()[0] != "ok":  # Its own row, next, says which variable to export.
+            return "skipped", "(needs tracker-token)"
+        state = getattr(self.c, "state", None) or self.c.main / self.c.state_rel
+        try:
+            parent = json.loads((Path(state) / "state.json").read_text())["meta"].get("trackerParent")
+        except (OSError, ValueError, KeyError, TypeError):
+            parent = None
+        parent = parent or getattr(self.c, "delivery", None)
+        if not parent:
+            return self.not_applicable("no delivery's tracker parent to check against")
+        try:
+            taken = run(expand_argv(argv, stateDirectory=str(state), parent=parent) + ["--check"], cwd=self.root,
+                        check=False, timeout=int(spec.get("timeoutSeconds", 60)))
+        except subprocess.TimeoutExpired:
+            return "wrong", "the tracker snapshot's --check timed out"
+        try:
+            found = json.loads(taken.stdout) if taken.returncode == 0 else None
+        except ValueError:
+            found = None
+        if not isinstance(found, dict) or found.get("check") != "tracker-scope/1":
+            return "wrong", f"the tracker snapshot's --check failed: {(taken.stderr or taken.stdout).strip()[-200:]}"
+        lines = []
+        if "--scope" in argv and "--state-dir" not in argv:
+            lines.append("it sets --scope without --state-dir {stateDirectory}, so the delivery file's stories aren't "
+                         "kept in scope; fix: add --state-dir {stateDirectory}")
+        if found["unknown"]:
+            lines.append(f"the project has no {', '.join(found['unknown'])}; fix: correct the binding's trackerSnapshot")
+        if found["unmapped"]:
+            lines.append(f"In Progress statuses with no --status-state: {', '.join(found['unmapped'])}; map each, or "
+                         "leave it to its category")
+        if found["unmarked"]:
+            lines.append(f"in scope with no scoped value: {', '.join(found['unmarked'])}; tag each in the tracker")
+        if found["unknown"]:
+            return "wrong", "; ".join(lines)
+        return ("warn", "; ".join(lines)) if lines else ("ok", "every scope value and mapped status is known")
+
     def hosted(self):
         try:
             settings=hosted_settings(self.c)
@@ -12959,6 +13063,10 @@ class Doctor:
 
     def publishing(self):
         problems = publishing_problems(self.c, self.binding)
+        # Siblings are a snapshot source too: a record that names them, with nothing in the binding to read them.
+        sibling_status, sibling_said = self.siblings()
+        if sibling_status == "wrong":
+            problems.append(sibling_said)
         if problems:
             return "wrong", "; ".join(problems)
         state = self.binding.get("state") or {}
@@ -12966,6 +13074,7 @@ class Doctor:
         updates = {"publisher": f"the {conf['publisher']} tracker publisher posts tracker updates",
                    "manual": f"the lead posts tracker updates by hand ({self.c.name} sets tracker.updates to manual)"}
         said = [*(["a forge snapshot"] if state.get("forgeSnapshot") else []),
+                *([f"sibling deliveries ({sibling_said})"] if sibling_status == "ok" else []),
                 *([updates[conf["mode"]]] if conf["mode"] in updates else [])]
         loose = tracker_publisher.untargeted(conf) if conf["mode"] == "publisher" else []
         if conf["transitions"].get("review"):
@@ -12975,6 +13084,27 @@ class Doctor:
         return "ok", ("; ".join(said) or "the binding has neither a forge snapshot nor a tracker publisher, and needs "
                       "neither") + (f"; these moves name no status in tracker.transitions.targets, so one a person "
                                     f"already made shows as not offered: {', '.join(loose)}" if loose else "")
+
+    def siblings(self):
+        """Each sibling delivery the record names, with its last read's outcome, and a binding that never reads them:
+        part of the snapshots and publishers check."""
+        # A configuration resolves its state directory only once a delivery is selected.
+        state = getattr(self.c, "state", None)
+        if state is None:
+            return self.not_applicable("no delivery selected")
+        try:
+            record = json.loads((Path(state) / "state.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return self.not_applicable("no record yet")
+        named = [row for row in (record.get("siblings") or []) if isinstance(row, dict)] if isinstance(record, dict) else []
+        if not named:
+            return self.not_applicable("the record names no sibling delivery")
+        said = "; ".join(f"{row.get('name')}: {row.get('lastOutcome') or 'never read'}" for row in named)
+        if not ((self.binding or {}).get("state") or {}).get("siblingSnapshot"):
+            return "wrong", (f"the record names sibling deliveries ({said}), but the binding has no "
+                             f"state.siblingSnapshot, so they are never read; fix: add state.siblingSnapshot to the "
+                             f"binding (delivery-views' hosted.py siblings --state-dir {{stateDirectory}} prints one)")
+        return "ok", said
 
     def node(self):
         problem = node_problem(self.release())
@@ -13517,6 +13647,15 @@ def main(argv: list[str] | None = None) -> None:
     held.add_argument("--text", help="why the story waits, in the lead's words")
     held.add_argument("--clear", action="store_true", help="clear the lead's hold, which story.unheld records")
     p.set_defaults(fn=lead_hold)
+    p = command(sub, "lead-sibling", help="name a sibling delivery of the same epic by its hosted link, or remove one")
+    sibling = p.add_subparsers(dest="action", required=True)
+    q = command(sibling, "add", help="name a sibling by its hosted live view's link")
+    q.add_argument("--link", required=True, help="the sibling's hosted live view, https://<origin>/d/<64 hex>")
+    q.add_argument("--name", required=True, help="the sibling's label in this record")
+    q.set_defaults(fn=lead_sibling)
+    q = command(sibling, "remove", help="stop reading a sibling")
+    q.add_argument("--name", required=True, help="the sibling's label in this record")
+    q.set_defaults(fn=lead_sibling, link=None)
     p = command(sub, "lead-resolve", help="resolve a recorded blocker, or rerun a failed fullHealth")
     p.add_argument("id", help="the blocker's journal id, or full-health to rerun a failed fullHealth")
     p.add_argument("--why", required=True)

@@ -1,0 +1,282 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3602",
+  "headline": "One epic across repositories",
+  "baseBranch": "integrate/epic-across-repos",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-18-epic-across-repositories.md",
+  "laneBrief": "docs/plans/2026-11-18-epic-across-repositories.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-18-epic-across-repositories.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/delivery-views/scripts/snapshot.py",
+        "tests/test_delivery_views_snapshots.py",
+        "tests/fixtures/delivery-views-snapshots/jira-scope/*"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/delivery-views/scripts/hosted.py",
+        "tests/test_siblings.py",
+        "tests/fixtures/siblings/*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3363": {
+      "title": "Scope a delivery's tracker snapshot to its own repository's tickets, and map an adopter's statuses by name",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3363-1",
+          "text": "With --scope \"component=Mobile App\", a parent whose children carry the components \"Backend\" and \"Mobile App\" leaves only the \"Mobile App\" children, and any the delivery file lists, in the sweep. The \"Backend\" children appear as outside, with their status and component, and no sweep reports on them."
+        },
+        {
+          "id": "v26-3363-2",
+          "text": "--scope \"label=...\" and --scope \"prefix=...\" behave the same way for labels and summary prefixes. Several --scope values match any of them."
+        },
+        {
+          "id": "v26-3363-3",
+          "text": "A child with no value of the scoped kind stays in scope and is flagged."
+        },
+        {
+          "id": "v26-3363-4",
+          "text": "With --status-state mapping a status to completed, a ticket in that status reads as completed regardless of its category. One mapped to started reads as started, and a merged story whose ticket moves to it is reported."
+        },
+        {
+          "id": "v26-3363-5",
+          "text": "A record already holding outside tickets, as lane-less building work or as tracker-added follow-ups, drops them on the next sweep, journaled once. Its own stories are untouched."
+        },
+        {
+          "id": "v26-3363-6",
+          "text": "doctor names an unknown component, label or mapped status, unmapped In Progress statuses, and unmarked in-scope children."
+        },
+        {
+          "id": "v26-3363-7",
+          "text": "Without either argument, behaviour is unchanged."
+        }
+      ]
+    },
+    "V26-3603": {
+      "title": "Read sibling deliveries' published snapshots into the record",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3603-1",
+          "text": "c1: The lead can add and remove a sibling by its hosted link and a short name. Each change is journaled, and a record without meta.trackerParent refuses one."
+        },
+        {
+          "id": "v26-3603-2",
+          "text": "c2: serve reads every sibling on its refresh interval and reconcile applies the read, so the record holds each sibling's stories with their stage and title, when each was first read landed, and when the sibling was last read. The hosted snapshot carries no merge time, so a sibling story's landing is an observation time, never an occurrence time."
+        },
+        {
+          "id": "v26-3603-3",
+          "text": "c3: A sibling whose snapshot is another schema version is shown as needing a compatible snapshot and is never half-read. One whose epic differs from this record's is shown as another epic and contributes no stories."
+        },
+        {
+          "id": "v26-3603-4",
+          "text": "c4: A failed or stale read keeps the last good read and says when it was taken. It never changes a sibling story's stage."
+        },
+        {
+          "id": "v26-3603-5",
+          "text": "c5: The first read showing a sibling story landed journals that once."
+        },
+        {
+          "id": "v26-3603-6",
+          "text": "c6: Sibling reads carry no Authorization or Cookie header and follow no redirect."
+        },
+        {
+          "id": "v26-3603-7",
+          "text": "c7: A sibling that has closed, whose last cut is terminal, keeps reading as read when the service marks it stale, so a wait on its stories can still clear."
+        },
+        {
+          "id": "v26-3603-8",
+          "text": "c8: The hosted projection drops the record's siblings, and the hosted snapshot stays hosted-delivery-snapshot/2."
+        }
+      ]
+    },
+    "V26-3072": {
+      "title": "Show one record for an epic delivered across repositories",
+      "lane": "lane-1",
+      "after": [
+        "V26-3363",
+        "V26-3603"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3072-1",
+          "text": "c1: The live view, the Markdown view and the built-in page show each sibling's stories with their stage and a link to the sibling's live view, next to this delivery's own."
+        },
+        {
+          "id": "v26-3072-2",
+          "text": "c2: When this delivery's own stories are done and a sibling still has open stories, or can't be read, or has never been read, every view says so for that repository, never that the epic is done. The done headline shows only when every same-epic sibling reads fresh with everything landed."
+        },
+        {
+          "id": "v26-3072-3",
+          "text": "c3: A sibling that can't be read, is stale, needs a compatible snapshot or belongs to another epic is shown as such, with when it was last read."
+        },
+        {
+          "id": "v26-3072-4",
+          "text": "c4: V26-3363's \"Elsewhere\" children that a sibling holds show the sibling's stage and link. Those no sibling holds show the tracker status only."
+        },
+        {
+          "id": "v26-3072-5",
+          "text": "c5: A record with no siblings draws exactly as before."
+        },
+        {
+          "id": "v26-3072-6",
+          "text": "c6: Without --scope, the tracker sweep never takes in a child that a sibling's last read lists, and clears a tracker-added copy of one, journaled once. The delivery's own stories are never cleared."
+        }
+      ]
+    },
+    "V26-3604": {
+      "title": "Let a story wait on a sibling delivery's story landing",
+      "lane": "lane-2",
+      "after": [
+        "V26-3603"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3604-1",
+          "text": "c1: A planned story whose after key names a sibling's story that has not landed says which story it waits on, in which repository, and where that story stands."
+        },
+        {
+          "id": "v26-3604-2",
+          "text": "c2: next doesn't offer that story until the sibling's story reads landed, and wait wakes when it does."
+        },
+        {
+          "id": "v26-3604-3",
+          "text": "c3: The wait clears with no action from the lead when a fresh read shows the sibling's story landed. A stale or failed read never clears it, and the wait says when the sibling was last read."
+        },
+        {
+          "id": "v26-3604-4",
+          "text": "c4: In a record with siblings, an after key no story and no sibling holds shows as a wait that needs the lead. In a record without siblings, such a key is ignored, as today."
+        },
+        {
+          "id": "v26-3604-5",
+          "text": "c5: lead-plan change --after accepts a sibling's story, and lead-setup notes an after key that is neither a story nor a known sibling story."
+        }
+      ]
+    },
+    "V26-3622": {
+      "title": "Word a sibling wait's time from when its outcome began, not its last changing read",
+      "lane": "lane-2",
+      "why": "V26-3604 deferred P2 outcome-correctness-r1-2: the wait sentence and the schema still say last read from readAt, which can understate recency by hours. The operator chose a lane fix with review.",
+      "criteria": [
+        {
+          "id": "v26-3622-1",
+          "text": "A wait on a sibling story whose sibling isn't fresh says \"<reason> since <lastAttemptAt>\", in the same words the views use. A wait on a fresh sibling says nothing about time."
+        },
+        {
+          "id": "v26-3622-2",
+          "text": "A sibling that read fresh and unchanged for hours and then turned unavailable shows the time it turned unavailable, never the time of its last changing read."
+        },
+        {
+          "id": "v26-3622-3",
+          "text": "schemas.json describes readAt as the last read that changed the sibling, and lastAttemptAt as when its current outcome began."
+        },
+        {
+          "id": "v26-3622-4",
+          "text": "The wait-words marker test and the delivery's wait tests pass with the new sentence."
+        }
+      ],
+      "after": [
+        "V26-3604"
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each of the four stories lands on integrate/epic-across-repos through the merge queue, or closes with its reason recorded",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration base's head after the last landing, with no number in tests/suite-budget.json raised",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integrated",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main and lands there, as the orchestration guide's integration review describes",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "two-repositories",
+      "label": "Two repositories",
+      "text": "On an -rc.N candidate, two repositories with hosted publishing each run one delivery under one epic, naming each other as siblings. A story in one comes after a story in the other, both live views show both repositories' stories, and the wait clears with no lead action when the other story merges, including after the other delivery has closed",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "kwamina",
+    "grantedOn": "2026-11-18"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "**Plan review:** both plan lenses align, or the operator ends the review by decision.",
+      "state": "done"
+    },
+    {
+      "id": "approval-2",
+      "text": "**Operator, before the finish-line proof:** choose two repositories with hosted publishing, provisioned with distinct repository IDs and tokens, and name the shared epic.",
+      "state": "waiting",
+      "blocking": false
+    },
+    {
+      "id": "approval-3",
+      "text": "**Operator:** after the full local run on macOS with Python 3.11, tag a `-rc.N` candidate, run the two-repository proof on it, then tag the final on the same commit.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-4",
+      "text": "**Already given, 2026-11-18:** local views only (Decision 9), V26-3363 folded in as tier 1, and the epic's tickets created (V26-3602 to V26-3605).",
+      "state": "done"
+    }
+  ],
+  "outOfScope": [
+    "One lead, queue or lane set spanning repositories, and merges that are atomic across repositories (Decision 1).",
+    "Carrying siblings on the hosted page (V26-3605).",
+    "Discovering siblings automatically, or any index of deliveries on the hosted service.",
+    "Reading a sibling from a local state directory or another checkout instead of its hosted link.",
+    "V26-3363's own out-of-scope items: the Linear snapshot's `--scope`.",
+    "Continuing a record past merge through deploy and QA (V26-3071).",
+    "A sibling's checks, rounds or journal facts. A sibling contributes its stories' stages only."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}

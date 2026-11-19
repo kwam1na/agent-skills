@@ -343,6 +343,10 @@ export function summarize(view, listed, readings = null, reportSpecs = undefined
 export function builtinPage(document, registry = null) {
   return tool({ builtin: { document, registry } });
 }
+/** A record as the state wrapper gives it to every view: with what its sibling deliveries show. */
+export function withAcross(document) {
+  return JSON.parse(tool({ across: document }));
+}
 /** A record as the live server sends it: with the story the narrator tells of it. */
 export function told(document) {
   return JSON.parse(tool({ told: document }));
