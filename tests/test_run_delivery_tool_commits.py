@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import stat
 import subprocess
 import unittest
@@ -26,6 +27,13 @@ from tests.test_run_delivery import PROFILE, ROOT, build_release, commit, instal
 TOOL_SOURCE = ROOT / "skills/run-delivery/scripts/run_delivery.py"
 BUILDS = ("commit", "merge")
 REWRITTEN = "rewritten by a hook"
+# Configuration passed through the environment, as the merge queue's bypass runs every check: the cases clear it from
+# their own git, and one case hands it to the tool on purpose.
+ENVIRONMENT_CONFIG = re.compile(r"GIT_CONFIG_(COUNT|PARAMETERS|KEY_\d+|VALUE_\d+)\Z")
+
+
+def without_environment_config(environment) -> dict[str, str]:
+    return {key: value for key, value in environment.items() if not ENVIRONMENT_CONFIG.match(key)}
 
 
 def constant(node: ast.AST) -> str | None:
@@ -114,6 +122,13 @@ class ToolCommitHookTests(unittest.TestCase):
             build_release(ROOT, cls.new_archive, cls.new_metadata, release_id="base-move-new", profile_id=PROFILE,
                           runtime_directory=cls.release.build / "runtime")
 
+    def setUp(self) -> None:
+        # The runner's own git configuration from the environment, such as the queue's `core.hooksPath`, would reach
+        # every git the case runs and hide the repository's hooks; each case says what its git sees.
+        cleared = mock.patch.dict(os.environ, clear=True, values=without_environment_config(os.environ))
+        cleared.start()
+        self.addCleanup(cleared.stop)
+
     def build_planned_fixture(self):
         """The base-move fixture, its delivery planned with criteria and an approval waiting before `lead-init`."""
         setup = characterization.setup_delivery
@@ -134,6 +149,7 @@ class ToolCommitHookTests(unittest.TestCase):
         """The planned fixture with the binding's `hooks` as given (None: no key), committed and pushed before any hook
         is installed."""
         fx, old = kept_fixture(self, self.build_planned_fixture)
+        fx.env = without_environment_config(fx.env)
         m = fx.main
         binding_path = m / ".agents/orchestration.json"
         binding = json.loads(binding_path.read_text())
@@ -194,7 +210,7 @@ class ToolCommitHookTests(unittest.TestCase):
         return sh("git", "commit", "-q", "-m", "A plain commit", cwd=m, check=False)
 
     def assert_configuration_kept(self, fx, hooks: Path) -> None:
-        self.assertEqual(sh("git", "config", "--get-all", "core.hooksPath", cwd=fx.main).stdout.strip(), str(hooks))
+        self.assertEqual(sh("git", "config", "--local", "--get-all", "core.hooksPath", cwd=fx.main).stdout.strip(), str(hooks))
         common = Path(sh("git", "rev-parse", "--path-format=absolute", "--git-common-dir", cwd=fx.main).stdout.strip())
         self.assertNotIn("empty-hooks", (common / "config").read_text())
         empty = common / "run-delivery" / "empty-hooks"
@@ -221,6 +237,27 @@ class ToolCommitHookTests(unittest.TestCase):
         self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
         self.assertEqual(sorted(os.listdir(ran)), ["pre-commit"])
         self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip(), made["merge"])
+
+    def test_hooks_the_environment_names_never_run_either(self) -> None:
+        # The tool's own `-c` outranks a `core.hooksPath` the environment passes, as the queue's bypass passes one.
+        fx = self.fixture("bypass")
+        hooks, ran = self.install_hooks(fx, {"pre-commit": "exit 1"})
+        passed = fx.tmp / "environment-hooks"
+        passed.mkdir()
+        for name in ("pre-commit", "commit-msg"):
+            path = passed / name
+            path.write_text(f"#!/bin/sh\ntouch '{ran}/environment-{name}'\nexit 1\n")
+            path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        fx.env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.hooksPath", GIT_CONFIG_VALUE_0=str(passed))
+        made = self.three_commits(fx)
+        self.assertEqual(sorted(os.listdir(ran)), [], made)
+        self.assert_configuration_kept(fx, hooks)
+        # The same environment does choose the hooks of a plain commit: the setting the tool outranks is live.
+        (fx.main / "src/plain.txt").write_text("plain\n")
+        sh("git", "add", "src/plain.txt", cwd=fx.main)
+        refused = sh("git", "commit", "-q", "-m", "A plain commit", cwd=fx.main, env=fx.env, check=False)
+        self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+        self.assertEqual(sorted(os.listdir(ran)), ["environment-pre-commit"])
 
     def test_rewriting_hooks_change_none_of_the_three_commits_with_no_hooks_setting(self) -> None:
         fx = self.fixture(None)
