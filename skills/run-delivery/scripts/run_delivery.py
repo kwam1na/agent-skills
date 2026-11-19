@@ -9226,14 +9226,11 @@ def supervisor_down_words(state: Path) -> str:
     return UNRECORDED_STOP
 
 
-# How the close condition names the finish lines it waits on, as close_holds words it.
-UNMET_LINES = "finish lines not met: "
-
-
 def waits_on(c) -> str:
     """What the supervisor's last pass found holding the close: its "Needs you", and the close condition's open parts.
     Read from its pass log, where each pass writes it; empty before the first pass, or once nothing holds it. The
     finish lines not met are read from the record as it stands, so a line marked since the pass is not named."""
+    unmet_lines = "finish lines not met: "  # as close_holds words that part
     path = lead_file(c, "supervisor.jsonl")
     lines = [line for line in path.read_text().splitlines() if line.strip()] if path.exists() else []
     try:
@@ -9243,14 +9240,14 @@ def waits_on(c) -> str:
     if not last:
         return ""
     held = [str(item) for item in last.get("closeHeldBy") or []]
-    at = next((index for index, item in enumerate(held) if item.startswith(UNMET_LINES)), None)
+    at = next((index for index, item in enumerate(held) if item.startswith(unmet_lines)), None)
     if at is None:  # where close_holds puts it: after the stories not handed off or not merged
         at = sum(1 for item in held if item.startswith(("not handed off: ", "not merged: ")))
-    held = [item for item in held if not item.startswith(UNMET_LINES)]
+    held = [item for item in held if not item.startswith(unmet_lines)]
     unmet = [line["id"] for line in (load_json(c.state / "state.json") or {}).get("finish") or []
              if isinstance(line, dict) and not line.get("met")]
     if unmet:
-        held.insert(at, UNMET_LINES + ", ".join(unmet))
+        held.insert(at, unmet_lines + ", ".join(unmet))
     if not held:
         return ""
     shown = "; ".join(held[:5]) + (f"; and {len(held) - 5} more" if len(held) > 5 else "")
