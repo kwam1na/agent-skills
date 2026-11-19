@@ -3326,8 +3326,12 @@ class PlanApprovalJournalTests(unittest.TestCase):
         self.assertIn("".join(f"  refine: {line}\n" for line in said), out)
         self.assertEqual([e["data"] for e in self.journal(fx) if e["kind"] == "story.approved"],
                          [{"title": "Thing one", "plan": "docs/plan.md"}, {"title": "Thing two", "plan": "docs/plan.md"}])
-        # Once the record started, the approval is journalled, and doctor no longer says what it will do.
+        # Once the record started, the approval is journalled, and doctor no longer says what it will do, with start
+        # moves or without them.
         self.assertNotIn("at the plan's approval", row()[1])
+        del conf["tracker"]["transitions"]["start"]
+        (m / ".agents/run-delivery.json").write_text(json.dumps(conf, indent=2))
+        self.assertEqual(row(), ("ok", "lanes make no start move, so there is no readiness to check"))
 
     def test_without_refine_nothing_journals_a_plan_approval(self) -> None:
         fx, path = self.fixture(None)
