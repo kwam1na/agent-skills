@@ -84,7 +84,9 @@ Checked against `main` at `998da472` on 2026-11-18:
    [--command TEXT] [--same-as N]` journals `gap.noted`. Leads and lanes can both run it. The logic lives in a new
    module, `skills/run-delivery/scripts/gaps.py`, wired into `run_delivery.py` as `pr_review_gates.py` is.
    - `gap.noted` data is `{class, text, why, by, release?, generation?, command?, evidence?, occurrenceOf?}`. `by`
-     is `lead` or the lane's id. `--subject` sets the entry's subject, the delivery's key by default.
+     is `lead` or the lane's id. `--subject` sets the entry's subject. When the lead runs it, the subject defaults to
+     the delivery's key; when a lane runs it, to the lane's current story, since the state tool lets a lane journal
+     only on its own work.
    - A lane journals it under its own writer: the state tool's lane-writer allowlist in `delivery_state.py` gains
      `gap.noted`, as it holds the review kinds and `base.merge.authorized`.
    - A workflow gap records the release id and generation from the running generation's entry in
@@ -137,8 +139,9 @@ Checked against `main` at `998da472` on 2026-11-18:
     Each of these is refused, journalling nothing:
     - `--required` with no reference, or an empty one;
     - `--not-required` with no reason, or an empty one;
-    - any run while a planned story is not handed off or settled, or a queued story is not merged, naming what is
-      open. So the decision is made once the work is done, with every gap noted.
+    - any run while open work stands, read exactly as `close_holds` reads it: a planned story not settled or a
+      queued story not merged, each leaving out the subjects a plan change removed. The refusal names what is open.
+      So the decision is made once the work is done, with every gap noted.
     The entry releases the hold on the next pass. A delivery reopened after a close needs a new decision. Kind entry:
     altitude `headline`, posts on the epic.
 12. **`lead-close` refuses without the decision** (V26-3561). With no `compounding.recorded` since the latest
@@ -231,7 +234,8 @@ module that would push the run over its budget makes other tests in the same cha
   - the same repo text on another release: an occurrence;
   - the same text in another class: a new gap;
   - `--same-as` naming a non-gap, or a gap of another class: refused, journalling nothing.
-- A lane's `note-gap` journals under the lane's writer, with `by` the lane's id.
+- A lane's `note-gap` with no `--subject` journals under the lane's writer, on the lane's current story, with `by`
+  the lane's id.
 - Close-out over a record holding two workflow gaps on two releases (one with an occurrence), one repo gap noted
   without `--subject`, and one host gap:
   - one follow-up `gap-<id>` for the repo gap, with the delivery's key as its story, and the tracker publisher's
@@ -252,6 +256,8 @@ module that would push the run over its budget makes other tests in the same cha
   - `--required` with no reference, and with an empty one;
   - `--not-required` with no `--why`, and with an empty one;
   - any run while a story is still unmerged, naming it.
+- With a story a plan change removed stopped in the queue and every other story merged, `lead-compound` journals and
+  the next pass releases the close.
 - With a story still unmerged, a pass writes no `friction.md`.
 - The stub across passes: the lead adds text under "What was hard", then notes a gap, then a pass runs. The new gap is
   in "Gaps noted" and the lead's text is unchanged. The archive holds the stub, and `closed.json` names the archived
@@ -293,8 +299,9 @@ module that would push the run over its budget makes other tests in the same cha
 At tier 1 the two lanes share six files. The lead grants each lane disjoint regions in them with
 `lead-own --region` against the integration base's head at `lead-init`, anchored as follows:
 
-- `delivery_state.py`: lane 1 `patch`'s `--set` handling, where the combined operation is added; lane 2 the
-  lane-writer allowlist in `append_journal`.
+- `delivery_state.py`: lane 1 `_assign`, where the `--set` refusal is raised, and `main`'s parser registration
+  through its dispatch, where the combined operation's function and command are added; lane 2 the lane-writer
+  allowlist in `append_journal`.
 
 - `run_delivery.py`
   - Lane 1: `waits_on` through `supervisor_line`; `journal_finish_met`, where `lead-finish` is added; and the
