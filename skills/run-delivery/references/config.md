@@ -459,8 +459,14 @@ The close condition: every planned and queued story merged or removed, every mer
 finish line met, every lane idle or done, and no "Needs you" item holding. "Needs you" is derived each pass, and its file is only that pass's view of it,
 never read back: a failed `fullHealth` at the
 current base head, unless the base declares the `focused` posture, a broken base, a blocked lane or one waiting on the lead, an unresolved `blocker.recorded`, a
-child that won't stay up, and the tracker publisher's own items. `lead-resolve <journal id> --why TEXT` resolves a
-blocker; `lead-resolve full-health --why TEXT` asks the next pass to rerun a failed `fullHealth` (under the `focused` posture, once
+child that won't stay up, and the tracker publisher's own items. A child that won't stay up is also journalled, once,
+as a `blocker.recorded` naming the child, its log and that log's last line, so a running `lead-wait` wakes on it; while
+it flaps its "won't stay up" item stands for that blocker, and the supervisor journals a `blocker.resolved` answering
+it once the child has stayed up for a pass. A checkout an interrupted `lead-suite` left under the binding's work folder,
+which the merge queue's `serve` refuses to run beside, is removed before `serve` starts and on each pass when its run
+has ended, no process works inside it, it is detached and it holds no change; otherwise it is recorded as a blocker
+naming it, why it stays and the command that removes it, resolved once it is gone. `lead-resolve <journal id> --why
+TEXT` resolves a blocker; `lead-resolve full-health --why TEXT` asks the next pass to rerun a failed `fullHealth` (under the `focused` posture, once
 the base returns to `gate`). The runner's own
 blocker clears when its hold does, or with `base.repaired`. Each item says whether it holds the close or is only
 shown, where it comes from and what clears it. The line map's Now chapter lists the holding items first. A list

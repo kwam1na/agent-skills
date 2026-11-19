@@ -621,7 +621,10 @@ supervisor's last pass found, as `doctor --delivery` does too. Each pass writes 
 `<delivery-key>.supervisor.jsonl`. It names a story not yet merged, a finish line not met, a lane still busy, and
 "Needs you": a failed `fullHealth`, a broken base, a lane that is blocked or waits on you, a merge made before you
 accepted it (its checkout stays until you run `lead-accept` or record a decision), an unresolved blocker, a
-child process that won't stay up, and the tracker publisher's own items. The line map's Now chapter shows the same
+child process that won't stay up, and the tracker publisher's own items. A child that won't stay up, and a checkout an
+interrupted `lead-suite` left where the merge queue refuses to run beside it, are journalled as blockers, so your
+`lead-wait` wakes on them; the supervisor resolves each once the child has stayed up for a pass or the checkout has
+gone, and removes such a checkout itself when no run uses it. The line map's Now chapter shows the same
 "Needs you" from the supervisor's last pass, what holds the close first, each item with where it comes from and what
 clears it. While the supervisor isn't running, or its list is a pass overdue, the chapter says the list is
 unavailable. Record a decision, and why you made it, with `lead-decide`, and a blocker with `lead-block`; each
