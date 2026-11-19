@@ -219,6 +219,18 @@
         "warn"
       ]
     },
+    "finishBy": {
+      "description": "Who marked a finish line met: the lead, for a line the record can't prove, or the supervisor.",
+      "enum": [
+        "lead",
+        "supervisor"
+      ]
+    },
+    "finishEvidence": {
+      "description": "What shows a lead-held finish line met, as the lead gave it. It holds something other than spaces.",
+      "type": "string",
+      "pattern": "\\S"
+    },
     "rerunVerdict": {
       "description": "What a re-run on the main line found: the main line is broken, the failure is the piece's, or no verdict was reached.",
       "enum": [
@@ -2316,6 +2328,14 @@
       "data": {
         "finish": {
           "type": "name"
+        },
+        "evidence": {
+          "optional": true,
+          "type": "finishEvidence"
+        },
+        "by": {
+          "optional": true,
+          "type": "finishBy"
         }
       },
       "because": {

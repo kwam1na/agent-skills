@@ -1049,7 +1049,23 @@ def _assign(target: dict, pointer: str, value: object) -> None:
         raise StateError("patch_invalid", f"a set pointer must name a field: {pointer!r}")
     parts = [part.replace("~1", "/").replace("~0", "~") for part in pointer[1:].split("/")]
     parent: object = target
-    for part in parts[:-1]:
+    for depth, part in enumerate(parts[:-1]):
+        if isinstance(parent, list):
+            # An element is chosen by its key, never its place: name the --element form that makes the same write.
+            import shlex
+            array, rest = parts[depth - 1], parts[depth + 1:]
+            key = ELEMENT_KEYS.get(array) if depth == 1 else None
+            element = parent[int(part)] if part.isdigit() and int(part) < len(parent) else None
+            if key is None or not isinstance(element, dict) or not isinstance(element.get(key), str):
+                raise StateError("patch_invalid", f"a set pointer cannot pass through an array: {pointer}. Select "
+                                 "the element with --element and patch it there")
+            if value is None or isinstance(value, dict) or len(rest) > 1:
+                form = "--set " + shlex.quote(json.dumps({"/" + "/".join(p.replace("~", "~0").replace("/", "~1")
+                                                                         for p in rest): value}))
+            else:
+                form = "--patch " + shlex.quote(json.dumps({rest[0]: value}))
+            raise StateError("patch_invalid", f"a set pointer cannot pass through an array element: {pointer}. "
+                             f"Write it as --element {shlex.quote(f'{array}[{key}={element[key]}]')} {form}")
         if not isinstance(parent, dict) or part not in parent:
             raise StateError("patch_invalid", f"a set pointer must name an existing object: {pointer}")
         parent = parent[part]
@@ -5941,6 +5957,9 @@ def main(argv: list[str] | None = None) -> int:
     entry.add_argument("--subject")
     entry.add_argument("--writer", choices=("lead", "lane"), default="lead",
                        help="lane: a lane journals a review round of its own work")
+    entry.add_argument("--element", help="the lead's: patch this element, such as finish[id=...], in the same write")
+    entry.add_argument("--patch", help="with --element: the element's JSON merge patch")
+    entry.add_argument("--version", type=int, help="with --element: the state version the patch was written against")
     finished = commands.add_parser("close-finished", help="mark the close of delivery.closed entry N finished, once its archive has landed")
     finished.add_argument("--entry", type=int, required=True)
     _add_wait_arguments(commands.add_parser("wait", help="read the record and the machine until something needs the lead"))
@@ -6087,6 +6106,14 @@ def main(argv: list[str] | None = None) -> int:
                     lane=args.lane,
                 ),
             }
+        elif args.command == "journal" and (args.element, args.patch, args.version) != (None, None, None):
+            if None in (args.element, args.patch, args.version) or args.writer != "lead" or args.lane:
+                raise StateError("patch_invalid", "a journalled patch is the lead's, and gives --element, --patch and "
+                                 "--version together")
+            result = {"ok": True, **journal_patched(
+                args.dir, version=args.version, selector=args.element, changes=_json_argument(args.patch, "patch"),
+                kind=args.kind, data=_journal_data(args), subject=args.subject,
+                because=_links(args.because, "--because"), answers=_links(args.answers, "--answers"))}
         elif args.command == "journal":
             result = {
                 "ok": True,
@@ -6171,6 +6198,38 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     emit(result)
     return 0
+
+
+@writer_operation
+def journal_patched(directory: Path, *, version: int, selector: str, changes: object, kind: str, data: dict,
+                    subject: str | None = None, because: list[int] | None = None,
+                    answers: list[int] | None = None) -> dict:
+    """The lead's element patch and the journal entry that says why, as one write under the state lock: both land or
+    neither does. The patch is pinned to ``version`` and checked as the lead's patch is; the entry as the journal's."""
+
+    def change(updated: dict, journal: list[dict]) -> tuple[None, list[dict]]:
+        if updated["version"] != version:
+            raise StateError("version_stale", f"patch is pinned to version {version}; state is at {updated['version']}")
+        current = copy.deepcopy(updated)
+        patched = apply_patch(current, changes, selector)
+        violations = ownership_violations(current, patched, "lead")
+        if violations:
+            raise StateError("field_not_owned", "; ".join(sorted(set(violations))))
+        _stamp_waiting(current, patched, "lead", _written_field(selector, changes, None, "waitingOn"))
+        _stamp_focus(current, patched, "lead", None)
+        _stamp_wait_rows(current, patched)
+        _require_unicode(patched, "patch_invalid")
+        updated.clear()
+        updated.update(patched)
+        return None, [{"kind": kind, "subject": subject, "data": data, "because": because, "answers": answers}]
+
+    if isinstance(kind, str) and kind.startswith(RESERVED_PREFIX):
+        raise StateError("kind_reserved", f"{kind} is reserved: kinds beginning {RESERVED_PREFIX} are an adopter's own, "
+                         "and this registry has none")
+    if not isinstance(data, dict):
+        raise StateError("entry_invalid", "an entry carries its facts in data, a JSON object")
+    written, _, [entry] = _locked_write(directory, change)
+    return {"state": written, "entry": entry}
 
 
 if __name__ == "__main__":

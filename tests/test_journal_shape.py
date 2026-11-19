@@ -99,6 +99,7 @@ INVENTORY = {
         _key("accept_story", {"handoff.checked"}): 1,
         _key("clean_story", {"cleanup.done"}): 1,
         _key("journal_finish_met", {"finish.met"}): 1,
+        _key("lead_finish", {"finish.met"}): 1,
         _key("lead_may_stop", {"hook.held"}): 1,
         _key("note_posture", {"posture.changed"}): 2,
         _key("record_focused", {"fullhealth.skipped"}): 1,

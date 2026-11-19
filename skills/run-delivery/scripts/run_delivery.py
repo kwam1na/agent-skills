@@ -9226,16 +9226,31 @@ def supervisor_down_words(state: Path) -> str:
     return UNRECORDED_STOP
 
 
+# How the close condition names the finish lines it waits on, as close_holds words it.
+UNMET_LINES = "finish lines not met: "
+
+
 def waits_on(c) -> str:
     """What the supervisor's last pass found holding the close: its "Needs you", and the close condition's open parts.
-    Read from its pass log, where each pass writes it; empty before the first pass, or once nothing holds it."""
+    Read from its pass log, where each pass writes it; empty before the first pass, or once nothing holds it. The
+    finish lines not met are read from the record as it stands, so a line marked since the pass is not named."""
     path = lead_file(c, "supervisor.jsonl")
     lines = [line for line in path.read_text().splitlines() if line.strip()] if path.exists() else []
     try:
         last = json.loads(lines[-1]) if lines else {}
     except ValueError:  # a pass still writing its line
         last = {}
+    if not last:
+        return ""
     held = [str(item) for item in last.get("closeHeldBy") or []]
+    at = next((index for index, item in enumerate(held) if item.startswith(UNMET_LINES)), None)
+    if at is None:  # where close_holds puts it: after the stories not handed off or not merged
+        at = sum(1 for item in held if item.startswith(("not handed off: ", "not merged: ")))
+    held = [item for item in held if not item.startswith(UNMET_LINES)]
+    unmet = [line["id"] for line in (load_json(c.state / "state.json") or {}).get("finish") or []
+             if isinstance(line, dict) and not line.get("met")]
+    if unmet:
+        held.insert(at, UNMET_LINES + ", ".join(unmet))
     if not held:
         return ""
     shown = "; ".join(held[:5]) + (f"; and {len(held) - 5} more" if len(held) > 5 else "")
@@ -9626,11 +9641,60 @@ def journal_finish_met(c, doc: dict) -> list[str]:
                                                             for entry in fresh["state"]["finish"]]},
                        f"finish line {line['id']} met")
         if not journalled:
-            state_tool("journal", "--kind", "finish.met", "--subject", line["id"], "--data", json.dumps({"finish": line["id"]}))
+            state_tool("journal", "--kind", "finish.met", "--subject", line["id"], "--data",
+                       json.dumps({"finish": line["id"], "by": "supervisor"}))
             said.append(f"finish line {line['id']} met")
         # Logged last, so a pass whose journal failed leaves the line for the next pass to journal.
         append_log("finish", c.delivery, {"line": line["id"]})
     return said
+
+
+def lead_finish(args) -> None:
+    """Mark a finish line the record can't prove met, with the lead's evidence: the mark and its finish.met, with
+    `by: lead`, in one write, so a failure leaves neither. Refused, with nothing written, for a line the record
+    doesn't hold, a line the record proves, a line already met, and empty evidence. Then the live view is rendered
+    once, as a pass renders it, so the line drops out of the view and the status line at once."""
+    c = cfg()
+    evidence = args.evidence
+    if evidence.startswith("@"):
+        try:
+            evidence = Path(evidence[1:]).expanduser().read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            raise Stop(f"--evidence {args.evidence}: the file can't be read: {error}") from None
+    evidence = evidence.strip()
+    if not evidence:
+        raise Stop("--evidence is required: say what shows the line met, or name a file with @FILE, not empty or "
+                   "only spaces")
+    plan = load_json(c.state / PLAN_FILE) or {}
+    declared = {line["id"]: line for line in [*c.finish, *(plan.get("finish") or [])] if isinstance(line, dict)}
+    for _ in range(PATCH_ATTEMPTS):
+        doc = load_state()
+        line = next((entry for entry in doc["state"]["finish"] if entry["id"] == args.line), None)
+        if line is None:
+            held = ", ".join(entry["id"] for entry in doc["state"]["finish"]) or "none"
+            raise Stop(f"the record holds no finish line {args.line}: its lines are {held}")
+        if not leads_line(declared.get(args.line, line)):
+            raise Stop(f"finish line {args.line}: the record proves this line: the supervisor marks it when its "
+                       "criteria and proofs are done")
+        if line.get("met"):
+            raise Stop(f"finish line {args.line} is already met")
+        done = state_tool("journal", "--kind", "finish.met", "--subject", args.line,
+                          "--data", json.dumps({"finish": args.line, "evidence": evidence, "by": "lead"}),
+                          "--element", f"finish[id={args.line}]", "--patch", json.dumps({"met": True}),
+                          "--version", str(doc["state"]["version"]), check=False)
+        try:  # the state tool answers with one JSON document, pretty-printed
+            answer = json.loads(done.stdout)
+        except ValueError:
+            answer = {}
+        answer = answer if isinstance(answer, dict) else {}
+        if done.returncode == 0:
+            print(f"finish line {args.line} met (journal entry {answer['entry']['id']}); views: {render_views(c)}")
+            return
+        if answer.get("code") != "version_stale":
+            raise Stop(f"the state tool refused finish line {args.line}: "
+                       f"{(answer.get('error') or done.stderr or done.stdout).strip()[-600:]}")
+    raise Stop(f"version_stale: the record kept changing while finish line {args.line} was marked; tried "
+               f"{PATCH_ATTEMPTS} times, reading it afresh each time. Run it again once the other writer settles")
 
 
 def render_views(c, only: str | None = None) -> str:
@@ -13499,6 +13563,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--because", help="earlier journal ids it was decided because of, comma-separated")
     p.add_argument("--subject", help="the story it is about, whose ticket it posts on; the epic when absent")
     p.set_defaults(fn=lead_decide)
+    p = command(sub, "lead-finish", help="mark a finish line the record can't prove met, with its evidence")
+    p.add_argument("line", help="the finish line's id")
+    p.add_argument("--evidence", required=True, help="what shows it met, in the lead's words, or @FILE to read them")
+    p.set_defaults(fn=lead_finish)
     p = command(sub, "lead-block", help="record a blocker, which lead-resolve resolves")
     p.add_argument("--text", required=True, help="what blocks the work, in the lead's words")
     p.add_argument("--because", help="earlier journal ids it is blocked because of, comma-separated")
