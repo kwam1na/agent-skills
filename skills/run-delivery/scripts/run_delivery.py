@@ -5989,6 +5989,8 @@ def lead_plan(args) -> None:
                                  "the added story's planned work")
             if patched is not None:
                 state_tool("journal", "--kind", "story.added", "--subject", key, "--data", json.dumps(story_added(c, key, change.get("why"))))
+                if (approved := story_approved(c, key)) is not None:
+                    state_tool("journal", "--kind", "story.approved", "--subject", key, "--data", json.dumps(approved))
         rebuild_plan(c)
     print(f"recorded {ids}: {said}" if dropping else
           f"recorded {ids}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
@@ -7253,6 +7255,9 @@ def lead_init(args) -> None:
     state_tool("init", "--headline", c.raw.get("headline", c.delivery), "--seed", json.dumps(seed))
     state_tool("journal", "--kind", "record.started",
                "--data", json.dumps({"base": {"ref": c.base_ref, "head": git("rev-parse", c.base_ref)}}))
+    for item in planned:  # in plan order: the plan's approval refines each story, when the tracker refines
+        if (approved := story_approved(c, item["subject"])) is not None:
+            state_tool("journal", "--kind", "story.approved", "--subject", item["subject"], "--data", json.dumps(approved))
     if plan_declared(c):
         with plan_lock(c):
             if not any(entry["type"] == "snapshot" for entry in read_plan_log(c)):
@@ -7483,6 +7488,8 @@ def _register_stories(c) -> list[str]:
         return []
     for key in added:
         state_tool("journal", "--kind", "story.added", "--subject", key, "--data", json.dumps(story_added(c, key)))
+        if (approved := story_approved(c, key)) is not None:
+            state_tool("journal", "--kind", "story.approved", "--subject", key, "--data", json.dumps(approved))
     if records_changes(c):
         for key in added:
             change = {"kind": "added", "subjects": [key], "by": "lead", "title": c.stories[key]["title"],
@@ -8047,6 +8054,17 @@ def story_added(c, key: str, why: str | None = None) -> dict:
     """A story.added's facts: the story's title, and why it joins, from the change or the delivery file."""
     why = why or c.stories[key].get("why") or f"planned work for {c.lane_of(key)}"
     return {"title": c.stories[key]["title"], "why": why}
+
+
+def story_approved(c, key: str) -> dict | None:
+    """A story.approved's facts, when the tracker refines a delivery's stories at its plan's approval: the story's
+    title, the plan's path and its review record's, when it has one. None when no refine move is configured, so
+    nothing journals it."""
+    if not tracker_conf(c)["transitions"].get("refine"):
+        return None
+    review = c.plan.with_name(c.plan.stem + ".review.json")
+    return {"title": c.stories[key]["title"], "plan": c.plan.as_posix(),
+            **({"review": review.as_posix()} if (c.root / review).is_file() else {})}
 
 
 def lead_flake(args) -> None:

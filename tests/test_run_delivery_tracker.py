@@ -42,7 +42,16 @@ WORKFLOW = [
     {"id": "21", "name": "Submit for review", "from": ["In Progress"], "to": "In Review"},
     {"id": "31", "name": "Complete", "from": ["In Review"], "to": "Done"},
     {"id": "41", "name": "Close epic", "from": None, "to": "Closed"},
+    # Refining, with names the tooling assumes nothing about.
+    {"id": "51", "name": "Triage", "from": ["New"], "to": "Triaged"},
+    {"id": "61", "name": "Groom", "from": ["To Groom", "Triaged"], "to": "Groomed"},
 ]
+PLAN, REVIEW = "docs/plans/facts.md", "docs/plans/facts.review.json"
+
+
+def approved(key: str) -> dict:
+    """A story.approved's facts for `key`: the plan holding it and its review record."""
+    return {"title": f"Thing {key}", "plan": PLAN, "review": REVIEW}
 
 
 def _load_publisher():
@@ -1005,6 +1014,49 @@ class Scenarios:
         self.assertEqual([item["holding"] for item in items], [False])
         self.assertIn("Complete", items[0]["text"])
 
+    def transitions(self, d: Delivery) -> list[list]:
+        return [call for call in d.calls() if call[0] == "transition"]
+
+    def test_one_refine_move_is_made_once_on_each_story_that_needs_it_and_left_to_people_elsewhere(self) -> None:
+        d = self.delivery({"refine": ["Groom"], "targets": {"Groom": "Groomed"}})
+        for key, status in (("EP-2", "To Groom"), ("EP-3", "Groomed"), ("EP-4", "In Progress")):
+            d.ticket(key, status=status)
+        entries = {key: d.entry("story.approved", key, approved(key)) for key in ("EP-2", "EP-3", "EP-4")}
+        self.published(d)
+        self.published(d)  # A second run moves nothing and posts nothing.
+        self.assertEqual([d.status(key) for key in entries], ["Groomed", "Groomed", "In Progress"])
+        self.assertEqual(len(self.transitions(d)), 1)
+        self.assertEqual({key: d.outcomes(entry["id"]) for key, entry in entries.items()},
+                         {"EP-2": ["transition", "comment"], "EP-3": ["skip", "comment"], "EP-4": ["handled", "comment"]})
+        for key in entries:
+            [comment] = d.comments(key)
+            self.assertTrue(comment.startswith(f"Plan approved: The plan with {key} was approved for delivery"), comment)
+            self.assertIn(f"The plan is {PLAN}; its review record is {REVIEW}", comment)
+        self.assertIn('Moved with "Groom".', d.comments("EP-2")[0])
+        self.assertIn("already made by someone else", d.comments("EP-3")[0])
+        self.assertIn("belongs to people", d.comments("EP-4")[0])
+
+    def test_two_refine_moves_are_walked_from_wherever_each_story_stands(self) -> None:
+        d = self.delivery({"refine": ["Triage", "Groom"], "targets": {"Triage": "Triaged", "Groom": "Groomed"}})
+        for key, status in (("EP-2", "New"), ("EP-3", "Triaged"), ("EP-4", "Groomed")):
+            d.ticket(key, status=status)
+        entries = {key: d.entry("story.approved", key, approved(key)) for key in ("EP-2", "EP-3", "EP-4")}
+        self.published(d)
+        self.published(d)
+        self.assertEqual({d.status(key) for key in entries}, {"Groomed"})
+        self.assertEqual(len(self.transitions(d)), 3)
+        self.assertEqual({key: d.outcomes(entry["id"]) for key, entry in entries.items()},
+                         {"EP-2": ["transition", "transition", "comment"], "EP-3": ["skip", "transition", "comment"],
+                          "EP-4": ["skip", "comment"]})
+        self.assertIn('Moved with "Triage".\nMoved with "Groom".', d.comments("EP-2")[0])
+
+    def test_without_refine_a_plan_approval_posts_and_moves_nothing(self) -> None:
+        d = self.delivery({"start": ["Start work"]})
+        d.ticket("EP-2", status="To Groom")
+        entry = d.entry("story.approved", "EP-2", approved("EP-2"))
+        self.published(d)
+        self.assertEqual((d.status("EP-2"), self.transitions(d), d.outcomes(entry["id"])), ("To Groom", [], ["comment"]))
+
     def test_a_lead_move_is_made_once(self) -> None:
         d = self.delivery({"lead": {"candidate.merged": ["Complete"], "delivery.closed": ["Close epic"]}})
         d.ticket("EP-2", status="In Review")
@@ -1409,6 +1461,22 @@ class TrackerSettingsTests(unittest.TestCase):
             conf = tp.settings(tmp, {"tracker": {"argv": ["adapter"], "transitions": bad}}, {})
             self.assertTrue(tp.refusal(conf))
             self.assertEqual(tp.untargeted(conf), [], "a malformed tracker is refused, never read for its moves")
+
+    def test_refine_is_a_list_of_moves_whose_last_has_a_target_and_an_intermediate_one_without_is_named(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="tracker-refine-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        conf = lambda transitions: tp.settings(tmp, {"tracker": {"argv": ["adapter"], "transitions": transitions}}, {})
+        for bad in ("Groom", ["Groom", ""], [7]):
+            with self.subTest(refine=bad):
+                self.assertIn("tracker.transitions.refine must be a list of transition names",
+                              tp.refusal(conf({"refine": bad, "targets": {"Groom": "Groomed"}})))
+        refused = tp.refusal(conf({"refine": ["Triage", "Groom"], "targets": {"Triage": "Triaged"}}))
+        self.assertIn("tracker.transitions.refine's last move, 'Groom', needs a tracker.transitions.targets entry",
+                      refused)
+        two = conf({"refine": ["Triage", "Groom"], "targets": {"Groom": "Groomed"}})
+        self.assertEqual(two["problems"], [])
+        self.assertEqual(tp.untargeted(two), ["Triage"], "doctor warns of the intermediate move with no target")
+        self.assertEqual(conf({"refine": [], "start": ["Begin"]})["problems"], [])
 
     def test_a_tracker_with_no_known_adapter_needs_some_publisher_unless_manual(self) -> None:
         tmp = Path(tempfile.mkdtemp(prefix="tracker-unknown-"))
@@ -3162,6 +3230,74 @@ class RegistryUpdateTests(unittest.TestCase):
             kinds["candidate.stopped"]["tracker"] = None
         with mock.patch.object(tp.journal_words, "REGISTRY_FILE", self.planted(unposted)):
             self.assertEqual([ticket for ticket, _ in self.posted(self.MERGED, self.STOPPED)], ["EP-2"])
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class PlanApprovalJournalTests(unittest.TestCase):
+    """With `transitions.refine` set, the plan's approval journals one story.approved per story: at lead-init in plan
+    order, and after each later story.added, at lead-plan change and at the registration lead-brief shares. Without it,
+    none."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from tests import test_run_delivery as harness
+        cls.harness = harness
+        for name, value in vars(harness.installed_release()).items():
+            setattr(cls, name, value)
+
+    def fixture(self, refine: list[str] | None):
+        h = self.harness
+        fx = h.Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        m = fx.main
+        path = h.plan_delivery(fx)
+        (m / "docs/plan.review.json").write_text("{}\n")  # the plan's review record, beside it
+        if refine is not None:
+            conf = json.loads((m / ".agents/run-delivery.json").read_text())
+            conf["tracker"]["transitions"] = {"refine": refine, "targets": {refine[-1]: "Groomed"}}
+            (m / ".agents/run-delivery.json").write_text(json.dumps(conf, indent=2))
+        h.commit(m, "FX-1: the review record and the tracker's refine moves")
+        h.sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        return fx, path
+
+    def journal(self, fx) -> list[dict]:
+        return json.loads(self.harness.sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py",
+                                          "--dir", fx.tmp / "record", "show").stdout)["journal"]
+
+    def added_later(self, fx, path) -> list[tuple[str, str]]:
+        """A story added with lead-plan change, then one added to the delivery file and registered by lead-brief: the
+        kinds and subjects each journals."""
+        h, m = self.harness, fx.main
+        before = len(self.journal(fx))
+        code, out = fx.flow("lead-plan", "change", "--kind", "added", "--subjects", "FX-4", "--title", "Thing four",
+                            "--text", "Thing four works", "--why", "A lane found the gap.", "--lane", "lane-1", cwd=m)
+        self.assertEqual(code, 0, out)
+        h.add_story(fx, path, "FX-5", why="The operator asked for it.")
+        code, out = fx.flow("lead-brief", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn("registered FX-5", out)
+        return [(e["kind"], e["subject"]) for e in self.journal(fx)[before:] if e["kind"].startswith("story.")]
+
+    def test_each_story_is_approved_at_init_in_plan_order_and_each_added_story_after_its_addition(self) -> None:
+        fx, path = self.fixture(["Groom"])
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        journal = self.journal(fx)
+        self.assertEqual([(e["kind"], e["subject"]) for e in journal[:3]],
+                         [("record.started", None), ("story.approved", "FX-2"), ("story.approved", "FX-3")])
+        self.assertEqual(journal[1]["data"], {"title": "Thing one", "plan": "docs/plan.md",
+                                              "review": "docs/plan.review.json"})
+        self.assertEqual(self.added_later(fx, path), [("story.added", "FX-4"), ("story.approved", "FX-4"),
+                                                      ("story.added", "FX-5"), ("story.approved", "FX-5")])
+        approvals = [e for e in self.journal(fx) if e["kind"] == "story.approved"]
+        self.assertEqual([e["data"]["title"] for e in approvals[2:]], ["Thing four", "Thing FX-5"])
+
+    def test_without_refine_nothing_journals_a_plan_approval(self) -> None:
+        fx, path = self.fixture(None)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.added_later(fx, path), [("story.added", "FX-4"), ("story.added", "FX-5")])
+        self.assertNotIn("story.approved", [e["kind"] for e in self.journal(fx)])
 
 
 if __name__ == "__main__":

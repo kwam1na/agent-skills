@@ -49,6 +49,29 @@
       "line": "Keep facts in the journal. The guide named a file the skill does not ship."
     },
     {
+      "kind": "story.approved",
+      "lane": null,
+      "subject": "APP-12",
+      "data": {
+        "title": "Keep facts in the journal",
+        "plan": "docs/plans/facts.md",
+        "review": "docs/plans/facts.review.json"
+      },
+      "head": "The plan with APP-12 was approved for delivery",
+      "line": "Keep facts in the journal. The plan is docs/plans/facts.md; its review record is docs/plans/facts.review.json"
+    },
+    {
+      "kind": "story.approved",
+      "lane": null,
+      "subject": "APP-12",
+      "data": {
+        "title": "Keep facts in the journal",
+        "plan": "docs/plans/facts.md"
+      },
+      "head": "The plan with APP-12 was approved for delivery",
+      "line": "Keep facts in the journal. The plan is docs/plans/facts.md"
+    },
+    {
       "kind": "lane.assigned",
       "lane": "lane-1",
       "subject": "APP-12",
