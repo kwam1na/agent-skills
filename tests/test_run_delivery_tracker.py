@@ -3273,6 +3273,20 @@ class ReadinessWalkTests(unittest.TestCase):
                 self.assertEqual(self.readiness(None, start, targets)[0], "not-checked")
                 self.assertEqual(self.readiness({"state": "backlog"}, [], targets), ("ready", None))
 
+    def test_an_item_at_the_last_moves_target_has_the_whole_start_made_as_the_publisher_reads_it(self) -> None:
+        # The publisher's move skips every move when the last one's target is the ticket's status.
+        targets = {"Groom": "Groomed", "Begin": "Ready"}
+        self.assertEqual(self.readiness({"state": "backlog", "status": "Ready", "offeredTransitions": ["Start"]},
+                                        ["Groom", "Begin"], targets), ("ready", None))
+
+    def test_the_walk_passes_every_leading_move_already_made(self) -> None:
+        targets = {"Groom": "Groomed", "Approve": "Groomed"}
+        start = ["Groom", "Approve", "Begin"]
+        self.assertEqual(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": ["Begin"]},
+                                        start, targets), ("ready", None))
+        self.refused(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": ["Approve"]},
+                                    start, targets), "Groomed", "Begin")
+
     def test_a_status_named_by_a_target_never_skips_a_move_that_targets_another(self) -> None:
         # As the publisher's move: a move counts as made only when its own target is the item's status.
         targets = {"Groom": "Groomed", "Begin": "Begun"}
