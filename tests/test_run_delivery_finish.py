@@ -136,9 +136,10 @@ class LeadFinishTests(unittest.TestCase):
         self.assertEqual(record(fx), marked)
 
     def test_a_lead_held_line_holds_the_close_until_lead_finish_and_a_covered_line_is_marked_on_its_merges(self) -> None:
-        """V26-3477's first, second and fourth criteria: every story merged and nothing else to hold the close, the
-        line the record can't prove stays unmarked across passes and alone holds it, while the covered line is marked
-        by the supervisor. lead-finish releases the close on the next pass, which journals no second entry."""
+        """An external line with empty coverage stays pending, and a covered line is still met. With every story
+        merged and nothing else to hold the close, the line the record can't prove stays unmarked across passes and
+        alone holds it, while the supervisor marks the covered line. lead-finish releases the close on the next pass,
+        which journals no second entry."""
         fx = self.fixture()
         self.merged(fx, "FX-2", "lane-1")
         self.merged(fx, "FX-3", "lane-2")
@@ -162,8 +163,8 @@ class LeadFinishTests(unittest.TestCase):
 
 
 class FixedDeferralTests(unittest.TestCase):
-    """V26-3477's third criterion: a deferral that a later round of its lens lists as fixed files no follow-up at
-    close-out, while one still deferred files one."""
+    """Only a final review deferral is retained: a deferral that a later round of its lens lists as fixed files no
+    follow-up at close-out, while one still deferred files one."""
 
     def test_a_deferral_a_later_round_lists_as_fixed_files_no_follow_up(self) -> None:
         tool = loaded_run_delivery(self, "run_delivery_for_fixed_deferrals")
