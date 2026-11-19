@@ -8196,6 +8196,9 @@ class ElementWriteTests(unittest.TestCase):
                 with self.assertRaises(state_tool.StateError) as refused:
                     state_tool.journal_patched(self.directory, subject="deploy", **arguments)
                 self.assertEqual(refused.exception.code, code, refused.exception)
+                if given.get("kind") in ("delivery.closed", "base.repaired"):
+                    # Refused by the guard itself, not by the entry's data.
+                    self.assertIn(f"{given['kind']} is journalled on its own", str(refused.exception))
                 self.assertEqual(self.written(), before)
         # A field the lead doesn't own, here one only a lane's hand-off writes, is refused as the lead's patch is.
         state_tool.patch(self.directory, writer="lead", version=2, changes={"queue": [queue_item("pr-1")]})
