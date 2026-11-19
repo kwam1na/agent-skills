@@ -51,6 +51,16 @@ Seen on release `linear-v3.2.0` (generation `e13cd6d1`), the installed workflow 
   regranted spans, so the lead recorded a plain merge as a decision (80) instead. Open: say so in the refusal, and name
   the plain merge as the path when no review can carry.
 
+### The merge queue and checks
+
+- **The setup check doesn't test a check's own Node range.** `doctor` and `lead-run` check the first `node` on `PATH`
+  against the runtime's `nodeMinimum` (22.6.0) only. The supervisor started on Homebrew's Node 23.5.0, and V26-3564's
+  `hosted.install` check, `npm ci --engine-strict` against a viewer that requires `^22.22.2 || >=24.15.0`, failed. The
+  base re-run failed the same way, so the queue journalled `base.broken` for a host problem. The lead restarted the
+  supervisor with nvm's Node 24.22.2 first on `PATH`, proved `hosted.install` passes at the base head, and journalled
+  `base.repaired` by hand. Open: `doctor` could check each catalogued check's declared engine range, and a re-run that
+  fails before the check starts, on the host, could stop as a host problem rather than a broken base.
+
 ## Repo
 
 - **A catalogued test module needs a `TestCase`.** Decision 19 said the lead's stubs would hold only a docstring, but
