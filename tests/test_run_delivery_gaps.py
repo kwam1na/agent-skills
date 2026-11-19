@@ -12,11 +12,15 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.test_run_delivery import Fixture, commit, installed_release, setup_delivery, sh, stop_supervisors
-from tests.test_run_delivery_supervisor import hand_off, kinds, queue_run, record, state_tool, supervised, tracked
+from tests.test_run_delivery_supervisor import (hand_off, kinds, loaded_run_delivery, queue_run, record, state_tool,
+                                               supervised, tracked)
 from tests.test_run_delivery_tracker import FileBackend
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,12 +102,68 @@ class GapWindowTests(unittest.TestCase):
         self.assertEqual([g["entry"]["id"] for g in gaps.gaps(self.JOURNAL[:2], REOPENING)], [1])
 
     def test_a_gap_an_earlier_close_routed_is_neither_matched_nor_named_with_same_as(self) -> None:
-        self.assertIsNone(gaps.occurrence_of(self.JOURNAL, REOPENING, "repo", "old", None, None))
-        self.assertEqual(gaps.occurrence_of(self.JOURNAL, REOPENING, "repo", "new", None, None), 5)
+        self.assertIsNone(gaps.occurrence_of(self.JOURNAL, "repo", "old", None, None))
+        self.assertEqual(gaps.occurrence_of(self.JOURNAL, "repo", "new", None, None), 5)
         for named in (1, 2):
             with self.subTest(named=named), self.assertRaisesRegex(gaps.Refused, "routed by an earlier close-out"):
-                gaps.occurrence_of(self.JOURNAL, REOPENING, "repo", "x", None, named)
-        self.assertEqual(gaps.occurrence_of(self.JOURNAL, REOPENING, "repo", "x", None, 6), 5)
+                gaps.occurrence_of(self.JOURNAL, "repo", "x", None, named)
+        self.assertEqual(gaps.occurrence_of(self.JOURNAL, "repo", "x", None, 6), 5)
+
+    def test_while_a_close_stands_its_routed_gaps_are_not_open_and_a_repeat_is_a_new_gap_the_next_close_counts(self) -> None:
+        closed = [gap(1, "flaky"), {"id": 2, "kind": "delivery.closed", "data": {}}]
+        self.assertEqual(gaps.listing(closed, "repo", None), [])
+        self.assertIsNone(gaps.occurrence_of(closed, "repo", "flaky", None, None))
+        with self.assertRaisesRegex(gaps.Refused, "routed by an earlier close-out"):
+            gaps.occurrence_of(closed, "repo", "again", None, 1)
+        # The repeat, noted as a new gap after the close, is routed by the next close once work reopened it.
+        later = [*closed, gap(3, "flaky"), {"id": 4, "kind": "lane.assigned", "data": {}},
+                 {"id": 5, "kind": "delivery.closed", "data": {}}]
+        self.assertEqual([g["entry"]["id"] for g in gaps.gaps(later, REOPENING)], [3])
+
+
+class FollowupStepTests(unittest.TestCase):
+    """followups_step files each repo gap once, also under noDeferrals, and no workflow or host gap."""
+
+    def setUp(self) -> None:
+        self.tool = loaded_run_delivery(self, "run_delivery_for_gap_followups")
+        folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (folder / "state").mkdir()
+        (folder / "flow-log").mkdir()
+        self.doc = {"state": {"queue": [], "followups": []},
+                    "journal": [gap(1, "No README", "repo"), gap(2, "PATH drops", "host"),
+                                gap(3, "brief lost", "workflow", release="r"), gap(4, "no readme", "repo", occurrenceOf=1)]}
+        self.doc["journal"][0]["subject"] = "S-1"
+        doc = self.doc
+
+        def journal(*argv, **_):
+            entry = {"id": len(doc["journal"]) + 1, "kind": argv[argv.index("--kind") + 1],
+                     "subject": argv[argv.index("--subject") + 1], "data": json.loads(argv[argv.index("--data") + 1])}
+            doc["journal"].append(entry)
+            return types.SimpleNamespace(stdout=json.dumps({"entry": entry}))
+
+        def patch(make, _what):
+            doc["state"].update(make(doc))
+        for name, value in (("state_tool", journal), ("patch_from", patch), ("render_views", lambda c: None),
+                            ("load_state", lambda: doc), ("deferred_findings", lambda c: []),
+                            ("deferral_breaches", lambda c, d: []), ("tracker_conf", lambda c: {"mode": "hand"})):
+            self.enterContext(mock.patch.object(self.tool, name, value))
+        self.c = lambda no_deferrals: types.SimpleNamespace(no_deferrals=no_deferrals, delivery="D", state=folder / "state",
+                                                            flow_log=folder / "flow-log")
+
+    def filed(self) -> list[dict]:
+        return [e for e in self.doc["journal"] if e["kind"] == "followup.filed"]
+
+    def test_a_repo_gap_is_filed_once_across_passes_with_or_without_no_deferrals(self) -> None:
+        for no_deferrals in (False, True):
+            with self.subTest(no_deferrals=no_deferrals):
+                self.doc["journal"] = self.doc["journal"][:4]
+                self.doc["state"]["followups"] = []
+                for _ in range(2):
+                    self.assertEqual(self.tool.followups_step(self.c(no_deferrals), self.doc),
+                                     (True, "follow-ups: 1 recorded"))
+                self.assertEqual([(e["subject"], e["data"]) for e in self.filed()],
+                                 [("S-1", {"finding": "gap-1", "followup": "S-1-gap-1", "title": "No README"})])
+                self.assertEqual([f["id"] for f in self.doc["state"]["followups"]], ["S-1-gap-1"])
 
 
 class NoteGapTests(unittest.TestCase):
@@ -201,11 +261,20 @@ class NoteGapTests(unittest.TestCase):
         self.assertNotIn("occurrenceOf", other["data"])
 
     def test_same_as_names_the_gap_a_note_repeats_and_the_listing_names_it_first(self) -> None:
+        receipt = self.fx.main / ".agent-skills/active.json"
+        kept = receipt.read_text()
+        self.on_release("a-third-release")
+        elsewhere = self.workflow("open-pr loses the body, on another release")
+        receipt.write_text(kept)
+        other_class = self.noted("--class", "host", "--text", "open-pr loses the body, a host gap", "--why", "w")
         first = self.workflow("open-pr loses the body")
         code, out, added = self.note("--class", "workflow", "--text", "the PR body went missing", "--why", "again",
                                      "--evidence", self.evidence("body.txt", "x\n"), "--same-as", str(first["id"]))
         self.assertEqual(code, 0, out)
-        self.assertIn(f"  {first['id']}: open-pr loses the body", out)
+        self.assertIn(f"  {first['id']}: open-pr loses the body\n", out)
+        # Only open workflow gaps on this release are offered.
+        self.assertNotIn(f"  {elsewhere['id']}: ", out)
+        self.assertNotIn(f"  {other_class['id']}: ", out)
         self.assertEqual(added[0]["data"]["occurrenceOf"], first["id"])
         # An occurrence named with --same-as stands for its gap.
         third = self.workflow("the body, a third time", same_as=str(added[0]["id"]))
@@ -247,11 +316,18 @@ class NoteGapTests(unittest.TestCase):
         entry = self.noted("--class", "repo", "--text", "the lane checkout has no venv", "--why", "w", cwd=self.wt)
         self.assertEqual((entry["lane"], entry["subject"], entry["data"]["by"]), ("lane-1", "FX-2", "lane-1"))
         # The state tool lets a lane journal only on its own work.
+        evidence = self.evidence("refused.txt", "never journalled\n")
+        following = max(e["id"] for e in record(self.fx)["journal"]) + 1
         code, out, added = self.note("--class", "repo", "--text", "elsewhere", "--why", "w", "--subject", "FX-3",
-                                     cwd=self.wt)
+                                     "--evidence", evidence, cwd=self.wt)
         self.assertNotEqual(code, 0, out)
         self.assertIn("writer_not_owned", out)
         self.assertEqual(added, [])
+        # The refused note's evidence copy is gone, so the next note with evidence takes that id.
+        self.assertFalse((self.fx.tmp / "record/gaps" / str(following)).exists())
+        entry = self.noted("--class", "repo", "--text", "the lane's own, with a file", "--why", "w", "--evidence",
+                           evidence, cwd=self.wt)
+        self.assertEqual(entry["data"]["evidence"]["path"], f"gaps/{entry['id']}/refused.txt")
 
     def test_the_registry_refuses_an_unknown_class(self) -> None:
         done = subprocess.run([sys.executable, "-B", str(self.generation / "skills/orchestrate-work/scripts/delivery_state.py"),
@@ -363,6 +439,7 @@ class CloseOutGapTests(unittest.TestCase):
         one = text[text.index("## release-one"):text.index("## release-two")]
         self.assertIn("### review-prepare loses the lenses", one)
         self.assertIn("- Noted: 2 times", one)
+        self.assertIn("- Why: a script stood in", one)
         self.assertIn("- Command: `run_delivery.py release-one`", one)
         two = text[text.index("## release-two"):]
         self.assertIn("### lead-accept forgets the checks", two)

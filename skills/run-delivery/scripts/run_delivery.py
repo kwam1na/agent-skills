@@ -11318,10 +11318,10 @@ def note_gap(args) -> None:
             raise
     journal = load_state()["journal"]
     try:
-        occurrence = gaps.occurrence_of(journal, REOPENING, args.cls, text, release, args.same_as)
+        occurrence = gaps.occurrence_of(journal, args.cls, text, release, args.same_as)
     except gaps.Refused as error:
         raise Stop(str(error)) from None
-    listed = gaps.listing(journal, REOPENING, args.cls, release)
+    listed = gaps.listing(journal, args.cls, release)
     print(f"open {args.cls} gaps{' on ' + release if args.cls == 'workflow' else ''}, by journal id"
           f"{' (name one with --same-as N)' if listed else ''}:")
     print("\n".join(listed) or "  (none)")

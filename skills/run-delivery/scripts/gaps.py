@@ -69,6 +69,13 @@ def gaps(journal: list[dict], reopening: tuple[str, ...]) -> list[dict]:
     return [{**gap, "count": 1 + len(gap["occurrences"])} for gap in roots.values()]
 
 
+def open_gaps(journal: list[dict]) -> list[dict]:
+    """The gaps a new note may repeat: those noted after the latest close, standing or reopened since. A close-out
+    routes the gaps before it, so a repeat noted after it is a new gap for the next close to count."""
+    after = max(closes(journal), default=0)
+    return [gap for gap in gaps(journal, ()) if gap["entry"]["id"] > after]
+
+
 def matching(found: list[dict], cls: str, release: str | None) -> list[dict]:
     """The open gaps a new note of this class may repeat: a workflow gap's on the same release, any other class's on
     any release, since those match on class alone."""
@@ -76,10 +83,9 @@ def matching(found: list[dict], cls: str, release: str | None) -> list[dict]:
             and (cls != "workflow" or gap["entry"]["data"].get("release") == release)]
 
 
-def occurrence_of(journal: list[dict], reopening: tuple[str, ...], cls: str, text: str, release: str | None,
-                  same_as: int | None) -> int | None:
-    """The gap a new note repeats, or None for a new gap. `--same-as N` names it outright, and must name a gap.noted
-    of the same class (an occurrence names its gap); otherwise an open gap whose text matches exactly."""
+def occurrence_of(journal: list[dict], cls: str, text: str, release: str | None, same_as: int | None) -> int | None:
+    """The gap a new note repeats, or None for a new gap. `--same-as N` names it outright, and must name an open
+    gap.noted of the same class (an occurrence names its gap); otherwise an open gap whose text matches exactly."""
     if same_as is not None:
         named = next((e for e in journal if e.get("id") == same_as), None)
         if named is None or named.get("kind") != KIND:
@@ -89,21 +95,21 @@ def occurrence_of(journal: list[dict], reopening: tuple[str, ...], cls: str, tex
             raise Refused(f"--same-as {same_as}: journal entry {same_as} is a {named['data']['class']} gap, "
                           f"not a {cls} gap")
         root = named["data"].get("occurrenceOf", named["id"])
-        if root <= since(journal, reopening):
+        if root <= max(closes(journal), default=0):
             # An occurrence of a gap already routed would be counted nowhere.
             raise Refused(f"--same-as {same_as}: gap {root} was routed by an earlier close-out; note it as a new gap")
         return root
     wanted = normalized(text)
-    hit = next((gap for gap in matching(gaps(journal, reopening), cls, release)
+    hit = next((gap for gap in matching(open_gaps(journal), cls, release)
                 if normalized(gap["entry"]["data"]["text"]) == wanted), None)
     return None if hit is None else hit["entry"]["id"]
 
 
-def listing(journal: list[dict], reopening: tuple[str, ...], cls: str, release: str | None) -> list[str]:
+def listing(journal: list[dict], cls: str, release: str | None) -> list[str]:
     """The open gaps a note of this class may repeat, one line each with its journal id, for `--same-as`."""
     return [f"  {gap['entry']['id']}: {gap['entry']['data']['text']}"
             + (f" (noted {gap['count']} times)" if gap["count"] > 1 else "")
-            for gap in matching(gaps(journal, reopening), cls, release)]
+            for gap in matching(open_gaps(journal), cls, release)]
 
 
 def next_id(journal: list[dict]) -> int:
