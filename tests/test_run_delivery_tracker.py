@@ -3300,5 +3300,137 @@ class PlanApprovalJournalTests(unittest.TestCase):
         self.assertNotIn("story.approved", [e["kind"] for e in self.journal(fx)])
 
 
+class ReadinessWalkTests(unittest.TestCase):
+    """Readiness walks the start moves as the publisher's `move` does: a move whose target is the item's status is
+    made, and the story is ready when the item offers the first move not yet made. The tracker's own names here are
+    made up; nothing in the tooling knows them."""
+
+    TARGETS = {"Groom": "Groomed"}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec = importlib.util.spec_from_file_location("run_delivery_readiness", SCRIPTS / "run_delivery.py")
+            cls.run_delivery = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(cls.run_delivery)
+            views = ROOT / "skills/delivery-views/scripts"
+            spec = importlib.util.spec_from_file_location("snapshot_readiness", views / "snapshot.py")
+            cls.snapshot = importlib.util.module_from_spec(spec)
+            # The reader imports its own helpers, and its dataclasses look the module up by name.
+            with mock.patch.object(sys, "path", [str(views), *sys.path]), \
+                    mock.patch.dict(sys.modules, {"snapshot_readiness": cls.snapshot}):
+                spec.loader.exec_module(cls.snapshot)
+        finally:
+            sys.dont_write_bytecode = previous
+
+    def readiness(self, item: dict | None, start: list[str], targets: dict | None = None) -> tuple[str, str | None]:
+        transitions = {"start": start, **({"targets": targets} if targets is not None else {})}
+        items = None if item is None else {"FX-3": {"subject": "FX-3", "title": "Three", **item}}
+        rd = self.run_delivery
+        with mock.patch.object(rd, "tracker_conf", lambda c: {"transitions": transitions}), \
+                mock.patch.object(rd, "tracker_snapshot_items", lambda c: items):
+            return rd.story_readiness(object(), "FX-3")
+
+    def linear_item(self, state_type: str, name: str) -> dict:
+        """The item `snapshot.py`'s Linear reader builds from a faked GraphQL answer for one child."""
+        node = {"identifier": "FX-3", "createdAt": "2026-11-01T09:00:00.000Z", "title": "Three", "description": "",
+                "state": {"type": state_type, "name": name}, "inverseRelations": {"nodes": []}}
+        page = {"data": {"issue": {"createdAt": "2026-11-01T08:00:00.000Z", "children": {
+            "nodes": [node], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}
+        sent = []
+
+        def transport(method, url, headers, timeout, body=None):
+            sent.append(json.loads(body))
+            return self.snapshot.Response(200, {}, json.dumps(page).encode())
+
+        code, out, err = self.snapshot.run(
+            ["--kind", "linear", "--parent", "FX-1", "--token-env", "FX_LINEAR_KEY", "--now", "2026-11-01T10:00:00Z"],
+            environ={"FX_LINEAR_KEY": "lin_api_fixture"}, transport=transport, clock=lambda: 0.0, sleep=lambda s: None,
+            cwd=None)
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("state { type name }", sent[0]["query"])
+        [item] = json.loads(out)["items"]
+        self.assertEqual((item["status"], "offeredTransitions" in item), (name, False))
+        return {key: value for key, value in item.items() if key not in ("subject", "title")}
+
+    def refused(self, outcome: tuple[str, str | None], status: str, move: str) -> None:
+        self.assertEqual(outcome, ("not-ready", f'FX-3 is in {status}: "{move}" isn\'t offered; refine it first'))
+
+    def test_a_jira_item_already_at_the_first_moves_target_is_ready_when_it_offers_the_next(self) -> None:
+        item = {"state": "backlog", "status": "Groomed", "offeredTransitions": ["Begin"]}
+        self.assertEqual(self.readiness(item, ["Groom", "Begin"], self.TARGETS), ("ready", None))
+
+    def test_a_linear_item_at_a_target_or_in_backlog_is_ready_since_linear_restricts_no_move(self) -> None:
+        groomed = self.linear_item("unstarted", "Groomed")
+        self.assertEqual(groomed["state"], "backlog")
+        for start in (["Groom"], ["Groom", "Begin"]):
+            with self.subTest(start=start):
+                self.assertEqual(self.readiness(groomed, start, self.TARGETS), ("ready", None))
+        backlog = self.linear_item("backlog", "Backlog")
+        self.assertEqual(self.readiness(backlog, ["Groom", "Begin"], self.TARGETS), ("ready", None))
+
+    def test_a_jira_item_read_without_its_transitions_is_not_checked(self) -> None:
+        outcome = self.readiness({"state": "backlog"}, ["Groom", "Begin"], self.TARGETS)
+        self.assertEqual(outcome, ("not-checked", "FX-3: readiness wasn't checked: the tracker snapshot doesn't list "
+                                                  "its offered moves"))
+
+    def test_backlog_items_are_ready_only_when_they_offer_the_first_move(self) -> None:
+        start = ["Groom", "Begin"]
+        self.assertEqual(self.readiness({"state": "backlog", "status": "Backlog", "offeredTransitions": ["Groom"]},
+                                        start, self.TARGETS), ("ready", None))
+        for offered in (["Begin"], []):
+            with self.subTest(offered=offered):
+                self.refused(self.readiness({"state": "backlog", "status": "Backlog", "offeredTransitions": offered},
+                                            start, self.TARGETS), "Backlog", "Groom")
+
+    def test_an_item_at_the_first_target_offering_nothing_names_the_next_move(self) -> None:
+        self.refused(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": []},
+                                    ["Groom", "Begin"], self.TARGETS), "Groomed", "Begin")
+
+    def test_an_item_with_every_move_made_is_ready(self) -> None:
+        self.assertEqual(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": []},
+                                        ["Groom"], self.TARGETS), ("ready", None))
+
+    def test_one_start_move_with_no_target_behaves_as_before_in_each_case(self) -> None:
+        start = ["Begin"]
+        for targets in (self.TARGETS, None):
+            with self.subTest(targets=targets):
+                ready = lambda item: self.assertEqual(self.readiness(item, start, targets), ("ready", None))
+                ready({"state": "backlog", "status": "Groomed", "offeredTransitions": ["Begin"]})
+                ready({"state": "backlog", "status": "Backlog", "offeredTransitions": ["Begin"]})
+                ready({"state": "started", "status": "In Progress", "offeredTransitions": []})
+                self.refused(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": []},
+                                            start, targets), "Groomed", "Begin")
+                self.refused(self.readiness({"state": "backlog", "status": "Backlog", "offeredTransitions": ["Groom"]},
+                                            start, targets), "Backlog", "Begin")
+                self.assertEqual(self.readiness({"state": "backlog"}, start, targets)[0], "not-checked")
+                self.assertEqual(self.readiness(None, start, targets)[0], "not-checked")
+                self.assertEqual(self.readiness({"state": "backlog"}, [], targets), ("ready", None))
+
+    def test_an_item_at_the_last_moves_target_has_the_whole_start_made_as_the_publisher_reads_it(self) -> None:
+        # The publisher's move skips every move when the last one's target is the ticket's status.
+        targets = {"Groom": "Groomed", "Begin": "Ready"}
+        self.assertEqual(self.readiness({"state": "backlog", "status": "Ready", "offeredTransitions": ["Start"]},
+                                        ["Groom", "Begin"], targets), ("ready", None))
+
+    def test_the_walk_passes_every_leading_move_already_made(self) -> None:
+        targets = {"Groom": "Groomed", "Approve": "Groomed"}
+        start = ["Groom", "Approve", "Begin"]
+        self.assertEqual(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": ["Begin"]},
+                                        start, targets), ("ready", None))
+        self.refused(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": ["Approve"]},
+                                    start, targets), "Groomed", "Begin")
+
+    def test_a_status_named_by_a_target_never_skips_a_move_that_targets_another(self) -> None:
+        # As the publisher's move: a move counts as made only when its own target is the item's status.
+        targets = {"Groom": "Groomed", "Begin": "Begun"}
+        self.refused(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": ["Close"]},
+                                    ["Groom", "Begin"], targets), "Groomed", "Begin")
+        self.refused(self.readiness({"state": "backlog", "status": "Elsewhere", "offeredTransitions": ["Begin"]},
+                                    ["Groom", "Begin"], targets), "Elsewhere", "Groom")
+
+
 if __name__ == "__main__":
     unittest.main()
