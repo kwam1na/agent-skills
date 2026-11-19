@@ -100,6 +100,10 @@ class CompoundingCloseTests(unittest.TestCase):
         self.assertTrue(needed["holding"])
         self.assertIn(f"write up the friction stub {self.stub(fx)}", needed["text"])
         self.assertIn("lead-compound", needed["text"])
+        # Its row, as the views draw it, names the decision and the stub, not something unnamed.
+        self.assertEqual(needed["said"]["headline"], "The compound-learning decision is not recorded")
+        self.assertIn(f"Write up the friction stub {self.stub(fx)}", needed["said"]["why"])
+        self.assertIn("lead-compound --required --ref REF", needed["said"]["clears"])
         self.assertTrue(self.stub(fx).is_file())
         self.assertIn(f"The close waits on: {DECISION}", status_line(self.flow(fx, "lead-brief")))
         # The lead writes under "What was hard", then notes a gap; the next pass keeps the one and lists the other.

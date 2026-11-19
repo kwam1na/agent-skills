@@ -641,14 +641,26 @@ When a lane has no story left, tell it so; it sets its focus `done`, as its brie
 python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir .orchestration/state focus --lane lane-1 --text "<story-key> merged; nothing left" --state done
 ```
 
+The close also waits on your compound-learning decision. Note gaps as they happen. When the last story lands, write up
+the friction stub, run `$compound-learning` and record its decision; a note it preserves rides the integration change
+request and is reviewed with it. Then the close. Once nothing else holds the close, the supervisor writes the friction
+stub to the flow log's `<delivery-key>.friction.md`, and "Needs you" names it. It keeps what you write under "What was
+hard" and rewrites the rest on each pass. Record the decision once the stories are done:
+
+```text example outline
+run_delivery.py lead-compound --required --ref docs/solutions/<category>/<slug>.md
+run_delivery.py lead-compound --not-required --why "<why nothing new needs preserving>"
+```
+
 When every story is merged or removed, every merged story's checkout is cleaned up, every finish line is met, every
-lane is idle or done, and nothing in "Needs you" holds it, the supervisor closes the delivery itself, in order: `fullHealth` once per base head (skipped when the
+lane is idle or done, the decision is recorded, and nothing in "Needs you" holds it, the supervisor closes the delivery
+itself, in order: `fullHealth` once per base head (skipped when the
 base declares the `focused` posture, and already run at that head when the delivery merged anything, since the
 supervisor runs it after each merge or batch), a follow-up for
-each deferred finding, `delivery.closed` and then a wait until the tracker has every update, the archive, a friction
-note stub beside
-it for your `compound-learning` pass, and then it stops. There is nothing to run for the close. `lead-close` is for
-closing early, or with the supervisor down. With the lead's checkout gone, the archived copy still serves the live
+each deferred finding, `delivery.closed` and then a wait until the tracker has every update, and the archive, which
+holds the friction stub, and then it stops. `closed.json` names the archived stub. There is nothing else to run for the
+close. `lead-close` is for closing early, or with the supervisor down. It refuses while no decision stands, and
+`lead-close --without-compounding "<why>"` records the decision as skipped. With the lead's checkout gone, the archived copy still serves the live
 view:
 
 ```text example outline

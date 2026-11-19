@@ -389,6 +389,9 @@ class CloseOutGapTests(unittest.TestCase):
         with open(fx.tmp / "flow-log/plan-changes.jsonl", "a") as changes:
             changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"], "by": "lead",
                                       "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
+        # The work is done: the lead records the compound-learning decision the close waits on.
+        code, out = fx.flow("lead-compound", "--not-required", "--why", "the gaps are routed on their own", cwd=fx.main)
+        assert code == 0, out
         closed = fx.tmp / "flow-log/FX-1.closed.json"
         for _ in range(4):
             code, out = fx.flow("lead-run", "--once", cwd=fx.main)

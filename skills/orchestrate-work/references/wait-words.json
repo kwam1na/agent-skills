@@ -132,7 +132,8 @@
           "free": "{subject:ticket} is free to start",
           "paused": "Serving is paused",
           "report": "A report for the lead[ on {about}]",
-          "stale": "The {name} is not answering"
+          "stale": "The {name} is not answering",
+          "compounding": "The compound-learning decision is not recorded"
         },
         "otherwise": "Something needs {whom}"
       },
@@ -159,7 +160,8 @@
           "free": "{lane:lane} is idle.",
           "paused": "[{reason}]",
           "report": "[{detail}]",
-          "stale": "[{reason}]"
+          "stale": "[{reason}]",
+          "compounding": "The close waits on it. Write up the friction stub {stub}, run compound-learning on it, and record its decision."
         },
         "otherwise": ""
       },
@@ -186,7 +188,8 @@
           "free": "Clears when {subject:ticket} is assigned, held, or waits again.",
           "paused": "Clears when the lead lifts the hold.",
           "report": "Clears when the report leaves the record.",
-          "stale": "Clears when the {name} answers again."
+          "stale": "Clears when the {name} answers again.",
+          "compounding": "Clears with lead-compound --required --ref REF, or --not-required --why TEXT."
         },
         "otherwise": ""
       },

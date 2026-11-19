@@ -10424,7 +10424,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                       "writes it once nothing else holds the close), run compound-learning on it, and record its "
                       f"decision with {flow_command()} lead-compound",
                       "clears": f"{flow_command()} lead-compound --required --ref REF, or --not-required --why TEXT",
-                      "kind": "other", "who": "lead", "fields": {"detail": str(stub)}})
+                      "kind": "compounding", "who": "lead", "fields": {"stub": str(stub)}})
     items += record_needs(doc, items)
     return say_needs(c, doc, items + waits_needing(c, doc, items))
 
