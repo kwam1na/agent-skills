@@ -197,6 +197,8 @@ class StatementTests(unittest.TestCase):
         self.assertEqual(regions.anchor_for("a.py", text, 11, 15, []), ("    total = compute(", None, (11, 15)))
         # No block holds lines 1-3 alone: the smallest one widened by the line after it does.
         self.assertEqual(regions.anchor_for("a.txt", ["a", "  b", "c", "d"], 1, 4, []), ("a", "after", (1, 4)))
+        # On a tie in size, a later line's own block beats an earlier line's widened one.
+        self.assertEqual(regions.anchor_for("a.txt", ["a", "b:", "  c", "d"], 2, 3, []), ("b:", None, (2, 4)))
         # An insertion's one line, by --insert: never into a claimed line, so the other side's block is named.
         self.assertEqual(regions.anchor_for("a.txt", ["p", "q", "r"], 2, 3, [], True), ("p", "after", (1, 3)))
         self.assertEqual(regions.anchor_for("a.txt", ["p", "q", "r"], 2, 3, [(2, 3)], True), ("q", "after", (2, 4)))
