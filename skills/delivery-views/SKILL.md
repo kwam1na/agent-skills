@@ -253,13 +253,14 @@ A criterion is **proven**; a finish line is **met**, as the record says.
 A journal `delivery.closed` entry makes the page read the delivery as closed,
 until a lane is assigned, a candidate is handed or a check starts after it. Now
 says so and says when, with no warning about silence, though a lost connection
-still shows. It says "Delivered." only when every piece and every live plan unit
-landed; proofs and finish lines keep their own counts beside it. What's left stops
+still shows. Under the delivery's name, its count line says "Every piece landed"
+only when every piece and every live plan unit landed; proofs and finish lines keep
+their own counts beside it. What's left stops
 counting down once nothing is left to land, and counts plan units that never reached
 the line. Lanes read as finished whatever the record last said they waited on, an
 unlanded stop reads "Not landed" and stops pulsing, and leftover holds, leases and
 stale sources no longer show. The progress bar and dots use the same count as the
-headline, and a piece the plan removed isn't counted. Now and the plan call what
+count line, and a piece the plan removed isn't counted. Now and the plan call what
 remains left open at close rather than asking for anything. The close is journaled
 before the supervisor stops, so its Needs you box still shows while a running,
 current list holds the close, and otherwise doesn't show.
@@ -1020,14 +1021,17 @@ print those words. A record with no siblings draws exactly as before.
   another epic". A sibling no read has reached says "never read". A sibling of
   another epic shows no stories. The line map adds the chapter after What's
   left, the Markdown view and the built-in page after Planned.
-- **The headline.** Until every one of this delivery's own stories has landed
+- **The done count.** Until every one of this delivery's own stories has landed
   it is unchanged. Once they have, a same-epic sibling with open stories in its
   last kept read, one never read, or one not fresh adds its sentence, and the
   views say "This repository's part is done." with those sentences in place of
-  a done headline: "<name> has N open." ("..., couldn't be read since <at>."
+  a done count: "<name> has N open." ("..., couldn't be read since <at>."
   when it isn't fresh), "<name> couldn't be read (never read).", or "<name>
-  couldn't be read since <at>.". Every same-epic sibling fresh with everything
-  landed leaves the usual done headline. The delivery still closes by itself.
+  couldn't be read since <at>.". The line map shows the first as the count under
+  the delivery's name, without its full stop, and the siblings' sentences below
+  it; the Markdown view and the built-in page say them as they are. Every
+  same-epic sibling fresh with everything landed leaves the usual done count.
+  The delivery still closes by itself.
 - **Elsewhere.** An outside child a drawn sibling's stories hold appears in that
   sibling's group; the rest stay under "Elsewhere in KEY", which the Markdown
   view and the built-in page now draw too.

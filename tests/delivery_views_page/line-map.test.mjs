@@ -1305,6 +1305,12 @@ test("the delivery's name heads the page, without a ticket key the kicker alread
   const css = readFileSync(path.join(ROOT, "skills/delivery-views/assets/line-map.css"), "utf8");
   expect(css).toContain(".kicker { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; "
     + "white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }");
+  // The skill's page says the same opening.
+  const skill = readFileSync(path.join(ROOT, "skills/delivery-views/SKILL.md"), "utf8").replace(/\s+/g, " ");
+  expect(skill).toContain("Under the delivery's name, its count line says \"Every piece landed\" only when every piece and every live "
+    + "plan unit landed");
+  expect(skill).toContain("The line map shows the first as the count under the delivery's name, without its full stop, and the "
+    + "siblings' sentences below it; the Markdown view and the built-in page say them as they are.");
 });
 
 test("reads the live record once it is open, and says when it cannot", async () => {
