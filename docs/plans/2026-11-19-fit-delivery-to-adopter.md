@@ -122,15 +122,13 @@ Checked against `main` at `aeeeafce` on 2026-11-19:
    it. The field is part of what the plan chapter compares, so a hand edit after init shows as an unrecorded plan
    change, and a recorded `--kind lenses` change doesn't.
 9. **A brief lens can't be dropped** (V26-3651). A round 1 `--lenses` that leaves out a lens the story's entry names
-   is refused, naming the lens and that the story's brief asks for it, as a missing mandated lens is. A brief lens
-   added after a story's round 1 joins at the next round:
-   - The next round's `review-prepare` adds to the story's set every lens its entry names that the set lacks. That
-     round's meta records the widened set, with `requested` set to `brief` for each added lens, and its
-     `review.started` carries the widened `lenses`. A later round's `--lenses` may name the widened set; any other
-     different set is still refused.
-   - `handoff` and `lead-accept` read the story's latest set, the last prepared round's, not round 1's.
-   - Until a round carries the lens, `handoff` and `lead-accept` refuse the story, naming the lens and
-     `review-prepare <key> --round <next>`.
+   is refused, naming the lens and that the story's brief asks for it, as a missing mandated lens is. obtain-review
+   fixes a story's lens set before its first round and for every later round, so a brief lens can't join after it:
+   - Once a story's round 1 is prepared, `lead-plan change --kind lenses` that adds a lens to its entry is refused,
+     naming the story, the lens and that its review's lens set is fixed at round 1. Removing one is accepted: the lens
+     has already run in the story's set. A lens a story's review missed belongs in a follow-up.
+   - `handoff` and `lead-accept` refuse a story whose set lacks a lens its entry names, as a hand edit after round 1
+     leaves it, naming the lens and `lead-plan change --kind lenses` to take it out of the entry.
 10. **Where a lens came from** (V26-3651). Round 1's meta gains `requested`: each on-request lens in the set, mapped to
     `lane` or `brief`. A lens both the brief and `--lenses` name is `brief`. `handoff`'s message, `lead-accept`'s
     lens line and `lead-brief`'s lens list show it. `review.started` is unchanged: its `lenses` already holds the
@@ -237,10 +235,11 @@ its budget makes other tests in the same change cheaper; no budget number moves.
 - A story whose entry names `lens.data` gets it with no `--lenses`, with `requested: {"lens.data": "brief"}`.
 - That story's `--lenses` leaving out `lens.data` is refused, naming it and the brief.
 - That story's `--lenses` including `lens.data` is accepted, with `requested: {"lens.data": "brief"}`.
-- A brief lens added with `lead-plan change --kind lenses` after the story's round 1 is reduced: `handoff` and
-  `lead-accept` refuse the story, naming the lens and `review-prepare <key> --round 2`. Round 2 then carries the
-  lens, its meta records `requested: {"lens.data": "brief"}`, its `review.started` names it, and once round 2 is
-  reduced and aligned, `handoff` and `lead-accept` pass.
+- After the story's round 1 is prepared, `lead-plan change --kind lenses` adding `lens.data` is refused, naming the
+  story, the lens and the fixed set, and records nothing; removing a brief lens is accepted. Before round 1, adding
+  it is accepted.
+- A hand edit that adds `lens.data` to the entry after round 1: `handoff` and `lead-accept` refuse the story, naming
+  the lens and the removal; after `lead-plan change --kind lenses` takes it out, both pass.
 - The same through `review.default` for a `harness.config.ts` lens.
 - Conflicts: `default: false` on a mandated lens, on a plan-only lens and on an undeclared one, and `review.lenses`
   and `review.default` disagreeing, are each reported by `doctor`. `default: true` runs the lens by default, as
