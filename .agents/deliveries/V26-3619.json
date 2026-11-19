@@ -44,6 +44,16 @@
         "tests/test_lane_changes.py",
         "tests/delivery_views_page/*"
       ]
+    },
+    "lane-3": {
+      "owns": [
+        "skills/delivery-views/references/hosted-snapshot.schema.json",
+        "skills/delivery-views/scripts/public_projection.py",
+        "tests/test_run_delivery.py",
+        "tests/test_delivery_views_render.py",
+        "tests/test_delivery_views_hosted_projection.py",
+        "tests/fixtures/delivery-views/*"
+      ]
     }
   },
   "stories": {
@@ -143,6 +153,37 @@
         {
           "id": "v26-3564-5",
           "text": "c5: A lane branch that can't be read leaves the view and the item saying so, rather than showing stale changes as current."
+        }
+      ]
+    },
+    "V26-3589": {
+      "title": "Show a delivery's integration step on the live view",
+      "lane": "lane-3",
+      "why": "The operator added it on 2026-11-18 as a third lane; its plan is already reviewed, and this delivery is itself an integration delivery that needs the view.",
+      "criteria": [
+        {
+          "id": "v26-3589-1",
+          "text": "c1: The record carries the delivery's integration base and target, and the view's payload passes them through; a delivery without one carries neither."
+        },
+        {
+          "id": "v26-3589-2",
+          "text": "c2: The lead's integration facts are journalled: each merge of the target into the integration candidate with its conflicted paths, each `lead-suite` run with its head and result, each integration review round with its head, and the change request into the target and its merge."
+        },
+        {
+          "id": "v26-3589-3",
+          "text": "c3: Once every piece has landed on the integration base and before the change request merges, the headline reads in two beats and names the target, with the target's drift and the catch-up count."
+        },
+        {
+          "id": "v26-3589-4",
+          "text": "c4: The line map draws the integration line's four stops past the integration base and the target below it, each stop's state read from the journal."
+        },
+        {
+          "id": "v26-3589-5",
+          "text": "c5: The \"Before it rejoins\" ledger shows each proof with the head it was taken at, struck through when a later integration fact names a newer head."
+        },
+        {
+          "id": "v26-3589-6",
+          "text": "c6: A delivery with no integration target renders byte for byte as before (the existing goldens are unchanged)."
         }
       ]
     }

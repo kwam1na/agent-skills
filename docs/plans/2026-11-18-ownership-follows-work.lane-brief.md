@@ -43,8 +43,9 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 
 | Lane | Stories | Owns |
 | --- | --- | --- |
-| lane-1 | V26-3591, V26-3570 | `skills/orchestrate-work/scripts/region_ownership.py`, `skills/orchestrate-work/scripts/merge_queue.py`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/journal-kinds.json`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/templates/lane-brief.md`, `tests/test_region_claims.py`, `tests/test_region_grants.py`, `tests/test_journal_kinds.py`, `tests/test_journal_shape.py`, `tests/fixtures/journal-kinds/*` |
-| lane-2 | V26-3476, V26-3564 | `skills/delivery-views/scripts/render.py`, `skills/delivery-views/assets/line-map.js`, `skills/delivery-views/assets/line-map.css`, `skills/delivery-views/SKILL.md`, `skills/run-delivery/references/config.md`, `tests/test_ownership_lock_race.py`, `tests/test_lane_changes.py`, `tests/delivery_views_page/*` |
+| lane-1 | V26-3591, V26-3570 | `skills/orchestrate-work/scripts/region_ownership.py`, `skills/orchestrate-work/scripts/merge_queue.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/templates/lane-brief.md`, `tests/test_region_claims.py`, `tests/test_region_grants.py` |
+| lane-2 | V26-3476, V26-3564 | `skills/delivery-views/scripts/render.py`, `skills/delivery-views/assets/line-map.js`, `skills/delivery-views/assets/line-map.css`, `skills/delivery-views/SKILL.md`, `skills/run-delivery/references/config.md`, `tests/test_ownership_lock_race.py`, `tests/test_lane_changes.py`, `tests/delivery_views_page/*`, `skills/orchestrate-work/references/wait-words.json`, `tests/test_waits.py` |
+| lane-3 | V26-3589 | `skills/delivery-views/references/hosted-snapshot.schema.json`, `skills/delivery-views/scripts/public_projection.py`, `tests/test_run_delivery.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_hosted_projection.py`, `tests/fixtures/delivery-views/*`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/references/journal-kinds.json`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/orchestration-guide.md`, `tests/test_journal_kinds.py`, `tests/test_journal_shape.py`, `tests/fixtures/journal-kinds/*` |
 
 | Story | Label | Pinned request patterns | In-app checks its hand-off needs |
 | --- | --- | --- | --- |
@@ -52,6 +53,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 | V26-3570 | V26-3570 | - | none |
 | V26-3476 | V26-3476 | - | none |
 | V26-3564 | V26-3564 | - | none |
+| V26-3589 | V26-3589 | - | none |
 
 ## The focused lane profile
 

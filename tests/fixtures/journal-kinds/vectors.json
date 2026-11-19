@@ -187,6 +187,29 @@
       "line": "Findings: 0 P0, 1 P1, 2 P2 and 0 P3"
     },
     {
+      "kind": "review.round",
+      "lane": "lead",
+      "subject": "APP-10",
+      "data": {
+        "round": 2,
+        "head": "7a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d",
+        "startedAt": "2026-11-18T10:00:00Z",
+        "finishedAt": "2026-11-18T10:20:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "changes"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 1,
+          "P2": 0,
+          "P3": 2
+        }
+      },
+      "head": "Review round 2 on APP-10 at 7a1b2c3",
+      "line": "Findings: 0 P0, 1 P1, 0 P2 and 2 P3"
+    },
+    {
       "kind": "review.recorded",
       "lane": "lane-1",
       "subject": "APP-12",
@@ -1280,6 +1303,106 @@
       },
       "head": "The main line moved",
       "line": "From 9f3c2b1 to 4e66a05, taking in 0123456. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "integration.merged",
+      "lane": "lead",
+      "subject": "APP-10",
+      "data": {
+        "target": "main",
+        "targetHead": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+        "head": "7a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d",
+        "conflicts": []
+      },
+      "head": "The lead merged main into the integration",
+      "line": "main at 9f3c2b1, merged at 7a1b2c3"
+    },
+    {
+      "kind": "integration.merged",
+      "lane": "lead",
+      "subject": "APP-10",
+      "data": {
+        "target": "main",
+        "targetHead": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+        "head": "7a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d",
+        "conflicts": [
+          "src/a.py",
+          "src/b.py"
+        ]
+      },
+      "head": "The lead merged main into the integration",
+      "line": "main at 9f3c2b1, merged at 7a1b2c3, resolving src/a.py and src/b.py by hand"
+    },
+    {
+      "kind": "integration.suite",
+      "lane": "lead",
+      "subject": "APP-10",
+      "data": {
+        "head": "7a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d",
+        "result": "passed",
+        "seconds": 1242.5
+      },
+      "head": "The integration suite passed",
+      "line": "At 7a1b2c3, in 20m"
+    },
+    {
+      "kind": "integration.suite",
+      "lane": "lead",
+      "subject": "APP-10",
+      "data": {
+        "head": "7a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d",
+        "result": "over-budget",
+        "seconds": 1384,
+        "budgetSeconds": 1260
+      },
+      "head": "The integration suite passed over its budget",
+      "line": "At 7a1b2c3, in 23m against a budget of 21m"
+    },
+    {
+      "kind": "integration.suite",
+      "lane": "lead",
+      "subject": "APP-10",
+      "data": {
+        "head": "7a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d",
+        "result": "failed",
+        "seconds": 905
+      },
+      "head": "The integration suite failed",
+      "line": "At 7a1b2c3, in 15m"
+    },
+    {
+      "kind": "integration.suite",
+      "lane": "lead",
+      "subject": "APP-10",
+      "data": {
+        "head": "7a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d",
+        "result": "unreadable",
+        "seconds": 12.3
+      },
+      "head": "The integration suite could not start",
+      "line": "At 7a1b2c3, in 12s"
+    },
+    {
+      "kind": "integration.requested",
+      "lane": "lead",
+      "subject": "APP-10",
+      "data": {
+        "changeRequest": "https://github.com/example/app/pull/412",
+        "head": "7a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d"
+      },
+      "head": "The integration asks to rejoin its target",
+      "line": "https://github.com/example/app/pull/412 at 7a1b2c3"
+    },
+    {
+      "kind": "integration.landed",
+      "lane": "lead",
+      "subject": "APP-10",
+      "data": {
+        "target": "main",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "The integration rejoined main",
+      "line": "main is now at 4e66a05"
     },
     {
       "kind": "base.published",

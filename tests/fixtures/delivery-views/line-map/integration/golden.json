@@ -1,0 +1,781 @@
+{
+  "now": "2026-10-30T08:00:00Z",
+  "timeZone": "UTC",
+  "blocks": {
+    "delivery-state": {
+      "state": {
+        "version": 3,
+        "meta": {
+          "headline": "Fixture delivery",
+          "updatedAt": "2026-10-30T11:59:00Z",
+          "trackerParent": "APP-10",
+          "baseHead": "01b202080242b13102d3605a03640f8303f4beac",
+          "integration": {
+            "base": "integrate/app",
+            "target": "main",
+            "remote": "origin"
+          }
+        },
+        "lanes": [
+          {
+            "id": "lane-1",
+            "title": "Lane one",
+            "focus": "",
+            "state": "working",
+            "waitingOn": null,
+            "since": "2026-10-30T06:00:00Z"
+          }
+        ],
+        "queue": [
+          {
+            "order": 1,
+            "subject": "A",
+            "title": "Work A",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "0000034e0000083900000d240000120f000016fa",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 2,
+            "subject": "B",
+            "title": "Work B",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "000003510000083d00000d290000121500001701",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          }
+        ],
+        "planned": [],
+        "finish": [],
+        "followups": [],
+        "leases": []
+      },
+      "journal": [
+        {
+          "id": 1,
+          "at": "2026-10-30T06:00:00Z",
+          "kind": "record.started",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "base": {
+              "ref": "integrate/app",
+              "head": "3776123149f2c6bd5c6f7b496eec2fd58168e461"
+            }
+          }
+        },
+        {
+          "id": 2,
+          "at": "2026-10-30T06:10:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "A",
+          "data": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:10:00Z",
+            "finishedAt": "2026-10-30T06:10:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 3,
+          "at": "2026-10-30T06:11:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "A",
+          "data": {
+            "head": "0000034e0000083900000d240000120f000016fa",
+            "checks": []
+          }
+        },
+        {
+          "id": 4,
+          "at": "2026-10-30T06:12:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "A",
+          "data": {
+            "head": "0000034e0000083900000d240000120f000016fa"
+          }
+        },
+        {
+          "id": 5,
+          "at": "2026-10-30T06:20:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "B",
+          "data": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:20:00Z",
+            "finishedAt": "2026-10-30T06:20:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 6,
+          "at": "2026-10-30T06:21:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "B",
+          "data": {
+            "head": "000003510000083d00000d290000121500001701",
+            "checks": []
+          }
+        },
+        {
+          "id": 7,
+          "at": "2026-10-30T06:22:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "B",
+          "data": {
+            "head": "000003510000083d00000d290000121500001701"
+          }
+        },
+        {
+          "id": 8,
+          "at": "2026-10-30T06:40:00Z",
+          "kind": "integration.merged",
+          "lane": null,
+          "subject": "APP-10",
+          "data": {
+            "target": "main",
+            "targetHead": "d6c70cd573b414ed10a11d05ad8e251d4a7b2d35",
+            "head": "7b0d126c4ebc1c61226b2656f61a304bc9c93a40",
+            "conflicts": []
+          }
+        },
+        {
+          "id": 9,
+          "at": "2026-10-30T06:50:00Z",
+          "kind": "integration.suite",
+          "lane": null,
+          "subject": "APP-10",
+          "data": {
+            "head": "7b0d126c4ebc1c61226b2656f61a304bc9c93a40",
+            "result": "failed",
+            "seconds": 905
+          }
+        },
+        {
+          "id": 10,
+          "at": "2026-10-30T07:00:00Z",
+          "kind": "integration.suite",
+          "lane": null,
+          "subject": "APP-10",
+          "data": {
+            "head": "340ac48d4563b48d56bca48d6815948d796e848d",
+            "result": "passed",
+            "seconds": 1242
+          }
+        },
+        {
+          "id": 11,
+          "at": "2026-10-30T07:10:00Z",
+          "kind": "review.round",
+          "lane": null,
+          "subject": "APP-10",
+          "data": {
+            "round": 1,
+            "startedAt": "2026-10-30T07:10:00Z",
+            "finishedAt": "2026-10-30T07:10:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "changes"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            },
+            "head": "340ac48d4563b48d56bca48d6815948d796e848d"
+          }
+        },
+        {
+          "id": 12,
+          "at": "2026-10-30T07:20:00Z",
+          "kind": "integration.merged",
+          "lane": null,
+          "subject": "APP-10",
+          "data": {
+            "target": "main",
+            "targetHead": "27cd983c351224214256b0064f9b3beb5cdfc7d0",
+            "head": "7e7c6e96a8a5ec99d2cf6a9cfcf8e89f272266a2",
+            "conflicts": [
+              "src/app.py"
+            ]
+          }
+        },
+        {
+          "id": 13,
+          "at": "2026-10-30T07:30:00Z",
+          "kind": "integration.suite",
+          "lane": null,
+          "subject": "APP-10",
+          "data": {
+            "head": "7e7c6e96a8a5ec99d2cf6a9cfcf8e89f272266a2",
+            "result": "over-budget",
+            "seconds": 1384,
+            "budgetSeconds": 1260
+          }
+        },
+        {
+          "id": 14,
+          "at": "2026-10-30T07:40:00Z",
+          "kind": "review.round",
+          "lane": null,
+          "subject": "APP-10",
+          "data": {
+            "round": 2,
+            "startedAt": "2026-10-30T07:40:00Z",
+            "finishedAt": "2026-10-30T07:40:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            },
+            "head": "7e7c6e96a8a5ec99d2cf6a9cfcf8e89f272266a2"
+          }
+        }
+      ],
+      "stats": {},
+      "estimates": {},
+      "status": {
+        "source": "derived",
+        "text": ""
+      },
+      "focus": {},
+      "story": {
+        "schemaVersion": "story/1",
+        "state": "open",
+        "digest": {
+          "landed": 2,
+          "pieces": 2,
+          "startedAt": "2026-10-30T06:00:00Z",
+          "closedAt": null,
+          "took": null,
+          "setbacks": {
+            "closed": 0,
+            "cost": 0,
+            "standing": []
+          },
+          "decisions": 0,
+          "words": {
+            "head": "Two pieces landed so far.",
+            "line": "No setbacks."
+          }
+        },
+        "chapters": [
+          {
+            "id": "c1",
+            "form": "start",
+            "subject": null,
+            "pieceTitle": null,
+            "at": "2026-10-30T06:00:00Z",
+            "entries": [
+              1,
+              2,
+              3
+            ],
+            "beats": [
+              "b1",
+              "b2",
+              "b3"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "Getting started",
+              "line": "",
+              "standing": []
+            }
+          },
+          {
+            "id": "c2",
+            "form": "landing",
+            "subject": "A",
+            "pieceTitle": "Work A",
+            "at": "2026-10-30T06:12:00Z",
+            "entries": [
+              4
+            ],
+            "beats": [
+              "b4"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "A landed",
+              "line": "",
+              "standing": []
+            }
+          },
+          {
+            "id": "c3",
+            "form": "landing",
+            "subject": "B",
+            "pieceTitle": "Work B",
+            "at": "2026-10-30T06:22:00Z",
+            "entries": [
+              5,
+              6,
+              7
+            ],
+            "beats": [
+              "b5",
+              "b6",
+              "b7"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "B landed",
+              "line": "",
+              "standing": []
+            }
+          },
+          {
+            "id": "c4",
+            "form": "finish",
+            "subject": null,
+            "pieceTitle": null,
+            "at": "2026-10-30T07:40:00Z",
+            "entries": [
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14
+            ],
+            "beats": [
+              "b8",
+              "b9",
+              "b10",
+              "b11",
+              "b12",
+              "b13",
+              "b14"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "Finishing",
+              "line": "",
+              "standing": []
+            }
+          }
+        ],
+        "beats": [
+          {
+            "id": "b1",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:00:00Z",
+            "entries": [
+              1
+            ],
+            "thread": null,
+            "kind": "record.started",
+            "tone": "note",
+            "label": "Started",
+            "words": {
+              "head": "The delivery started",
+              "line": "On integrate/app at 3776123"
+            },
+            "explain": "The lead opened the record. Everything after it happened in this delivery.",
+            "items": []
+          },
+          {
+            "id": "b2",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:10:00Z",
+            "entries": [
+              2
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round 1 on A",
+              "line": "Findings: 0 P0, 0 P1, 0 P2 and 0 P3"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b3",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:11:00Z",
+            "entries": [
+              3
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Lane 1 handed off A",
+              "line": "Ready"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b4",
+            "chapter": "c2",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:12:00Z",
+            "entries": [
+              4
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "A landed",
+              "line": "At 0000034"
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b5",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:20:00Z",
+            "entries": [
+              5
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round 1 on B",
+              "line": "Findings: 0 P0, 0 P1, 0 P2 and 0 P3"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b6",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:21:00Z",
+            "entries": [
+              6
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Lane 1 handed off B",
+              "line": "Ready"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b7",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:22:00Z",
+            "entries": [
+              7
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "B landed",
+              "line": "At 0000035"
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b8",
+            "chapter": "c4",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:40:00Z",
+            "entries": [
+              8
+            ],
+            "thread": null,
+            "kind": "integration.merged",
+            "tone": "note",
+            "label": "Target merged in",
+            "words": {
+              "head": "The lead merged main into the integration",
+              "line": "main at d6c70cd, merged at 7b0d126"
+            },
+            "explain": "The lead brought the target's newer work into the integration, so it rejoins the target from its current head.",
+            "items": []
+          },
+          {
+            "id": "b9",
+            "chapter": "c4",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:50:00Z",
+            "entries": [
+              9
+            ],
+            "thread": null,
+            "kind": "integration.suite",
+            "tone": "note",
+            "label": "Integration suite",
+            "words": {
+              "head": "The integration suite failed",
+              "line": "At 7b0d126, in 15m"
+            },
+            "explain": "The lead ran the full suite on the integration at one head.",
+            "items": []
+          },
+          {
+            "id": "b10",
+            "chapter": "c4",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T07:00:00Z",
+            "entries": [
+              10
+            ],
+            "thread": null,
+            "kind": "integration.suite",
+            "tone": "note",
+            "label": "Integration suite",
+            "words": {
+              "head": "The integration suite passed",
+              "line": "At 340ac48, in 20m"
+            },
+            "explain": "The lead ran the full suite on the integration at one head.",
+            "items": []
+          },
+          {
+            "id": "b11",
+            "chapter": "c4",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T07:10:00Z",
+            "entries": [
+              11
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round 1 on APP-10 at 340ac48",
+              "line": "Findings: 0 P0, 0 P1, 0 P2 and 0 P3"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b12",
+            "chapter": "c4",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T07:20:00Z",
+            "entries": [
+              12
+            ],
+            "thread": null,
+            "kind": "integration.merged",
+            "tone": "note",
+            "label": "Target merged in",
+            "words": {
+              "head": "The lead merged main into the integration",
+              "line": "main at 27cd983, merged at 7e7c6e9, resolving src/app.py by hand"
+            },
+            "explain": "The lead brought the target's newer work into the integration, so it rejoins the target from its current head.",
+            "items": []
+          },
+          {
+            "id": "b13",
+            "chapter": "c4",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T07:30:00Z",
+            "entries": [
+              13
+            ],
+            "thread": null,
+            "kind": "integration.suite",
+            "tone": "note",
+            "label": "Integration suite",
+            "words": {
+              "head": "The integration suite passed over its budget",
+              "line": "At 7e7c6e9, in 23m against a budget of 21m"
+            },
+            "explain": "The lead ran the full suite on the integration at one head.",
+            "items": []
+          },
+          {
+            "id": "b14",
+            "chapter": "c4",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T07:40:00Z",
+            "entries": [
+              14
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round 2 on APP-10 at 7e7c6e9",
+              "line": "Findings: 0 P0, 0 P1, 0 P2 and 0 P3"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          }
+        ],
+        "threads": [],
+        "tones": [
+          {
+            "tone": "landed",
+            "word": "Landed"
+          },
+          {
+            "tone": "ready",
+            "word": "Ready to check"
+          },
+          {
+            "tone": "decision",
+            "word": "Decision"
+          },
+          {
+            "tone": "problem",
+            "word": "Setback"
+          },
+          {
+            "tone": "note",
+            "word": "Other update"
+          }
+        ]
+      }
+    },
+    "delivery-runs": {},
+    "delivery-links": {
+      "issues": {},
+      "changes": {},
+      "commits": {
+        "01b202080242b13102d3605a03640f8303f4beac": "https://github.com/v26-technologies/athena/commit/01b202080242b13102d3605a03640f8303f4beac",
+        "3776123149f2c6bd5c6f7b496eec2fd58168e461": "https://github.com/v26-technologies/athena/commit/3776123149f2c6bd5c6f7b496eec2fd58168e461",
+        "0000034e0000083900000d240000120f000016fa": "https://github.com/v26-technologies/athena/commit/0000034e0000083900000d240000120f000016fa",
+        "000003510000083d00000d290000121500001701": "https://github.com/v26-technologies/athena/commit/000003510000083d00000d290000121500001701",
+        "d6c70cd573b414ed10a11d05ad8e251d4a7b2d35": "https://github.com/v26-technologies/athena/commit/d6c70cd573b414ed10a11d05ad8e251d4a7b2d35",
+        "7b0d126c4ebc1c61226b2656f61a304bc9c93a40": "https://github.com/v26-technologies/athena/commit/7b0d126c4ebc1c61226b2656f61a304bc9c93a40",
+        "340ac48d4563b48d56bca48d6815948d796e848d": "https://github.com/v26-technologies/athena/commit/340ac48d4563b48d56bca48d6815948d796e848d",
+        "27cd983c351224214256b0064f9b3beb5cdfc7d0": "https://github.com/v26-technologies/athena/commit/27cd983c351224214256b0064f9b3beb5cdfc7d0",
+        "7e7c6e96a8a5ec99d2cf6a9cfcf8e89f272266a2": "https://github.com/v26-technologies/athena/commit/7e7c6e96a8a5ec99d2cf6a9cfcf8e89f272266a2"
+      }
+    }
+  },
+  "initialText": "NowThe lineWhoWhat's leftWhat happenedParkedFixture delivery · APP-10 · delivering · 2 h2 pieces landed beside main. Now it rejoins.The lead has caught up 2 times.StartPieces landedRejoined mainStories2 of 2 landedLast landedWork BB · an hour agoSaved viewUpdated just nowbase 01b2020The lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Lane one2 of 2 landedABmainmain insuitereviewchange requestintegrate/appFinish line2/2 landedBefore it rejoinsCaught up2 times, at 7b0d126, 7e7c6e9, resolving 1 conflict by handSuiteover-budget in 23 minutes against a budget of 21 minutes at 7e7c6e9Reviewround 2 every lens approves, at 7e7c6e9RejoinReady. A change request into main can open. The merge is the operator's.Lane 1Work AA · Landed an hour agoReview evidence unavailable or stale for this candidate.Merge check · Landed an hour ago · 2 steps6:11 amLane 1 handed off A: Ready6:12 amA landed: At 0000034LandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedBoth landedWho's doing what1 lane is working on this.Each lane is a separate session working in parallel on its own part of the work.Lane oneBuildingfor 2hWhat's left0pieces to go2 of 2 pieces have landed.What happenedTwo pieces landed so far.No setbacks.LandedReady to checkOther updateHeadlinesStoryEverythingAllDecisionsLandingsSetbacksFinishing7:40 am7:40 amReview round 2 on APP-10 at 7e7c6e9Findings: 0 P0, 0 P1, 0 P2 and 0 P3Review round7:30 amThe integration suite passed over its budgetAt 7e7c6e9, in 23m against a budget of 21mIntegration suite7:20 amThe lead merged main into the integrationmain at 27cd983, merged at 7e7c6e9, resolving src/app.py by handTarget merged in7:10 amReview round 1 on APP-10 at 340ac48Findings: 0 P0, 0 P1, 0 P2 and 0 P3Review round7:00 amThe integration suite passedAt 340ac48, in 20mIntegration suite6:50 amThe integration suite failedAt 7b0d126, in 15mIntegration suite6:40 amThe lead merged main into the integrationmain at d6c70cd, merged at 7b0d126Target merged inB landed6:22 amWork B6:22 amB landedAt 0000035Landed6:21 amLane 1 handed off BReadyHanded off6:20 amReview round 1 on BFindings: 0 P0, 0 P1, 0 P2 and 0 P3Review roundA landed6:12 amWork A6:12 amA landedAt 0000034LandedGetting started6:00 am6:11 amLane 1 handed off AReadyHanded off6:10 amReview round 1 on AFindings: 0 P0, 0 P1, 0 P2 and 0 P3Review round6:00 amThe delivery startedOn integrate/app at 3776123StartedParked for laterNothing parked.Past deliveries and runs",
+  "details": {
+    "A": {
+      "detail": "Lane 1Work AA · Landed an hour agoReview evidence unavailable or stale for this candidate.Merge check · Landed an hour ago · 2 steps6:11 amLane 1 handed off A: Ready6:12 amA landed: At 0000034"
+    },
+    "B": {
+      "detail": "Lane 1Work BB · Landed an hour agoReview evidence unavailable or stale for this candidate.Merge check · Landed an hour ago · 2 steps6:21 amLane 1 handed off B: Ready6:22 amB landed: At 0000035"
+    }
+  }
+}

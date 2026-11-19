@@ -5775,6 +5775,7 @@ flow.reconcile_once = step("reconcile", [])
 flow.cleanup_merged = step("cleanup", [])
 flow.post_merge_step = step("fullHealth", "skipped")
 flow.journal_finish_met = step("finish", [])
+flow.write_lane_changes = step("laneChanges", "written")
 flow.needs_you = step("needs", [])
 flow.write_needs = lambda *args, **kwargs: None
 flow.copy_latest = step("latest", "latest")
@@ -6086,7 +6087,7 @@ class NoSupervisorOutlivesItsCaseTests(unittest.TestCase):
 
     def test_a_pass_with_its_record_kept_runs_every_step_and_is_logged(self) -> None:
         result = self.one_pass("none")
-        self.assertEqual(result["ran"], ["reconcile", "cleanup", "fullHealth", "finish", "publish", "needs", "render",
+        self.assertEqual(result["ran"], ["reconcile", "cleanup", "fullHealth", "finish", "laneChanges", "publish", "needs", "render",
                                          "latest"], result)
         self.assertEqual((result["returned"], result["logged"], result["lost"]), (False, 1, None), result)
 
@@ -6283,7 +6284,7 @@ class LeadSuiteTests(unittest.TestCase):
         code, out = fx.flow("lead-suite", cwd=fx.main)
         self.assertEqual(code, 1, out)
         failed = self.lines(fx)[-1]
-        self.assertEqual((failed["result"], failed["exit"], failed["interpreter"]), ("failed", 1, None), failed)
+        self.assertEqual((failed["result"], failed["exit"], failed["interpreter"]), ("unreadable", 1, None), failed)
         self.assertIn("the prepare step", failed["output"])
         self.assertIn("before its interpreter was asked", failed["interpreterUnread"])
         self.assertEqual(self.suite_checkouts(fx), [])

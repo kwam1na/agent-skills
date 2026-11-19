@@ -72,12 +72,13 @@ export function renderIn(root, document, extra = []) {
 
 /**
  * Renders a page in a throwaway repository and returns it, failing on a non-zero exit. A `plan` is placed as the
- * state directory's plan.json, and `needs` as its needs-you.json: an object as its JSON, a string as its exact text.
+ * state directory's plan.json, `needs` as its needs-you.json and `files` as its lane-changes.json: an object as its JSON,
+ * a string as its exact text.
  */
-export function renderPage(document, { config, runsCommands = null, plan = null, needs = null } = {}) {
+export function renderPage(document, { config, runsCommands = null, plan = null, needs = null, files = null } = {}) {
   const root = repository({ config, runsCommands });
   try {
-    for (const [name, value] of [["plan.json", plan], ["needs-you.json", needs]]) {
+    for (const [name, value] of [["plan.json", plan], ["needs-you.json", needs], ["lane-changes.json", files]]) {
       if (value === null) continue;
       mkdirSync(path.join(root, "state"), { recursive: true });
       writeFileSync(path.join(root, "state", name), typeof value === "string" ? value : JSON.stringify(value));
