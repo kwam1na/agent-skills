@@ -697,32 +697,37 @@
     var inner = parts.now;
     var meta = isObject(doc.state.meta) ? doc.state.meta : {};
     var landed = all.filter(isLanded).length;
-    var title = el("h1", "title");
     var closed = closedEntry(doc);
     var tally = closed ? closedTally(all) : null;
-    // Every own piece has landed while a sibling delivery's part is open or unread: the state tool's sentences, in place
-    // of a done headline. The first says this repository's part is done; the rest name each sibling.
+    // How far the delivery has come, said once and first on the line under the name. Every own piece has landed while a
+    // sibling delivery's part is open or unread: the state tool's sentences, in place of a done count. The first says
+    // this repository's part is done; the rest name each sibling.
     var partDone = isObject(doc.across) ? list(doc.across.partDone).map(text).filter(Boolean) : [];
     var behind = null;
+    var count = el("b", "now-count");
     var done = function (words) {
-      if (!partDone.length) { return add(title, words); }
+      if (!partDone.length) { return add(count, words); }
       behind = partDone.slice(1).join(" ");
-      return add(title, partDone[0]);
+      return add(count, partDone[0].replace(/\.$/, ""));
     };
-    if (closed && !tally.total) { add(title, all.length ? "Closed with nothing left to land." : "Closed with nothing on the line."); }
-    else if (closed && tally.landed === tally.total) { done("Delivered."); }
-    else if (closed) { add(title, "Closed with ", figures(el("b"), "now", tally.landed + " of " + tally.total), " pieces landed."); }
-    else if (!all.length) { add(title, "Nothing on the line yet."); }
-    else if (landed === all.length) { done("Every piece has landed."); }
-    else { add(title, figures(el("b"), "now", landed + " of " + all.length), " pieces have landed."); }
+    if (closed && !tally.total) { add(count, all.length ? "Closed with nothing left to land" : "Closed with nothing on the line"); }
+    else if (closed && tally.landed === tally.total) { done("Every piece landed"); }
+    else if (closed) { add(count, "Closed with ", figures(el("span"), "now", tally.landed + " of " + tally.total), " pieces landed"); }
+    else if (!all.length) { add(count, "Nothing on the line yet"); }
+    else if (landed === all.length) { done("Every piece has landed"); }
+    else { add(count, figures(el("span"), "now", landed + " of " + all.length), " pieces have landed"); }
     var outcome = plan && isObject(plan.outcome) ? text(plan.outcome.summary) : "";
-    var headline = text(meta.headline) || pageTitle();
-    // The outcome is said once, under the headline: a record headline that only repeats it leaves the kicker to the ticket.
+    var parent = text(meta.trackerParent);
+    // The delivery's name is the headline. A ticket key it opens with is left off when the kicker links that ticket, or
+    // links none, and what remains starts with a capital.
+    var name = text(meta.headline) || outcome || pageTitle();
+    var keyed = name.match(/^([A-Z][A-Z0-9]*-\d+):\s*(.+)$/);
+    if (keyed && (!parent || keyed[1] === parent)) { name = keyed[2].charAt(0).toUpperCase() + keyed[2].slice(1); }
+    var title = add(el("h1", "title"), name);
+    // The kicker is one line: the tracker item the delivery's work is listed under, linked when the renderer linked it,
+    // then how long it has run.
     var kicker = el("div", "kicker");
-    if (headline !== outcome) { add(kicker, el("span", "headline", headline)); }
-    // The tracker item the delivery's work is listed under, linked when the renderer linked it.
-    if (text(meta.trackerParent)) { add(kicker, kicker.firstChild ? " · " : null, issue(text(meta.trackerParent))); }
-    else if (!kicker.firstChild) { add(kicker, el("span", "headline", pageTitle())); }
+    if (parent) { add(kicker, issue(parent)); }
     // How long the delivery has run, from the record's first entry: to now while it delivers, to its close once delivered.
     // The start, and for a closed one the end, read on pointing at it, in local time with UTC beside it.
     var first = list(doc.journal).filter(isObject)[0];
@@ -732,7 +737,7 @@
       var minutes = Math.round((ended - begun) / 60), hours = Math.floor(minutes / 60);
       var lasted = minutes < 60 ? minutes + " min" : hours < 48 ? hours + " h" + (minutes % 60 ? " " + minutes % 60 + " min" : "") : Math.round(hours / 24) + " days";
       var stamp = function (at) { var date = new Date(at * 1000); return date.toLocaleString() + " (" + date.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC") + ")"; };
-      var time = figures(el("time", "kicker-time"), "kicker", closed ? "delivered in " + lasted : "delivering · " + lasted);
+      var time = figures(el("time", "kicker-time"), "kicker", closed ? "Closed after " + lasted : "Started " + lasted + " ago");
       time.setAttribute("datetime", text(first.at));
       time.setAttribute("tabindex", "0");
       // The page's own card says the ends, as a ticket's does, since nothing on the page carries a native tooltip.
@@ -745,12 +750,14 @@
       time.addEventListener("focus", showEnds);
       time.addEventListener("mouseleave", hideCard);
       time.addEventListener("blur", hideCard);
-      add(kicker, " · ", time);
+      add(kicker, kicker.firstChild ? " · " : null, time);
     }
-    var nodes = [kicker, title];
-    // The outcome, then how much of the plan is proven and how often it changed, linked to the plan chapter.
+    var nodes = kicker.firstChild ? [kicker, title] : [title];
+    // The outcome when it says more than the name, then the count, how much of the plan is proven and how often it
+    // changed, linked to the plan chapter.
+    var said = outcome && outcome !== text(meta.headline) && outcome !== name ? outcome : null;
     var planLink = planNow(doc);
-    if (outcome || planLink) { nodes.push(add(el("p", "plan-now"), outcome || null, planLink)); }
+    nodes.push(add(el("p", "plan-now"), said, add(el("span", "plan-now-line"), count, planLink ? " · " : null, planLink)));
     if (behind) { nodes.push(el("p", "say say-across", behind)); }
     var status = sayLine(doc, all);
     if (status) { nodes.push(el("p", "say", status)); }
@@ -2460,7 +2467,7 @@
     var counts = planCounts(doc);
     var link = figures(el("a", "plan-now-link"), "plan-now", counts.proven + " of " + counts.total + " criteria proven");
     link.setAttribute("href", "#plan");
-    return add(el("span", "plan-now-line"), link, figures(el("span"), "plan-changes", " · " + timesChanged(list(plan.changes).length)));
+    return add(el("span", "plan-now-plan"), link, figures(el("span"), "plan-changes", " · " + timesChanged(list(plan.changes).length)));
   }
 
   /** The criteria a finish line covers, or null when it covers proofs only, over every unit. */

@@ -38,7 +38,7 @@ async function open(doc, scenario = {}) {
   return openPage(pageWithRuns(doc, {}, { config: CONFIG }), { now: NOW, store: false, ...scenario });
 }
 function said(shown) {
-  return { title: shown.app.querySelector("#now .title").textContent,
+  return { title: shown.app.querySelector("#now .now-count").textContent,
     across: [...shown.app.querySelectorAll("#now .say-across")].map((node) => node.textContent) };
 }
 
@@ -80,15 +80,15 @@ test("own stories all landed and a fresh sibling with two open: this repository'
   for (const closed of [false, true]) {
     const [shown] = await open(document([sibling("backend", stories("building", "review", "merged"))], { closed }));
     // The delivery still closes: the closed record says part done in place of Delivered.
-    expect(said(shown)).toEqual({ title: "This repository's part is done.", across: ["backend has 2 open."] });
+    expect(said(shown)).toEqual({ title: "This repository's part is done", across: ["backend has 2 open."] });
   }
 });
 
 test("every sibling fresh with everything landed: the usual done headline", async () => {
   const [shown] = await open(document([sibling("backend", stories("merged", "settled"))]));
-  expect(said(shown)).toEqual({ title: "Every piece has landed.", across: [] });
+  expect(said(shown)).toEqual({ title: "Every piece has landed", across: [] });
   const [closed] = await open(document([sibling("backend", stories("merged"))], { closed: true }));
-  expect(said(closed)).toEqual({ title: "Delivered.", across: [] });
+  expect(said(closed)).toEqual({ title: "Every piece landed", across: [] });
 });
 
 test("a sibling that can't be read now never lets the done headline show", async () => {
@@ -100,18 +100,18 @@ test("a sibling that can't be read now never lets the done headline show", async
   ];
   for (const [row, words] of cases) {
     const [shown] = await open(document([row]));
-    expect(said(shown)).toEqual({ title: "This repository's part is done.", across: [words] });
+    expect(said(shown)).toEqual({ title: "This repository's part is done", across: [words] });
   }
 });
 
 test("before every own story has landed, the headline is today's whatever the siblings say", async () => {
   const [shown] = await open(document([sibling("backend", stories("building"))], { landed: false }));
-  expect(said(shown)).toEqual({ title: "0 of 1 pieces have landed.", across: [] });
+  expect(said(shown)).toEqual({ title: "0 of 1 pieces have landed", across: [] });
 });
 
 test("a sibling of another epic is drawn without stories and isn't named in the headline", async () => {
   const [shown] = await open(document([sibling("backend", stories("merged")), sibling("legacy", stories("building"), "other-epic")]));
-  expect(said(shown)).toEqual({ title: "Every piece has landed.", across: [] });
+  expect(said(shown)).toEqual({ title: "Every piece has landed", across: [] });
   const groups = [...shown.app.querySelectorAll("#across .across-group")];
   expect(groups[1].querySelector(".across-head").textContent).toBe("legacyDelivers another epic since 5 minutes ago");
   expect(groups[1].querySelector("li")).toBeNull();

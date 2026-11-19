@@ -91,10 +91,10 @@ test("draws the run as a line map, chapter by chapter", async () => {
 
   // Now: how far the run has got, what is being checked, and what needs attention.
   const now = chapter("now");
-  expect(now.querySelector(".kicker .headline")?.textContent).toBe("Checkout resilience");
+  expect(now.querySelector("h1.title")?.textContent).toBe("Checkout resilience");
   // The tracker item the delivery is listed under opens in the tracker.
   expect(now.querySelector(".kicker a")?.getAttribute("href")).toBe("https://tracker.example/issue/PAY-2354");
-  expect(now.querySelector("h1")?.textContent).toBe("1 of 8 pieces have landed.");
+  expect(now.querySelector(".now-count")?.textContent).toBe("1 of 8 pieces have landed");
   // What landed last is the chapter's second fact, after the stories landed: its title, then its ticket, its pull request and how long ago.
   expect(now.querySelector(".facts > .fact:nth-child(2)")?.textContent).toBe("Last landedHold the cart through a payment redirectPAY-2358 · #1101 · 44 minutes ago");
   const checking = now.querySelector(".checking").textContent;
@@ -623,7 +623,7 @@ test("never lets record text become markup", async () => {
   expect(app.querySelector("img")).toBeNull();
   // The hostile <b>bold</b> never becomes an element of its own.
   expect([...app.querySelectorAll("b")].filter((node) => node.textContent === "bold")).toHaveLength(0);
-  expect(app.querySelector("#now .kicker .headline")?.textContent).toBe(HOSTILE);
+  expect(app.querySelector("#now h1.title")?.textContent).toBe(HOSTILE);
   expect(text).toContain("</script><img src=x onerror=alert(1)>");
   expect(JSON.parse(embedded({ text: HOSTILE }))).toEqual({ text: HOSTILE });
 });
@@ -908,7 +908,7 @@ test("tells each round's time from the round before it, and colours each badge b
 test("draws whatever the record has, and says so when it has nothing to draw", async () => {
   for (const document of [{ state: {} }, { state: { meta: {}, queue: null, lanes: "x" }, journal: [null, 3] }, { state: { meta: { checking: { now: { steps: [null, {}] } } } } }]) {
     const [{ app }] = await open(document);
-    expect(app.querySelector("#now .kicker .headline")?.textContent).toBe("Delivery");
+    expect(app.querySelector("#now h1.title")?.textContent).toBe("Delivery");
     expect(app.querySelector("#line")?.textContent).toContain("No work on the line yet.");
     expect(app.querySelector("#left .left-number")?.textContent).toBe("0pieces to go");
   }
@@ -923,10 +923,10 @@ test("follows the live store: its pushes, its read, and its connection", async (
     store: { read: "pending" },
     steps: [{ push: later }, { status: false }, { push: { nope: true } }],
   });
-  const headline = (snapshot) => snapshot.app.querySelector("#now .kicker .headline")?.textContent;
+  const headline = (snapshot) => snapshot.app.querySelector("#now h1.title")?.textContent;
   expect(headline(before)).toBe("Checkout resilience");
   expect(headline(pushed)).toBe("Checkout resilience, later");
-  expect(pushed.app.querySelector("#now h1")?.textContent).toBe("2 of 8 pieces have landed.");
+  expect(pushed.app.querySelector("#now .now-count")?.textContent).toBe("2 of 8 pieces have landed");
   expect(pushed.source).toBe("live");
   expect(pushed.app.querySelector(".since")?.textContent).toContain("Live");
   expect(down.app.querySelector(".since")?.textContent).toContain("Reconnecting. Showing the last update.");
@@ -1051,7 +1051,7 @@ test("keeps a newer push over a late read, and works with a store that cannot su
   pushed.state.meta.headline = "Pushed";
   const read = fixtureDocument();
   read.state.meta.headline = "Read late";
-  const headline = (snapshot) => snapshot.app.querySelector("#now .kicker .headline")?.textContent;
+  const headline = (snapshot) => snapshot.app.querySelector("#now h1.title")?.textContent;
   const [, afterPush, afterRead] = await open(fixtureDocument(), { store: { read: "manual" }, steps: [{ push: pushed }, { resolve: read }] });
   expect(headline(afterPush)).toBe("Pushed");
   expect(headline(afterRead)).toBe("Pushed");
@@ -1268,7 +1268,7 @@ test("follows the live server through the adapter it injects into the page", asy
   const written = fixtureDocument();
   written.state.meta.headline = "Just written";
   const [, read, pushed, dropped] = await open(fixtureDocument(), { server: { document: onServer }, steps: [{ wait: 20 }, { event: written }, { dropped: true }] }, served.stdout);
-  const headline = (snapshot) => snapshot.app.querySelector("#now .kicker .headline")?.textContent;
+  const headline = (snapshot) => snapshot.app.querySelector("#now h1.title")?.textContent;
   expect(headline(read)).toBe("From the server");
   expect(read.app.querySelector(".since")?.textContent).toContain("Connected, waiting for updates");
   expect(headline(pushed)).toBe("Just written");
@@ -1277,11 +1277,41 @@ test("follows the live server through the adapter it injects into the page", asy
   expect(headline(dropped)).toBe("Just written");
 });
 
+test("the delivery's name heads the page, without a ticket key the kicker already links, over a one-line kicker", async () => {
+  const named = (headline, parent) => {
+    const document = fixtureDocument();
+    document.state.meta.headline = headline;
+    if (parent === undefined) { delete document.state.meta.trackerParent; } else { document.state.meta.trackerParent = parent; }
+    return document;
+  };
+  const shown = async (document) => (await open(document))[0].app;
+  // The kicker's own ticket, or no ticket at all: the key goes, and what remains starts with a capital.
+  expect((await shown(named("PAY-2354: checkout resilience", "PAY-2354"))).querySelector("#now h1.title").textContent)
+    .toBe("Checkout resilience");
+  expect((await shown(named("PAY-2354: checkout resilience"))).querySelector("#now h1.title").textContent)
+    .toBe("Checkout resilience");
+  // Another ticket's key says something the kicker doesn't, so it stays.
+  const other = await shown(named("PAY-2354: checkout resilience", "PAY-9"));
+  expect(other.querySelector("#now h1.title").textContent).toBe("PAY-2354: checkout resilience");
+  // The kicker is the ticket and the time, with no state word; with no ticket it is the time alone.
+  const kicker = other.querySelector("#now .kicker");
+  expect(kicker.firstChild.tagName).toBe("A");
+  expect(kicker.textContent).toMatch(/^PAY-9 · Started .+ ago$/);
+  expect((await shown(named("Checkout resilience"))).querySelector("#now .kicker").textContent).toMatch(/^Started .+ ago$/);
+  // The headline is the name, not the count, which leads the line under it.
+  expect(other.querySelector("#now h1.title .now-count")).toBeNull();
+  expect(other.querySelector("#now .plan-now-line").firstChild.className).toBe("now-count");
+  // It never wraps: a kicker too long for its line ends in an ellipsis.
+  const css = readFileSync(path.join(ROOT, "skills/delivery-views/assets/line-map.css"), "utf8");
+  expect(css).toContain(".kicker { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; "
+    + "white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }");
+});
+
 test("reads the live record once it is open, and says when it cannot", async () => {
   const later = fixtureDocument();
   later.state.meta.headline = "Read from the live record";
   const [, read] = await open(fixtureDocument(), { store: { read: later }, steps: [{ wait: 20 }] });
-  expect(read.app.querySelector("#now .kicker .headline")?.textContent).toBe("Read from the live record");
+  expect(read.app.querySelector("#now h1.title")?.textContent).toBe("Read from the live record");
   expect(read.source).toBe("live");
   expect(read.app.querySelector(".since")?.textContent).toContain("Connected, waiting for updates");
   const [, refused] = await open(fixtureDocument(), { store: { read: "reject" }, steps: [{ wait: 20 }] });
