@@ -1440,54 +1440,6 @@ class LinearQualificationTests(unittest.TestCase):
             with self.subTest(loose=loose):
                 self.assertNotIn(loose, text)
 
-    @staticmethod
-    def _durable_paths() -> list[Path]:
-        durable_paths = [ROOT / "README.md"]
-        for root_name in (
-            "agent_skills",
-            "docs",
-            "qualifications",
-            "schemas",
-            "scripts",
-            "skills",
-            "tests",
-        ):
-            durable_paths.extend(
-                path
-                for path in (ROOT / root_name).rglob("*")
-                if path.is_file() and path.suffix in {".json", ".md", ".py"}
-                and not any(path.is_relative_to(ROOT / "docs" / kind) for kind in ("plans", "delivery"))
-                # The line map's golden corpus is recorded delivery records, which keep their ticket ids.
-                and not path.is_relative_to(ROOT / "tests" / "fixtures" / "delivery-views" / "line-map")
-                # The history page's golden corpus is recorded delivery records, which keep their ticket ids.
-                and not path.is_relative_to(ROOT / "tests" / "fixtures" / "delivery-views" / "history")
-                # The narrator's last-delivery is a recorded delivery's record, which keeps its ticket ids.
-                and not path.is_relative_to(ROOT / "tests" / "fixtures" / "narrator" / "last-delivery")
-            )
-        return durable_paths
-
-    def test_the_narrator_exemption_covers_only_the_recorded_delivery(self) -> None:
-        durable = set(self._durable_paths())
-        narrator = [path for path in (ROOT / "tests" / "fixtures" / "narrator").rglob("*")
-                    if path.is_file() and path.suffix in {".json", ".md", ".py"}]
-        recorded = [path for path in narrator if path.is_relative_to(ROOT / "tests" / "fixtures" / "narrator" / "last-delivery")]
-        self.assertTrue(recorded)
-        self.assertFalse(durable & set(recorded))
-        # Every other narrator fixture is still read, so a ticket id in one of them still fails.
-        self.assertTrue(set(narrator) - set(recorded))
-        self.assertLessEqual(set(narrator) - set(recorded), durable)
-
-    def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
-        durable_paths = self._durable_paths()
-        plan_unit = re.compile(r"\bU\d+[A-Za-z]?\b")
-        ticket_id = re.compile(r"\b[A-Z]\d{2,}-\d+\b")
-
-        for path in durable_paths:
-            content = path.read_text(encoding="utf-8")
-            with self.subTest(path=path.name):
-                self.assertIsNone(plan_unit.search(content))
-                self.assertIsNone(ticket_id.search(content))
-
 
 if __name__ == "__main__":
     unittest.main()

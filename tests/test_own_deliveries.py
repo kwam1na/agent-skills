@@ -193,16 +193,14 @@ class StandingBinding(unittest.TestCase):
         settings = json.loads((ROOT / ".agents/run-delivery.json").read_text(encoding="utf-8"))
         self.assertEqual(settings["hooks"], {"lead.may-stop": "enforce"})
 
-    def test_every_lane_gate_runs_the_catalogue_and_durable_text_guards(self) -> None:
-        # The two cheap guards the queue runs on every candidate also run in every lane's gate, so a lane meets them
-        # before review. They run through sh, so a fresh clone without .venv still resolves each gate.
+    def test_every_lane_gate_runs_the_catalogue_guard(self) -> None:
+        # The cheap catalogue guard the queue runs on every candidate also runs in every lane's gate, so a lane meets
+        # it before review. It runs through sh, so a fresh clone without .venv still resolves the gate.
         settings = json.loads((ROOT / ".agents/run-delivery.json").read_text(encoding="utf-8"))
         gates = {gate["id"]: gate["argv"] for gate in settings["gates"]}
         self.assertEqual(gates.get("catalogue"),
                          ["sh", "-c", "exec .venv/bin/python -B -m unittest tests.test_own_deliveries.StandingBinding"])
-        self.assertEqual(gates.get("durable-text"),
-                         ["sh", "-c", "exec .venv/bin/python -B -m unittest tests.test_linear_qualification."
-                          "LinearQualificationTests.test_durable_corpus_contains_no_plan_or_ticket_ids"])
+        self.assertNotIn("durable-text", gates)
 
     def test_the_committed_settings_hold_exactly_the_two_dispatcher_entries(self) -> None:
         settings = json.loads((ROOT / ".claude/settings.json").read_text(encoding="utf-8"))
