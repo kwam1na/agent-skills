@@ -100,7 +100,9 @@ checks may need no file at all.
     "lenses": { "lens.x": { "short": "x", "charter": "docs/review/x.md", "use": ["story"] } },
                                               // added; the charter is a repository file. use: plan, story or both
                                               // (the default): which reviews may take it ("Review lenses" below)
-    "use": { "lens.h": ["plan"] }             // the use of a harness.config.ts lens, whose entry can't carry one
+    "use": { "lens.h": ["plan"] },            // the use of a harness.config.ts lens, whose entry can't carry one
+    "default": { "lens.h": false }            // false puts a harness.config.ts story lens on request; a
+                                              // review.lenses entry says the same with "default": false
   },
   "tracker": {                                // optional
     "updates": "publisher",                   // publisher | manual (below); default: publisher with an adapter,
@@ -181,18 +183,42 @@ both, and naming either with any other use is a conflict, as are a use that is e
 `story`, and a `review.use` entry for a lens nobody declares. `doctor` lists every declared lens on its own line with
 its use and where it was declared; `config` shows each lens's use.
 
+A story lens with `"default": false` is on request: available to every story, it runs only when the lane's `--lenses`
+or the story's brief names it. A `review.lenses` entry says so in `default`; a `harness.config.ts` lens takes it from
+`review.default`, a map of lens id to `false`, as it takes its use from `review.use`. `true` is the same as leaving it
+out. A default on a mandated lens, on a lens whose use is plan only, or on a lens nobody declares is a conflict, as is a
+default that isn't `true` or `false`, and so are `review.lenses` and `review.default` giving one lens two defaults.
+`doctor`, `config` and `lead-brief` list the lenses on request on a line of their own, each with its charter's
+purpose.
+
+A story's brief asks for a lens in its delivery-file entry: `"lenses": ["lens.data"]`, declared story lens ids only.
+`lead-setup` drafts it from a `Lenses:` sentence in the story's plan section, naming each lens in backticks, as it
+drafts files from `Files:`. It is part of the plan, frozen at `lead-init`; after that, `lead-plan change --kind lenses
+--subjects <key> --lenses <ids> --why "<why>"` changes it, `--lenses ''` removes it, and the plan chapter shows the
+change as a `changed` one from the old lenses to the new. A hand edit after `lead-init` shows there as an unrecorded
+plan change.
+
 A story's review runs the mandated pair plus the story lenses its lane chooses, at round 1:
 `review-prepare <key> --round 1 --lenses <ids> --lenses-reason "<why>"`. `--lenses` names the mandated pair too,
-each lens once, and only story lenses; the reason is required, and at most 600 characters. Without `--lenses`, round
-1 runs every declared story lens, with the reason `every declared story lens`, so with no use declared anywhere every
-declared lens runs, as before. The set and its reason are fixed at round 1, in its meta: later rounds copy them, take
-`--lenses` only when it names the same set, and refuse any other. A restart of round 1 may choose again; its restart
-entry records the set it replaced, and it discards that set's results. A story whose round 1 was prepared before lenses
-could be chosen (its meta has no reason) runs every declared lens. `review-reduce` and `handoff` refuse a round
-outside the story's set, the hand-off message names the set and its reason, and `lead-accept` prints them before its
-decisions and checks the last round against the latest round 1 start's set. The delivery file has no default set: a
-lead who wants one asks for it in the lane brief's delivery notes. `lead-brief` lists each story lens with its
-charter's purpose, the first line after the title that isn't blank or a heading, cut to 160 characters.
+each lens once, and only story lenses, on request or not; the reason is required, and at most 600 characters. Without
+`--lenses`, round 1 runs the mandated pair, every story lens not on request, and every lens the story's brief names,
+with the reason `every story lens not on request`, followed by `, and the brief's <ids>` when the brief names any.
+With no lens on request and no brief lenses, that is every declared story lens, with the reason `every declared story
+lens`, so with no use declared anywhere every declared lens runs, as before. Round 1's meta records, in `requested`,
+each lens on request in the set and who asked for it, `lane` or `brief` (a lens both name is `brief`). A round 1
+`--lenses` that leaves out a lens the story's brief names is refused, naming it. The set and its reason are fixed at
+round 1, in its meta: later rounds copy them, take `--lenses` only when it names the same set, and refuse any other.
+Once a story's round 1 is prepared, `lead-plan change --kind lenses` refuses to add a lens to its brief, naming the
+story, the lens and the fixed set, and records nothing; removing one is accepted, and a review the story missed
+belongs in a follow-up. A story whose set lacks a lens its entry names, which only a hand edit after round 1 leaves,
+is refused by `handoff` and `lead-accept`, naming the lens and its removal with `lead-plan change --kind lenses`.
+A restart of round 1 may choose again; its restart entry records the set it replaced, and it discards that set's results. A story whose
+round 1 was prepared before lenses could be chosen (its meta has no reason) runs every declared lens.
+`review-reduce` and `handoff` refuse a round outside the story's set, the hand-off message names the set, its reason
+and who asked for each lens on request, and `lead-accept` prints them before its decisions and checks the last round
+against the latest round 1 start's set. `lead-brief` lists each story lens not on request with its charter's purpose,
+the first line after the title that isn't blank or a heading, cut to 160 characters, then the lenses on request, each
+with the stories whose brief asks for it.
 
 ### Several PR reviewers
 
