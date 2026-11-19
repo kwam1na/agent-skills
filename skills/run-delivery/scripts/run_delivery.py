@@ -11296,7 +11296,7 @@ def running_release(c) -> tuple[str, str]:
 
 
 def note_gap(args) -> None:
-    """Decisions 5 and 6: journal gap.noted, as a new gap or as an occurrence of an open one, after listing the open
+    """Journal gap.noted, as a new gap or as an occurrence of an open one, after listing the open
     gaps of the same class it could repeat. A lane notes under its own writer, on its current story."""
     c = cfg()
     text, why = worded(args.text, "--text"), worded(args.why, "--why")

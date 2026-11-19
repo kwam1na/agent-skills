@@ -43,7 +43,7 @@ def section(text: str, heading: str) -> str:
     return text[start:end if end != -1 else None]
 
 
-# Decision 8's wording, each phrase whitespace-normalized.
+# The trigger every brief names, each phrase whitespace-normalized.
 TRIGGER = (
     "Note friction with `note-gap` when it happens, and class it as workflow, repo or host",
     "When you write a script to get behaviour the workflow or a tool should provide, note a workflow gap with the "
