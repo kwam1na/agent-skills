@@ -119,6 +119,10 @@
         {
           "id": "v26-3624-2",
           "text": "Before hand-off, the card shows how the review ended (rounds, notes fixed or deferred) under the state line."
+        },
+        {
+          "id": "v26-3624-3",
+          "text": "The card shows the lane's own words and their age when the lane is on that story."
         }
       ],
       "after": [
