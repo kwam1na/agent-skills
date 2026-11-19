@@ -861,8 +861,9 @@ No command calls a host's own interface. What the workflow can't do for you:
   own session. The lead starts each with what `lead-assign` prints. When the host can't start or message sessions, no
   lane starts: the lead records the blocker and brings it to the operator, who may choose to deliver the stories one at a time
   through `$execute-work`.
-- **Archiving lane sessions.** The close-out archives the record, never a session; the friction note lists archiving
-  them as yours.
+- **Archiving lane sessions.** The close-out archives the record, never a session. The lead ends or archives each lane
+  session it started, where its host lets it, and names any it can't to the operator; `lead-close` and the friction note
+  say so.
 - **Queued lead messages.** A lane's message waits until the lead's session reads it. The record doesn't wait: a lane
   that is blocked or waits on the lead holds the close, and every lead command names it, from the supervisor's next
   pass after it says so in its focus; a hand-off is in the queue as soon as it is made.

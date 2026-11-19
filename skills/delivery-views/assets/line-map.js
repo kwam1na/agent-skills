@@ -30,6 +30,28 @@
     });
   });
 })();
+// On a phone the corner's person icon stands for whose checkout drew the page; a tap shows the address, and a tap
+// anywhere else, or Escape, puts it away.
+(function () {
+  "use strict";
+  var mark = document.querySelector(".operator-mark");
+  if (!mark) { return; }
+  var holder = mark.parentNode;
+  function show(open) {
+    holder.classList.toggle("open", open);
+    mark.setAttribute("aria-expanded", String(open));
+  }
+  mark.addEventListener("click", function (event) {
+    event.stopPropagation();
+    show(mark.getAttribute("aria-expanded") !== "true");
+  });
+  document.addEventListener("click", function (event) {
+    if (!holder.contains(event.target)) { show(false); }
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && mark.getAttribute("aria-expanded") === "true") { show(false); mark.focus(); }
+  });
+})();
 (function () {
   "use strict";
   var embedded = null;
@@ -284,6 +306,20 @@
     var time = ((date.getHours() + 11) % 12 + 1) + ":" + (date.getMinutes() < 10 ? "0" : "") + date.getMinutes() + (date.getHours() < 12 ? " am" : " pm");
     if (date.toDateString() === yesterday.toDateString()) { return "yesterday at " + time; }
     return "on " + MONTHS[date.getMonth()] + " " + date.getDate();
+  }
+  var WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  function twoDigits(n) { return (n < 10 ? "0" : "") + n; }
+  // A moment as a person says it, in local time: "Today at 4:54 pm", "Yesterday at 9:02 am", "Tue, Nov 18 at 4:54 pm",
+  // with the year only when it isn't this one.
+  function spokenMoment(at) {
+    var date = new Date(at * 1000), today = new Date(Date.now());
+    var clock = ((date.getHours() + 11) % 12 + 1) + ":" + twoDigits(date.getMinutes()) + (date.getHours() < 12 ? " am" : " pm");
+    var yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+    var day = date.toDateString() === today.toDateString() ? "Today"
+      : date.toDateString() === yesterday.toDateString() ? "Yesterday"
+      : WEEKDAYS[date.getDay()] + ", " + MONTHS[date.getMonth()] + " " + date.getDate()
+        + (date.getFullYear() !== today.getFullYear() ? ", " + date.getFullYear() : "");
+    return day + " at " + clock;
   }
   // A length of time as a person says it: "less than a minute", "40 minutes", "9 hours", "an hour 20 minutes", "3 days".
   function spokenDuration(total) {
@@ -812,14 +848,25 @@
     if (begun !== null && ended !== null && ended >= begun) {
       var minutes = Math.round((ended - begun) / 60), hours = Math.floor(minutes / 60);
       var lasted = minutes < 60 ? minutes + " min" : hours < 48 ? hours + " h" + (minutes % 60 ? " " + minutes % 60 + " min" : "") : Math.round(hours / 24) + " days";
-      var stamp = function (at) { var date = new Date(at * 1000); return date.toLocaleString() + " (" + date.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC") + ")"; };
       var time = figures(el("time", "kicker-time"), "kicker", closed ? "Closed after " + lasted : "Started " + lasted + " ago");
       time.setAttribute("datetime", text(first.at));
       time.setAttribute("tabindex", "0");
-      // The page's own card says the ends, as a ticket's does, since nothing on the page carries a native tooltip.
-      var ends = closed ? [["Started", begun], ["Closed", ended]] : [["Started", begun]];
+      // The page's own card says the ends, as a ticket's does, since nothing on the page carries a native tooltip: a
+      // small line from the start to the close, each end as a person says it, and the run between.
       var showEnds = function () {
-        card.replaceChildren.apply(card, ends.map(function (end) { return el("div", "ic-s", end[0] + " " + stamp(end[1])); }));
+        var when = el("div", closed ? "when" : "when open");
+        var end = function (word, at, kind) {
+          add(when, el("span", "when-dot " + kind), add(el("div", "when-end"), el("div", "when-word", word),
+            el("div", "when-local", spokenMoment(at))));
+        };
+        end("Started", begun, "start");
+        if (closed) {
+          add(when, el("span"), el("div", "when-took", spokenDuration(ended - begun)));
+          end("Closed", ended, "close");
+        } else {
+          add(when, el("span"), el("div", "when-took", spokenDuration(Date.now() / 1000 - begun) + " so far"));
+        }
+        card.replaceChildren(when);
         placeCard(time);
       };
       time.addEventListener("mouseenter", showEnds);
@@ -2579,12 +2626,20 @@
    */
   var fileReading = null;
   var whoDrawn = null;
+  // The view is drawn only once a branch read has something to say: a claimed file, or a read that failed. Before the
+  // first read, or when the read lists nothing, there is nothing to fold away.
+  function filesToShow() {
+    if (!isObject(FILES)) { return false; }
+    if (FILES.unreadable) { return true; }
+    var lanes = isObject(FILES.lanes) ? FILES.lanes : {};
+    return list(FILES.files).some(function (file) { return isObject(file) && typeof file.path === "string"; })
+      || Object.keys(lanes).some(function (lane) { return isObject(lanes[lane]) && typeof lanes[lane].unreadable === "string"; });
+  }
   function filesView(doc, colours) {
     var box = el("details", "files-fold");
     var body = el("div", "files-body");
     add(box, el("summary", null, "Who holds which files"), body);
     var fold = runFold(box, { key: "files" });
-    if (!FILES) { body.appendChild(el("p", "say", "No pass has read the lanes' branches yet.")); return fold; }
     if (FILES.unreadable) { body.appendChild(el("p", "say", "The lanes' changes can't be read.")); return fold; }
     var reads = isObject(FILES.lanes) ? FILES.lanes : {};
     var names = Object.create(null);
@@ -2740,7 +2795,7 @@
       nodes.push(people);
       prev.lanes = seen;
     }
-    if (list(doc.state.laneRegions).filter(isObject).length) { nodes.push(filesView(doc, colours)); }
+    if (list(doc.state.laneRegions).filter(isObject).length && filesToShow()) { nodes.push(filesView(doc, colours)); }
     var leases = list(doc.state.leases).filter(isObject);
     if (leases.length && !closed) {
       var held = el("div", "leases");

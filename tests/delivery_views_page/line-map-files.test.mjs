@@ -114,9 +114,13 @@ test("with no region claims the page has no files view, whatever the branch read
   expect(page.text).not.toContain("Who holds which files");
 });
 
-test("before any branch read, and with one that can't be read, the view says so and draws no files", async () => {
+test("before any branch read the page has no files view", async () => {
   const [none] = await openPage(renderPage(record(), { config }), { now: NOW });
-  expect(none.app.querySelector(".files-fold .say").textContent).toBe("No pass has read the lanes' branches yet.");
+  expect(none.app.querySelector(".files-fold")).toBeNull();
+  expect(none.text).not.toContain("Who holds which files");
+});
+
+test("with a read that can't be read, the view says so and draws no files", async () => {
   const [bad] = await openPage(renderPage(record(), { config, files: "{not json" }), { now: NOW });
   expect(bad.app.querySelector(".files-fold .say").textContent).toBe("The lanes' changes can't be read.");
   expect(bad.app.querySelector(".file")).toBeNull();

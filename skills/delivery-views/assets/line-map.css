@@ -50,6 +50,42 @@
 .theme-switch button[aria-pressed="true"] { background: var(--well); color: var(--ink); box-shadow: var(--shadow-press); }
 .theme-switch button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .theme-switch svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* The corner: whose checkout drew this page, joined to the theme switch as one quiet sheet. The address is set in mono
+   so it reads as an identity rather than prose; the domain steps back so the person leads. */
+.corner { position: fixed; top: 14px; right: 14px; z-index: 20; display: flex; align-items: center; gap: 4px; padding: 3px;
+  border-radius: 10px; background: var(--lift); box-shadow: 0 2px 6px rgba(20, 23, 25, .06), 0 12px 28px -12px rgba(20, 23, 25, .2), 0 0 0 1px color-mix(in oklab, var(--edge) 18%, transparent); }
+.corner .theme-switch { position: static; padding: 0; background: none; box-shadow: none; }
+.operator { position: relative; display: flex; align-items: center; min-width: 0; height: 26px; padding: 0 10px; border-right: 1px solid var(--hair); margin-right: 1px; }
+/* The icon is the phone's stand-in for the address; on a wider page the address shows itself and the icon steps aside. */
+.operator-mark { display: none; flex: none; width: 26px; height: 26px; place-items: center; padding: 0; border: 0; border-radius: 7px;
+  background: none; color: var(--faint); cursor: pointer; }
+.operator-mark:hover, .operator-mark[aria-expanded="true"] { color: var(--ink); }
+.operator-mark[aria-expanded="true"] { background: var(--well); box-shadow: var(--shadow-press); }
+.operator-mark:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.operator-mark svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.operator-email { min-width: 0; max-width: 28ch; display: flex; font-family: var(--mono); font-size: 11.5px; line-height: 16px; letter-spacing: -0.01em; white-space: nowrap; }
+.operator-local { color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
+.operator-domain { flex: none; color: var(--faint); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* On a phone the icon alone stands for the person; a tap lifts the address out beneath the corner as a small sheet,
+   right-aligned with the corner (the theme switch beside it is a fixed 71px), its tail pointing back at the icon. */
+@media (max-width: 560px) {
+  .operator { padding: 0; }
+  .operator-mark { display: grid; }
+  .operator-email { position: absolute; top: calc(100% + 11px); right: -71px; max-width: calc(100vw - 28px); padding: 8px 12px;
+    border-radius: 10px; background: var(--lift); box-shadow: var(--shadow-sheet);
+    opacity: 0; visibility: hidden; transform: translateY(-4px); transition: opacity var(--quick) var(--ease), transform var(--quick) var(--ease), visibility 0s linear var(--quick); }
+  .operator::after { content: ""; position: absolute; top: calc(100% + 6px); left: 8px; width: 10px; height: 10px; z-index: 1;
+    background: var(--lift); transform: translateY(-4px) rotate(45deg); border-radius: 2px 0 0 0;
+    box-shadow: -1px -1px 0 0 color-mix(in oklab, var(--edge) 22%, transparent);
+    opacity: 0; visibility: hidden; transition: opacity var(--quick) var(--ease), transform var(--quick) var(--ease), visibility 0s linear var(--quick); }
+  .operator.open .operator-email, .operator.open::after { opacity: 1; visibility: visible; transition-delay: 0s; }
+  .operator.open .operator-email { transform: none; }
+  .operator.open::after { transform: rotate(45deg); }
+}
+@media (max-width: 560px) and (prefers-reduced-motion: reduce) {
+  .operator-email, .operator::after { transition: none; }
+}
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 /* Keyboard focus is one ring everywhere; a row the page moves focus to is tinted instead, since nothing was typed. */
@@ -482,6 +518,19 @@ a.issue-link { color: inherit; cursor: pointer; }
 .issue-card b { display: block; font: 450 12px/16px var(--mono); color: var(--soft); margin-bottom: 4px; }
 .issue-card .ic-t { font-size: 14px; font-weight: 550; margin-bottom: 4px; }
 .issue-card .ic-s { color: var(--soft); }
+/* A delivery's span, from the kicker: its two ends on a short line, a hollow mark for the start and a solid one for the
+   close, as the line map's own stops are drawn; the run sits on the line between them. */
+.when { position: relative; display: grid; grid-template-columns: 9px auto; column-gap: 12px; min-width: 196px; }
+/* One rule joins the marks, from the start's centre to the close's: an end is two fixed lines, so the close's centre
+   sits 28.5px above the card's foot. A run still going trails off below the start, dashed. */
+.when::before { content: ""; position: absolute; left: 3.75px; width: 1.5px; top: 8.5px; bottom: 28.5px; background: var(--hair); }
+.when.open::before { bottom: 0; background: repeating-linear-gradient(to bottom, var(--edge) 0 3px, transparent 3px 6px); }
+.when-dot { position: relative; width: 9px; height: 9px; margin-top: 4px; border-radius: 50%; border: 1.5px solid var(--ink); background: var(--lift); }
+.when-dot.close { background: var(--ink); }
+.when-end { display: grid; gap: 1px; }
+.when-word { font-size: 11.5px; line-height: 16px; font-weight: 500; color: var(--faint); }
+.when-local { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--ink); }
+.when-took { padding: 10px 0; font-size: 12px; line-height: 16px; color: var(--soft); }
 
 /* Who: each lane session on its own card. */
 .people { display: grid; gap: 12px; }

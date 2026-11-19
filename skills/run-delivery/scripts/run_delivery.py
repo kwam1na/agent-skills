@@ -9547,6 +9547,8 @@ def lead_close(args) -> None:
     said = unregister_delivery(c)
     if said:
         done.append(said)
+    aligned, said = align_operator(c)
+    (left if aligned is False else done).append(said)
     # The final request is durable before the local view stops. The detached
     # watcher owns retries after this command's bounded wait.
     final=finalize_hosted(c,archive,closed)
@@ -9558,13 +9560,19 @@ def lead_close(args) -> None:
             done.append(said)
     except Stop as error:
         left.append(str(error))
+    try:
+        retired, kept = retire_lead(c)
+    except (Stop, OSError, ValueError) as error:
+        retired, kept = [], [f"the lead's checkout wasn't removed: {error}"]
+    done += retired
+    left += kept
     print(f"{c.delivery}: closed out")
     for line in done:
         print(f"  done: {line}")
     for line in left:
         print(f"  left: {line}")
-    print("  yours: archive the lane sessions, align your main checkout with the final base, and remove the lead's "
-          f"checkout {lead} when you no longer need it (its record is archived above).")
+    print("  lead: end or archive each lane session you started, where your host lets you, and name any you can't to "
+          "the operator.")
     if left:
         sys.exit(1)
 
@@ -9910,8 +9918,8 @@ def closed_status(c) -> str | None:
 def closed_words(closed: dict) -> str:
     """Where a closed delivery went: its archive, and the friction note archived in it, written up before the close."""
     note = closed.get("friction")
-    return f"Archive {closed.get('archive')}" + (f"; its friction note is {note}; archive the lane sessions"
-                                                  if note else "")
+    return f"Archive {closed.get('archive')}" + (f"; its friction note is {note}; the lead archives the lane sessions "
+                                                  f"it started and runs {flow_command()} lead-retire" if note else "")
 
 
 def supervisor_off() -> bool:
@@ -12437,6 +12445,105 @@ def finish_close(c, closed: dict, archive: Path) -> list[str]:
     return ["marked the close finished in the record and its archive"]
 
 
+def align_operator(c) -> tuple[bool | None, str]:
+    """Fast-forward the operator's checkout to its branch's remote tip, when it is clean and on the delivery's base or
+    its integration target, so the operator's main checkout holds what the delivery landed. Returns True when it is
+    aligned, None when the operator's own work holds it, another branch or uncommitted changes, which are theirs to
+    keep, and False when it can't fast-forward, with the line that says which."""
+    operator = c.main
+    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=operator, check=False)
+    dirty = git("status", "--porcelain", cwd=operator, check=False)
+    if branch not in {c.base_branch, c.raw.get("integrationTarget")} - {None}:
+        return None, f"left {operator} where it is: it is on {branch}"
+    ref = f"{c.remote}/{branch}"
+    if dirty:
+        return None, f"left {operator} where it is: it has uncommitted changes; align it with {ref} once they're settled"
+    fetched = run(["git", "fetch", "-q", c.remote, branch], cwd=operator, check=False)
+    if fetched.returncode != 0:
+        return False, f"left {operator} where it is: {c.remote}/{branch} couldn't be fetched"
+    moved = run(["git", "merge", "--ff-only", "-q", ref], cwd=operator, check=False)
+    if moved.returncode == 0:
+        return True, f"fast-forwarded {operator} to {ref}"
+    return False, f"left {operator} where it is: it can't fast-forward to {ref}"
+
+
+def retire_lead(c) -> tuple[list[str], list[str]]:
+    """Remove the lead's checkout once the close's archive holds everything in it: the delivery closed with its archive
+    landed, nothing of the delivery still runs from it, the record has nothing the archive lacks, no other checkout sits
+    inside it, and it has no change and its head is pushed. Never the operator's main checkout. What the close wrote
+    beside the record after the archive, its closed.json and the hosted sidecars, is copied into the archive first. The
+    command runs from that checkout, so it moves to the main checkout before removing it. Returns (what it did, why it
+    kept it)."""
+    lead = c.lane_checkout(c.delivery)
+    if not lead.exists() or lead.resolve() == c.main.resolve():
+        return [], []
+    doc = load_state()
+    kept = kept_close(c, latest_close(doc["journal"]))
+    if kept is None:
+        return [], [f"{lead} kept: the delivery's close hasn't archived the record yet"]
+    archive = Path(kept["archive"])
+    archived_ids, unreadable = set(), False
+    journal = archive / c.state.name / "journal.jsonl"
+    try:
+        for line in journal.read_text().splitlines():
+            if line.strip():
+                entry = json.loads(line)
+                archived_ids.add(entry.get("id") if isinstance(entry, dict) else None)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        unreadable = True
+    if unreadable:
+        return [], [f"{lead} kept: the archived journal {journal} can't be read"]
+    since = [entry["id"] for entry in doc["journal"] if entry.get("id") not in archived_ids]
+    if since:
+        return [], [f"{lead} kept: the record has {len(since)} journal entr{'y' if len(since) == 1 else 'ies'} the "
+                    f"archive lacks ({', '.join(map(str, since[:5]))}); close it again so the archive holds them"]
+    running = [pid for pid, _ in delivery_processes(lead, c.state, c.delivery, c.main)] + \
+        sorted(owned_hosted_processes(c))
+    if running:
+        return [], [f"{lead} kept: the delivery still runs from it (pid {', '.join(map(str, running))}); run "
+                    f"{flow_command()} lead-retire once they have stopped"]
+    nested = [path for path in worktrees_under(lead) if path.resolve() != lead.resolve()]
+    if nested:
+        return [], [f"{lead} kept: other checkouts sit inside it ({', '.join(map(str, nested[:3]))})"]
+    dirty = git("status", "--porcelain", "--untracked-files=all", cwd=lead, check=False)
+    if dirty:
+        return [], [f"{lead} kept: it has uncommitted or untracked files:\n      " + dirty[:400].replace("\n", "\n      ")]
+    head = git("rev-parse", "HEAD", cwd=lead)
+    if not git("branch", "-r", "--contains", head, cwd=lead, check=False):
+        return [], [f"{lead} kept: its head {head[:12]} is on no remote branch"]
+    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=lead, check=False)
+    pushed_tip = remote_head(branch) if branch and branch != "HEAD" else ""
+    # The record's folder and flow log as they stand now, hosted sidecars included, since the archive was taken before
+    # the close wrote its last files beside them; ignored files leave with the checkout.
+    retired = archive / "at-retire"
+    for source in (c.state, c.flow_log):
+        if source.exists():
+            shutil.copytree(source, retired / source.name, dirs_exist_ok=True)
+    os.chdir(c.main)
+    removed = run(["git", "worktree", "remove", str(lead)], cwd=c.main, check=False)
+    if removed.returncode != 0:
+        return [], [f"{lead} kept: git worktree remove failed: {(removed.stderr or removed.stdout).strip()[-300:]}"]
+    done = [f"removed the lead's checkout {lead} (its record is in {archive}, the files written after the archive in "
+            f"{retired})"]
+    if pushed_tip == head:
+        run(["git", "branch", "-D", branch], cwd=c.main, check=False)
+        done.append(f"deleted the local {branch} ({c.remote}/{branch} is kept)")
+    return done, []
+
+
+def lead_retire(args) -> None:
+    c = cfg()
+    done, kept = retire_lead(c)
+    for line in done:
+        print(f"  done: {line}")
+    for line in kept:
+        print(f"  left: {line}")
+    if not done and not kept:
+        print(f"{c.delivery}: the lead has no checkout of its own to remove")
+    if kept:
+        sys.exit(1)
+
+
 def archive_step(c, closed: dict) -> tuple[Path, list[str]]:
     """Release every lease the lead holds, archive the record, and fast-forward the operator's checkout when it is
     clean and on the final base. Done once for each close: a resumed close-out finds its archive."""
@@ -12455,15 +12562,7 @@ def archive_step(c, closed: dict) -> tuple[Path, list[str]]:
         said.append(f"released the lead's leases: {', '.join(str(lease.get('id')) for lease in held)}")
     archive, archived = archive_delivery(c)
     said += archived
-    operator = c.main
-    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=operator, check=False)
-    dirty = git("status", "--porcelain", cwd=operator, check=False)
-    if branch == c.base_branch and not dirty:
-        moved = run(["git", "merge", "--ff-only", "-q", c.base_ref], cwd=operator, check=False)
-        said.append(f"fast-forwarded {operator} to {c.base_ref}" if moved.returncode == 0
-                    else f"left {operator} where it is: it can't fast-forward to {c.base_ref}")
-    else:
-        said.append(f"left {operator} where it is: " + ("it has uncommitted changes" if dirty else f"it is on {branch}"))
+    said.append(align_operator(c)[1])
     marker.write_text(json.dumps({"archive": str(archive), "said": said, "at": now(), "entry": closed["id"],
                                   **closed_full_health(c)}, indent=2) + "\n")
     return archive, said
@@ -12530,8 +12629,10 @@ def archived_stub(c, archive: Path, said: list[str]) -> Path:
     if LEFT not in text.splitlines():
         lines = [LEFT, ""]
         lines += [f"- {line}" for line in said if line.startswith("left ")]
-        lines += [f"- Remove the lead's checkout {c.lane_checkout(c.delivery)} once you no longer need it.",
-                  "- Archive the lane sessions with your host's own tools.", ""]
+        lines += [f"- The lead runs `lead-retire`, which removes its checkout {c.lane_checkout(c.delivery)} once "
+                  "nothing of the delivery runs from it and the archive holds its record, and names what keeps it.",
+                  "- The lead ends or archives each lane session it started, where its host lets it, and names any it "
+                  "can't to you.", ""]
         note.parent.mkdir(parents=True, exist_ok=True)
         note.write_text(text + ("" if not text or text.endswith("\n") else "\n") + "\n".join(lines))
     return note
@@ -12569,7 +12670,8 @@ def close_out(c, flapping: tuple[str, ...] = (), wait: bool = False) -> tuple[li
                                   **({"workflowGaps": str(report)} if report else {})}, indent=2) + "\n")
     if report:
         said.append(f"wrote the workflow gaps {report}: sending it on is your call")
-    said.append(f"archived the friction note {note}; archive the lane sessions")
+    said.append(f"archived the friction note {note}; the lead archives the lane sessions it started and runs "
+                f"{flow_command()} lead-retire")
     return said, True
 
 
@@ -15052,6 +15154,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--without-compounding", metavar="WHY",
                    help="close with the compound-learning decision recorded as skipped, for this reason")
     p.set_defaults(fn=lead_close)
+    p = command(sub, "lead-retire", help="remove the lead's checkout once the close's archive holds everything in it")
+    p.set_defaults(fn=lead_retire)
     p = command(sub, "view", help="serve the record's live view, or an archived copy's, without a checkout")
     p.add_argument("--archive", type=Path, help="a copy of the record, such as the supervisor's latest")
     p.add_argument("--port", type=int, default=0, help="the port; 0 picks a free one")

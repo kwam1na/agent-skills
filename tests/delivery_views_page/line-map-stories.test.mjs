@@ -153,15 +153,21 @@ test("the kicker ends with how long the delivery has run, a time element that sa
   const said = async (page) => {
     const [, pointed] = await openPage(page, { now: NOW, store: false, steps: [{ hover: "#now .kicker time.kicker-time" }] });
     const card = pointed.app.querySelector(".issue-card");
-    return [card.hidden, [...card.children].map((line) => line.textContent), pointed.titled];
+    const ends = [...card.querySelectorAll(".when-end")].map((end) => [...end.children].map((line) => line.textContent));
+    const took = [...card.querySelectorAll(".when-took")].map((line) => line.textContent);
+    return [card.hidden, ends, pointed.titled, took];
   };
   // The record's first entry is minute 10, 06:10 UTC; the clock reads on, so a later look says a longer run.
   const time = await at(NOW);
   expect(time.textContent).toBe("Started 5 h 50 min ago");
   expect(time.getAttribute("datetime")).toBe(minute(10));
-  const [hidden, lines, titled] = await said(pageWithRuns(underway(), {}, { config: FORGE }));
+  // Each end as a person says it, in local time; an open run says how long so far.
+  const [hidden, lines, titled, running] = await said(pageWithRuns(underway(), {}, { config: FORGE }));
   expect([hidden, lines.length, titled]).toEqual([false, 1, 0]);
-  expect(lines[0]).toMatch(/^Started .+ \(2026-10-30 06:10:00 UTC\)$/);
+  expect(lines[0][0]).toBe("Started");
+  expect(lines[0][1]).toMatch(/^(Today|Yesterday|[A-Z][a-z]{2}, [A-Z][a-z]{2} \d+) at \d{1,2}:\d\d [ap]m$/);
+  expect(lines[0].length).toBe(2);
+  expect(running).toEqual(["5 hours 50 minutes so far"]);
   expect(time.getAttribute("tabindex")).toBe("0");
   // The kicker is that one fact when the record names no tracker item: no state word, nothing before it.
   expect(time.parentNode.textContent).toBe("Started 5 h 50 min ago");
@@ -183,6 +189,7 @@ test("the kicker ends with how long the delivery has run, a time element that sa
   const [closed] = await openPage(page, { now: NOW, store: false });
   const span = closed.app.querySelector("#now .kicker time.kicker-time");
   expect(span.textContent).toBe("Closed after 1 h 34 min");
-  const [shut, ends] = await said(page);
-  expect([shut, ends.map((line) => /^(Started|Closed) .+ \(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC\)$/.exec(line)?.[1])]).toEqual([false, ["Started", "Closed"]]);
+  const [shut, ends, , took] = await said(page);
+  expect([shut, ends.map((end) => end[0]), took]).toEqual([false, ["Started", "Closed"], ["an hour 34 minutes"]]);
+  expect(ends.every((end) => end.length === 2 && / at \d{1,2}:\d\d [ap]m$/.test(end[1]))).toBe(true);
 });
