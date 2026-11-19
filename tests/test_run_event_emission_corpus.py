@@ -44,13 +44,17 @@ REFERENCED_KINDS: dict[str, tuple[str, ...]] = {
         "`review.round.closed`",
     ),
     "skills/review-work/SKILL.md": ("`review.round.closed`",),
-    # The delivery journal's own kinds share these two names. The guide's
-    # tracker-updates table and lead-authority rules name them as journal
-    # entries the state tool writes, never as run events to emit.
+    # The delivery journal's own kinds share these three names. The guide's
+    # tracker-updates table, lead-authority rules and close-out name them as
+    # journal entries the state tool writes, never as run events to emit.
     "skills/orchestrate-work/references/orchestration-guide.md": (
         "`decision.recorded`",
         "`blocker.recorded`",
+        "`compounding.recorded`",
     ),
+    # The lead-compound row names the journal entry it writes for the
+    # delivery's compound-learning decision, never a run event to emit.
+    "skills/run-delivery/SKILL.md": ("`compounding.recorded`",),
     # The skill's carry-review section names the journal entry the state tool
     # writes for a carry, never a run event to emit.
     "skills/orchestrate-work/SKILL.md": ("`decision.recorded`",),

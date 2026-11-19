@@ -514,11 +514,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
-          "sha256": "d250aed54b1d436a8353d6fbb0487b0a203c728f66f697257b235c6b03738868"
+          "sha256": "ba045cf917e7e6188554b66ebbee1034732fc148520aeb84858844da83de13b2"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "70d7cd116fe3bb3bdca3ac32b1e79341f52b52e5e4e61f7af927f71d9cfcbd11"
+          "sha256": "8a075fdc5bc1186c77009dc2d9e88afbe41ded600482f6957c158836a9883d65"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -530,11 +530,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
-          "sha256": "8507a204c67b14a2805491805cf4922a60ac98a3c81de1b778de5f8edd81ee61"
+          "sha256": "9cb138c8138229b0e144b6fce5174974915d8ef8ac8b51266605f85014f3cc98"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "1976a60e472892664f9ee31b6b2e0129b0b5c194a3d7a65667864d26170cc6ab"
+          "sha256": "3602415362c848653f649f3fd77a46a9f2d7d2a4ae86ef3f92fc3cba5a84c4cc"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
@@ -1083,7 +1083,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "0aa0c0c995b017b8a63f3ca9e5a72ef947194a90ea350144a76eac506ec8cc23"
+          "sha256": "0d76282f27bbe7b11607e13bc6d90cfe57211679b467d972288b329b4a75fa68"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1111,11 +1111,15 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "090a5f54bd4d9ea134aa2c243bb49d847fd1b2054f9b2f91b7f995492bd465c1"
+          "sha256": "9358f468d30ff376c663f5b8798bb8adb6f78f405f27988f1f60111a0d6c2e56"
         },
         {
           "path": "skills/run-delivery/references/config.md",
           "sha256": "2559f637571e04f8c05a360911642b58e6029bc97c696dee6bba1e2053b0d6f1"
+        },
+        {
+          "path": "skills/run-delivery/scripts/gaps.py",
+          "sha256": "5737a6a012a99c7c7d4b74fe92bd0ac1c7ecb02cc630a1c2e0972153b4c42ee8"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
@@ -1123,7 +1127,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "8a5590086569a73a96c54a5e6f8965586696d15f2e00b1a6eafba455f0f24304"
+          "sha256": "69a145639b7729cb1076c1ac68154f95a82fd9b02da6514ce64060fb30f3830b"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
@@ -1139,7 +1143,7 @@
         },
         {
           "path": "skills/run-delivery/templates/lane-brief.md",
-          "sha256": "afc61c2fa59456ef87daee757b88aa47af07f5c28b1c8ff65060c84f87afa796"
+          "sha256": "deaea4d008562dbc83da3fd429cee7f1d335a9f12a5677faf2fa40409786d34d"
         },
         {
           "path": "skills/run-delivery/templates/round-brief.md",

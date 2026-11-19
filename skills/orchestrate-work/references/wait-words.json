@@ -177,6 +177,7 @@
           "paused": "Serving is paused",
           "report": "A report for the lead[ on {about}]",
           "stale": "The {name} is not answering",
+          "compounding": "The compound-learning decision is not recorded",
           "sibling": "{subject:ticket} comes after {on:ticket}, which no sibling lists"
         },
         "otherwise": "Something needs {whom}"
@@ -208,6 +209,7 @@
           "paused": "[{reason}]",
           "report": "[{detail}]",
           "stale": "[{reason}]",
+          "compounding": "The close waits on it. Write up the friction stub {stub}, run compound-learning on it, and record its decision.",
           "sibling": "Add the sibling delivery that holds {on:ticket}, or fix the key."
         },
         "otherwise": ""
@@ -239,6 +241,7 @@
           "paused": "Clears when the lead lifts the hold.",
           "report": "Clears when the report leaves the record.",
           "stale": "Clears when the {name} answers again.",
+          "compounding": "Clears with lead-compound --required --ref REF, or --not-required --why TEXT.",
           "sibling": "Clears when a sibling's read lists it, or the after key changes."
         },
         "otherwise": ""

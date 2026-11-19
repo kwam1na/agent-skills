@@ -8101,6 +8101,127 @@ class LeadBaseBrokenTests(unittest.TestCase):
         self.assertNotIn("repair", self.row("work-b"))
 
 
+class ElementWriteTests(unittest.TestCase):
+    """A set pointer through an array element is refused with the --element form that makes the same write, and the
+    lead's element patch with its journal entry is one write: both land, or neither does."""
+
+    LINES = [{"id": "deploy", "text": "Deployed", "met": False}, {"id": "docs", "text": "Documented", "met": True}]
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name) / "state"
+        state_tool.init(self.directory, "Epic underway")
+        state_tool.patch(self.directory, writer="lead", version=1, changes={"finish": copy.deepcopy(self.LINES)})
+
+    def written(self) -> tuple[bytes, bytes]:
+        return ((self.directory / state_tool.STATE_FILE).read_bytes(),
+                (self.directory / state_tool.JOURNAL_FILE).read_bytes())
+
+    def test_a_set_through_an_element_names_the_element_form_whether_or_not_the_key_exists(self) -> None:
+        before = self.written()
+        cases = [("/finish/0/met", True, "--element 'finish[id=deploy]' --patch '{\"met\": true}'"),
+                 ("/finish/1/met", False, "--element 'finish[id=docs]' --patch '{\"met\": false}'"),
+                 ("/finish/0/label", "Deploy", "--element 'finish[id=deploy]' --patch '{\"label\": \"Deploy\"}'"),
+                 ("/finish/0/met", None, "--element 'finish[id=deploy]' --set '{\"/met\": null}'"),
+                 # A pointer nested below the element's field, or an object value, is a set: a merge patch would be
+                 # another write.
+                 ("/finish/0/covers/criteria", [], "--element 'finish[id=deploy]' --set '{\"/covers/criteria\": []}'"),
+                 ("/finish/0/covers", {"criteria": []},
+                  "--element 'finish[id=deploy]' --set '{\"/covers\": {\"criteria\": []}}'")]
+        for pointer, value, form in cases:
+            with self.subTest(pointer=pointer, value=value):
+                code, refused = run_tool(self.directory, "patch", "--writer", "lead", "--version", "2",
+                                         "--set", json.dumps({pointer: value}))
+                self.assertEqual((code, refused["code"]), (1, "patch_invalid"), refused)
+                self.assertIn(f"a set pointer cannot pass through an array element: {pointer}", refused["error"])
+                self.assertIn(form, refused["error"])
+        # The form it names is the write it refused, and is taken.
+        code, done = run_tool(self.directory, "patch", "--writer", "lead", "--version", "2",
+                              "--element", "finish[id=deploy]", "--patch", json.dumps({"met": True}))
+        self.assertEqual(code, 0, done)
+        self.assertEqual([line["met"] for line in done["state"]["finish"]], [True, True])
+        self.assertNotEqual(self.written(), before)
+
+    def test_a_set_through_an_array_with_no_element_to_name_is_refused_without_a_form(self) -> None:
+        before = self.written()
+        for pointer in ("/finish/7/met", "/finish/first/met", "/meta/sources/0/x"):
+            with self.subTest(pointer=pointer):
+                with self.assertRaises(state_tool.StateError) as refused:
+                    state_tool.patch(self.directory, writer="lead", version=2, assignments={pointer: True})
+                self.assertEqual(refused.exception.code, "patch_invalid")
+                self.assertNotIn("--element '", str(refused.exception))
+        self.assertEqual(self.written(), before)
+
+    def test_the_patch_and_its_entry_land_together(self) -> None:
+        code, done = run_tool(self.directory, "journal", "--kind", "finish.met", "--subject", "deploy", "--data",
+                              json.dumps({"finish": "deploy", "evidence": "release v3.4.0 applied", "by": "lead"}),
+                              "--element", "finish[id=deploy]", "--patch", json.dumps({"met": True}), "--version", "2")
+        self.assertEqual(code, 0, done)
+        self.assertEqual(done["state"]["version"], 3)
+        self.assertEqual([line["met"] for line in done["state"]["finish"]], [True, True])
+        self.assertEqual((done["entry"]["id"], done["entry"]["kind"], done["entry"]["subject"], done["entry"]["data"]),
+                         (1, "finish.met", "deploy",
+                          {"finish": "deploy", "evidence": "release v3.4.0 applied", "by": "lead"}))
+        shown = state_tool.show(self.directory)
+        self.assertEqual(shown["journal"], [done["entry"]])
+        self.assertEqual(shown["state"]["finish"], done["state"]["finish"])
+
+    def test_a_failed_journal_append_leaves_the_record_unchanged(self) -> None:
+        before = self.written()
+        with mock.patch.object(state_tool, "_append_journal_locked", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                state_tool.journal_patched(self.directory, version=2, selector="finish[id=deploy]",
+                                           changes={"met": True}, kind="finish.met", subject="deploy",
+                                           data={"finish": "deploy", "evidence": "applied", "by": "lead"})
+        self.assertEqual(self.written(), before)
+        self.assertEqual([line["met"] for line in state_tool.show(self.directory)["state"]["finish"]], [False, True])
+
+    def test_each_refusal_writes_neither(self) -> None:
+        before = self.written()
+        good = {"finish": "deploy", "evidence": "applied", "by": "lead"}
+        refusals = [
+            ("version_stale", dict(version=1, data=good)),
+            ("entry_invalid", dict(version=2, data={**good, "by": "operator"})),
+            ("entry_invalid", dict(version=2, data={**good, "evidence": "   "})),
+            ("selector_unmatched", dict(version=2, data=good, selector="finish[id=nowhere]")),
+            ("patch_invalid", dict(version=2, data=good, changes={"met": "yes"})),
+            # Kinds whose own append writes the record are journalled on their own.
+            ("entry_invalid", dict(version=2, kind="delivery.closed", data={})),
+            ("entry_invalid", dict(version=2, kind="base.repaired", data={"head": HEAD_A})),
+        ]
+        for code, given in refusals:
+            with self.subTest(code=code, given=given):
+                arguments = {"selector": "finish[id=deploy]", "changes": {"met": True}, "kind": "finish.met", **given}
+                with self.assertRaises(state_tool.StateError) as refused:
+                    state_tool.journal_patched(self.directory, subject="deploy", **arguments)
+                self.assertEqual(refused.exception.code, code, refused.exception)
+                if given.get("kind") in ("delivery.closed", "base.repaired"):
+                    # Refused by the guard itself, not by the entry's data.
+                    self.assertIn(f"{given['kind']} is journalled on its own", str(refused.exception))
+                self.assertEqual(self.written(), before)
+        # A field the lead doesn't own, here one only a lane's hand-off writes, is refused as the lead's patch is.
+        state_tool.patch(self.directory, writer="lead", version=2, changes={"queue": [queue_item("pr-1")]})
+        before = self.written()
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.journal_patched(self.directory, version=3, selector="queue[subject=pr-1]",
+                                       changes={"acceptedRegionPaths": ["src/x.py"]}, kind="finish.met",
+                                       subject="deploy", data=good)
+        self.assertEqual(refused.exception.code, "field_not_owned", refused.exception)
+        self.assertIn("acceptedRegionPaths", str(refused.exception))
+        self.assertEqual(self.written(), before)
+        # On the command line it is the lead's alone, and --element, --patch and --version come together.
+        whole = ["--element", "finish[id=deploy]", "--patch", json.dumps({"met": True}), "--version", "3"]
+        for argv in (["--writer", "lane", "--lane", "lane-1", *whole], whole[:2], whole[:4], [*whole[:2], *whole[4:]]):
+            with self.subTest(argv=argv):
+                code, refused = run_tool(self.directory, "journal", "--kind", "finish.met", "--subject", "deploy",
+                                         "--data", json.dumps(good), *argv)
+                self.assertEqual((code, refused["code"]), (1, "patch_invalid"), refused)
+                self.assertIn("gives --element, --patch and --version together", refused["error"])
+                self.assertEqual(self.written(), before)
+
+
+
 if __name__ == "__main__":
     # Run as a script, the repository root is not on the path, and a row imports the tests package from it.
     sys.path.insert(0, str(ROOT))
