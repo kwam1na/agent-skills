@@ -723,7 +723,8 @@ class FinishMarkOrderTests(unittest.TestCase):
             self.assertEqual(marks, [], "a line whose journal failed was logged as marked")
             self.assertEqual(module.journal_finish_met(c, doc), ["finish line merged met"])
             self.assertEqual(module.journal_finish_met(c, doc), [])
-        self.assertEqual([(e["subject"], e["data"]) for e in doc["journal"]], [("merged", {"finish": "merged"})])
+        self.assertEqual([(e["subject"], e["data"]) for e in doc["journal"]],
+                         [("merged", {"finish": "merged", "by": "supervisor"})])
         self.assertEqual(marks, ["merged"])
         self.assertTrue(doc["state"]["finish"][0]["met"])
         # A line met by hand, with no subject, is found by its facts; one journalled as a sentence alone is refused at
@@ -2936,8 +2937,9 @@ class SupervisorPassTests(unittest.TestCase):
         log.write_text(json.dumps({"pass": 1, "closeHeldBy": held}) + "\n")
         code, out = fx.flow("lead-brief", cwd=fx.main)
         self.assertEqual(code, 0, out)
-        self.assertIn("The close waits on: hold 1; hold 2; hold 3; hold 4; hold 5; and 2 more", out)
-        self.assertNotIn("hold 6", out)
+        # The finish lines not met, acs here, are read from the record, in close_holds' place, and count in the five.
+        self.assertIn("The close waits on: finish lines not met: acs; hold 1; hold 2; hold 3; hold 4; and 3 more", out)
+        self.assertNotIn("hold 5", out)
         # A pass still writing its line: the line is passed over, never a crash.
         with open(log, "a") as partial:
             partial.write('{"pass": 2, "closeHeldBy": ["hold')

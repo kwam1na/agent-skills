@@ -1914,6 +1914,29 @@
       "line": "acs"
     },
     {
+      "kind": "finish.met",
+      "lane": null,
+      "subject": "acs",
+      "data": {
+        "finish": "acs",
+        "evidence": "release v3.4.0 applied",
+        "by": "lead"
+      },
+      "head": "A finish line was met",
+      "line": "acs"
+    },
+    {
+      "kind": "finish.met",
+      "lane": null,
+      "subject": "acs",
+      "data": {
+        "finish": "acs",
+        "by": "supervisor"
+      },
+      "head": "A finish line was met",
+      "line": "acs"
+    },
+    {
       "kind": "hook.held",
       "lane": "lane-1",
       "subject": "APP-12",

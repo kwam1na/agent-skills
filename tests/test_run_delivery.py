@@ -9991,7 +9991,8 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
         self.assertEqual(len(accepted), 1, "the hand-off was never accepted")
         self.assertEqual((kinds[-1], state["journal"][-1]["data"]), ("delivery.closed", {}))
         met = [e for e in state["journal"] if e["kind"] == "finish.met"]
-        self.assertEqual([(e.get("subject"), e["data"]) for e in met], [("greeting", {"finish": "greeting"})],
+        self.assertEqual([(e.get("subject"), e["data"]) for e in met],
+                         [("greeting", {"finish": "greeting", "by": "supervisor"})],
                          "the finish line wasn't met once, by its proofs")
         self.assertFalse(lane.exists(), "the lane's checkout outlived its merge")
         # The operator's checkout was clean and on the base, so the close-out fast-forwarded it.
