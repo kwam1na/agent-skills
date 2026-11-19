@@ -1,0 +1,118 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-18-story-review-lens-selection.md",
+  "planSha256": "ab4f09861b35914adab56f6f7e787076b6754716d8d196cf370dfe46f92a9f28",
+  "planCommit": "924fb736040f6bf8b4adc70b002751bea3178ac8",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "7bc8c764cd28a5776795d7dcc9231e38363649fc",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-18T19:11:12.035589Z",
+      "finishedAt": "2026-11-18T19:13:46.895777Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "abfeb13f1e9b003ec3d59753ff4ac21e58d8034c",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-18T19:14:57.039958Z",
+      "finishedAt": "2026-11-18T19:16:02.036849Z",
+      "open": [
+        "adversarial-testing-r2-1"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "924fb736040f6bf8b4adc70b002751bea3178ac8",
+      "outcome": "aligned",
+      "startedAt": "2026-11-18T19:19:42.380044Z",
+      "finishedAt": "2026-11-18T19:23:41.459703Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "story-review-lens-selection.plan",
+        "candidateRef": "924fb736040f6bf8b4adc70b002751bea3178ac8",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree 01342cf960f8bbe8a81653f34b8b521d9597dbd9 at HEAD 924fb736040f6bf8b4adc70b002751bea3178ac8 in the private checkout. The start identity check passed: git rev-parse HEAD^{tree} matched and git status --porcelain was empty. The end identity check passed with the same tree and a clean status. No probes or mutants were made.",
+          "I derived the delta with git diff abfeb13f1e9b003ec3d59753ff4ac21e58d8034c..924fb736040f6bf8b4adc70b002751bea3178ac8. It changes only docs/plans/2026-11-18-story-review-lens-selection.md: Decision 4 gets a legacy later-round rule and the restart-discard rule, Decision 6 gets lead-accept's meta-based fallback, and the Scenarios get one more test-module scenario and three more supervisor scenarios.",
+          "Re-checking carried findings: none are open. All four round-1 findings (outcome-correctness-r1-1 to r1-4) were closed as fixed in round 2. The delta leaves each fix in place. The journal stays unchanged, every round's meta still copies lenses and lensesReason from round 1, legacy status is still judged by round 1's meta, lead-accept still reads the latest round-1 review.started, and the delivery-file defaults are still dropped.",
+          "Round 2's P2 note on restart discards is adopted. Decision 4 now says a restart discards the results of the lenses the previous meta named. A scenario covers the sequence {pair, x}, then {pair, b}, then {pair, x}, and the first attempt's x result is not reduced. Today's review_prepare (run_delivery.py lines 1684-1693) discards across c.lenses. The new rule discards across the previous meta's set, and each attempt only writes results for its own meta's set, so no stale result for a lens in the new set survives a restart. One case remains: a reviewer from an earlier attempt that writes its result after the discard. Today's restart has that same race, so this change does not introduce it, and I did not file it.",
+          "Delta review, legacy later round: Decision 4 says a later round of a pre-change story records every declared lens, plan-only included, and no lensesReason. Decision 6 gives such a story every declared lens as its set, so review-reduce's and handoff's checks match it, just as they do today. The new scenario (round 2 from a legacy round 1 writes briefs for lens.p and lens.h and reduces and hands off) pins that behaviour. Restarting a legacy round 1 under the new code makes it a new-style story with the default reason, and the restart discards the old full set. That is consistent.",
+          "Delta review, lead-accept fallback: lead-accept now uses every declared lens when round 1's meta, found as in Decision 7 (story_folders, run_delivery.py lines 3311-3314), has no lensesReason, or when there is no round-1 review.started. Today's check at accept_story compares set(last verdicts) with set(c.lenses), and the fallback reproduces that for pre-change stories, including the scenario where a lens is no longer declared. If the meta cannot be found, or round 1's restart was not journalled, a chosen-subset story is refused rather than accepted against a thinner set. That fails closed, never admits a thin set, and the new scenarios cover the no-entry case. I did not file it.",
+          "Declined, no failure stated: Decision 4's closing list still says 'the restart's discards' iterate 'the story's set'. The new, more specific sentence says the discards cover the previous meta's set. Either reading leaves no stale result reduced in the scenario, so nothing breaks. Acceptance criterion c4's phrase 'without any default set' is still outdated wording, already noted in round 2, and it causes no failure.",
+          "No P2 or P3 notes beyond those above.",
+          "Model class: Claude Opus (claude-opus-5-5), running as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals, and this result records that limitation. Plan review runs no checks, and no test files were in scope. Evidence comes from reading the plan and the code it cites in skills/run-delivery/scripts/run_delivery.py (review_prepare's restart discards at 1684-1718, story_folders at 3311-3314, lead_accept and accept_story at 8164 onward).",
+          "Approval conditions: this round raises no findings, so there are none to resolve. No carried finding remains open."
+        ]
+      },
+      "resultSha256": "21e4a3a8748b7f767cd6acb9120f3cc31e4bca887e9511af5154aa7f0c0172d6"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "story-review-lens-selection.plan",
+        "candidateRef": "924fb736040f6bf8b4adc70b002751bea3178ac8",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "evidence": [
+          "Reviewed tree SHA 01342cf960f8bbe8a81653f34b8b521d9597dbd9. Start identity check passed: HEAD was 924fb736040f6bf8b4adc70b002751bea3178ac8, HEAD^{tree} was 01342cf960f8bbe8a81653f34b8b521d9597dbd9 and git status --porcelain was empty. End identity check passed with the same tree and an empty status.",
+          "The delta was derived as git diff abfeb13f1e9b003ec3d59753ff4ac21e58d8034c..924fb736040f6bf8b4adc70b002751bea3178ac8. It touches only docs/plans/2026-11-18-story-review-lens-selection.md, with 17 lines added and 5 removed.",
+          "Re-check of adversarial-testing-r2-1: fixed. Decision 4 now specifies the legacy copy exactly: a later round of a story whose round 1 meta has no `lensesReason` records every declared lens, plan-only lenses included, and no `lensesReason`. The tests/test_run_delivery.py legacy row now prepares round 2 from that legacy round 1 with no `--lenses`. It asserts that the step succeeds, which kills the unconditional `meta1[\"lensesReason\"]` KeyError mutant. It asserts briefs for every declared lens with `lens.p` and `lens.h` included, which kills the use-filtered-default mutant. It asserts that the meta carries no `lensesReason`, and that round 2 reduces and hands off. The change was adopted as its approval condition wrote it.",
+          "Delta review: the new lead-accept rows pin both sides of the no-round-1-`review.started` fallback. A hand-off carrying every declared lens is accepted and one missing a declared lens is refused, which kills a mutant that refuses outright when there is no entry. The row with a pre-change `review.started` naming a lens no longer declared kills a mutant that trusts the journal's set for a legacy story. The kept-lane-evidence row kills a mutant that reads the reason only from the lane checkout (the round-2 P2 is now covered).",
+          "Delta review, P3, not filed: the new restart row (pair+lens.x, then pair+lens.b, then pair+lens.x) says the first `lens.x` result 'was discarded at the first restart'. Its last assertion, that the result is not reduced, is also satisfied by a mutant that discards the new set's results instead of the previous meta's, because the second restart removes the stale file anyway. That mutant is behaviourally equivalent for reduction. The row distinguishes it only if it checks for the file right after the first restart, which its wording implies. I am noting this, not filing it.",
+          "Delta review, P2, not filed: Decision 6's lead-accept rule reads 'when round 1's meta has no `lensesReason`' and Decision 7 allows the meta to be found nowhere. The plan does not say which set lead-accept uses when the meta is missing for a story that chose a subset. A mutant that treats a missing meta as legacy (every declared lens) refuses that valid hand-off, and no row has a chosen-subset story with neither source present. It fails closed, the lead sees the refusal, and the case is rare. It is a deferrable gap.",
+          "P2, not filed, late (these lines were unchanged since round 2): the supervisor fixture declares only story lenses (`lens.x`, `lens.y`). For a legacy story, 'every declared lens' and 'every story lens' are therefore indistinguishable there. A mutant whose legacy fallback in lead-accept is use-filtered survives. It would refuse an in-flight story whose round 2, as pinned in tests/test_run_delivery.py, carries a plan-only lens. That is reachable only when an adopter adds a plan-only `use` while stories are in flight, and it fails closed.",
+          "P3, not filed: a legacy story's round 2 prepared with `--lenses` has no row (same set accepted, a different one refused).",
+          "Model class: Claude Opus 5.5 (claude-opus-5-5), running as a native subagent. The host exposes no progress or permission signals to the lens. This is recorded as a limitation.",
+          "Realization basis: host-convention.",
+          "No checks were run and no mutants were planted, because the brief names no scoped sensors or test files for a plan review. Every mutation named is reasoned against the plan's scenarios and the decisions in its delta, so the mutants stay within the candidate's changed text. The checkout was only read.",
+          "Approval conditions: this round raises no findings, so none apply."
+        ],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r2-1",
+            "state": "fixed",
+            "resolution": "Decision 4 now specifies the legacy later-round copy: every declared lens, plan-only lenses included, and no `lensesReason`. The legacy row prepares round 2 from a legacy round 1 with no `--lenses`, asserts briefs for every declared lens including `lens.p` and `lens.h` and a meta with no `lensesReason`, and has that round 2 reduce and hand off."
+          }
+        ]
+      },
+      "resultSha256": "e7a33f4a0c47631d6f908eec4db774a3f3508bb6fa7d34090ac1f3d3d43dacae"
+    }
+  ],
+  "residualRisks": [
+    "3 review rounds; findings open after each round: 8, 1, 0."
+  ]
+}

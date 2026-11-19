@@ -97,7 +97,10 @@ checks may need no file at all.
                                               // lanes read and triage it before hand-off (pr-review); lead-accept
                                               // requires it current at the handed head. Or several reviewers: see
                                               // "Several PR reviewers" below
-    "lenses": { "lens.x": { "short": "x", "charter": "docs/review/x.md" } }  // added; the charter is a repository file
+    "lenses": { "lens.x": { "short": "x", "charter": "docs/review/x.md", "use": ["story"] } },
+                                              // added; the charter is a repository file. use: plan, story or both
+                                              // (the default): which reviews may take it ("Review lenses" below)
+    "use": { "lens.h": ["plan"] }             // the use of a harness.config.ts lens, whose entry can't carry one
   },
   "tracker": {                                // optional
     "updates": "publisher",                   // publisher | manual (below); default: publisher with an adapter,
@@ -163,6 +166,30 @@ checks may need no file at all.
   }
 }
 ```
+
+### Review lenses
+
+The declared lenses are the workflow's two, `lens.outcome-correctness` and `lens.adversarial-testing`, then each
+`additionalReviewLenses` entry in `harness.config.ts`, then each `review.lenses` entry here. Declared means available,
+not run: a lens whose use includes `story` is available to a story's review, and one whose use includes `plan` to the
+plan's. A `review.lenses` entry gives its use in `use`; a `harness.config.ts` lens takes its use from `review.use`, a
+map of lens id to that list. A lens with no use declared has both. The two workflow lenses are mandated: their use is
+both, and naming either with any other use is a conflict, as are a use that is empty or names anything but `plan` and
+`story`, and a `review.use` entry for a lens nobody declares. `doctor` lists every declared lens on its own line with
+its use and where it was declared; `config` shows each lens's use.
+
+A story's review runs the mandated pair plus the story lenses its lane chooses, at round 1:
+`review-prepare <key> --round 1 --lenses <ids> --lenses-reason "<why>"`. `--lenses` names the mandated pair too,
+each lens once, and only story lenses; the reason is required, and at most 600 characters. Without `--lenses`, round
+1 runs every declared story lens, with the reason `every declared story lens`, so with no use declared anywhere every
+declared lens runs, as before. The set and its reason are fixed at round 1, in its meta: later rounds copy them, take
+`--lenses` only when it names the same set, and refuse any other. A restart of round 1 may choose again; its restart
+entry records the set it replaced, and it discards that set's results. A story whose round 1 was prepared before lenses
+could be chosen (its meta has no reason) runs every declared lens. `review-reduce` and `handoff` refuse a round
+outside the story's set, the hand-off message names the set and its reason, and `lead-accept` prints them before its
+decisions and checks the last round against the latest round 1 start's set. The delivery file has no default set: a
+lead who wants one asks for it in the lane brief's delivery notes. `lead-brief` lists each story lens with its
+charter's purpose, the first line after the title that isn't blank or a heading, cut to 160 characters.
 
 ### Several PR reviewers
 
@@ -309,7 +336,8 @@ A story's plan context is the plan section whose heading names its key, plus tab
 plus the `context.sections`. The plan has no required format beyond that.
 
 `planReview.lenses` names the lenses that review the plan itself, through `run_delivery.py plan-review
-prepare|reduce|end`: 1 to 12 of the repository's declared lenses, each with its charter. They are fixed at round 1; a
+prepare|reduce|end`: 1 to 12 of the repository's declared lenses whose use includes `plan`, each with its charter; a
+story-only lens is refused, naming the declared plan lenses. They are fixed at round 1; a
 different set later is refused, so an amendment after `lead-init` is judged by the lenses that reviewed the plan, and
 continues the round numbering. The review has no round bound. Its store, `<workDirectory>/review/<delivery>/plan/`
 without `checkouts/`, keeps every round in full, and `lead-close` archives it with the delivery. `lead-init` refuses to

@@ -126,6 +126,8 @@ test("the facts share one grid through subgrid, stack on a phone, and nothing on
   expect(/row-gap:\s*10px/.test(rule(".facts"))).toBe(true);
   expect(/align-self:\s*baseline/.test(rule(".fact-value"))).toBe(true);
   expect(/padding-top:\s*28px/.test(rule(".chapter-now .journey + .facts"))).toBe(true);
+  // The facts sit under the journey with space alone, and no rule between them.
+  expect(/border/.test(rule(".chapter-now .journey + .facts"))).toBe(false);
   expect(/font:[^;]*var\(--display\)/.test(rule(".fact-count"))).toBe(true);
   // The track's tones are the landed colour, a wash of it and the hairline, so both themes keep it legible.
   expect(/var\(--landed\)/.test(rule(".fact-track .is-landed"))).toBe(true);

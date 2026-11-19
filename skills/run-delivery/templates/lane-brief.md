@@ -72,12 +72,20 @@ round, run another round; re-run the gates at the new head, and the in-app check
 {{in_app}}
 ## Review
 
-Lenses {{lenses}}, through `obtain-review`/`review-work`, realized by host convention as reviewers the lane starts and
-resumes. `run-delivery` does the mechanical part.
+The story's lenses, through `obtain-review`/`review-work`, realized by host convention as reviewers the lane starts and
+resumes. `run-delivery` does the mechanical part. The story lenses this repository declares:
+
+{{lenses}}
+
+Every round runs the mandated pair. Each other story lens is yours to choose, for what the story changes: choose at
+round 1 with `--lenses <ids> --lenses-reason "<why>"`, naming the mandated pair too. Without `--lenses`, every story
+lens above runs. The set and its reason are fixed at round 1: later rounds keep them, a different `--lenses` is
+refused, and the lead sees both at hand-off and at acceptance. A lens declared for plan review only is never a story
+lens. If the lead asks for a set in the delivery notes, choose it.
 
 1. Before round 1, fill in "Evidence so far" in `{{work}}/review/<key>/context.md`. `review-prepare` seeds it
    from the plan the first time it runs and refuses until you replace the TODO line. Update it before each later round.
-2. `{{flow}} review-prepare <key> --round <n>` makes one private, prepared checkout per lens at your HEAD and one filled
+2. `{{flow}} review-prepare <key> --round <n>` (at round 1, with your `--lenses` and `--lenses-reason`) makes one private, prepared checkout per lens at your HEAD and one filled
    round brief per lens. Commit first: it refuses uncommitted or untracked files.
 3. Round 1: start one reviewer per lens in parallel with the prompts it prints, and keep track of each. Later rounds:
    resume the same reviewers with the new prompts. Save each final JSON message, exactly as returned, to the result path it
@@ -107,7 +115,7 @@ them for the candidate's checks.
 
 Every `--blocked` item, and every restarted review round, is the lead's decision: the lead accepts each one by
 name, or sends the story back. It refuses unless the checkout is clean (untracked files included), your branch on `{{remote}}` is at HEAD, the PR is
-open from your branch into `{{base_branch}}`, the last round has every lens approving exactly that head, the gates
+open from your branch into `{{base_branch}}`, the last round has every lens of the story's set approving exactly that head, the gates
 passed at it, and the in-app evidence is complete and current. Then it captures the review rounds, hands off to the
 record, and prints the hand-off message and the tracker post. Send the lead that message, word for word. Don't merge
 or release. The lead verifies the claims and accepts; the merge queue merges after syncing your branch with the base.

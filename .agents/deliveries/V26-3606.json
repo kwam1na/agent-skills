@@ -1,0 +1,196 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3606",
+  "headline": "V26-3606: let a lane pick its story review's lenses",
+  "plan": "docs/plans/2026-11-18-story-review-lens-selection.md",
+  "laneBrief": "docs/plans/2026-11-18-story-review-lens-selection.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-18-story-review-lens-selection.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/run-delivery/scripts/run_delivery.py",
+        "skills/run-delivery/SKILL.md",
+        "skills/run-delivery/references/config.md",
+        "skills/run-delivery/references/adopting.md",
+        "skills/run-delivery/templates/lane-brief.md",
+        "tests/test_run_delivery.py",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_run_delivery_plan_review.py",
+        "catalog.json",
+        "profiles/*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3606": {
+      "title": "Let a lane pick its story review's lenses instead of running every declared lens",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "c1",
+          "text": "A story round can run the mandated pair plus a lane-chosen subset of the declared lenses. The set is fixed at round 1, recorded with its reason, and shown at hand-off and `lead-accept`."
+        },
+        {
+          "id": "c2",
+          "text": "Leaving out a mandated lens, or adding an undeclared one, is refused with the declared list. A different set in a later round is refused."
+        },
+        {
+          "id": "c3",
+          "text": "A lens declared plan-only is accepted by `plan-review` and refused, and never defaulted, in a story round."
+        },
+        {
+          "id": "c4",
+          "text": "Without `--lenses` and without any default set, behaviour is unchanged: every declared lens runs."
+        },
+        {
+          "id": "c5",
+          "text": "`doctor` lists each declared lens with its use (plan, story, or both)."
+        },
+        {
+          "id": "c6",
+          "text": "The config reference, the adoption guide and the lane brief describe the selection."
+        }
+      ]
+    },
+    "V26-3618": {
+      "title": "Wake the lead when the supervisor holds the finish, and clear a stale suite checkout before serve refuses on it",
+      "lane": "lane-1",
+      "why": "The operator added it to this delivery after the delivery's own merge queue was refused for about 12 minutes on another delivery's stale lead-suite checkout, and no wake reached the lead.",
+      "criteria": [
+        {
+          "id": "v26-3618-1",
+          "text": "A flapping child that holds the finish wakes a running lead-wait, and its clearing is journalled too."
+        },
+        {
+          "id": "v26-3618-2",
+          "text": "A stale lead-suite checkout in the work root doesn't leave the queue silently stopped: it is cleaned up when that's safe, and otherwise the refusal names it and its fix in the lead's wake."
+        },
+        {
+          "id": "v26-3618-3",
+          "text": "Tests cover both, including a checkout that is still in use, which is never removed."
+        }
+      ],
+      "after": [
+        "V26-3606"
+      ]
+    },
+    "V26-3620": {
+      "title": "Make the delivery's name the live view's headline, with the count under it and a one-line kicker",
+      "lane": "lane-1",
+      "why": "The operator chose this design for the live view's opening from mockups during this delivery and asked for it to join this delivery's work, after V26-3618 on the one lane.",
+      "criteria": [
+        {
+          "id": "v26-3620-1",
+          "text": "The live view's headline is the delivery's name, without a leading ticket key that the kicker already links."
+        },
+        {
+          "id": "v26-3620-2",
+          "text": "The count leads the line under the name, in each open and closed state."
+        },
+        {
+          "id": "v26-3620-3",
+          "text": "The kicker is one line, the tracker link and Started ... ago or Closed after ..., with no state word, on desktop and phone widths."
+        },
+        {
+          "id": "v26-3620-4",
+          "text": "The page-behaviour tests and the history golden are updated to the new wording, and the hosted view renders the same."
+        }
+      ],
+      "after": [
+        "V26-3618"
+      ]
+    },
+    "V26-3624": {
+      "title": "Say where a story is on its line-map card, with the lane's own words under it",
+      "lane": "lane-1",
+      "why": "The operator agreed this card design from an HTML mockup during this delivery, after V26-3618's card read Being built for the hour after its review was approved, and asked for it to join this delivery after V26-3620, which edits the same line-map files.",
+      "criteria": [
+        {
+          "id": "v26-3624-1",
+          "text": "A story's card shows a state line for each state, worked out from the record and journal, with the dot colour for moving, waiting or checked."
+        },
+        {
+          "id": "v26-3624-2",
+          "text": "Before hand-off, the card shows how the review ended (rounds, notes fixed or deferred) under the state line."
+        },
+        {
+          "id": "v26-3624-3",
+          "text": "The card shows the lane's own words and their age when the lane is on that story."
+        },
+        {
+          "id": "v26-3624-4",
+          "text": "Proofs left, hasn't been handed off and the review-counts sentence are gone, the rest of the card is kept, and the page tests cover each state."
+        }
+      ],
+      "after": [
+        "V26-3620"
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The story",
+      "text": "V26-3606 lands on main through the merge queue",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the base head after the landing, inside tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-18"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The operator approves this plan before `lead-setup`.",
+      "state": "done",
+      "who": "Kwamina"
+    },
+    {
+      "id": "approval-2",
+      "text": "The operator grants lanes `push` and `draftPullRequests`, and the lead `readyPullRequests`.",
+      "state": "done",
+      "who": "Kwamina"
+    }
+  ],
+  "outOfScope": [
+    "A `use` member in `harness.config.ts` itself. That needs a runtime change, which goes out as a candidate first.",
+    "Changing the round brief template or the review validator. A round's `requestedLenses` already names its own set.",
+    "Choosing lenses per round. The set is held for the story.",
+    "Plan review's own rules beyond Decision 8.",
+    "A default story set in the delivery file (`storyReview.lenses`, or a story's own set), which the ticket proposed: no command writes either and `lead-setup`'s redraft drops them. A lead asks for a set in the lane brief.",
+    "Journaling the reason or a restart's old set. `review.started`'s data is closed, so either is a record-shape change."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "stateDirectory": ".orchestration/deliveries/V26-3606/state"
+}
