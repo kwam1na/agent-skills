@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "cfd6ad08485e514c2cd1a37f56c55348123fc36f700e26cac1999d1ba894b7db"
+          "sha256": "58625abbcc1a5b7a89e4c1aa1a49c7211517cc68a6a568c3b3201092aefbd4de"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -210,11 +210,11 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.css",
-          "sha256": "744b082c26fa715d0409dd5d8e9ab289c668741644af975b19714d96134e8c36"
+          "sha256": "21f6a5266032a011bd232f539b5d55b3107a5359c720e78924ef0ed6be3448c5"
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "038d819b37883c6d98cdc51e247371a92c24434c9d8a69e47baf4e71c795da62"
+          "sha256": "c1e9078b9e82702534d229ed2c981daa420626100caa2dc8e51d9d6dc046cda3"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
@@ -514,11 +514,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
-          "sha256": "c76e1d45e487564b899eb489dc21a66226b48c6d3c6dda16c95a91085f58b326"
+          "sha256": "07d152a74a41c9fe70f44f505369ea3f7e55abf95c4c4d48aeb248369a345202"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "34dc9dc09dfb0307464a39dd90b1cf139a796b976c3c9146d51ff6c68416b127"
+          "sha256": "b6b6d1b591237650cda356a2653f4be2290b0e2a40e21cb2ee00902186b81502"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -530,11 +530,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
-          "sha256": "0bfb05dbf82e5fd7a73204fb7b73281e792ae80721b8865c8a1e2f0f3fefcfe5"
+          "sha256": "5af5c7cffab6890b943e13ba9bb62a77e26bd91ade42363ab1d3c0a04e5a0c09"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "ab81ecbaabd95db323b9400f55cf730dcceb19fef32f1945df09a08f7741c54d"
+          "sha256": "41efba4bacfbcd1898f71bdb71b4ac6f34788e8bebf44383d1d26bcbd33f0b46"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
@@ -1083,7 +1083,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "bcfd82b72e283b2beffe704ad35a6d19074298be61bfcf274c5af5e71b6ac049"
+          "sha256": "cd9dc53aaa5e2cdd6a3c05b98b6876545f62afb807ebd8f4671f2baf8fc63d57"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1111,11 +1111,15 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "090a5f54bd4d9ea134aa2c243bb49d847fd1b2054f9b2f91b7f995492bd465c1"
+          "sha256": "9358f468d30ff376c663f5b8798bb8adb6f78f405f27988f1f60111a0d6c2e56"
         },
         {
           "path": "skills/run-delivery/references/config.md",
           "sha256": "90157325c25b4e30ae6dac1fc0b4547e965616e0bca4690925d5614d3f2db108"
+        },
+        {
+          "path": "skills/run-delivery/scripts/gaps.py",
+          "sha256": "5737a6a012a99c7c7d4b74fe92bd0ac1c7ecb02cc630a1c2e0972153b4c42ee8"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
@@ -1123,7 +1127,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "835c174bc2a503373b2c1fb494e9cd7ce9a546ccb756b8e09069be8b003e2a3c"
+          "sha256": "3c10beb8f2eaca4c140be4a3b51f4baf18827545bc3e68ba00e0258e7dd93f40"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
@@ -1139,7 +1143,7 @@
         },
         {
           "path": "skills/run-delivery/templates/lane-brief.md",
-          "sha256": "7547933a0d8606f862beca0146a30baf98792186c22cc9ae72d233cb895df2f5"
+          "sha256": "95a7007be0f2e3f71a952c042e068ab3aae95476bf043fba89b82b247db93d53"
         },
         {
           "path": "skills/run-delivery/templates/round-brief.md",

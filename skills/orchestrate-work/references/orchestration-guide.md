@@ -8,6 +8,13 @@ skill links to each by name.
 Work through these steps in order. Each step names the state it writes; write
 it through the state tool, then render the views.
 
+Note friction with `note-gap` when it happens, and class it as workflow, repo
+or host. When you write a script to get behaviour the workflow or a tool should
+provide, note a workflow gap with the script as its evidence before moving on.
+One-off reads for understanding don't count; anything you'd need again does.
+The close-out files repo gaps as follow-ups, writes workflow gaps beside the
+archive, and lists every gap in the friction stub.
+
 ### Writing the state
 
 - **Null is written with `--set`, never with a merge patch.** A merge patch
@@ -253,6 +260,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `serving.held` | On the epic: the queue is held while its setup is fixed, and why. | the epic | Serving is held |
 | `deferral.breached` | On the ticket: the deferred review note still open past its due point, with its follow-up. | the ticket | Deferred note still open |
 | `blocker.recorded` | On the blocked ticket, or the epic when every ticket is blocked: the blocker, and whose answer or work unblocks it. | the ticket, or the epic | Blocked |
+| `gap.noted` | None: a repo gap is filed as its own follow-up at close-out, and workflow and host gaps stay in the delivery's own reports. | nowhere | - |
 | `blocker.resolved` | On the blocked ticket, or the epic: what unblocked it, and why. | the ticket, or the epic | Blocker resolved |
 | `decision.recorded` | On the ticket the decision concerns, or the epic: what, why, and who decided, the operator or the lead. A deferred finding links its follow-up item. | the ticket, or the epic | Decision |
 | `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. | the ticket, or the epic | Lease granted |
@@ -262,6 +270,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `release.started` | None: the release posts once it finishes. | nowhere | - |
 | `release.finished` | On the epic: the release shipped, its commit and targets, and who approved it. | the epic | Released |
 | `finish.met` | On the epic: the finish line and the evidence that met it. | the epic | Finish line met |
+| `compounding.recorded` | On the epic: whether a learning was preserved and where, or why none was, or why the decision was skipped. | the epic | Compounding decided |
 | `hook.held` | None: a host hook held, or warned about, a lead's stop while no listener ran, and the entry shows in the record and the views. | nowhere | - |
 | `peer.merged` | None: the supervisor journals a merge by another delivery on the base that changed a file one of this delivery's open stories names, and the entry shows in the record and the views. | nowhere | - |
 | `delivery.closed` | On the epic: the close-out summary; the epic moves to its final state. | the epic | Delivery closed |
@@ -555,8 +564,14 @@ marks it met, and it holds the close until the lead marks it. A line with no
 
 - For each finish line, run the observable check the plan names, against the
   merged base, not against a lane's checkout.
-- Set the line's `met` to true only on that evidence, and journal
-  `finish.met`.
+- Mark the line met only on that evidence, with run-delivery's
+  `lead-finish LINE --evidence TEXT|@FILE`. It sets the line's `met` and
+  journals `finish.met` with the evidence and `by: lead` in one write, and
+  refuses a line the record proves, a line already met and empty evidence. The
+  supervisor's own marks carry `by: supervisor`. Without run-delivery, the
+  state tool's `journal --kind finish.met --data '{"finish": "LINE",
+  "evidence": "...", "by": "lead"}' --element 'finish[id=LINE]' --patch
+  '{"met": true}' --version N` makes the same single write.
 
 ### 7. Release with approval
 
@@ -612,15 +627,27 @@ and the live view up and "Needs you" current, where the run holds the close
 until it ends. One run at a time holds its lock, so two passes never start two
 for one head, and a run that outlives a killed supervisor is adopted by the next
 one rather than started again; `lead-close` stops it, and it records no result.
-Once nothing holds the close, the supervisor runs
+The close also waits on the compound-learning decision. Once nothing else holds
+it, the supervisor writes the friction stub among the lead-side files, with
+what "Needs you" showed without holding and every gap noted, and "Needs you"
+names its path. It rewrites the stub's generated sections on each later pass and
+keeps what the lead wrote under "What was hard". Note gaps as they happen. When the last story lands, write up the friction
+stub, run `$compound-learning` and record its decision; a note it preserves
+rides the integration change request and is reviewed with it. Then the close. The lead records
+the decision with run-delivery's `lead-compound --required --ref REF` or
+`lead-compound --not-required --why TEXT`, which refuses while a story is still
+open. A delivery reopened after a close needs a new decision. Once nothing holds
+the close, the supervisor runs
 `fullHealth` at the final head only when no run at that head has happened, as
 in a delivery that merged nothing, then files a follow-up for each finding
 still deferred at its story's last captured round, journals `delivery.closed`
 and waits until the tracker has every
-update, archives the record, aligns the operator's checkout when it is clean,
-and writes a friction note stub for `$compound-learning`, in that order. The lead's part is what holds the close,
-which every lead command names from the supervisor's last pass, and the
-friction note. The steps below are for a delivery without it.
+update, archives the record with the friction stub, writing the stub first if
+no pass did, and aligns the operator's checkout when it is clean, in that order.
+`closed.json` names the archived stub. A `delivery.closed` journalled by hand
+with no decision holds before the archive. The lead's part is what holds the
+close, which every lead command names from the supervisor's last pass, the
+friction stub and the decision. The steps below are for a delivery without it.
 
 The record marks how far a close got, in `meta.closing`, with two marks that
 each name the `delivery.closed` journal entry they belong to. The `started`
@@ -628,8 +655,11 @@ mark goes into the record with that entry, whoever journals it through the state
 tool, the supervisor or the lead by hand. The `finished` mark is written once
 the close's archive has landed, by the supervisor's close-out or by
 `lead-close`, in the live record and in the archived copy, whose views are
-rendered again to show it. The supervisor's friction note comes after it.
-`closed.json` names the closing entry too.
+rendered again to show it. The archived friction note gains what the
+close-out left to the operator after it. `closed.json` names the closing entry
+too. A close that finished before decisions were recorded still reads as
+closed with none; one stopped partway with no decision names `lead-compound`
+first, or `lead-close --without-compounding WHY`, as what finishes it.
 
 Only the latest close counts. New work after a close, a `lane.assigned`,
 `candidate.handed` or `check.started` entry, reopens the delivery, and closing
@@ -678,7 +708,14 @@ is journaled.
 - Record every follow-up in `followups[]`, each with its tracker reference.
 - Align the operator's checkout with the final base, and clean up every lane
   checkout the epic created.
-- Preserve what the epic taught with `$compound-learning`.
+- Note gaps as they happen. When the last story lands, write up the friction
+  stub, run `$compound-learning` and record its decision; a note it preserves
+  rides the integration change request and is reviewed with it. Then the close. Record the decision as
+  `compounding.recorded`, with run-delivery's `lead-compound` or by hand:
+  `outcome` `required` with the note's `reference`, or `not-required` with
+  `why`. run-delivery's `lead-close` refuses while no decision stands since the
+  delivery last reopened, and `lead-close --without-compounding WHY` records it
+  as skipped, with the reason in the journal and in its summary.
 - Journal `delivery.closed`, and render the views one last time.
 - Mark the close finished with `delivery_state.py close-finished --entry <its
   journal id>`, and render again; a close left with only its `started` mark
@@ -734,7 +771,9 @@ Before integration review, compare the target-owned paths against the fetched
 target. Confirm the standing binding and the target's exact archive digest in
 the receipt. Run the repository's integration gates in that restored tree.
 Then run the integration review above against the exact candidate, including
-the merge and any resolutions. Open the reviewed change request into the target
+the merge and any resolutions. Note gaps as they happen. When the last story lands, write up the friction
+stub, run `$compound-learning` and record its decision; a note it preserves
+rides the integration change request and is reviewed with it. Then the close. Open the reviewed change request into the target
 and let the repository's merge process land it. If the target moves before
 landing, incorporate it and repeat the affected review and gates.
 
@@ -930,6 +969,17 @@ One attempt, never a gate. When you cannot write to the record, give each
 round in your hand-off as
 `round <n>: <startedAt> → <finishedAt>, <verdict per lens>, findings P0/P1/P2/P3`,
 and the lead records it.
+
+**Gaps**
+
+Note friction with `note-gap` when it happens, and class it as workflow, repo
+or host: `<run-delivery command> note-gap --class workflow|repo|host --text
+"<what>" --why "<what it cost>" [--evidence FILE] [--command "<command>"]
+[--same-as N]`. When you write a script to get behaviour the workflow or a tool
+should provide, note a workflow gap with the script as its evidence before
+moving on. One-off reads for understanding don't count; anything you'd need
+again does. It lists the open gaps of the same class first: name one with
+`--same-as N` when yours repeats it.
 
 **Questions**
 

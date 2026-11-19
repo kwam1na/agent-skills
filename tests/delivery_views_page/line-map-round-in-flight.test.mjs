@@ -128,7 +128,9 @@ test("the reduced round's bead settles when a redraw first finds it reduced, for
   expect(inFlight.app.querySelector(".run-bead.is-running")).not.toBeNull();
   const settling = (snap) => [...snap.app.querySelectorAll(".run-bead")].map((bead) => bead.classList.contains("is-settling"));
   expect(settling(settled)).toEqual([false, false, true]);
-  expect(settled.app.querySelector(".run-story").textContent).toBe("Approved on round 3 · 1 serious note raised");
+  // Reduced and approved, the card's state line says the review ended, so the summary's count is left to the reports.
+  expect(settled.app.querySelector("#detail .d-state .d-now").textContent).toBe("Reviewed, getting ready to hand off");
+  expect(settled.app.querySelector(".run-story")).toBeNull();
   expect(settling(again)).toEqual([false, false, false]);
 });
 
