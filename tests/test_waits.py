@@ -585,6 +585,8 @@ class NeedsYouRowTests(unittest.TestCase):
     def test_every_kind_needs_you_gives_is_said_by_the_table_with_its_own_headline(self) -> None:
         source = (PRODUCT_ROOT / "skills/run-delivery/scripts/run_delivery.py").read_text(encoding="utf-8")
         body = source[source.index("def tracker_item("):source.index("NEEDS_FILE = ")]
+        # The regrant items a landing leaves, which needs_you lists, are made beside the settle that marks them.
+        body += source[source.index("def regrant_needs("):source.index("def change_ownership(")]
         # Each kind, with who it names, as needs_you and its helpers write it.
         found = re.findall(r'"kind": "(\w+)"(?: if \w+ else "(\w+)")?,(?:\s*\n\s*)? ?(?:"who": "(\w+)")?', body)
         kinds = {kind for pair in found for kind in pair[:2] if kind}
@@ -615,6 +617,8 @@ class NeedsYouRowTests(unittest.TestCase):
             "drafts": ({"subjects": ["APP-1", "APP-2"]}, {}, "APP-1 and APP-2 wait to be marked ready"),
             "laneBlocked": ({"focus": "which API"}, {"lane": "lane-2", "subject": "APP-1"}, "Lane 2 is blocked on APP-1"),
             "laneAsks": ({"focus": "which API"}, {"lane": "lane-2"}, "Lane 2 waits on the lead"),
+            "regrant": ({"path": "src/a.py", "detail": "a landed hunk crosses the span's edge"}, {"lane": "lane-2"},
+                        "Lane 2's lines in src/a.py need a regrant"),
             "stopped": ({"detail": "e2e failed"}, {"subject": "APP-1"}, "APP-1 was stopped"),
             "free": ({}, {"subject": "APP-2", "lane": "lane-1"}, "APP-2 is free to start"),
             "paused": ({"reason": "a break"}, {}, "Serving is paused"),
