@@ -638,6 +638,8 @@ def state_errors(state: object) -> list[str]:
         errors = _unique(state)
         regions = state.get("laneRegions", [])
         ownership = state.get("laneOwnership", {})
+        held_keys = {item.get("subject") for name in ("queue", "planned") for item in state.get(name, [])
+                     if isinstance(item, dict)}
         for index, claim in enumerate(regions):
             path = claim["path"]
             label = f"/laneRegions/{index}"
@@ -647,6 +649,8 @@ def state_errors(state: object) -> list[str]:
                 errors.append(f"{label}/lane: name a lane in laneOwnership")
             if claim["start"] >= claim["end"]:
                 errors.append(f"{label}: end must be greater than start")
+            if "story" in claim and claim["story"] not in held_keys:
+                errors.append(f"{label}/story: name a story the record holds")
             if any(fnmatch.fnmatchcase(path, pattern) for patterns in ownership.values() for pattern in patterns):
                 errors.append(f"{label}: {path} already has a whole-file claim")
             for previous in regions[:index]:
@@ -999,13 +1003,15 @@ def init(directory: Path, headline: str, seed: dict | None = None) -> dict:
         if generation is not None:
             state["meta"]["writerGeneration"] = generation
         if seed is not None:
-            allowed = {"meta", "planned", "finish", "laneOwnership"}
+            allowed = {"meta", "planned", "finish", "laneOwnership", "regionsSettled"}
             if not isinstance(seed, dict) or set(seed) - allowed:
-                raise StateError("state_invalid", "init seed may set only meta, planned, finish and laneOwnership")
+                raise StateError("state_invalid",
+                                 "init seed may set only meta, planned, finish, laneOwnership and regionsSettled")
             if not isinstance(seed.get("meta", {}), dict) or set(seed.get("meta", {})) - {
-                "trackerParent", "handoffsNeedAcceptance"
+                "trackerParent", "handoffsNeedAcceptance", "integration"
             }:
-                raise StateError("state_invalid", "init seed meta may set only trackerParent and handoffsNeedAcceptance")
+                raise StateError("state_invalid",
+                                 "init seed meta may set only trackerParent, handoffsNeedAcceptance and integration")
             state = merge_patch(state, seed)
             errors = state_errors(state)
             if errors:

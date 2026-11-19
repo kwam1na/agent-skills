@@ -243,8 +243,9 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
    are never clipped; scrolling sideways (on a phone) never brings a vertical scroll with it. */
 /* The track's least width: the lane-name column and its gap (220 + 24, or 104 + 12 on a phone) and the merge's width,
    plus 46 for each stop of the longest lane, so stops never crowd under their keys. The drawing sets the merge's width,
-   --merge-width (176, or 304 with the epic's post), and the room above the line, --merge-top (16, or more for the epic's
-   words), on the track, so the padding, the least width and the drawing's place all follow the one number. */
+   --merge-width (176, 304 with the epic's post, or 478 with the integration step), and the room above the line,
+   --merge-top (16, or more for the epic's words), on the track, so the padding, the least width and the drawing's place
+   all follow the one number. */
 .lines-track { position: relative; display: grid; gap: 20px; padding-top: var(--merge-top); padding-right: var(--merge-width); padding-bottom: 16px; padding-left: 0;
   min-width: calc(244px + var(--merge-width) + var(--most, 1) * 46px); }
 .line { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; height: 64px; }
@@ -275,6 +276,29 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .mg-post { stroke: var(--ink); stroke-width: 3; stroke-linecap: round; }
 .mg-label { font: 550 13px var(--text); fill: var(--ink); }
 .mg-count { font: 500 11px var(--mono); fill: var(--faint); }
+/* The integration step: the main line runs on through four stops and bends into the target, drawn beneath it. Its width,
+   478 (REJOIN_WIDTH in line-map.js), reaches the track as --merge-width like every merge's. */
+.lines-track.rejoining { padding-bottom: 74px; }
+.mg-target { fill: none; stroke: var(--edge); stroke-width: 4; stroke-linecap: round; }
+.mg-step { fill: var(--paper); stroke: color-mix(in oklab, var(--ink) 30%, transparent); stroke-width: 2; }
+.mg-step.filled { fill: var(--ink); stroke: var(--ink); }
+.mg-step.danger { stroke: var(--held); stroke-width: 3; }
+.mg-step.warning { stroke: var(--wait); stroke-width: 3; }
+.mg-step.next { stroke: var(--l1); stroke-width: 3; }
+.mg-step-label { font: 500 10px var(--text); fill: var(--soft); }
+.mg-base, .mg-target-label { font-size: 11px; fill: var(--soft); }
+.title-beat { color: var(--faint); }
+.rejoin { margin: 18px 0 6px; }
+.rejoin-title { font: 600 14px var(--text); margin: 0 0 8px; }
+.rejoin-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rj-row { display: grid; grid-template-columns: 96px 1fr; gap: 12px; font: 400 13px var(--text); color: var(--ink); }
+.rj-name { color: var(--soft); }
+.rj-head { font: 500 12px var(--mono); }
+.rj-head.struck { color: var(--faint); }
+.rj-dots { display: inline-flex; gap: 3px; vertical-align: middle; }
+.rj-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.rj-dot.approve { background: var(--landed); }
+.rj-dot.changes { background: var(--wait); }
 /* The epic's post: past this repository's finish line the main line runs on to it, and sibling repositories turn in from
    rows under the lanes. Every stroke of it is neutral: dashed while work is open, dotted for a sibling that can't be read,
    solid once everything has landed. No warning colour, since a sibling out of reach is not trouble here. */
@@ -477,6 +501,32 @@ a.issue-link { color: inherit; cursor: pointer; }
 .chip.blocked { background: var(--held-wash); color: var(--held); }
 .person .on { font: 400 12px/16px var(--mono); color: var(--faint); max-width: 100%; overflow-wrap: anywhere; text-align: right; }
 .person .on.waiting { color: var(--wait); }
+/* Who holds which files: a fold under the lanes, each claimed file in its lane's colour, solid where changed. */
+.files-fold { margin-top: 16px; border-top: 1px solid var(--hair); padding: 12px 0 0; }
+.files-fold > summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--soft); }
+.files-fold > summary::-webkit-details-marker { display: none; }
+.files-body { display: grid; gap: 14px; padding-top: 12px; }
+.files-area h4, .file-reading h4 { margin: 0 0 6px; font: 500 12px/16px var(--mono); color: var(--faint); overflow-wrap: anywhere; }
+.files-shelf { display: flex; flex-wrap: wrap; gap: 6px; }
+.file { display: inline-flex; align-items: center; gap: 8px; min-height: 26px; max-width: 100%; padding: 0 10px; border-radius: 6px;
+  font: 400 12px/16px var(--mono); overflow-wrap: anywhere; border: 1.5px solid var(--c); background: transparent; color: var(--ink); }
+.file.whole.solid { background: var(--c); color: var(--on-ink); }
+.file.unread { border-style: dashed; color: var(--faint); }
+.file.shared { cursor: pointer; padding: 4px 10px; flex-direction: column; align-items: stretch; border-color: var(--hair); }
+.file.shared.open { border-color: var(--ink); }
+.file-split { position: relative; display: block; height: 8px; min-width: 120px; border-radius: 3px; background: var(--well); }
+.file-split .stretch { position: absolute; top: 0; bottom: 0; border: 1.5px solid var(--c); border-radius: 3px; box-sizing: border-box; }
+.file-split .stretch.solid { background: var(--c); }
+.file-split .stretch.unread, .ruler .stretch.regrant, .file-split .stretch.regrant { border-style: dashed; }
+.files-unread { margin: 0; font-size: 13px; color: var(--wait); overflow-wrap: anywhere; }
+.file-reading { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 4px 16px; }
+.file-reading h4 { grid-column: 1 / -1; }
+.ruler { position: relative; min-height: 160px; border-radius: 4px; background: var(--well); }
+.ruler .stretch { position: absolute; left: 0; width: 10px; border: 1.5px solid var(--c); border-radius: 3px; box-sizing: border-box; }
+.ruler .tick { position: absolute; left: 14px; width: 12px; min-height: 2px; background: var(--c); border-radius: 1px; }
+.ruler .tick.out { background: var(--held); }
+.file-lanes { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; align-content: start; font-size: 13px; color: var(--soft); }
+.file-lanes b { color: var(--c); font-weight: 600; }
 .leases { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 14px; color: var(--soft); }
 .leases span b { color: var(--ink); font-weight: 600; font-family: var(--mono); font-size: 13px; }
 

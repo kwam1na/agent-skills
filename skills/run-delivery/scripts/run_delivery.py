@@ -6224,6 +6224,164 @@ def candidate_ownership(c, lane: str, base: str, head: str, state: dict) -> tupl
                                             and owners_of(ownership, path) != [lane])]
 
 
+def claims_report(c, helper, lane: str, key: str, base: str, head: str, state: dict) -> tuple[list[str], list[str]]:
+    """Decision 7: the committed change from ``base`` to ``head`` against ``lane``'s claims, as (held, needed): what
+    a whole-file claim, a span or a shared output holds, and each hunk, creation, deletion, mode or binary change the
+    lane still needs a claim for, with the lead's request for it. ``head`` may be a tree."""
+    regions = state.get("laneRegions", [])
+    ownership = c.effective_ownership(state)
+    shared = shared_outputs(c)
+    command = flow_command()
+    held, needed = [], []
+    for path in helper.changed_paths(c.root, base, head):
+        on_path = [claim for claim in regions if claim["path"] == path]
+        if path in shared:
+            held.append(f"{path}: a declared shared output")
+            continue
+        if not on_path:
+            owners = owners_of(ownership, path)
+            if owners == [lane]:
+                held.append(f"{path}: {lane}'s whole file")
+            else:
+                holder = f" ({' and '.join(owners)} hold{'s' if len(owners) == 1 else ''} it)" if owners else ""
+                needed.append(f"{path}: needs a whole-file claim{holder}\n    {command} lead-own --grant {shlex.quote(path)} "
+                              f"--lane {lane}")
+            continue
+        mine = [claim for claim in on_path if claim["lane"] == lane]
+        try:
+            spans, rows = helper.change_report(c.root, path, base, head, mine)
+        except helper.RegionError as error:
+            needed.append(f"{path}: {error}; lanes share it by lines ({', '.join(described_claim(claim) for claim in on_path)})")
+            continue
+        size = len(helper.lines(c.root, helper.entry(c.root, base, path)[1]))
+        want: set[int] = set()
+        edges: set[int] = set()  # the lines an insertion at the edge of one of the lane's spans needs
+        for row in rows:
+            if row["claim"] is not None:
+                held.append(f"{path} {row['where']}: inside {described_claim(row['claim'], row['span'], base)}")
+                continue
+            needed.append(f"{path} {row['where']}: outside {lane}'s spans")
+            first, removed = row["first"], row["removed"]
+            lines_ = range(first, first + removed) if removed else range(first - 1, first + 1)
+            if not removed and (first - 1 < 1 or first > size):
+                needed[-1] += " (an insertion at the file's edge needs a whole-file claim)"
+                continue
+            missing = {line for line in lines_ if not any(start <= line < end for start, end in spans)}
+            want.update(missing)
+            if not removed and len(missing) == 1:
+                edges.update(missing)
+        others = []
+        for claim in on_path:
+            if claim["lane"] != lane:
+                with contextlib.suppress(helper.RegionError):  # one that no longer maps holds no line here
+                    others.append((helper.mapped(c.root, claim, base), claim))
+        text = helper.text_lines(c.root, base, path)
+        claimed = [*spans, *(span for span, _ in others)]
+        for start, end in runs_of(sorted(want)):
+            touching = next((claim for (first, last), claim in zip(spans, mine) if first <= end and start <= last), None)
+            story = touching.get("story") if touching else key
+            # Decision 13: the request names the lines by a line's text, with --insert for one past a block's edge.
+            found = ((edges & set(range(start, end))) and helper.anchor_for(path, text, start, end, claimed, True)) \
+                or helper.anchor_for(path, text, start, end, claimed)
+            if found is None:
+                needed.append(f"  lines {start}-{end - 1} of {path}: no line's text names a block that holds them; "
+                              "ask the lead for a carve that gives them")
+                continue
+            words, insert, span = found
+            clash = [described_claim(claim, other, base) for other, claim in others if helper.overlapping(other, span)]
+            needed.append(f"  {command} lead-own --region {shlex.quote(path)} --lane {lane} --base {base} "
+                          f"--around={shlex.quote(words)}" + (f" --insert {insert}" if insert else "")
+                          + (f" --story {story}" if story else "")
+                          + (f"   (overlaps {', '.join(clash)}: a carve gives it)" if clash else ""))
+    return held, needed
+
+
+def runs_of(numbers: list[int]) -> list[tuple[int, int]]:
+    """Sorted line numbers as half-open runs."""
+    runs: list[list[int]] = []
+    for number in numbers:
+        if runs and runs[-1][1] == number:
+            runs[-1][1] = number + 1
+        else:
+            runs.append([number, number + 1])
+    return [(start, end) for start, end in runs]
+
+
+def claims_check(args) -> None:
+    """Decision 7, a lane command: what the story's committed change needs claimed, and the lead's request for each.
+    Writes nothing and journals nothing; exits 1 when anything is needed."""
+    c = cfg()
+    key = c.require(args.key)
+    helper = _region_ownership()
+    git("fetch", "-q", c.remote, c.base_branch)
+    head = git("rev-parse", "HEAD")
+    base = git("merge-base", c.base_ref, head)
+    state = c.record_state()
+    lane = c.lane_of(key, state)
+    try:
+        held, needed = claims_report(c, helper, lane, key, base, head, state)
+    except helper.RegionError as error:
+        raise Stop(str(error)) from error
+    print(f"{key} on {lane}, {head[:12]} against its merge base {base[:12]} with {c.base_ref}:")
+    for line in held:
+        print(f"  holds {line}")
+    if not needed:
+        print("  nothing more to claim")
+        return
+    print("Needs a claim (ask the lead to run each request):")
+    for line in needed:
+        print(f"  {line}" if not line.startswith("  ") else line)
+    sys.exit(1)
+
+
+def lead_claims(args) -> None:
+    """Decision 8: whether the queue would accept each story's ownership, on the tree it would sync with the base."""
+    c = cfg()
+    require_lead_checkout(c)
+    helper = _region_ownership()
+    git("fetch", "-q", c.remote, c.base_branch)
+    base = git("rev-parse", c.base_ref)
+    state = c.record_state()
+    queued = {item["subject"]: item for item in state.get("queue", []) if item["stage"] != "merged"}
+    keys = [c.require(key) for key in args.keys] if args.keys else list(c.stories)
+    shown = 0
+    for key in keys:
+        item = queued.get(key)
+        if item is not None:
+            head, where = item["head"], "its handed head"
+        else:
+            fetched = run(["git", "fetch", "-q", c.remote, c.branch(key)], check=False).returncode == 0
+            ref = f"refs/remotes/{c.remote}/{c.branch(key)}"
+            if not fetched or run(["git", "rev-parse", "--verify", "--quiet", ref], check=False).returncode:
+                if args.keys:
+                    print(f"{key}: no hand-off and no pushed branch")
+                continue
+            head, where = git("rev-parse", ref), f"its pushed branch {c.branch(key)}"
+        shown += 1
+        lane = c.lane_of(key, state)
+        merged = run(["git", "merge-tree", "--write-tree", base, head], check=False)
+        if merged.returncode:
+            print(f"{key} ({lane}), {where} {head[:12]}: conflicts with {c.base_ref} at {base[:12]}, so no ownership verdict")
+            continue
+        tree = merged.stdout.split()[0]
+        try:
+            outside = helper.queue_problems(c.root, state, lane, (item or {}).get("acceptedRegionPaths", []), base, tree)
+            held, needed = claims_report(c, helper, lane, key, base, tree, state)
+        except helper.RegionError as error:
+            print(f"{key} ({lane}), {where} {head[:12]}: the queue could not check region ownership: {error}")
+            continue
+        verdict = ("the queue would refuse it: region ownership refused " + f"{lane}'s changes: "
+                   + "; ".join(f"{path}: {reason}" for path, reason in outside.items())) if outside \
+            else "the queue would accept its ownership"
+        print(f"{key} ({lane}), {where} {head[:12]} merged with {c.base_ref} at {base[:12]}: {verdict}")
+        for line in held:
+            print(f"  holds {line}")
+        for line in needed:
+            print(f"  {line}" if not line.startswith("  ") else line)
+    if not shown and not args.keys:
+        print("no story has a hand-off or a pushed branch")
+
+
 def owner_words(c, path: str) -> str:
     regions = [claim for claim in c.record_state().get("laneRegions", []) if claim["path"] == path]
     if regions:
@@ -7064,8 +7222,11 @@ def lead_init(args) -> None:
     overlaps = ownership_overlaps(ownership, tracked_at_base(c), shared_outputs(c))
     if overlaps:
         raise Stop(f"lanes own the same files: {'; '.join(overlaps)}")
-    seed = {"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True}, "planned": planned,
-            "finish": finish, "laneOwnership": ownership}
+    # The integration step's facts are read against this: written only when the delivery rejoins a target.
+    target = c.raw.get("integrationTarget")
+    integration = {"integration": {"base": c.base_branch, "target": target, "remote": c.remote}} if target else {}
+    seed = {"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True, **integration}, "planned": planned,
+            "finish": finish, "laneOwnership": ownership, "regionsSettled": 0}
     for line in replace_record(c) if args.replace else []:
         print(line)
     state_tool("init", "--headline", c.raw.get("headline", c.delivery), "--seed", json.dumps(seed))
@@ -7917,18 +8078,62 @@ def lead_own(args) -> None:
         change_ownership(c, args)
 
 
+def region_story(c, args, state: dict, lane: str, key: str | None) -> str | None:
+    """Decision 1: a claim's story, a key of this delivery assigned to the claim's lane, or None for the lane's own."""
+    if key is None:
+        return None
+    if key not in c.stories or not any(entry.get("subject") == key for name in ("planned", "queue")
+                                       for entry in state.get(name, [])):
+        raise Stop(f"{key} is not a story this delivery's record holds")
+    if c.lane_of(key, state) != lane:
+        raise Stop(f"{key} is {c.lane_of(key, state)}'s story, not {lane}'s")
+    return key
+
+
+def described_claim(claim: dict, span: tuple[int, int] | None = None, base: str | None = None) -> str:
+    start, end = span or (claim["start"], claim["end"])
+    story = f" for {claim['story']}" if claim.get("story") else ""
+    return f"{claim['lane']}'s{story} [{start}, {end}) at {(base or claim['baseHead'])[:12]}"
+
+
+def regrant_words(helper, c, claims: list[dict], base: str) -> list[str]:
+    """The claims on a path that don't map to ``base``, each with why: they need a regrant, and refuse nothing."""
+    said = []
+    for claim in claims:
+        try:
+            helper.mapped(c.root, claim, base)
+        except helper.RegionError as error:
+            said.append(f"{described_claim(claim)} needs a regrant: {error}")
+    return said
+
+
 def change_regions(c, args) -> None:
     helper = _region_ownership()
     path = args.region or args.revoke_region
     if not helper.valid_path(path):
         raise Stop("name a repository-relative file")
-    if not args.base or args.start is None or args.end is None:
-        raise Stop("a region claim needs --base COMMIT --start LINE --end LINE")
+    numbered = args.start is not None or args.end is not None
+    if args.revoke_region and (args.around is not None or args.insert):
+        raise Stop("a revocation matches the claim by its coordinates: --base, --start and --end")
+    if not args.base or (args.around is None and (args.start is None or args.end is None)):
+        raise Stop("a region claim needs --base COMMIT and either --around TEXT or --start LINE --end LINE")
+    if args.around is not None and numbered:
+        raise Stop("name the lines by --around TEXT or by --start and --end, not both")
+    if args.revoke_region and args.story:
+        raise Stop("--story names a grant's story; a revocation matches the claim by its coordinates")
     base_head = git("rev-parse", "--verify", "--end-of-options", f"{args.base}^{{commit}}")
+    asked = None
+    if args.region:
+        try:
+            args.start, args.end, asked = resolve_lines(helper, c, path, base_head, args.start, args.end, args.around,
+                                                        args.insert, c.record_state().get("laneRegions", []))
+        except helper.RegionError as error:
+            raise Stop(str(error)) from error
     claim = {"lane": args.lane, "path": path, "baseHead": base_head, "start": args.start, "end": args.end}
     if args.region:
         git("fetch", "-q", c.remote, c.base_branch)
         base = git("rev-parse", c.base_ref)
+    said: dict = {}
 
     def compute(doc: dict) -> list[str]:
         state = doc["state"]
@@ -7938,39 +8143,331 @@ def change_regions(c, args) -> None:
         if args.lane not in ownership:
             raise Stop("name a lane recorded for this delivery")
         regions = list(state.get("laneRegions", []))
+        said.clear()
         if args.revoke_region:
-            if claim not in regions:
+            found = next((other for other in regions if helper.same_claim(other, claim)), None)
+            if found is None:
                 raise Stop(f"{args.lane} has no matching region claim for {path}")
-            regions.remove(claim)
-        elif claim not in regions:
-            if owners_of(ownership, path):
-                raise Stop(f"{path} already has a whole-file claim")
-            if path in shared_outputs(c):
-                raise Stop(f"{path} is a declared shared output")
-            try:
-                start, end = helper.mapped(c.root, claim, base)
-                for other in regions:
-                    if other["path"] == path:
-                        first, last = helper.mapped(c.root, other, base)
-                        if start < last and first < end:
-                            raise Stop(f"{path} [{start}, {end}) overlaps {other['lane']}'s [{first}, {last}) at {base[:12]}")
-            except helper.RegionError as error:
-                raise Stop(str(error)) from error
-            regions.append(claim)
-        return ["--set", json.dumps({"/laneRegions": regions})]
+            regions.remove(found)
+            return ["--set", json.dumps({"/laneRegions": regions})]
+        story = region_story(c, args, state, args.lane, args.story)
+        granted = {**claim, "story": story} if story else dict(claim)
+        if any(helper.same_claim(other, claim) and other.get("story") == story for other in regions):
+            return None
+        if owners_of(ownership, path):
+            raise Stop(f"{path} already has a whole-file claim")
+        if path in shared_outputs(c):
+            raise Stop(f"{path} is a declared shared output")
+        on_path = [other for other in regions if other["path"] == path]
+        # A regrant: this lane's claims on the path, of this story, that a landing left needing one, give way to it.
+        replaced = [other for other in on_path if other.get("regrant") and other["lane"] == args.lane
+                    and other.get("story") == story]
+        try:
+            start, end = helper.mapped(c.root, granted, base)
+            for other in on_path:
+                if any(other is gone for gone in replaced):
+                    continue
+                if other["lane"] == args.lane and other.get("story") == story:
+                    continue  # Decision 5: one lane's claims of one story are made one below, overlapping or touching
+                try:
+                    first, last = helper.mapped(c.root, other, base)
+                except helper.RegionError:
+                    continue  # Decision 3: a claim that no longer maps refuses no grant; it is named below
+                if start < last and first < end:
+                    raise Stop(f"{path} [{start}, {end}) overlaps {other['lane']}'s [{first}, {last}) at {base[:12]}")
+            kept = [other for other in on_path if not any(other is gone for gone in replaced)]
+            joined, runs = helper.coalesce(c.root, [*kept, granted], base_head)
+            for claim_now in joined:
+                if not any(claim_now is other for other in kept):
+                    helper.mapped(c.root, claim_now, base)
+            merged = [other for other in regions if other["path"] != path] + joined
+        except helper.RegionError as error:
+            raise Stop(str(error)) from error
+        said.update(replaced=replaced, runs=runs, stale=regrant_words(
+            helper, c, [other for other in on_path if not any(other is gone for gone in replaced)], base),
+            written=[claim_now for claim_now in joined if not any(claim_now is other for other in kept)])
+        return ["--set", json.dumps({"/laneRegions": merged})]
 
-    patch_from(compute, f"region ownership of {path}")
+    if patch_from(compute, f"region ownership of {path}") is None and not args.revoke_region:
+        print(f"{args.lane} already holds {path} [{args.start}, {args.end}) at {base_head}")
+        return
     action = "revoked" if args.revoke_region else "granted"
     change = f"{action} {args.lane}'s {path} [{args.start}, {args.end}) at {base_head}"
-    state_tool("journal", "--kind", f"ownership.{action}", "--lane", args.lane, "--data", json.dumps(
+    if args.story:
+        change += f" for {args.story}"
+    state_tool("journal", "--kind", f"ownership.{action}", "--lane", args.lane,
+               *(["--subject", args.story] if args.story else []), "--data", json.dumps(
         {"path": path, "span": {"first": args.start, "after": args.end}, "base": {"ref": args.base, "head": base_head}}))
     print(change)
+    for line in asked or []:
+        print(f"  {line}")
+    for written in said.get("written", []):
+        print(f"  {written_lines(helper, c, written)}")
+    for gone in said.get("replaced", []):
+        print(f"  replaces {described_claim(gone)}, which needed a regrant")
+    for run_ in said.get("runs", []):
+        print(f"  made one claim at {base_head[:12]} of {', '.join(described_claim(other) for other in run_)}, "
+              "which touch")
+    for line in said.get("stale", []):
+        print(f"  {line}")
+
+
+GIVE = re.compile(r"(?P<lane>[^:+\s]+)(?:\+(?P<insert>before|after))?:"
+                  r"(?:(?P<start>[0-9]+)-(?P<end>[0-9]+)|around=(?P<around>.+?))(?:@(?P<key>[A-Za-z][A-Za-z0-9]*-[0-9]+))?")
+
+
+def carve_gives(values: list[str]) -> list[dict]:
+    """Each --give as {lane, start, end} or {lane, around}, with its story and --insert side when it names them."""
+    gives = []
+    for value in values:
+        found = GIVE.fullmatch(value)
+        if not found:
+            raise Stop(f"--give {value!r}: name it as LANE[+before|+after]:START-END[@KEY] or "
+                       "LANE[+before|+after]:around=TEXT[@KEY]")
+        give = {"lane": found["lane"], **({"story": found["key"]} if found["key"] else {}),
+                **({"insert": found["insert"]} if found["insert"] else {})}
+        if found["around"] is not None:
+            give["around"] = found["around"]
+        else:
+            start, end = int(found["start"]), int(found["end"])
+            if start < 1 or end <= start:
+                raise Stop(f"--give {value!r}: END must be greater than START, from line 1")
+            give.update(start=start, end=end)
+        gives.append(give)
+    return gives
+
+
+def resolve_lines(helper, c, path: str, base: str, start: int | None, end: int | None, around: str | None,
+                  insert: str | None, regions: list[dict], taken: list[tuple[int, int]] = ()) -> tuple[int, int, list[str]]:
+    """The span a grant or a give names at ``base``: by --around's block (Decision 10) or its numbers, each edge at a
+    statement's start in a Python file (Decision 11), widened by --insert past an edge into an unclaimed line
+    (Decision 12). Returns it, and what to print of how it was read."""
+    said = []
+    if around is not None:
+        start, end = helper.anchored(c.root, base, path, around)
+        said.append(f"--around {around!r} names [{start}, {end}) at {base[:12]}")
+    helper.check_statements(c.root, base, path, start, end)
+    if insert:
+        held = list(taken)
+        for claim in regions:
+            if claim["path"] == path:
+                with contextlib.suppress(helper.RegionError):
+                    held.append(helper.mapped(c.root, claim, base))
+        size = len(helper.text_lines(c.root, base, path))
+        wider = helper.widened(start, end, insert, size, held)
+        said.append(f"--insert {insert} widens [{start}, {end}) to [{wider[0]}, {wider[1]}), so an insertion "
+                    f"{insert} its {'first' if insert == 'before' else 'last'} line falls inside")
+        start, end = wider
+    return start, end, said
+
+
+def written_lines(helper, c, claim: dict) -> str:
+    """Decision 9: a span written, with its first and last line as text at its base."""
+    try:
+        words = helper.span_lines(c.root, claim["baseHead"], claim["path"], claim["start"], claim["end"])
+    except (helper.RegionError, IndexError) as error:
+        words = f"its lines can't be read: {error}"
+    return f"{described_claim(claim)}: {words}"
+
+
+def change_carve(c, args) -> None:
+    """Decision 4: a path's claims recomputed in one write, or nothing written."""
+    helper = _region_ownership()
+    path = args.carve
+    if not helper.valid_path(path):
+        raise Stop("name a repository-relative file")
+    if not args.give:
+        raise Stop("a carve gives lines: --give LANE:START-END[@KEY], as many as it needs")
+    if args.start is not None or args.end is not None or args.lane or args.story:
+        raise Stop("a carve names its lines in each --give, not with --lane, --start, --end or --story")
+    if args.around is not None or args.insert:
+        raise Stop("a carve names each give's lines in its --give: LANE[+before|+after]:around=TEXT[@KEY]")
+    gives = carve_gives(args.give)
+    git("fetch", "-q", c.remote, c.base_branch)
+    base = git("rev-parse", c.base_ref)
+    carve_base = git("rev-parse", "--verify", "--end-of-options", f"{args.base or base}^{{commit}}")
+    asked: list[str] = []
+    try:
+        taken: list[tuple[int, int]] = []
+        for give in gives:
+            give["start"], give["end"], words = resolve_lines(
+                helper, c, path, carve_base, give.get("start"), give.get("end"), give.pop("around", None),
+                give.pop("insert", None), c.record_state().get("laneRegions", []), taken)
+            taken.append((give["start"], give["end"]))
+            asked += [f"{give['lane']}: {line}" for line in words]
+    except helper.RegionError as error:
+        raise Stop(f"the carve of {path} changes nothing: {error}") from error
+    said: dict = {}
+
+    def compute(doc: dict) -> list[str]:
+        state = doc["state"]
+        ownership = state.get("laneOwnership")
+        if ownership is None:
+            raise Stop("seed this record with lead-own --seed first")
+        for give in gives:
+            if give["lane"] not in ownership:
+                raise Stop(f"--give names {give['lane']}, which isn't a lane recorded for this delivery")
+            region_story(c, args, state, give["lane"], give.get("story"))
+        if owners_of(ownership, path):
+            raise Stop(f"{path} already has a whole-file claim")
+        if path in shared_outputs(c):
+            raise Stop(f"{path} is a declared shared output")
+        try:
+            result = helper.carve(c.root, list(state.get("laneRegions", [])), path, carve_base, gives)
+            spans = []
+            for claim in result["claims"]:
+                if claim["path"] == path:
+                    spans.append((helper.mapped(c.root, claim, base), claim))
+            for i, (one, first) in enumerate(spans):
+                for other, second in spans[i + 1:]:
+                    if helper.overlapping(one, other):
+                        raise Stop(f"the carve leaves {described_claim(first, one, base)} overlapping "
+                                   f"{described_claim(second, other, base)}")
+        except helper.RegionError as error:
+            raise Stop(f"the carve of {path} changes nothing: {error}") from error
+        said.clear()
+        said.update(result)
+        return ["--set", json.dumps({"/laneRegions": result["claims"]})]
+
+    patch_from(compute, f"the carve of {path}")
+    shown = lambda claim: {name: claim[name] for name in ("lane", "baseHead", "start", "end", "story") if name in claim}
+    state_tool("journal", "--kind", "ownership.carved", "--data", json.dumps(
+        {"path": path, "base": {"ref": c.base_branch, "head": carve_base},
+         "removed": [shown(claim) for claim in said["removed"]], "added": [shown(claim) for claim in said["added"]]}))
+    print(f"carved {path} at {carve_base}")
+    for line in asked:
+        print(f"  {line}")
+    for claim in said["removed"]:
+        print(f"  removed {described_claim(claim)}")
+    for claim in said["added"]:
+        print(f"  added {written_lines(helper, c, claim)}")
+
+
+def in_flight_before(c, state: dict, lane: str, landed: str, merge: str, story: str | None) -> list[str]:
+    """The lane's other stories still in flight on a branch that began before ``merge``: a claim carried to the merge
+    maps for each only once it merges the base. With ``story``, that story alone, if it is one of them."""
+    found = []
+    pieces = [*state.get("planned", []), *state.get("queue", [])]
+    for piece in pieces:
+        key = piece.get("subject")
+        if key == landed or key in found or c.lane_of(key, state) != lane or (story and key != story):
+            continue
+        if piece.get("stage") in ("merged", "settled"):
+            continue
+        heads = [ref for ref in (f"refs/remotes/{c.remote}/{c.branch(key)}", f"refs/heads/{c.branch(key)}")
+                 if run(["git", "rev-parse", "--verify", "--quiet", ref], check=False).returncode == 0]
+        if heads and any(run(["git", "merge-base", "--is-ancestor", merge, ref], check=False).returncode for ref in heads):
+            found.append(key)
+    return found
+
+
+def settle_landings(c) -> str:
+    """Decision 2, a supervisor step: each `candidate.merged` not settled yet, in journal order, one versioned patch
+    under the ownership lock, then its entries. A record that settled none, from an earlier release, starts at its
+    latest merge, or at 0 with none."""
+    helper = _region_ownership()
+    said = []
+    with ownership_lock(c):
+        # What to settle is read here; each write is computed again from the record it is pinned to.
+        merges = [entry for entry in load_state()["journal"] if entry["kind"] == "candidate.merged"]
+        state = c.record_state()
+        if "regionsSettled" not in state:
+            seed = merges[-1]["id"] if merges else 0
+            patch_from(lambda fresh: None if "regionsSettled" in fresh["state"] else {"regionsSettled": seed},
+                       "the first settled merge")
+            return f"settled from journal entry {seed}"
+        fetched = False
+        for merge in merges:
+            if merge["id"] <= state["regionsSettled"]:
+                continue
+            if not fetched:
+                git("fetch", "-q", c.remote, c.base_branch)
+                fetched = True
+            try:
+                landed = helper.merge_commit(c.root, c.base_ref, merge["data"]["head"])
+            except helper.RegionError as error:
+                raise Stop(f"can't find where {merge['subject']} landed on {c.base_ref}: {error}") from error
+            outcome: dict = {}
+
+            def compute(fresh: dict) -> dict | None:
+                state = fresh["state"]
+                if state.get("regionsSettled", 0) >= merge["id"]:
+                    return None
+                outcome.clear()
+                regions = state.get("laneRegions", [])
+                if not regions:
+                    return {"regionsSettled": merge["id"]}
+                if landed is None:
+                    return None  # a pass after the base holds it settles it
+                lane = c.lane_of(merge["subject"], state)
+                result = helper.settle(c.root, regions, merge["subject"], lane, landed)
+                outcome.update(result, lane=lane, inFlight={
+                    id(new): in_flight_before(c, state, lane, merge["subject"], landed, new.get("story"))
+                    for _, new in result["carried"]})
+                return {"laneRegions": result["regions"], "regionsSettled": merge["id"]}
+
+            try:
+                written = patch_from(compute, f"the claims {merge['subject']}'s landing settles")
+            except helper.RegionError as error:
+                raise Stop(f"settling {merge['subject']}'s landing: {error}") from error
+            if written is None and landed is None:
+                later = [entry for entry in merges if entry["id"] > merge["id"]]
+                if any(helper.merge_commit(c.root, c.base_ref, entry["data"]["head"]) for entry in later):
+                    raise Stop(f"can't find where {merge['subject']} (journal entry {merge['id']}) landed on "
+                               f"{c.base_ref}, though a later merge is there: its claims wait, and so does every later "
+                               "landing's settle, until the lead settles its claims by hand and sets regionsSettled")
+                said.append(f"{merge['subject']}'s merge isn't on {c.base_ref} yet")
+                break
+            subject = merge["subject"]
+            for claim in outcome.get("released", []):
+                state_tool("journal", "--kind", "ownership.released", "--lane", claim["lane"], "--subject", subject,
+                           "--data", json.dumps({"path": claim["path"], "span": {"first": claim["start"], "after": claim["end"]},
+                                                 "base": {"ref": c.base_branch, "head": claim["baseHead"]}, "merge": landed}))
+            for old, new in outcome.get("carried", []):
+                waiting = outcome["inFlight"][id(new)]
+                state_tool("journal", "--kind", "ownership.carried", "--lane", new["lane"], "--subject", subject,
+                           "--data", json.dumps({"path": new["path"], "from": {"first": old["start"], "after": old["end"]},
+                                                 "to": {"first": new["start"], "after": new["end"]}, "was": old["baseHead"],
+                                                 "base": {"ref": c.base_branch, "head": landed},
+                                                 **({"story": new["story"]} if new.get("story") else {}),
+                                                 **({"inFlight": waiting} if waiting else {})}))
+            if outcome:
+                said.append(f"{subject}: {len(outcome['released'])} released, {len(outcome['carried'])} carried, "
+                            f"{len(outcome['regrant'])} to regrant")
+                said += [f"carried {written_lines(helper, c, new)}" for _, new in outcome["carried"]]
+            state = c.record_state()
+    return "; ".join(said) or "nothing to settle"
+
+
+def regrant_needs(state: dict) -> list[dict]:
+    """Decision 2's "Needs you" items: each claim a landing left needing a regrant. None holds the close."""
+    items = []
+    for claim in state.get("laneRegions", []):
+        mark = claim.get("regrant")
+        if not isinstance(mark, dict):
+            continue
+        where = f"{claim['path']} [{claim['start']}, {claim['end']}) at {claim['baseHead'][:12]}"
+        items.append({"holding": False, "source": "the record's region claims",
+                      "text": f"{claim['lane']}'s claim on {where} needs a regrant after the merge {mark['merge'][:12]}: "
+                      f"{mark['reason'][:300]}",
+                      "clears": f"{flow_command()} lead-own --region {claim['path']} --lane {claim['lane']} ... "
+                      "regranting it, or --revoke-region revoking it", "kind": "regrant", "who": "lead",
+                      "lane": claim["lane"], **({"subject": claim["story"]} if claim.get("story") else {}),
+                      "fields": {"path": claim["path"], "detail": mark["reason"][:300]}})
+    return items
 
 
 def change_ownership(c, args) -> None:
+    if args.carve:
+        change_carve(c, args)
+        return
+    if args.give:
+        raise Stop("--give belongs to a carve: --carve PATH --give LANE:START-END[@KEY]")
     if not (args.region or args.revoke_region or args.claim) and any(
             value is not None for value in (args.base, args.start, args.end)):
         raise Stop("--base, --start and --end require --region or --revoke-region")
+    if args.story and not args.region:
+        raise Stop("--story names a region grant's story: use it with --region")
     if args.claim:
         change_claims(c, args)
         return
@@ -10406,6 +10903,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           + "journalling base.repaired", "kind": "baseHealth" if found else "baseBroken", "who": "lead",
                           "since": events[-1].get("at"), "fields": {"detail": entry_said(events[-1])[:300]}})
     items += lane_needs(doc["state"])
+    items += regrant_needs(doc["state"])
     for item in doc["state"]["queue"]:
         merge = unaccepted_merge(doc, item)
         if merge:
@@ -10456,6 +10954,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                       f"decision with {flow_command()} lead-compound",
                       "clears": f"{flow_command()} lead-compound --required --ref REF, or --not-required --why TEXT",
                       "kind": "compounding", "who": "lead", "fields": {"stub": str(stub)}})
+    items += lane_change_needs(c, doc["state"])
     items += record_needs(doc, items)
     return say_needs(c, doc, items + waits_needing(c, doc, items))
 
@@ -10704,6 +11203,283 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
                       "subject": free["subject"], **({"lane": free["lane"]} if free.get("lane") else {}),
                       **({"waiting": len(waiting)} if waiting else {})})
     return added
+
+
+# What each lane has pushed. A pass reads every assigned lane's story branch on the remote, as a diff from its merge
+# base with the delivery base, and writes what it changed beside the record: "Needs you" names a change outside the
+# lane's ground from it, and the line map's files view draws it. It refuses nothing; acceptance still decides.
+LANE_CHANGES_FILE = "lane-changes.json"
+LANE_CHANGES_SPEC = "delivery-lane-changes/1"
+# The diff a branch read takes: the one region_ownership.hunks takes, so a change's old lines are the hunks it checks.
+LANE_DIFF = ("diff", "--text", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--no-indent-heuristic",
+             "--inter-hunk-context=0", "--unified=0", "--diff-algorithm=myers")
+LANE_HUNK = re.compile(r"^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@", re.M)
+# The line that names where a change sits, on the new side: the nearest `def` or `class` in Python, `function` or
+# `const NAME =` in JavaScript, and a heading in Markdown.
+ENCLOSING_NAMES = {
+    "python": re.compile(r"^\s*(?:async\s+)?(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)"),
+    "javascript": re.compile(r"^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)"
+                             r"|^\s*(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*="),
+    "markdown": re.compile(r"^#{1,6}\s+(.*?)\s*#*\s*$"),
+}
+ENCLOSING_KINDS = {".py": "python", ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+                   ".jsx": "javascript", ".ts": "javascript", ".tsx": "javascript", ".md": "markdown"}
+# The files view's own bound: past it the claimed files are cut, and the cut is said.
+LANE_FILES_LIMIT = 400
+
+
+def enclosing_name(path: str, lines: list[str], line: int) -> str | None:
+    """The name of the block line `line` (one-based) sits in, on the new side: the line itself when it names one, else
+    the nearest one above it. In Python and JavaScript, the nearest one indented less than the code it holds, so a
+    sibling's nested function above is passed over; in Markdown, the nearest heading."""
+    kind = ENCLOSING_KINDS.get(os.path.splitext(path)[1].lower())
+    if kind is None or not lines:
+        return None
+    pattern = ENCLOSING_NAMES[kind]
+
+    def named(text: str) -> str | None:
+        found = pattern.match(text)
+        return next((group for group in found.groups() if group), None) if found else None
+
+    index = min(max(line, 1), len(lines)) - 1
+    if named(lines[index]):
+        return named(lines[index])
+    if kind == "markdown":
+        return next((named(text) for text in reversed(lines[:index]) if named(text)), None)
+    indent = lambda text: len(text) - len(text.lstrip())
+    below = indent(lines[index]) if lines[index].strip() else None
+    for text in reversed(lines[:index]):
+        if not text.strip():
+            continue
+        if below is None or indent(text) < below:
+            if named(text):
+                return named(text)
+            below = indent(text)
+    return None
+
+
+def read_lane_branch(c, story: str, base: str) -> dict | None:
+    """One lane's story branch as the remote holds it, read as a diff from its merge base with `base`: its head, that
+    merge base, and per changed file each change's old first line and size, new first line and size, and enclosing
+    name. None when the branch isn't pushed. A branch that can't be read says why, with no files."""
+    branch = c.branch(story)
+    said = {"story": story, "branch": branch}
+    listed = run(["git", "ls-remote", c.remote, f"refs/heads/{branch}"], cwd=c.root, check=False)
+    if listed.returncode != 0:
+        return {**said, "unreadable": f"git ls-remote failed: {(listed.stderr or listed.stdout).strip()[-300:]}"}
+    if not listed.stdout.strip():
+        return None
+    head = listed.stdout.split()[0]
+    said.update(head=head, base=base)
+    try:
+        run(["git", "fetch", "-q", "--no-write-fetch-head", c.remote, f"+refs/heads/{branch}:refs/remotes/{c.remote}/{branch}"],
+            cwd=c.root)
+        merge_base = git("merge-base", base, head, cwd=c.root)
+        paths = list(filter(None, run(["git", "diff", "--name-only", "--no-renames", "-z", merge_base, head],
+                                      cwd=c.root).stdout.split("\0")))
+        files = []
+        for path in paths:
+            # Not strictly decoded: a binary or non-UTF-8 file is still a change the read reports, by its hunks.
+            patch = run(["git", *LANE_DIFF, merge_base, head, "--", path], cwd=c.root, errors="replace").stdout
+            shown = run(["git", "show", f"{head}:{path}"], cwd=c.root, check=False, errors="replace")
+            text = shown.stdout.splitlines() if shown.returncode == 0 and "\0" not in shown.stdout else []
+            changes = []
+            for match in LANE_HUNK.finditer(patch):
+                first, removed, start, added = (int(n) if n is not None else 1 for n in match.groups())
+                changes.append({"old": first if removed else first + 1, "removed": removed,
+                                "start": start if added else start + 1, "added": added,
+                                "name": enclosing_name(path, text, start if added else start)})
+            files.append({"path": path, "changes": changes})
+    except (Stop, UnicodeError) as error:
+        return {**said, "unreadable": str(error)[-300:]}
+    return {**said, "mergeBase": merge_base, "readAt": now(), "files": files}
+
+
+def lane_holdings(c, lane: str, read: dict, state: dict) -> dict:
+    """The read with what the lane holds of each file, by the ownership acceptance uses: `holds` is "file", "span",
+    "shared" or "none", and each change is `inside` the lane's ground or not. On a file the lane holds by span, a change
+    outside its spans is outside, with the file still "span"; a file it can't change by span at all is "none"."""
+    if "files" not in read:
+        return read
+    helper = _region_ownership()
+    _, outside = candidate_ownership(c, lane, read["mergeBase"], read["head"], state)
+    regions = state.get("laneRegions", [])
+    shared = shared_outputs(c) if "laneOwnership" in state else set()
+    files = []
+    for entry in read["files"]:
+        path = entry["path"]
+        refused = path in outside or any(item.startswith(f"{path}: ") for item in outside)
+        changes = [dict(change, inside=not refused) for change in entry["changes"]]
+        holds = "shared" if path in shared else "span" if any(claim["path"] == path for claim in regions) else "file"
+        if refused and holds == "span" and not any(claim["path"] == path and claim["lane"] == lane for claim in regions):
+            holds = "none"  # other lanes share it by span, and this lane holds none of it
+            changes = [dict(change, inside=False) for change in changes]
+        elif refused and holds == "span":
+            spans = []
+            for claim in regions:
+                if claim["path"] == path and claim["lane"] == lane:
+                    with contextlib.suppress(helper.RegionError):
+                        spans.append(helper.mapped(c.root, claim, read["mergeBase"]))
+            try:
+                # What no span can hold, as acceptance's check refuses it: a creation, a deletion, a type, mode or
+                # binary change.
+                old_mode, _ = helper.entry(c.root, read["mergeBase"], path)
+                new_mode, _ = helper.entry(c.root, read["head"], path)
+                helper.require_text(c.root, read["head"], path)
+                whole = old_mode != new_mode
+            except helper.RegionError:
+                whole = True
+            for change in changes:
+                first, removed = change["old"], change["removed"]
+                change["inside"] = any(start <= first and first + removed <= end if removed else start < first < end
+                                       for start, end in spans)
+            # Refused for the file itself, or with no span that maps (a claim needing a regrant), or with every
+            # change inside: the lane can't change this file by span, so it is held as no file is.
+            if whole or not spans or not changes or all(change["inside"] for change in changes):
+                holds = "none"
+                changes = [dict(change, inside=False) for change in changes]
+        elif refused:
+            holds = "none"
+        files.append({"path": path, "holds": holds, "changes": changes})
+    return {**read, "files": files}
+
+
+def claimed_files(c, state: dict, base: str) -> dict:
+    """The delivery's claimed files at `base`, for the files view: each tracked file a lane's whole-file claim names,
+    and each file region claims share, with every claim's span mapped to `base` and the file's length there. A span
+    that no longer maps keeps its granted lines and says it needs a regrant."""
+    helper = _region_ownership()
+    ownership = c.effective_ownership(state)
+    regions = state.get("laneRegions", [])
+    tracked = git("ls-tree", "-r", "--name-only", base, cwd=c.root, check=False).splitlines()
+    regional = sorted({claim["path"] for claim in regions})
+    whole = [path for path in tracked if path not in regional and owners_of(ownership, path)]
+    files = []
+    for path in regional + whole:
+        if len(files) >= LANE_FILES_LIMIT:
+            break
+        shown = run(["git", "show", f"{base}:{path}"], cwd=c.root, check=False)
+        length = len(shown.stdout.splitlines()) if shown.returncode == 0 else 0
+        if path in regional:
+            spans = []
+            for claim in regions:
+                if claim["path"] != path:
+                    continue
+                try:
+                    start, end = helper.mapped(c.root, claim, base)
+                    spans.append({"lane": claim["lane"], "start": start, "end": end})
+                except helper.RegionError:
+                    spans.append({"lane": claim["lane"], "start": claim["start"], "end": claim["end"], "regrant": True})
+            files.append({"path": path, "lines": length, "spans": sorted(spans, key=lambda span: span["start"])})
+        else:
+            files.append({"path": path, "lines": length, "lanes": owners_of(ownership, path)})
+    return {"files": files, **({"more": len(regional) + len(whole) - len(files)}
+                               if len(regional) + len(whole) > len(files) else {})}
+
+
+def read_lane_changes(folder: Path) -> dict | None:
+    """The last pass's lane-changes.json, or None when there is none or it can't be read."""
+    try:
+        written = json.loads((folder / LANE_CHANGES_FILE).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return written if isinstance(written, dict) and written.get("spec") == LANE_CHANGES_SPEC else None
+
+
+def write_lane_changes(c) -> str:
+    """Read every assigned lane's pushed story branch and write lane-changes.json beside the record. A branch at the
+    same base and head as the last pass's read is not read again: its read, with its read time, is kept, and only
+    what the lane holds is judged afresh, so a grant shows at once."""
+    doc = load_state()
+    state = doc["state"]
+    base = git("rev-parse", "--verify", f"{c.base_ref}^{{commit}}", cwd=c.root)
+    last = (read_lane_changes(c.state) or {}).get("lanes") or {}
+    lanes = {}
+    for lane in state["lanes"]:
+        story = lane_story(state, lane["id"])
+        if story is None:
+            continue
+        earlier = last.get(lane["id"]) if isinstance(last.get(lane["id"]), dict) else {}
+        read = None
+        if earlier.get("story") == story["subject"] and earlier.get("base") == base and "files" in earlier:
+            listed = run(["git", "ls-remote", c.remote, f"refs/heads/{earlier['branch']}"], cwd=c.root, check=False)
+            if listed.returncode == 0 and listed.stdout.split()[:1] == [earlier.get("head")]:
+                with contextlib.suppress(KeyError, TypeError):  # a read this release can't take is read again
+                    kept = {name: earlier[name] for name in ("story", "branch", "head", "base", "mergeBase", "readAt")}
+                    kept["files"] = [{"path": f["path"], "changes": [{name: change[name] for name in
+                                                                      ("old", "removed", "start", "added", "name")}
+                                                                     for change in f["changes"]]} for f in earlier["files"]]
+                    read = kept
+        if read is None:
+            read = read_lane_branch(c, story["subject"], base)
+        if read is None:
+            continue
+        try:
+            lanes[lane["id"]] = lane_holdings(c, lane["id"], read, state)
+        except Stop as error:
+            lanes[lane["id"]] = {name: read[name] for name in ("story", "branch", "head", "base") if name in read} | {
+                "unreadable": str(error)[-300:]}
+    written = {"spec": LANE_CHANGES_SPEC, "at": now(), "base": base, "lanes": lanes,
+               **(claimed_files(c, state, base) if state.get("laneRegions") else {})}
+    path = c.state / LANE_CHANGES_FILE
+    staging = path.with_name(f".{LANE_CHANGES_FILE}.{os.getpid()}")
+    staging.write_text(json.dumps(written, indent=2) + "\n")
+    with open(c.state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            os.replace(staging, path)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+    return f"{len(lanes)} branch(es)"
+
+
+def lines_said(first: int, count: int) -> str:
+    return f"line {first}" if count <= 1 else f"lines {first}-{first + count - 1}"
+
+
+def lane_change_needs(c, state: dict) -> list[dict]:
+    """The "Needs you" items the last branch read raises, none of them holding the close: a changed file its lane
+    doesn't hold, each change outside the spans of a file it holds by span, naming the lines, and a branch that can't
+    be read, in place of that lane's items. A declared shared output, and a change inside a span, raise nothing."""
+    written = read_lane_changes(c.state)
+    if written is None:
+        return []
+    assigned = {lane["id"] for lane in state["lanes"]}
+    items = []
+    for lane, read in sorted((written.get("lanes") or {}).items()):
+        if lane not in assigned or not isinstance(read, dict):
+            continue
+        named = lane_named(lane)
+        named = named[:1].upper() + named[1:]
+        facts = {"holding": False, "who": "lead", "lane": lane, "subject": read.get("story")}
+        if "unreadable" in read:
+            items.append({**facts, "source": f"{lane}'s branch {read.get('branch')}", "kind": "laneUnreadable",
+                          "text": f"{named}'s branch `{read.get('branch')}` can't be read: {str(read['unreadable'])[:300]}",
+                          "clears": "a pass that reads the branch",
+                          "fields": {"branch": read.get("branch"), "detail": str(read["unreadable"])[:300]}})
+            continue
+        for entry in read.get("files") or []:
+            path, changes = entry["path"], entry.get("changes") or []
+            source = f"{lane}'s branch {read.get('branch')} at {str(read.get('head'))[:10]}"
+            if entry.get("holds") == "none":
+                items.append({**facts, "source": source, "kind": "laneOutside",
+                              "text": f"{named} changed `{path}`, which it doesn't hold.",
+                              "clears": "the branch no longer changing it, or the lead granting the file",
+                              "fields": {"path": path, "detail": "It doesn't hold the file."}})
+                continue
+            for change in changes:
+                if change.get("inside", True):
+                    continue
+                # Named by the merge base's lines, which the span check judged and a grant names.
+                lines = (lines_said(change["old"], change["removed"]) if change["removed"]
+                         else f"before line {change['old']}")
+                said = (f"changed {lines}" if change["removed"]
+                        else f"added {change['added']} line{'s' if change['added'] != 1 else ''} {lines}")
+                items.append({**facts, "source": source, "kind": "laneOutside",
+                              "text": f"{named} {said} of `{path}`, outside its span.",
+                              "clears": "the branch no longer changing those lines, or the lead granting them",
+                              "fields": {"path": path, "lines": lines, "detail": f"It {said}, outside its span."}})
+    return items
 
 
 NEEDS_FILE = "needs-you.json"
@@ -12171,12 +12947,13 @@ class Supervisor:
             entry["laneWords"] = lane_words(doc, remembered)
             return cleanup_merged(c, doc, entry["laneWords"])
 
-        steps = (("reconcile", reconcile_once), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
+        steps = (("reconcile", reconcile_once), ("regions", lambda: settle_landings(c)), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
                  ("peers", lambda: self.peer_merges(entry)),
                  ("lenses", lambda: journal_lens_returns(c)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
-                 ("peerWaits", lambda: write_peer_waits(c)), ("publish", lambda: render_views(c, only="publishers")),
+                 ("peerWaits", lambda: write_peer_waits(c)), ("laneChanges", lambda: write_lane_changes(c)),
+                 ("publish", lambda: render_views(c, only="publishers")),
                  ("blockers", self.blockers), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:
@@ -12450,7 +13227,7 @@ def lead_suite(args) -> None:
     """The lead's own run of the binding's fullHealth, under any posture, at --at or the base head on the remote: in a
     detached checkout of that commit under the binding's work folder, prepared first and removed after, so nothing the
     lead does in its own checkout reaches the run. Its result is one line of the flow log's suite.jsonl, which the lead
-    cites when marking a finish line; it journals nothing."""
+    cites when marking a finish line, and, on a record with an integration step, an integration.suite entry."""
     c = cfg()
     binding = c.shelf.json(".agents/orchestration.json") or {}
     if not binding.get("fullHealth"):
@@ -12472,28 +13249,102 @@ def lead_suite(args) -> None:
     # run_group, and its checkout removed, by in_detached_checkout.
     began = time.monotonic()
 
-    def suite(checkout: Path) -> tuple[int, str, tuple[str | None, str | None]]:
+    def suite(checkout: Path) -> tuple[int, str, tuple[str | None, str | None], float | None]:
         asked = program_version(argv[0], checkout)
         try:
             code, out = run_group(argv, checkout, full_health_timeout(binding))
         except Stop as error:  # its timeout: a failure, with the version already read
             code, out = 1, str(error)
-        return code, out, asked
+        return code, out, asked, suite_budget(argv, checkout)
     print(f"lead-suite: running {shlex.join(argv)} at {commit[:10]} in {checkout}", flush=True)
+    started = True
     try:
-        code, out, (version, unread) = in_detached_checkout(c, commit, checkout, suite, full_health_timeout(binding))
+        code, out, (version, unread), budget = in_detached_checkout(c, commit, checkout, suite,
+                                                                    full_health_timeout(binding))
     except Stop as error:  # the checkout or a prepare step failed, before the interpreter was asked
-        code, out, version, unread = 1, str(error), None, "the run ended before its interpreter was asked"
+        code, out, version, unread, budget = 1, str(error), None, "the run ended before its interpreter was asked", None
+        started = False
     seconds = round(time.monotonic() - began, 1)
-    result = "passed" if code == 0 else "failed"
+    # Exit 3 is over its budget only where the run itself was held to a suite-budget/1 file; elsewhere it is a failure.
+    result = ("unreadable" if not started else "passed" if code == 0 else
+              "over-budget" if code == 3 and budget is not None else "failed")
     append_log("suite", c.delivery, {"commit": commit, "result": result, "exit": code, "argv": argv, "seconds": seconds,
                                      "output": out[-2000:], "platform": platform.platform(), "interpreter": version,
                                      **({"interpreterUnread": unread} if unread else {})})
+    integration = record_integration()
+    if integration:
+        state_tool("journal", "--kind", "integration.suite", "--subject", c.delivery, "--data", json.dumps(
+            {"head": commit, "result": result, "seconds": seconds,
+             **({"budgetSeconds": budget} if budget is not None else {})}))
     print(out[-2000:].rstrip())
     print(f"lead-suite: {result} at {commit[:10]} (exit {code}, {seconds}s); "
-          f"recorded in {flow_log('suite', c.delivery)}")
+          f"recorded in {flow_log('suite', c.delivery)}" + ("" if not integration else " and the journal"))
     if code:
-        sys.exit(code if 0 < code < 256 else 1)
+        raise SystemExit(code if 0 < code < 256 else 1)
+# The run's budget: the file a --budget argument names, read in the run's own checkout at the head it ran, as its
+# wall seconds when it reads as suite-budget/1, and None otherwise.
+def suite_budget(argv: list[str], checkout: Path) -> float | None:
+    named = next((argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--budget"),
+                 next((arg.split("=", 1)[1] for arg in argv if arg.startswith("--budget=")), None))
+    if not named:
+        return None
+    try:
+        budget = json.loads((checkout / named).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(budget, dict) or budget.get("schemaVersion") != "suite-budget/1":
+        return None
+    wall = budget.get("wallSeconds")
+    return wall if isinstance(wall, (int, float)) and not isinstance(wall, bool) and wall >= 0 else None
+# The record's integration step, {base, target, remote}, or None for a delivery without one or with no record yet.
+def record_integration() -> dict | None:
+    if not (cfg().state / "state.json").exists():
+        return None
+    integration = load_state()["state"]["meta"].get("integration")
+    return integration if isinstance(integration, dict) else None
+# The lead's record of the integration step: each fact under the delivery's own key, at a head the lead checkout has.
+def lead_integrate(args) -> None:
+    """Journal one fact of the integration step: the target merged in, an integration review round, the change request
+    into the target, or its merge. Refused, with nothing journalled, on a record without an integration step and for a
+    head that isn't a commit here, once the target is fetched."""
+    c = cfg()
+    integration = record_integration()
+    if not integration:
+        raise Stop("the record has no integration step: lead-init writes one only for a delivery with an "
+                   "integrationTarget")
+    target, remote = integration["target"], integration["remote"]
+    git("fetch", "-q", remote, target, check=False)
+    head = git("rev-parse", "--verify", "--quiet", f"{args.head}^{{commit}}", check=False)
+    if not head:
+        raise Stop(f"{args.head} is no commit in this repository; fetch it, or name another")
+    if args.fact == "merged":
+        parents = git("rev-list", "--parents", "-n", "1", head).split()[1:]
+        if len(parents) != 2:
+            raise Stop(f"{args.head} is no merge of {target}: it has {len(parents)} parents, and a merge has two")
+        done = state_tool("journal", "--kind", "integration.merged", "--subject", c.delivery, "--data", json.dumps(
+            {"target": target, "targetHead": parents[1], "head": head, "conflicts": list(args.conflict or [])}))
+    elif args.fact == "round":
+        verdicts = {}
+        for said in args.verdict:
+            lens, _, verdict = said.partition("=")
+            if not lens or verdict not in ("approve", "changes"):
+                raise Stop(f"--verdict {said} is not LENS=approve or LENS=changes")
+            verdicts[lens] = verdict
+        counts = args.findings.split(",")
+        if len(counts) != 4 or not all(n.isdigit() for n in counts):
+            raise Stop(f"--findings {args.findings} is not four counts, P0,P1,P2,P3")
+        moment = now()
+        done = state_tool("journal", "--kind", "review.round", "--subject", c.delivery, "--data", json.dumps(
+            {"round": args.round, "head": head, "verdicts": verdicts,
+             "findings": dict(zip(("P0", "P1", "P2", "P3"), map(int, counts))),
+             "startedAt": args.started or moment, "finishedAt": args.finished or moment}))
+    elif args.fact == "requested":
+        done = state_tool("journal", "--kind", "integration.requested", "--subject", c.delivery, "--data", json.dumps(
+            {"changeRequest": args.change_request, "head": head}))
+    else:
+        done = state_tool("journal", "--kind", "integration.landed", "--subject", c.delivery, "--data", json.dumps(
+            {"target": target, "head": head}))
+    print(f"recorded {args.fact} as entry {journal_id(done)} at {head[:10]}")
 
 
 def moved_head_stands(c, doc: dict, head: str, last: dict | None) -> str:
@@ -13939,6 +14790,8 @@ def main(argv: list[str] | None = None) -> None:
     q = command(review_commands, "check", help="validate plan-review-evidence/1 records, hand-written or written by a review")
     q.add_argument("records", nargs="+", metavar="RECORD"); q.set_defaults(fn=plan_review_check)
     p = command(sub, "gate"); p.add_argument("key"); p.set_defaults(fn=gate)
+    p = command(sub, "claims-check", help="what your committed change still needs claimed, with the lead's request for each")
+    p.add_argument("key"); p.set_defaults(fn=claims_check)
     p = command(sub, "build"); p.add_argument("key", nargs="?"); p.set_defaults(fn=build)
     p = command(sub, "app-check"); p.add_argument("key"); p.add_argument("name")
     p.add_argument("--mode", choices=("hold", "fail", "loaded"), required=True)
@@ -14052,11 +14905,21 @@ def main(argv: list[str] | None = None) -> None:
     action.add_argument("--region", metavar="PATH", help="grant a span in a committed text file")
     action.add_argument("--revoke-region", metavar="PATH", help="remove a region claim by its exact coordinates")
     action.add_argument("--claim", metavar="PATTERN", help="claim whole files on the base for this delivery's peers")
+    action.add_argument("--carve", metavar="PATH", help="recompute a file's region claims in one write, from --give")
+    p.add_argument("--give", action="append", metavar="LANE:START-END[@KEY]",
+                   help="with --carve: lines at --base to give a lane, for one of its stories after @")
+    p.add_argument("--story", metavar="KEY", help="with --region: the story of the lane the claim is for, released when it lands")
     p.add_argument("--lane"); p.add_argument("--from", dest="source")
     p.add_argument("--base", metavar="COMMIT")
+    p.add_argument("--around", metavar="TEXT", help="with --region: the block of the one line at --base holding TEXT, "
+                   "in place of --start and --end")
+    p.add_argument("--insert", choices=("before", "after"),
+                   help="with --region: widen the span one unclaimed line past that edge, for an insertion there")
     p.add_argument("--start", type=int, metavar="LINE", help="first owned line, starting at 1")
     p.add_argument("--end", type=int, metavar="LINE", help="first line after the owned span")
     p.set_defaults(fn=lead_own)
+    p = command(sub, "lead-claims", help="whether the queue would accept each story's ownership after syncing it")
+    p.add_argument("keys", nargs="*"); p.set_defaults(fn=lead_claims)
     p = command(sub, "lead-assign"); p.add_argument("keys", nargs="+"); p.add_argument("--lane", required=True)
     p.add_argument("--title", required=True); p.add_argument("--note")
     p.add_argument("--force", action="store_true",
@@ -14091,6 +14954,24 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=lead_carry_review)
     p = command(sub, "lead-suite", help="run the binding's fullHealth at a commit, in a detached checkout of its own")
     p.add_argument("--at", help="the commit to run at; the base head on the remote when absent")
+    q = command(sub, "lead-integrate", help="journal a fact of the integration step under the delivery's own key")
+    facts = q.add_subparsers(dest="fact", required=True)
+    one = facts.add_parser("merged", help="the target merged into the integration candidate at --head")
+    one.add_argument("--head", required=True, help="the merge commit, whose second parent is the target's head")
+    one.add_argument("--conflict", action="append", help="a path whose conflict was resolved by hand; repeat for each")
+    one = facts.add_parser("round", help="an integration review round on the candidate at --head")
+    one.add_argument("--round", type=int, required=True, help="the round's number, from 1")
+    one.add_argument("--head", required=True, help="the candidate the round read")
+    one.add_argument("--verdict", action="append", required=True, help="LENS=approve or LENS=changes; one each lens")
+    one.add_argument("--findings", required=True, help="the round's finding counts, P0,P1,P2,P3")
+    one.add_argument("--started", help="when the round started; now when absent")
+    one.add_argument("--finished", help="when the round finished; now when absent")
+    one = facts.add_parser("requested", help="the change request into the target, opened or moved to --head")
+    one.add_argument("--change-request", required=True, help="the change request's address")
+    one.add_argument("--head", required=True, help="the head it was opened at")
+    one = facts.add_parser("landed", help="the change request into the target merged")
+    one.add_argument("--head", required=True, help="the target's new head")
+    q.set_defaults(fn=lead_integrate)
     p.add_argument("extra", nargs=argparse.REMAINDER, help="after --, arguments appended to the fullHealth argv")
     p.set_defaults(fn=lead_suite)
     p = command(sub, "lead-decide", help="record a decision and why it was made")

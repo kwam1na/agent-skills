@@ -1851,19 +1851,10 @@ class Runner:
             raise Stop("undeclared_change", "a sync step changed files outside the declared paths", undeclared)
 
     def check_regions(self, item: dict, checkout: Path, base: str, head: str) -> None:
-        state = self.state()
-        regions = state.get("laneRegions", [])
-        accepted_paths = set(item.get("acceptedRegionPaths", []))
-        if not regions and not accepted_paths:
-            return
-        regional_paths = {claim["path"] for claim in regions}
         lane = item["lane"]
         try:
-            changed = region_ownership.changed_paths(checkout, base, head)
-            outside = region_ownership.problems(checkout, lane, base, head, changed, regions)
-            for path in accepted_paths.intersection(changed) - regional_paths:
-                if region_ownership.owners(state["laneOwnership"], path) != [lane]:
-                    outside[path] = "the lane has no current whole-file or region claim"
+            outside = region_ownership.queue_problems(checkout, self.state(), lane, item.get("acceptedRegionPaths", []),
+                                                      base, head)
         except region_ownership.RegionError as error:
             raise Stop("unreviewed_change", f"could not check region ownership: {error}") from error
         if outside:
