@@ -3631,6 +3631,17 @@ def check_snapshot(snapshot: object, name: str, max_age: float, *, parent: str |
         if snapshot["source"] == "tracker":
             errors += [f"/items: {problem}" for problem in dependency_problems(
                 [(item["subject"], item.get("blockedBy", [])) for item in snapshot["items"]], parent)]
+        for member in ("outside", "statusStates"):
+            if member in snapshot and snapshot["source"] != "tracker":
+                errors.append(f"/{member}: only a tracker snapshot carries it")
+        errors += [f"/items/{index}/unmarked: only a tracker snapshot carries it"
+                   for index, item in enumerate(snapshot["items"]) if "unmarked" in item and snapshot["source"] != "tracker"]
+        outside = [item["subject"] for item in snapshot.get("outside", [])]
+        if len(outside) != len(set(outside)):
+            errors.append("/outside: each subject appears once")
+        both = sorted(set(outside) & set(subjects))
+        if both:
+            errors.append(f"/outside: {', '.join(both)} {'is' if len(both) == 1 else 'are'} in items too")
         if "parent" in snapshot and snapshot["source"] != "tracker":
             errors.append("/parent: only a tracker snapshot carries it")
         elif "parent" in snapshot and parent is not None and snapshot["parent"]["subject"] != parent:
@@ -3689,7 +3700,7 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
         return next((item for item in lead["queue"] if item["subject"] == subject), None)
 
     def planned(subject: str) -> dict | None:
-        return next((item for item in lead["planned"] if item["subject"] == subject), None)
+        return next((item for item in lead.get("planned", []) if item["subject"] == subject), None)
 
     def followed(subject: str) -> bool:
         return any(subject in (item["id"], item["reference"]) for item in lead["followups"])
@@ -3704,13 +3715,68 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
         """Where planned work stands, as a report names it."""
         return "in review" if entry["stage"] == "review" else entry["stage"]
 
+    # A scoped tracker snapshot lists another repository's children apart, as outside. Work this delivery holds as its
+    # own stays in scope whatever the tracker marks it with; only what the sweep itself added is cleared.
+    added_by = {entry["subject"] for entry in journal if entry["kind"] == "story.added"}
+    scoped = [snapshot for snapshot in snapshots if snapshot["source"] == "tracker" and "outside" in snapshot]
+    outside = {item["subject"]: item for snapshot in scoped for item in snapshot["outside"]}
+
+    def tracker_added(entry: dict) -> bool:
+        """Planned work the sweep added from the tracker: building with no lane, no plan order or files, no change
+        request and no run, and never added as a story of the delivery."""
+        return (entry["lane"] is None and entry["stage"] == "building" and entry.get("trackerStarted") is True
+                and not any(name in entry for name in ("after", "files", "changeRequest", "runId"))
+                and entry["subject"] not in added_by)
+
+    # A sibling delivery's last kept read lists the children it holds, even while it can't be read. With or without a
+    # scope, the tracker sweep leaves them to it: by the first sibling in name order that lists each. A sibling now
+    # read as another epic's holds nothing here, as the views draw it.
+    sibling_of: dict[str, str] = {}
+    if any(snapshot["source"] == "tracker" for snapshot in snapshots):
+        for row in sorted(state.get("siblings", []), key=lambda row: row["name"]):
+            if row.get("lastOutcome") == "other-epic":
+                continue
+            for story in row.get("stories", []):
+                sibling_of.setdefault(story["subject"], row["name"])
+
+    # Decided once, on the record as read: what this sweep then does to the work never changes whose it is.
+    owned = {subject for subject in {*outside, *sibling_of} if queued(subject) is not None
+             or (planned(subject) is not None and not tracker_added(planned(subject)))}
+    # Lane-less work of this delivery that the tracker files elsewhere keeps its shape: the tracker's start doesn't
+    # move it, so a later sweep never takes it for work the sweep added.
+    held = {subject for subject in owned if planned(subject) is not None and planned(subject)["lane"] is None}
+
+    def own(subject: str) -> bool:
+        return subject in owned
+
+    for subject in sorted({*outside, *sibling_of}):  # In subject order, whatever order the snapshots list them in.
+        if own(subject):
+            continue
+        why = f"held by sibling {sibling_of[subject]}" if subject in sibling_of else "outside this delivery's scope"
+        if planned(subject) is not None:
+            lead["planned"] = [entry for entry in lead["planned"] if entry["subject"] != subject]
+            changes.append({"subject": subject, "change": f"{why}: cleared from the planned work", "recovery": False,
+                            "cleared": {"from": "planned", "why": why}})
+        if any(entry["id"] == subject and entry.get("reference") in (subject, None) for entry in lead["followups"]):
+            lead["followups"] = [entry for entry in lead["followups"]
+                                 if not (entry["id"] == subject and entry.get("reference") in (subject, None))]
+            changes.append({"subject": subject, "change": f"{why}: cleared from the follow-ups", "recovery": False,
+                            "cleared": {"from": "followups", "why": why}})
+
+    def mapped_back(snapshot: dict, item: dict) -> bool:
+        """The ticket's status is one the snapshot's maker was told reads as started: work sent back."""
+        return snapshot.get("statusStates", {}).get(item.get("status")) == "started"
+
     # The tracker first, whatever the order given: work it adds is then there
     # for the forge to link, so one pass reaches the fixed point.
     for snapshot in sorted(snapshots, key=lambda snapshot: snapshot["source"] != "tracker"):
-        for item in snapshot["items"]:
+        mine = [item for item in snapshot.get("outside", []) if own(item["subject"])]
+        for item in [*snapshot["items"], *mine]:
             subject, word = item["subject"], item["state"]
             title = item.get("title") or subject
             if snapshot["source"] == "tracker":
+                if subject in sibling_of and not own(subject):
+                    continue  # A sibling's: never taken in, never reported on.
                 listed[subject] = item
                 known = queued(subject) or planned(subject)
                 if not known and not followed(subject):
@@ -3724,10 +3790,15 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                         change(subject, "started in the tracker but not in the record: added as planned work, building")
                     elif word == "completed":
                         report(subject, "completed in the tracker but never recorded")
+                elif (word == "started" and queued(subject) and queued(subject)["stage"] == "merged"
+                      and mapped_back(snapshot, item)):
+                    report(subject, f"returned after merge ({item['status']}): assign a fix")
                 elif planned(subject) and planned(subject)["stage"] == "settled":
                     pass  # closed with no change needed: whatever the tracker says, the record holds it settled
                 elif word == "started" and not known:
                     report(subject, "a follow-up the tracker now shows started: assign it a lane")
+                elif word == "started" and subject in held:
+                    pass
                 elif word == "started" and planned(subject) and planned(subject)["stage"] == "planned":
                     # A lane moves its ticket to started as it begins; that alone moves the stop.
                     planned(subject).update(stage="building", trackerStarted=True)
@@ -3812,7 +3883,18 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
     if not lead["planned"] and "planned" not in state:
         del lead["planned"]
     changed = {key: value for key, value in lead.items() if value != state.get(key, [] if key == "planned" else None)}
+    if scoped or (state.get("outside") and any(snapshot["source"] == "tracker" for snapshot in snapshots)):
+        # What the views draw as "Elsewhere": the outside children this delivery doesn't hold, as the tracker shows
+        # them. A tracker snapshot no longer scoped empties it, so dropping --scope leaves no stale fold.
+        kept = [{name: item[name] for name in ("subject", "title", "state", "status", "marks") if name in item}
+                for item in outside.values() if not own(item["subject"])]
+        kept.sort(key=lambda item: item["subject"])
+        if kept != state.get("outside", []):
+            changed["outside"] = kept if kept else None
     tickets = _ticket_changes(state.get("tickets", {}), listed, lead)
+    for entry in changes:
+        if "cleared" in entry and entry["subject"] in state.get("tickets", {}) and not own(entry["subject"]):
+            tickets[entry["subject"]] = None  # The views keep a ticket's words only for work the record holds.
     if tickets:
         changed["tickets"] = tickets
         moved = {entry["subject"] for entry in changes}
@@ -3859,17 +3941,47 @@ def reconcile(
     max_age: float = SNAPSHOT_MAX_AGE_SECONDS,
     between_read_and_write: Callable[[], None] | None = None,
 ) -> dict:
-    """Bring the record up to date with forge and tracker snapshots.
+    """Bring the record up to date with forge, tracker and sibling snapshots.
 
     Lead fields are written as the lead. A merge the runner never recorded is
     written as the runner, with a journal entry saying so: a recovery path, since
     the runner records its own merges. Pinned to the version it read; when the
     record moves under it, the plan is made again from the new record.
+
+    A forge or tracker snapshot the freshness gate refuses raises, and nothing is
+    written. A sibling snapshot is applied entry by entry once the others have
+    been: a read too old to take counts as stale for that sibling, and the
+    forge and tracker snapshots beside it still apply.
     """
     if not snapshot_paths:
         raise StateError("snapshot_invalid", "give at least one --snapshot")
     parent = read_state(directory)["meta"].get("trackerParent")
-    snapshots = [read_snapshot(Path(path), max_age, parent=parent) for path in snapshot_paths]
+    loaded = [(Path(path), _load_snapshot(Path(path))) for path in snapshot_paths]
+    sibling_reads = [check_sibling_snapshot(value, path.name) for path, value in loaded if _is_sibling_snapshot(value)]
+    work = [(path, check_snapshot(value, path.name, max_age, parent=parent))
+            for path, value in loaded if not _is_sibling_snapshot(value)]
+    named: dict[str, str] = {}
+    for path, value in zip([path for path, value in loaded if _is_sibling_snapshot(value)], sibling_reads):
+        for entry in value["siblings"]:
+            if entry["name"] in named:
+                raise StateError("snapshot_invalid", f"{entry['name']} is in two sibling snapshots, {named[entry['name']]} "
+                                                     f"and {path.name}: give one read of each")
+            named[entry["name"]] = path.name
+    result = (_reconcile_work(directory, [path for path, _ in work], [snapshot for _, snapshot in work], parent,
+                              between_read_and_write) if work
+              else {"ok": True, "drift": False, "changes": [], "reports": [], "summary": "no drift"})
+    if sibling_reads:
+        applied = _apply_siblings(directory, sibling_reads, max_age)
+        if applied:
+            changes = result["changes"] + applied
+            result = {**result, "drift": True, "changes": changes,
+                      "summary": f"{len(changes)} change{'s' if len(changes) != 1 else ''}"}
+    return result
+
+
+def _reconcile_work(directory: Path, snapshot_paths: list[Path], snapshots: list[dict], parent: str | None,
+                    between_read_and_write: Callable[[], None] | None) -> dict:
+    """Apply checked forge and tracker snapshots, as reconcile does."""
     seen: dict[tuple[str, str], str] = {}
     for path, snapshot in zip(snapshot_paths, snapshots):
         for item in snapshot["items"]:
@@ -3905,12 +4017,246 @@ def reconcile(
                 continue
             raise
         break
+    for entry in changes:  # Each clearing once, after the write that made it; the next sweep finds nothing to clear.
+        if "cleared" in entry:
+            append_journal(directory, kind="work.cleared", subject=entry["subject"], data=entry.pop("cleared"))
     if recoveries:
         _recover(directory, recoveries, changes, reports)
     if not changes:
         return {"ok": True, "drift": False, "changes": [], "reports": reports, "summary": "no drift"}
     return {"ok": True, "drift": True, "changes": changes, "reports": reports,
             "summary": f"{len(changes)} change{'s' if len(changes) != 1 else ''}"}
+
+
+# ---------------------------------------------------------------------------
+# Sibling deliveries: the same epic delivered from other repositories, read from their hosted snapshots
+
+SIBLING_SNAPSHOT = "sibling-snapshot/1"
+SIBLING_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# A hosted live view's shape: <scheme>://<host>[:port]/d/<64 hex>. Which schemes may serve it is the reader's to say,
+# and lead-sibling's; the record holds the address it was given.
+SIBLING_LINK = re.compile(r"^[a-z][a-z0-9+.-]*://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?/d/[a-f0-9]{64}$")
+# A sibling's story has landed at these stages, the test _landed_subjects makes: merged, or settled with no change.
+SIBLING_LANDED = ("merged", "settled")
+SIBLING_KEPT = ("trackerParent", "updatedAt", "closing", "terminal")
+
+
+def _load_snapshot(path: Path) -> object:
+    """A snapshot file's JSON, of any source, or a refusal naming it."""
+    try:
+        return json.loads(Path(path).read_bytes().decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as error:
+        raise StateError("snapshot_invalid", f"cannot read the snapshot {Path(path).name}: {error}") from None
+
+
+def _is_sibling_snapshot(value: object) -> bool:
+    return isinstance(value, dict) and value.get("schemaVersion") == SIBLING_SNAPSHOT
+
+
+def check_sibling_snapshot(snapshot: object, name: str) -> dict:
+    """``snapshot`` as a valid ``sibling-snapshot/1``, or a refusal naming it ``name``.
+
+    Its age is not checked here: reconcile takes each entry's own read time to
+    the freshness gate, so one too old reads as stale for that sibling alone.
+    """
+    errors = validate(snapshot, load_schema(SIBLING_SNAPSHOT))
+    if not errors:
+        try:
+            _require_unicode(snapshot, "snapshot_invalid")
+        except StateError as error:
+            errors.append(str(error))
+    if not errors:
+        for index, entry in enumerate(snapshot["siblings"]):
+            try:
+                read = _parse_time(entry["readAt"], exact=True)
+            except ValueError:
+                errors.append(f"/siblings/{index}/readAt: not a real time")
+                continue
+            if (read - datetime.datetime.now(datetime.timezone.utc)).total_seconds() > SNAPSHOT_CLOCK_SKEW_SECONDS:
+                errors.append(f"/siblings/{index}/readAt: read in the future: check its clock")
+            if ("stories" in entry) != (entry["outcome"] in ("read", "stale")):
+                errors.append(f"/siblings/{index}/stories: a read or stale entry carries its stories, and no other does")
+            subjects = [story["subject"] for story in entry.get("stories", [])]
+            if len(subjects) != len(set(subjects)):
+                errors.append(f"/siblings/{index}/stories: each subject appears once")
+    if not errors:
+        try:
+            _parse_time(snapshot["takenAt"], exact=True)
+        except ValueError:
+            errors.append("/takenAt: not a real time")
+    if errors:
+        raise StateError("snapshot_invalid", f"{name}: " + "; ".join(errors))
+    return snapshot
+
+
+def _sibling_landed(journal: list[dict], sibling: str, subject: str) -> bool:
+    return any(entry["kind"] == "sibling.landed" and entry["data"].get("sibling") == sibling
+               and entry["data"].get("subject") == subject for entry in journal)
+
+
+def _sibling_mismatched(journal: list[dict], sibling: str, parent: str | None) -> bool:
+    return any(entry["kind"] == "sibling.mismatched" and entry["data"].get("sibling") == sibling
+               and entry["data"].get("parent") == parent for entry in journal)
+
+
+def _journal_locked(directory: Path, current: dict, journal: list[dict], kind: str, data: dict) -> dict:
+    """Append one tool entry while the caller holds the state lock, keeping ``journal`` in step."""
+    entry = {"id": len(journal) + 1, "at": now(), "kind": kind, "lane": None, "subject": None, "data": data}
+    written = _append_journal_locked(directory, current, journal, entry)
+    journal.append(written)
+    return written
+
+
+def _write_locked(directory: Path, state: dict, updated: dict) -> dict:
+    """Write ``updated`` as the next version while the caller holds the state lock, with the record's own checks."""
+    updated["version"] = state["version"] + 1
+    updated["meta"]["updatedAt"] = now()
+    errors = state_errors(updated)
+    if errors:
+        raise StateError("patch_invalid", "; ".join(errors))
+    _require_unicode(updated, "patch_invalid")
+    _write_atomically(directory / STATE_FILE, dumps(updated))
+    _note_change(directory, "patch", version=updated["version"])
+    return updated
+
+
+@writer_operation
+def _apply_siblings(directory: Path, reads: list[dict], max_age: float) -> list[dict]:
+    """Apply checked sibling reads to the record, entry by entry, and return what changed.
+
+    An entry counts for the sibling the record holds by that name and link: one
+    removed or relinked since the read is passed over, as is an entry read before
+    the sibling's lastAttemptAt, unless the freshness gate refuses it. Only a
+    read entry changes a sibling's stories and journals anything about them;
+    one older than ``max_age`` counts as stale. An entry whose outcome differs
+    from lastOutcome sets it, and lastAttemptAt to that entry's time. An entry
+    that changes nothing but those times writes nothing, so readAt is the last
+    read that changed the sibling, and lastAttemptAt when its outcome began.
+    """
+    clock = datetime.datetime.now(datetime.timezone.utc)
+    changes: list[dict] = []
+
+    def _sibling_unchanged(row: dict, before: dict) -> bool:
+        """Whether a read changed nothing but its own times: then it writes nothing. readAt stays the last read that
+        changed the sibling's stories or fields, and lastAttemptAt when its lastOutcome began."""
+        timeless = lambda value: {key: item for key, item in value.items() if key not in ("readAt", "lastAttemptAt")}
+        return timeless(row) == timeless(before)
+
+    with file_lock(directory / STATE_LOCK):
+        state = read_state(directory, for_write=True)
+        journal = read_journal(directory)
+        updated = copy.deepcopy(state)
+        rows = {row["name"]: row for row in updated.get("siblings", [])}
+        parent = state["meta"].get("trackerParent")
+        pending: list[tuple[str, dict]] = []
+        for snapshot in reads:
+            for entry in snapshot["siblings"]:
+                row = rows.get(entry["name"])
+                if row is None or row["link"] != entry["link"]:
+                    continue
+                earlier = (row.get("lastAttemptAt") is not None
+                           and _parse_time(entry["readAt"], exact=True) < _parse_time(row["lastAttemptAt"], exact=True))
+                before = copy.deepcopy(row)
+                if (clock - _parse_time(entry["readAt"])).total_seconds() > max_age:
+                    # The freshness gate refuses it: the sibling reads stale, whenever the refused read was taken.
+                    row["lastOutcome"] = "stale"
+                    if not earlier:
+                        row["lastAttemptAt"] = entry["readAt"]
+                    if _sibling_unchanged(row, before):
+                        row.clear()
+                        row.update(before)
+                    else:
+                        changes.append({"subject": None, "change": f"sibling {row['name']} read stale", "recovery": False})
+                    continue
+                if earlier:
+                    continue
+                outcome = entry["outcome"]
+                if outcome == "read" and entry.get("trackerParent") != parent:
+                    outcome = "other-epic"
+                row["lastOutcome"], row["lastAttemptAt"] = outcome, entry["readAt"]
+                if outcome == "read":
+                    row["readAt"] = entry["readAt"]
+                    row["stories"] = copy.deepcopy(entry["stories"])
+                    for field in SIBLING_KEPT:
+                        if field in entry:
+                            row[field] = copy.deepcopy(entry[field])
+                        else:
+                            row.pop(field, None)
+                    for story in row["stories"]:
+                        if (story["stage"] in SIBLING_LANDED and not _sibling_landed(journal, row["name"], story["subject"])
+                                and not any(kind == "sibling.landed" and data["sibling"] == row["name"]
+                                            and data["subject"] == story["subject"] for kind, data in pending)):
+                            pending.append(("sibling.landed", {"sibling": row["name"], "subject": story["subject"],
+                                                               "firstSeenAt": entry["readAt"]}))
+                elif outcome == "other-epic":
+                    seen = entry.get("trackerParent")
+                    if not _sibling_mismatched(journal, row["name"], seen) and not any(
+                            kind == "sibling.mismatched" and data["sibling"] == row["name"] and data.get("parent") == seen
+                            for kind, data in pending):
+                        pending.append(("sibling.mismatched", {"sibling": row["name"],
+                                                               **({"parent": seen} if seen else {})}))
+                if _sibling_unchanged(row, before):
+                    # Read again, and nothing to say: the record isn't written, so an idle refresh leaves it as it was.
+                    row.clear()
+                    row.update(before)
+                else:
+                    changes.append({"subject": None, "change": f"sibling {row['name']} read {outcome}", "recovery": False})
+        current = _write_locked(directory, state, updated) if updated != state else state
+        for kind, data in pending:
+            if kind == "sibling.landed":
+                _journal_locked(directory, current, journal, "sibling.landed", data)
+            else:
+                _journal_locked(directory, current, journal, "sibling.mismatched", data)
+            changes.append({"subject": None, "recovery": False,
+                            "change": (f"{data['subject']} landed in sibling {data['sibling']}" if kind == "sibling.landed"
+                                       else f"sibling {data['sibling']} belongs to another epic")})
+    return changes
+
+
+def sibling_link_problem(link: object) -> str | None:
+    """Why ``link`` can't name a sibling, or None: a hosted live view, <origin>/d/<64 hex>."""
+    if not isinstance(link, str) or not SIBLING_LINK.fullmatch(link):
+        return ("a sibling is named by its hosted live view, <origin>/d/<64 hex>, with no user, query or fragment")
+    return None
+
+
+@writer_operation
+def set_sibling(directory: Path, *, name: str, link: str | None = None, remove: bool = False) -> dict:
+    """Name a sibling delivery by its hosted link, journaled as sibling.added, or remove one, as sibling.removed.
+
+    Refused, with nothing written, for a record with no meta.trackerParent (a
+    sibling's epic could not be checked), a link that is not a hosted live view,
+    a name or link the record already holds, or a removal of a name it doesn't.
+    """
+    if not isinstance(name, str) or not SIBLING_NAME.fullmatch(name):
+        raise StateError("sibling_invalid", "a sibling's name is 1 to 64 letters, digits, dots, dashes and underscores")
+    with file_lock(directory / STATE_LOCK):
+        state = read_state(directory, for_write=True)
+        journal = read_journal(directory)
+        updated = copy.deepcopy(state)
+        rows = updated.setdefault("siblings", [])
+        held = next((row for row in rows if row["name"] == name), None)
+        if remove:
+            if held is None:
+                raise StateError("sibling_invalid", f"the record names no sibling {name}: there is nothing to remove")
+            rows.remove(held)
+            current = _write_locked(directory, state, updated)
+            entry = _journal_locked(directory, current, journal, "sibling.removed", {"sibling": name})
+            return {"ok": True, "removed": name, "entry": entry["id"]}
+        if not state["meta"].get("trackerParent"):
+            raise StateError("sibling_invalid", "the record names no meta.trackerParent, so a sibling's epic can't be "
+                                                "checked: set the tracker parent first")
+        problem = sibling_link_problem(link)
+        if problem:
+            raise StateError("sibling_invalid", problem)
+        if held is not None:
+            raise StateError("sibling_invalid", f"the record already names a sibling {name}: remove it first")
+        if any(row["link"] == link for row in rows):
+            raise StateError("sibling_invalid", "the record already names a sibling with that link")
+        rows.append({"name": name, "link": link, "addedAt": now()})
+        current = _write_locked(directory, state, updated)
+        entry = _journal_locked(directory, current, journal, "sibling.added", {"sibling": name, "link": link})
+        return {"ok": True, "added": name, "entry": entry["id"]}
 
 
 def _current_merge(journal: list[dict], item: dict) -> bool:
@@ -4365,7 +4711,7 @@ def _files(hint: dict, *, queued: bool) -> tuple[list[str], str]:
 # Every sentence a wait is said in: read through WAIT_WORDS_FILE, which a test may point at a copy.
 WAIT_WORDS_FILE = Path(__file__).resolve().parent.parent / "references" / "wait-words.json"
 # The causes, in the order a story's waits are shown.
-WAIT_CAUSES = ("order", "files", "lane", "claim", "slot", "review", "held")
+WAIT_CAUSES = ("order", "sibling", "files", "lane", "claim", "slot", "review", "held")
 
 
 def load_wait_words(path: Path | None = None) -> dict:
@@ -4424,7 +4770,10 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
     """Every wait the record holds, each ``{subject, on, cause, stage, frees, since?, needsSomeone, words}``.
 
     A planned story that has not started waits, in this order, for each of its
-    ``after`` keys that has not landed (``order``); for each unlanded story of
+    ``after`` keys that has not landed (``order``), or, in a record with
+    siblings, for an ``after`` key no story of its own holds (``sibling``): one a
+    same-epic sibling's last kept read holds unlanded, or one no sibling lists;
+    for each unlanded story of
     another lane whose whole-file grant covers a file both stories name
     (``files``); and for the lead, while the lead's ``story.held`` stands
     (``held``). A story in review waits on the round its lane is running
@@ -4463,6 +4812,35 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
         return (item["stage"] == "stopped" or item["subject"] in needing
                 or row.get("state") == "blocked" or row.get("waitingOn") == "lead")
 
+    # Siblings of the same epic, as the record keeps them: their stories are their last kept read's, and only a read
+    # applied as such changes a stage, so nothing here needs a clock.
+    siblings = [row for row in state.get("siblings", []) if row.get("lastOutcome") != "other-epic"]
+
+    def sibling_wait(subject: str, key: str) -> tuple[dict, dict] | None:
+        """The wait an after key outside the record makes, or None when a sibling's story has landed."""
+        for row in siblings:
+            story = next((story for story in row.get("stories", []) if story["subject"] == key), None)
+            if story is None:
+                continue
+            if story["stage"] in SIBLING_LANDED:
+                return None
+            # A fresh sibling's story says where it stands, with no time. Any other says since when its outcome
+            # began, as the views do: readAt is the last read that changed it, which can be hours older.
+            fresh = row.get("lastOutcome") == "read"
+            where = (wait_said(table, "stages", "sibling", {"stage": story["stage"]}) if fresh else
+                     wait_said(table, "stages", "siblingSince", {"outcome": row.get("lastOutcome"),
+                                                                 "at": row.get("lastAttemptAt") or row.get("readAt")}))
+            fields = {"on": key, "sibling": row["name"], "case": "held", "where": where}
+            return ({"subject": subject, "on": key, "cause": "sibling", "stage": story["stage"], "frees": "landed",
+                     "needsSomeone": False}, fields)
+        # Held by no story and no sibling: the lead has to add the sibling or fix the key, unless a sibling that
+        # hasn't been read fresh may yet list it.
+        unread = next((row for row in siblings if row.get("lastOutcome") != "read"), None)
+        fields = {"on": key, "case": "unread" if unread else "unlisted",
+                  "sibling": unread["name"] if unread else None}
+        return ({"subject": subject, "on": key, "cause": "sibling", "stage": "planned", "frees": "landed",
+                 "needsSomeone": unread is None}, fields)
+
     told: dict[str, list[tuple[dict, dict]]] = {}
     for entry in planned:
         if entry["stage"] != "planned":
@@ -4475,6 +4853,11 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
                                                         {"stage": where(other), "round": rounds.get(key)})}
                 found.append(({"subject": subject, "on": key, "cause": "order", "stage": other["stage"],
                                "frees": "landed", "needsSomeone": needs_someone(other)}, fields))
+            elif key not in items and "siblings" in state and state["siblings"]:
+                # A record without siblings ignores a key it doesn't hold, as it always has.
+                made = sibling_wait(subject, key)
+                if made is not None:
+                    found.append(made)
         named = entry.get("files", [])
         for other in [*planned, *queue]:
             holder = lane_of(other)
@@ -4720,15 +5103,19 @@ def next_for_lane(state: dict, lane: str, snapshot: dict | None, hints: dict | N
     if not any(entry["id"] == lane for entry in state["lanes"]):
         raise StateError("lane_unknown", f"there is no lane {lane}")
     declared = {} if hints is None else hints["items"]
-    tracker = {item["subject"]: item for item in (snapshot or {"items": []})["items"]}
+    tracker = {item["subject"]: item for item in [*(snapshot or {}).get("items", []), *(snapshot or {}).get("outside", [])]}
     # The plan's order and the files other lanes hold are the record's own waits, as every view shows them.
     derived: dict[str, list[dict]] = {}
     for wait in waits({"state": state}):
-        if wait["cause"] in ("order", "files"):
+        if wait["cause"] in ("order", "sibling", "files"):
             derived.setdefault(wait["subject"], []).append({"cause": wait["cause"], "on": wait["on"]})
     merged = {item["subject"] for item in state["queue"] if item["stage"] == "merged"}
     # Work settled with no change needed is done too, though it never entered the queue: it blocks nothing.
     merged |= {item["subject"] for item in state.get("planned", []) if item["stage"] == "settled"}
+    # A same-epic sibling's story its kept read shows landed: the plan's order on it is met, though the hints still
+    # name it. The tracker's own blockedBy on it still has to say done.
+    sibling_landed = {story["subject"] for row in state.get("siblings", []) if row.get("lastOutcome") != "other-epic"
+                      for story in row.get("stories", []) if story["stage"] in SIBLING_LANDED}
     queued = {item["subject"] for item in state["queue"]}
     open_lanes = {entry["id"] for entry in state["lanes"]
                   if entry["id"] != lane and entry["state"] not in RESTING_LANE_STATES}
@@ -4759,6 +5146,9 @@ def next_for_lane(state: dict, lane: str, snapshot: dict | None, hints: dict | N
         for blocker in dict.fromkeys([*waited, *blockers]):
             if blocker not in waited and (blocker in merged
                                           or tracker.get(blocker, {}).get("state") in ("completed", "canceled")):
+                continue
+            if (blocker not in waited and blocker in sibling_landed
+                    and blocker not in tracker.get(subject, {}).get("blockedBy", [])):
                 continue
             open_blockers.append(blocker if blocker in tracker or blocker in waited or snapshot is None
                                  else f"{blocker} (not in the snapshot)")
@@ -4834,7 +5224,7 @@ def suggest_next(directory: Path, lane: str, snapshot_path: Path, hints_path: Pa
 # ---------------------------------------------------------------------------
 # Forge and tracker snapshots from the repository's own commands, for a lead with no agent
 
-SNAPSHOT_SOURCES = ("tracker", "forge")
+SNAPSHOT_SOURCES = ("tracker", "forge", "siblings")
 TRACKER_SNAPSHOT_TIMEOUT = 60
 TRACKER_SNAPSHOT_TIMEOUT_CEILING = 600
 TRACKER_SNAPSHOT_OUTPUT_BYTES = 16 * 1024 * 1024
@@ -4856,8 +5246,11 @@ SNAPSHOTS_DIRECTORY = "snapshots"
 
 
 def snapshot_config(member: dict, source: str) -> dict | None:
-    """The binding's ``state.<source>Snapshot`` block, checked, or None when it has none."""
-    key = f"{source}Snapshot"
+    """The binding's ``state.<source>Snapshot`` block, checked, or None when it has none.
+
+    The siblings source's block is ``state.siblingSnapshot``.
+    """
+    key = "siblingSnapshot" if source == "siblings" else f"{source}Snapshot"
     config = member.get(key)
     if config is None:
         return None
@@ -5359,10 +5752,16 @@ def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, m
             cause = {"cause": "exited", "exitCode": code}
         else:
             try:
-                snapshot = check_snapshot(json.loads(out.decode("utf-8-sig")), "the command's snapshot", max_age,
-                                          parent=parent)
-                if snapshot["source"] != source:
-                    raise StateError("snapshot_invalid", f"the command's snapshot is not from the {source}")
+                printed = json.loads(out.decode("utf-8-sig"))
+                if source == "siblings":
+                    snapshot = check_sibling_snapshot(printed, "the command's snapshot")
+                    _sibling_snapshot_age(snapshot, max_age)
+                    items = snapshot["siblings"]
+                else:
+                    snapshot = check_snapshot(printed, "the command's snapshot", max_age, parent=parent)
+                    items = snapshot["items"]
+                    if snapshot["source"] != source:
+                        raise StateError("snapshot_invalid", f"the command's snapshot is not from the {source}")
             except (UnicodeDecodeError, ValueError, RecursionError):
                 reason = "the command printed no JSON"
                 cause = {"cause": "no_json"}
@@ -5381,7 +5780,7 @@ def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, m
             # Say the outage ended, so the next failure is noted again; it answers the note of the outage.
             append_journal(directory, kind="snapshot.retaken", data={"source": source},
                            answers=[last["id"]] if last["kind"] == "snapshot.stale" else None)
-        return {"ok": True, "taken": True, "output": str(output), "items": len(snapshot["items"]),
+        return {"ok": True, "taken": True, "output": str(output), "items": len(items),
                 "takenAt": snapshot["takenAt"], **_cleanup_note(cleanup)}
     facts = {"source": source, **cause}
     if last is None or not (last["kind"] == "snapshot.stale" and last["data"] == facts):
@@ -5390,6 +5789,15 @@ def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, m
     if detail and detail != reason:
         result["detail"] = detail
     return result
+
+
+def _sibling_snapshot_age(snapshot: dict, max_age: float) -> None:
+    """Refuse a sibling snapshot taken longer ago than ``max_age``, as the freshness gate refuses any other."""
+    age = (datetime.datetime.now(datetime.timezone.utc) - _parse_time(snapshot["takenAt"])).total_seconds()
+    if age < -SNAPSHOT_CLOCK_SKEW_SECONDS:
+        raise StateError("snapshot_invalid", f"the command's snapshot was taken {int(-age)}s in the future: check its clock")
+    if age > max_age:
+        raise StateError("snapshot_stale", f"the command's snapshot was taken {int(age)}s ago, more than {max_age:g}s")
 
 
 def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: float) -> dict:
@@ -5440,7 +5848,9 @@ def refresh_sources(directory: Path, member: dict, *, cwd: Path | None = None) -
             kept += _still_fresh(folder / f"{source}.json", max_age)
             continue
         if not declared:
-            statuses[source] = {"status": "not_observed"}
+            # Siblings are read only where the binding asks: a record that reads none says nothing about them.
+            if source != "siblings":
+                statuses[source] = {"status": "not_observed"}
             continue
         folder.mkdir(exist_ok=True)
         applied, fresh = folder / f"{source}.json", folder / f"{source}.next.json"
@@ -5656,7 +6066,7 @@ def _checks_argument(value: str) -> object:
 # What a running `wait` returns on: the journal kinds that need the lead. A blocked lane and machine pressure also end it.
 # A held runner wakes the lead as a blocker does: the queue writes its hold as serving.held.
 WAIT_KINDS = frozenset({"candidate.handed", "check.failed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded",
-                        "serving.held"})
+                        "serving.held", "sibling.landed"})
 # 0 is a wake and 1 an error, so a lead can tell what ended a wait left running in the background.
 WAIT_EXPIRED_EXIT = 3
 WAIT_TIMEOUT_SECONDS = 1800.0
