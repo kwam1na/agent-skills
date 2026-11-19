@@ -396,7 +396,7 @@ class PeerDeliveryTests(unittest.TestCase):
         self.assertIn(f"FX-1 (live, pid {second}; led from", self.doctor(fx, "FX-9", lead)["deliveries on this base"][1])
         # Its close removes its entry.
         self.state(fx, fx.tmp / "record", "journal", "--kind", "delivery.closed", "--data", "{}")
-        fx.flow("--delivery", "FX-1", "lead-close", cwd=m)
+        fx.flow("--delivery", "FX-1", "lead-close", "--without-compounding", "the fixture closes early", cwd=m)
         self.assertFalse((self.registry(fx) / "FX-1.json").exists())
         self.assertEqual(self.doctor(fx, "FX-9", lead)["deliveries on this base"][1],
                          "no other delivery is registered on feature/FX-1")
@@ -544,7 +544,7 @@ class PeerDeliveryTests(unittest.TestCase):
         self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
         self.assertTrue(self.peer_waits(fx, record1)["waits"])
         self.state(fx, record9, "journal", "--kind", "delivery.closed", "--data", "{}")
-        fx.flow("--delivery", "FX-9", "lead-close", cwd=lead)
+        fx.flow("--delivery", "FX-9", "lead-close", "--without-compounding", "the fixture closes early", cwd=lead)
         self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
         self.assertEqual(self.peer_waits(fx, record1), {"waits": [], "waitedOn": []})
 

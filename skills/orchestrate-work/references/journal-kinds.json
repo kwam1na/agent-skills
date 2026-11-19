@@ -214,11 +214,67 @@
         "focused"
       ]
     },
+    "gapClass": {
+      "description": "Where a gap lies: the workflow (the installed release's skills and tools), the repository, or the host the agents run in.",
+      "enum": [
+        "workflow",
+        "repo",
+        "host"
+      ]
+    },
+    "gapEvidence": {
+      "description": "A gap's evidence file, copied into the record: its path relative to the record, and its sha256.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "commandLine": {
+      "description": "A command and its arguments, as run.",
+      "type": "string",
+      "pattern": "\\S",
+      "maxLength": 4096
+    },
     "holdVerdict": {
       "enum": [
         "block",
         "warn"
       ]
+    },
+    "finishBy": {
+      "description": "Who marked a finish line met: the lead, for a line the record can't prove, or the supervisor.",
+      "enum": [
+        "lead",
+        "supervisor"
+      ]
+    },
+    "finishEvidence": {
+      "description": "What shows a lead-held finish line met, as the lead gave it. It holds something other than spaces.",
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "compoundingOutcome": {
+      "description": "What the delivery's compound-learning decision was: a learning preserved, none needed, or the decision skipped at a lead-close.",
+      "enum": [
+        "required",
+        "not-required",
+        "skipped"
+      ]
+    },
+    "compoundingReference": {
+      "description": "Where the preserved learning is, such as a solution note's path. It holds something other than spaces.",
+      "type": "string",
+      "pattern": "\\S"
     },
     "rerunVerdict": {
       "description": "What a re-run on the main line found: the main line is broken, the failure is the piece's, or no verdict was reached.",
@@ -2223,6 +2279,57 @@
       },
       "instruction": "On the blocked ticket, or the epic when every ticket is blocked: the blocker, and whose answer or work unblocks it."
     },
+    "gap.noted": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Gap noted",
+      "data": {
+        "class": {
+          "type": "gapClass"
+        },
+        "text": {
+          "type": "prose"
+        },
+        "why": {
+          "type": "prose"
+        },
+        "by": {
+          "type": "name"
+        },
+        "release": {
+          "type": "name",
+          "optional": true
+        },
+        "generation": {
+          "type": "name",
+          "optional": true
+        },
+        "command": {
+          "type": "commandLine",
+          "optional": true
+        },
+        "evidence": {
+          "type": "gapEvidence",
+          "optional": true
+        },
+        "occurrenceOf": {
+          "type": "count",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "A {class} gap was noted[ on {subject}][ again, as gap {occurrenceOf}]",
+        "line": "{text}"
+      },
+      "explain": "Friction met while delivering, noted when it happened, for the close-out to route by where it lies.",
+      "tracker": null,
+      "instruction": "None: a repo gap is filed as its own follow-up at close-out, and workflow and host gaps stay in the delivery's own reports."
+    },
     "blocker.resolved": {
       "altitude": "headline",
       "tone": "landed",
@@ -2443,6 +2550,14 @@
       "data": {
         "finish": {
           "type": "name"
+        },
+        "evidence": {
+          "optional": true,
+          "type": "finishEvidence"
+        },
+        "by": {
+          "optional": true,
+          "type": "finishBy"
         }
       },
       "because": {
@@ -2460,6 +2575,46 @@
         "heading": "Finish line met"
       },
       "instruction": "On the epic: the finish line and the evidence that met it."
+    },
+    "compounding.recorded": {
+      "altitude": "headline",
+      "tone": "decision",
+      "label": "Compounding decided",
+      "data": {
+        "outcome": {
+          "type": "compoundingOutcome"
+        },
+        "reference": {
+          "type": "compoundingReference",
+          "optional": true
+        },
+        "why": {
+          "type": "prose",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": {
+          "by": "outcome",
+          "cases": {
+            "required": "A learning was preserved",
+            "not-required": "No new learning to preserve"
+          },
+          "otherwise": "The compound-learning decision was skipped"
+        },
+        "line": "[{reference}][{why}]"
+      },
+      "explain": "The lead's compound-learning decision for the delivery, which its close waits on.",
+      "tracker": {
+        "posts": "epic",
+        "heading": "Compounding decided"
+      },
+      "instruction": "On the epic: whether a learning was preserved and where, or why none was, or why the decision was skipped."
     },
     "hook.held": {
       "altitude": "story",

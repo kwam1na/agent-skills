@@ -145,6 +145,15 @@ If a product run builds your story, bind its run id at start, before your first 
 `python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir {{state}} bind-run --lane <lane> --subject <key> --run <run id>`.
 The live view then shows the run's rounds before your hand-off, and the hand-off keeps the run. A story with no run binds none.
 
+## Gaps
+
+Note friction with `note-gap` when it happens, and class it as workflow, repo or host:
+`{{flow}} note-gap --class workflow|repo|host --text "<what>" --why "<what it cost>" [--evidence FILE] [--command "<command>"] [--same-as N]`.
+When you write a script to get behaviour the workflow or a tool should provide, note a workflow gap with the script as
+its evidence before moving on. One-off reads for understanding don't count; anything you'd need again does. It lists
+the open gaps of the same class first: name one with `--same-as N` when yours repeats it. A workflow gap needs
+`--evidence`. The close-out files repo gaps as follow-ups and keeps workflow and host gaps out of your tracker.
+
 ## Your turn
 
 End your turn only to hand off, to report yourself blocked, or to ask the lead. Never end it just to wait for a

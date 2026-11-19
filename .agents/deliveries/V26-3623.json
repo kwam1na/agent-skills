@@ -1,0 +1,190 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3623",
+  "headline": "V26-3623: close a delivery only on what it proved and what it taught",
+  "outcome": {
+    "summary": "A delivery closes only when what it proved is on the record and what it taught has been decided.",
+    "text": "A delivery closes only when what it proved is on the record and what it taught has been decided. Lines the record can't prove stay pending until the lead marks them met with evidence. The close holds on a recorded compounding decision. Gaps are journalled when they happen and reach that decision as evidence. Workflow gaps go to the workflow, never into the adopter's tracker. The supervised and manual close-out paths say the same order."
+  },
+  "baseBranch": "integrate/close-on-proof",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-18-close-on-proof-and-learning.md",
+  "laneBrief": "docs/plans/2026-11-18-close-on-proof-and-learning.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-18-close-on-proof-and-learning.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions",
+      "Units and order"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "tests/test_orchestration_state.py",
+        "tests/test_run_delivery_finish.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/run-delivery/scripts/gaps.py",
+        "skills/run-delivery/templates/lane-brief.md",
+        "tests/test_run_delivery_gaps.py"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3614": {
+      "title": "Give the lead a command that marks a finish line met, with its evidence",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3614-1",
+          "text": "c1: One command marks a lead-held finish line met and journals it with its evidence."
+        },
+        {
+          "id": "v26-3614-2",
+          "text": "c2: The next status line and the live view show the line as met."
+        },
+        {
+          "id": "v26-3614-3",
+          "text": "c3: A line the supervisor proves is refused by lead-finish, naming that the record proves it."
+        }
+      ]
+    },
+    "V26-3477": {
+      "title": "Keep external finish lines pending and retain only final review deferrals at close-out",
+      "lane": "lane-1",
+      "after": [
+        "V26-3614"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3477-1",
+          "text": "An external or manual finish line with empty coverage remains pending until explicit evidence marks it met."
+        },
+        {
+          "id": "v26-3477-2",
+          "text": "Story merge coverage still derives its appropriate finish line."
+        },
+        {
+          "id": "v26-3477-3",
+          "text": "Final review closures remove historical deferrals from the actionable follow-up list."
+        },
+        {
+          "id": "v26-3477-4",
+          "text": "A fixture with all stories merged and main integration or full health still pending does not close."
+        }
+      ]
+    },
+    "V26-3571": {
+      "title": "Note gaps as they happen, and route workflow gaps to the workflow, not the adopter",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3571-1",
+          "text": "c1: note-gap journals a gap.noted entry with its class, and a workflow gap carries the release id, generation and evidence. One without evidence is refused."
+        },
+        {
+          "id": "v26-3571-2",
+          "text": "c2: A second note matching an open gap on the same release adds an occurrence rather than a new gap."
+        },
+        {
+          "id": "v26-3571-3",
+          "text": "c3: The close-out files open repo gaps as follow-ups, writes workflow gaps to a workflow report in the archive grouped by release, and files nothing for host gaps."
+        },
+        {
+          "id": "v26-3571-4",
+          "text": "c4: No workflow gap is filed to the adopter's tracker."
+        },
+        {
+          "id": "v26-3571-5",
+          "text": "c5: Both briefs tell their reader to note gaps when they happen, and how to class them."
+        },
+        {
+          "id": "v26-3571-6",
+          "text": "c6: Both briefs name the script trigger and its exclusion for one-off reads, and a corpus pin holds that wording. A brief that says only \"note friction\" fails this criterion."
+        }
+      ]
+    },
+    "V26-3561": {
+      "title": "Make a delivery's close wait for its compound-learning decision",
+      "lane": "lane-1",
+      "after": [
+        "V26-3614",
+        "V26-3571"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3561-1",
+          "text": "With every finish line met and no compounding decision recorded, a supervisor pass journals no delivery.closed, and the status line and the live view's \"Needs you\" name the decision as what the close waits on."
+        },
+        {
+          "id": "v26-3561-2",
+          "text": "Recording a required decision with a reference, or a not-required decision with a reason, releases the close on the next pass."
+        },
+        {
+          "id": "v26-3561-3",
+          "text": "A required decision with no reference is refused."
+        },
+        {
+          "id": "v26-3561-4",
+          "text": "The friction note stub exists before the close is released, at a path the status line prints."
+        },
+        {
+          "id": "v26-3561-5",
+          "text": "lead-close without a decision exits non-zero naming it; with an explicit reason it closes and the reason is in the journal and the close-out summary."
+        },
+        {
+          "id": "v26-3561-6",
+          "text": "A record closed before this change still reads as closed."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "V26-3614, V26-3571 and V26-3561 land on integrate/close-on-proof through its merge queue, and V26-3477 settles with a no-change hand-off naming each criterion",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide's integration review says, and the operator merges it into main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration head, with --workers 4 --budget tests/suite-budget.json, inside the budget",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "grantedBy": "kwamina",
+    "grantedOn": "2026-11-18"
+  },
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}
