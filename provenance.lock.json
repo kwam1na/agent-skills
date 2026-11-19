@@ -514,11 +514,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
-          "sha256": "ba045cf917e7e6188554b66ebbee1034732fc148520aeb84858844da83de13b2"
+          "sha256": "a8f2e12f66b81ea7ff4f4270838286996c78feb03b9bb82f268513ff093ec9ab"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "8a075fdc5bc1186c77009dc2d9e88afbe41ded600482f6957c158836a9883d65"
+          "sha256": "b6ab7237d72975444936bd8d653beb9c5d7533439a51db483e094f06dc53c5ad"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -1111,11 +1111,11 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "29d439a3ac98cc8a0230aaabb76bb3bd0d55d6e023fd8c962abc6dcd3d2522a5"
+          "sha256": "5944d8d52112ee0cb48ffea73c1d72c8194d071804510e863b9f53ee130feeea"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "c643e8c4f7e415263f7f783cb5d426f4393c3e9adbeb01bb8706acbb15a823d2"
+          "sha256": "80246c1a2a54852b1cb0d4c80e3ea8098cf5b642f7cf19f53988d70c3ae59eb9"
         },
         {
           "path": "skills/run-delivery/scripts/gaps.py",
@@ -1127,11 +1127,11 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "56bb8195dee532736c2c27d12a8a498cbc4dc68f8349d711db3c5d52f1b3732e"
+          "sha256": "ce4ab63f0715bb2c29eae732cc466122ed86c9a37bb38a7de29990d8d30df704"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
-          "sha256": "f03c50da36be41fe66802ec5f88776f69434d5bc872b99114839b2bc1d91a04c"
+          "sha256": "fefd7315c2b5dd436d7d4759be9cbff640ec0ee859406f70b962976c73e1aaa6"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",
