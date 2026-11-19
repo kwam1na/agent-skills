@@ -339,9 +339,22 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .stop-btn:focus-visible { box-shadow: 0 0 0 3px var(--paper), 0 0 0 5px var(--ink); }
 .stop-label { position: absolute; top: 40px; font: 450 11px/14px var(--mono); color: var(--soft); white-space: nowrap; text-align: center; }
 /* What one stop carries, on its own sheet; its owner and timeline take the lane's hue. */
-.detail { min-height: 58px; padding: 22px 24px; border-radius: 14px; background: var(--lift); box-shadow: var(--shadow-sheet); display: grid; gap: 10px; }
+.detail { min-height: 58px; padding: 28px 30px 24px; border-radius: 14px; background: var(--lift); box-shadow: var(--shadow-sheet); display: grid; gap: 16px; }
 .detail .d1 { font-size: 17px; line-height: 24px; font-weight: 550; }
-.detail .d-owner { margin-bottom: -6px; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--c, var(--soft)); }
+.detail .d-owner { margin-bottom: -10px; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--c, var(--soft)); }
+/* The owner, title and meta line stay one group; the meta line is quiet. */
+.detail .d-meta { margin-top: -10px; color: var(--faint); font-size: 13px; }
+/* Where the story is: a state line with its dot, then how the review ended or the lane's own words. */
+.detail .d-state { margin: 8px 0 6px; display: grid; gap: 4px; }
+.detail .d-now { display: flex; align-items: center; gap: 8px; font-size: 15px; line-height: 22px; font-weight: 500; color: var(--ink); }
+.detail .d-now::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--dot, var(--landed)); flex: none; }
+.detail .d-said { margin-left: 15px; color: var(--soft); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.detail .d-said time { color: var(--faint); font-variant-numeric: tabular-nums; }
+.detail .d-said.d-lane { color: var(--faint); font-size: 12px; line-height: 18px; }
+.detail .d-state.is-moving { --dot: var(--landed); }
+.detail .d-state.is-waiting { --dot: var(--wait); }
+.detail .d-state.is-checked { --dot: var(--edge); }
+.detail .d-wait { font-size: 13px; line-height: 20px; }
 .detail .d-owner.is-none { color: var(--faint); }
 .detail .d2 { color: var(--soft); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
 .d-stage { color: var(--ink); }
@@ -736,7 +749,7 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
   .lines-track { min-width: calc(116px + var(--merge-width) + var(--most, 1) * 46px); }
   .line { grid-template-columns: 104px minmax(0, 1fr); gap: 12px; }
   .person { grid-template-columns: 20px minmax(0, 1fr); padding: 14px 16px; }
-  .detail { padding: 18px 16px; border-radius: 12px; }
+  .detail { padding: 22px 18px 20px; border-radius: 12px; gap: 14px; }
   .person .st { grid-column: 2; justify-items: start; }
   .person .on { text-align: left; }
   .beat { grid-template-columns: 18px minmax(0, 1fr); }
