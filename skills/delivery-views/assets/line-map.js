@@ -1619,38 +1619,141 @@
   /* 2. The line */
   // The lanes' row geometry, matched by the stylesheet: each row's stops centre this far below its top, rows this far apart.
   var LINE_STOP_Y = 23, LINE_PITCH = 84, MERGE_WIDTH = 176;
+  // With sibling repositories drawn, the merge widens to hold the epic's post: this repository's post keeps its x, and
+  // the epic's line runs on to a join where the siblings turn in and a post of its own. The stylesheet reads both widths
+  // and the room above the line from the variables the drawing sets on the track.
+  var EPIC_WIDTH = 304, FINISH_X = MERGE_WIDTH - 14, EPIC_JOIN_X = 228, EPIC_POST_X = EPIC_WIDTH - 14, MERGE_TOP = 16, MOST_DRAWN = 2;
+  // The merge's texts' sizes, as the stylesheet sets them, so the room above the line holds every line of the epic's words.
+  var TEXT_SIZE = { "mg-label": 13, "mg-count": 11 };
+  /**
+   * The epic's siblings as the line draws them, or null when no group is of this epic: then the line is drawn as it
+   * always was. Only same-epic groups count anywhere here; the state tool decides which those are. The siblings this
+   * repository waits on come first, in the record's order; the rest follow furthest behind first, by the lowest share of
+   * stories landed, then the most open, then the record's order. A fresh sibling with no stories has nothing to be
+   * behind on and comes last; one that can't be read and lists none counts as nothing landed. The first two are drawn.
+   */
+  function epicOf(doc, all) {
+    var groups = isObject(doc.across) ? list(doc.across.groups).filter(function (group) {
+      return isObject(group) && text(group.name) && group.lastOutcome !== "other-epic";
+    }) : [];
+    if (!groups.length) { return null; }
+    var waited = list(doc.waits).filter(function (wait) { return isObject(wait) && wait.cause === "sibling" && typeof wait.on === "string"; })
+      .map(function (wait) { return wait.on; });
+    var shown = groups.map(function (group, index) {
+      var stories = list(group.stories).filter(function (story) { return isObject(story) && text(story.subject); });
+      var landed = stories.filter(function (story) { return story.landed === true; }).length;
+      return { group: group, name: text(group.name), index: index, fresh: group.fresh === true, total: stories.length, landed: landed,
+        waited: stories.some(function (story) { return waited.indexOf(story.subject) >= 0; }) };
+    });
+    var rank = function (one) { return one.waited ? 0 : one.fresh && !one.total ? 2 : 1; };
+    var ranked = shown.slice().sort(function (a, b) {
+      if (rank(a) !== rank(b)) { return rank(a) - rank(b); }
+      if (rank(a) === 1) {
+        var shareA = a.total ? a.landed / a.total : 0, shareB = b.total ? b.landed / b.total : 0;
+        if (shareA !== shareB) { return shareA - shareB; }
+        if (a.total - a.landed !== b.total - b.landed) { return (b.total - b.landed) - (a.total - a.landed); }
+      }
+      return a.index - b.index;
+    });
+    var ownLanded = all.filter(isLanded).length;
+    var landed = shown.reduce(function (sum, one) { return sum + one.landed; }, ownLanded);
+    var total = shown.reduce(function (sum, one) { return sum + one.total; }, all.length);
+    var unread = shown.filter(function (one) { return !one.fresh; });
+    var met = ownLanded === all.length && landed === total && !unread.length;
+    return { drawn: ranked.slice(0, MOST_DRAWN), folded: ranked.slice(MOST_DRAWN), unread: unread, landed: landed, total: total,
+      repositories: shown.length + 1, state: unread.length ? "unread" : met ? "" : "open" };
+  }
+  /** A sibling's turn: solid once it has stories and all have landed, dotted while it can't be read, dashed otherwise. */
+  function siblingState(one) { return !one.fresh ? "unread" : one.total && one.landed === one.total ? "" : "open"; }
+  /** A drawn sibling's row under this repository's lanes: its name and how far it has come, with no stops of its own. */
+  function siblingRow(one) {
+    var row = el("div", "line sibling" + (siblingState(one) ? " " + siblingState(one) : ""));
+    row.style.setProperty("--c", "var(--edge)");
+    var since = text(one.group.since);
+    var when = since ? el("time", null, spoken(since) || since) : null;
+    if (when) { when.setAttribute("datetime", since); }
+    var said = one.fresh ? figures(el("span"), "sibling:" + one.name, one.landed + " of " + one.total + " landed")
+      : !text(one.group.readAt) || !when ? el("span", null, "Never read") : add(el("span"), "Couldn't be read since ", when);
+    add(row, add(el("div", "name"), el("b", null, one.name), said));
+    var stops = el("div", "stops");
+    stops.style.setProperty("--solid", siblingState(one) === "" ? "100%" : "0%");
+    return add(row, stops);
+  }
   /**
    * Beside the lanes, each lane's line turns into one main line that runs to the finish line. A lane's turn is solid
    * once it has landed everything; the main line is solid once every piece is in. Drawn to the rows' fixed geometry.
+   * With siblings of the epic, the main line runs on past the finish line to the epic's post, where the drawn siblings
+   * turn in from their rows below; its words stack above it, since the siblings come in from below.
    */
-  function mergeDrawing(doc, all, ends) {
-    var height = (ends.length - 1) * LINE_PITCH + LINE_STOP_Y * 2;
+  function mergeDrawing(doc, all, ends, epic, track) {
+    var rows = ends.length + (epic ? epic.drawn.length : 0);
+    var width = epic ? EPIC_WIDTH : MERGE_WIDTH;
+    var height = (rows - 1) * LINE_PITCH + LINE_STOP_Y * 2;
     var trunkY = LINE_STOP_Y + (ends.length - 1) * LINE_PITCH / 2;
-    var joinX = 100, finishX = MERGE_WIDTH - 14;
+    var joinX = 100, finishX = FINISH_X;
     var svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("class", "line-merge");
-    svg.setAttribute("viewBox", "0 0 " + MERGE_WIDTH + " " + height);
-    svg.setAttribute("width", String(MERGE_WIDTH));
+    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+    svg.setAttribute("width", String(width));
     svg.setAttribute("height", String(height));
     var landed = all.filter(isLanded).length;
     var finish = list(doc.state.finish).filter(isObject);
     var met = finish.filter(function (line) { return line.met === true; }).length;
+    var unreadNames = epic ? epic.unread.map(function (one) { return one.name; }) : [];
     svg.setAttribute("role", "img");
     svg.setAttribute("aria-label", "Every lane merges into one main line: " + landed + " of " + all.length + " pieces landed" +
-      (finish.length ? ", " + met + " of " + finish.length + " finish lines met" : ""));
+      (finish.length ? ", " + met + " of " + finish.length + " finish lines met" : "") +
+      (epic ? "; the epic: " + epic.landed + " of " + epic.total + " pieces landed across " + epic.repositories + " repositories" +
+        (unreadNames.length ? ", " + spokenList(unreadNames) + " can't be read" : "") +
+        (epic.folded.length ? ", " + epic.folded.length + " more not drawn" : "") : ""));
     shape(svg, "path", { class: "mg-trunk" + (landed === all.length ? "" : " open"), d: "M" + joinX + " " + trunkY + "H" + finishX });
+    if (epic) { shape(svg, "path", { class: "mg-epic" + (epic.state ? " " + epic.state : ""), d: "M" + finishX + " " + trunkY + "H" + EPIC_POST_X }); }
     ends.forEach(function (end, i) {
       var y = LINE_STOP_Y + i * LINE_PITCH;
       var turn = shape(svg, "path", { class: "mg-turn" + (end.done ? "" : " open"),
         d: "M0 " + y + "H12C" + (12 + 52) + " " + y + " " + (joinX - 52) + " " + trunkY + " " + joinX + " " + trunkY });
       turn.style.setProperty("--c", end.colour);
     });
+    (epic ? epic.drawn : []).forEach(function (one, j) {
+      var y = LINE_STOP_Y + (ends.length + j) * LINE_PITCH;
+      var state = siblingState(one);
+      shape(svg, "path", { class: "mg-sib" + (state ? " " + state : ""),
+        d: "M0 " + y + "H12C150 " + y + " 190 " + trunkY + " " + EPIC_JOIN_X + " " + trunkY });
+    });
     shape(svg, "circle", { class: "mg-join", cx: joinX, cy: trunkY, r: 4 });
+    if (epic) { shape(svg, "circle", { class: "mg-epic-join", cx: EPIC_JOIN_X, cy: trunkY, r: 4 }); }
     shape(svg, "path", { class: "mg-post", d: "M" + finishX + " " + (trunkY - 20) + "V" + (trunkY + 20) });
     shape(svg, "text", { class: "mg-label", x: finishX + 3, y: trunkY - 30, "text-anchor": "end" }, "Finish line");
     // The totals stack under the post, short enough to stay clear of the lanes turning in.
     figureText(svg, "merge-landed", { class: "mg-count", x: finishX + 3, y: trunkY + 38, "text-anchor": "end" }, landed + "/" + all.length + " landed");
     if (finish.length) { figureText(svg, "merge-met", { class: "mg-count", x: finishX + 3, y: trunkY + 52, "text-anchor": "end" }, met + "/" + finish.length + " met"); }
+    var top = MERGE_TOP;
+    if (epic) {
+      shape(svg, "path", { class: "mg-epic-post" + (epic.state ? " " + epic.state : ""), d: "M" + EPIC_POST_X + " " + (trunkY - 20) + "V" + (trunkY + 20) });
+      // Above the epic's post, bottom up: its count, what can't be read, and its label.
+      var words = unreadNames.length === 1 ? unreadNames[0] : unreadNames.length ? unreadNames.length + " can't be read" : "";
+      var stack = [["mg-label" + (unreadNames.length ? " unread" : ""), unreadNames.length ? "Epic ?" : "Epic"]];
+      if (words) { stack.push(["mg-count", words]); }
+      stack.forEach(function (line, k) {
+        shape(svg, "text", { class: line[0], x: EPIC_POST_X + 3, y: trunkY - 30 - (stack.length - k) * 14, "text-anchor": "end" }, line[1]);
+      });
+      figureText(svg, "merge-epic", { class: "mg-count", x: EPIC_POST_X + 3, y: trunkY - 30, "text-anchor": "end" }, epic.landed + "/" + epic.total + " landed");
+      // The room above the line holds every word the merge draws.
+      [].forEach.call(svg.querySelectorAll("text"), function (node) {
+        var size = TEXT_SIZE[node.getAttribute("class").split(" ")[0]] || 0;
+        top = Math.max(top, Math.ceil(size - Number(node.getAttribute("y"))));
+      });
+      if (epic.folded.length) {
+        var more = "+" + epic.folded.length + " more";
+        var chip = el("span", "more-chip", more);
+        chip.setAttribute("role", "img");
+        chip.setAttribute("aria-label", more + ": " + spokenList(epic.folded.map(function (one) { return one.name; })));
+        chip.style.setProperty("--chip-y", (trunkY + 28) + "px");
+        track.appendChild(chip);
+      }
+    }
+    track.style.setProperty("--merge-width", width + "px");
+    track.style.setProperty("--merge-top", top + "px");
     return svg;
   }
   /**
@@ -1663,7 +1766,7 @@
    */
   // The stream keeps the page's beat (--beat in the stylesheet): a swell is a whole number of beats long.
   var FLOW_SPEED = 72, BEAT_MS = 1200;
-  function drawFlow(track, flows, laneCount, running) {
+  function drawFlow(track, flows, laneCount, running, mergeWidth) {
     var old = track.querySelector(".line-flow");
     if (old) { old.remove(); }
     var width = track.clientWidth, height = track.clientHeight;
@@ -1678,7 +1781,7 @@
     if (typeof svg.animate !== "function") { svg.remove(); return; }
     var origin = track.getBoundingClientRect();
     var top = parseFloat(getComputedStyle(track).paddingTop) || 0;
-    var mergeX = width - MERGE_WIDTH, joinX = mergeX + 100, finishX = mergeX + MERGE_WIDTH - 14;
+    var mergeX = width - mergeWidth, joinX = mergeX + 100, finishX = mergeX + FINISH_X;
     var trunkY = top + LINE_STOP_Y + (laneCount - 1) * LINE_PITCH / 2;
     // One unbroken stream: a swell of light runs down it at an even pace, with no gap anywhere along it. More running
     // checks bring the swells closer, never faster. Each swell builds slowly and ends at a bright head, so the eye reads
@@ -1799,7 +1902,11 @@
       add(row, stops);
       track.appendChild(row);
     });
-    track.appendChild(mergeDrawing(doc, all, ends));
+    // The epic's drawn siblings have rows under this repository's lanes, on the same pitch.
+    var epic = epicOf(doc, all);
+    (epic ? epic.drawn : []).forEach(function (one) { track.appendChild(siblingRow(one)); });
+    var merge = mergeDrawing(doc, all, ends, epic, track);
+    track.insertBefore(merge, track.querySelector(".more-chip"));
     var detail = el("div", "detail");
     detail.id = "detail";
     detail.setAttribute("aria-live", "polite");
@@ -1821,7 +1928,8 @@
     if (!closedEntry(doc)) {
       var layFlow = function () {
         flows.forEach(function (flow) { flow.left = flow.stops.getBoundingClientRect().left; });
-        drawFlow(track, flows, lanes.length, current ? list(current.steps).filter(function (step) { return isObject(step) && step.state === "running"; }).length : 0);
+        drawFlow(track, flows, lanes.length, current ? list(current.steps).filter(function (step) { return isObject(step) && step.state === "running"; }).length : 0,
+          epic ? EPIC_WIDTH : MERGE_WIDTH);
       };
       layFlow();
       if (typeof ResizeObserver === "function") { prev.flowWatch = new ResizeObserver(layFlow); prev.flowWatch.observe(track); }
@@ -3461,13 +3569,14 @@
     section.hidden = !groups.length;
     if (link) { link.hidden = !groups.length; }
     if (!groups.length) { parts.across.replaceChildren(); return; }
+    // A group of another epic delivers nothing of this one: it is named after the epic's own, under Also linked.
+    var others = groups.filter(function (group) { return group.lastOutcome === "other-epic"; });
+    groups = groups.filter(function (group) { return group.lastOutcome !== "other-epic"; });
     var unread = groups.filter(function (group) { return group.fresh !== true; }).length;
     var nodes = [el("div", "kicker", "Across repositories"),
-      el("h2", "title", groups.length + (groups.length === 1 ? " other repository delivers this epic." : " other repositories deliver this epic.") +
-        (unread ? " " + unread + " can't be read now." : ""))];
-    var fold = el("details", "across-fold");
-    add(fold, el("summary", null, groups.map(function (group) { return text(group.name); }).join(" · ")));
-    groups.forEach(function (group) {
+      el("h2", "title", (groups.length === 0 ? "No other repository delivers this epic." : groups.length + (groups.length === 1
+        ? " other repository delivers this epic." : " other repositories deliver this epic.")) + (unread ? " " + unread + " can't be read now." : ""))];
+    var headOf = function (group) {
       var name = typeof group.link === "string" && /^https?:\/\//.test(group.link) ? el("a", "across-name", text(group.name)) : el("span", "across-name", text(group.name));
       if (name.tagName === "A") {
         name.setAttribute("href", group.link);
@@ -3484,20 +3593,31 @@
         : reason && when ? add(el("span", "across-read is-unread"), reason.charAt(0).toUpperCase() + reason.slice(1) + " since ", when,
           text(group.readAt) ? null : " · never read")
         : el("span", "across-read is-unread", "Never read");
-      var head = add(el("div", "across-head" + (group.fresh === true ? "" : " is-unread")), name, said);
-      var ul = el("ul", "parked across");
-      list(group.stories).filter(function (story) { return isObject(story) && text(story.subject); }).forEach(function (story) {
-        var row = add(el("li", story.landed === true ? "is-landed" : ""), add(el("span", "p"), issue(text(story.subject))),
-          text(story.title) || text(story.subject));
-        add(row, el("span", "p", stageWords(story)));
-        ul.appendChild(row);
+      return add(el("div", "across-head" + (group.fresh === true ? "" : " is-unread")), name, said);
+    };
+    if (groups.length) {
+      var fold = el("details", "across-fold");
+      add(fold, el("summary", null, groups.map(function (group) { return text(group.name); }).join(" · ")));
+      groups.forEach(function (group) {
+        var ul = el("ul", "parked across");
+        list(group.stories).filter(function (story) { return isObject(story) && text(story.subject); }).forEach(function (story) {
+          var row = add(el("li", story.landed === true ? "is-landed" : ""), add(el("span", "p"), issue(text(story.subject))),
+            text(story.title) || text(story.subject));
+          add(row, el("span", "p", stageWords(story)));
+          ul.appendChild(row);
+        });
+        add(fold, add(el("div", "across-group"), headOf(group), ul.firstChild ? ul : null));
       });
-      add(fold, add(el("div", "across-group"), head, ul.firstChild ? ul : null));
-    });
-    // Shut by default, as Elsewhere is; a reader who opened it keeps it open through a redraw.
-    if (prev.acrossOpen) { fold.setAttribute("open", ""); }
-    fold.addEventListener("toggle", function () { prev.acrossOpen = fold.hasAttribute("open"); });
-    nodes.push(fold);
+      // Shut by default, as Elsewhere is; a reader who opened it keeps it open through a redraw.
+      if (prev.acrossOpen) { fold.setAttribute("open", ""); }
+      fold.addEventListener("toggle", function () { prev.acrossOpen = fold.hasAttribute("open"); });
+      nodes.push(fold);
+    }
+    if (others.length) {
+      var also = add(el("div", "across-also"), el("span", "across-also-head", "Also linked"));
+      others.forEach(function (group) { also.appendChild(headOf(group)); });
+      nodes.push(also);
+    }
     parts.across.replaceChildren.apply(parts.across, nodes);
   }
 
