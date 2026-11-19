@@ -7763,6 +7763,85 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         sh("git", "worktree", "add", "-q", "--no-track", "-b", "lead/FX-1", lead, "origin/feature/FX-1", cwd=m)
         return fx, lead, lead / ".agents/deliveries/FX-1.json"
 
+    def test_the_close_removes_the_leads_own_checkout_once_the_archive_holds_everything_in_it(self) -> None:
+        fx, _, _ = self.fixture()
+        m = fx.main
+        lead = m / "lanes/FX-1"
+        sh("git", "worktree", "add", "-q", "--no-track", "-b", "lead/FX-1-own", lead, "origin/feature/FX-1", cwd=m)
+        sh("git", "push", "-q", "origin", "lead/FX-1-own", cwd=lead)
+        code, out = fx.flow("lead-retire", cwd=m)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"{lead.name} kept: the delivery's close hasn't archived the record yet", out)
+        state_tool = fx.release / "skills/orchestrate-work/scripts/delivery_state.py"
+        sh(sys.executable, "-B", state_tool, "--dir", fx.tmp / "record", "journal", "--kind", "delivery.closed",
+           "--data", "{}", cwd=m)
+        # A file only the lead's checkout holds keeps it; the close says so, and leaves the sessions to the lead.
+        (lead / "stray.txt").write_text("kept\n")
+        code, out = fx.flow("lead-close", "--without-compounding", "an early close in the fixture", cwd=m)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"{lead.name} kept: it has uncommitted or untracked files", out)
+        self.assertIn("stray.txt", out)
+        self.assertIn("lead: end or archive each lane session you started", out)
+        self.assertTrue(lead.exists())
+        (lead / "stray.txt").unlink()
+        # An entry journalled after the archive keeps it too, until a close archives it.
+        sh(sys.executable, "-B", state_tool, "--dir", fx.tmp / "record", "journal", "--kind", "compounding.recorded",
+           "--data", json.dumps({"outcome": "skipped", "why": "after the close"}), cwd=m)
+        code, out = fx.flow("lead-retire", cwd=m)
+        self.assertEqual(code, 1, out)
+        self.assertIn("journal entry the archive lacks", out)
+        self.assertTrue(lead.exists())
+        # Run from inside the lead's checkout, as a lead runs it: the close still says all it did once its folder is gone,
+        # and what it wrote beside the record after the archive is kept in the archive.
+        code, out = fx.flow("lead-close", "--without-compounding", "an early close in the fixture", cwd=lead)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"removed the lead's checkout {lead.resolve()}", out)
+        archive = Path(json.loads(out.split("its record is in ", 1)[1].split(",", 1)[0].join(['"', '"'])))
+        self.assertTrue((archive / "at-retire/flow-log/FX-1.closed.json").is_file(), out)
+        self.assertIn("deleted the local lead/FX-1-own", out)
+        self.assertFalse(lead.exists(), out)
+        self.assertTrue(remote_has(m, "lead/FX-1-own"), "the remote branch went with the checkout")
+        self.assertTrue(m.exists() and (m / ".git").exists(), "the operator's main checkout went")
+        code, out = fx.flow("lead-retire", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn("the lead has no checkout of its own to remove", out)
+
+    def test_the_close_fast_forwards_an_operator_checkout_on_the_integration_target(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="run-delivery-align-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        origin, seed, operator = tmp / "origin.git", tmp / "seed", tmp / "operator"
+        sh("git", "init", "-q", "--bare", "-b", "main", origin)
+        sh("git", "clone", "-q", origin, seed)
+        (seed / "a.txt").write_text("one\n")
+        commit(seed, "one")
+        sh("git", "push", "-q", "origin", "HEAD:main", cwd=seed)
+        sh("git", "clone", "-q", origin, operator)
+        # The integration lands on main after the operator's checkout last fetched it.
+        (seed / "a.txt").write_text("two\n")
+        commit(seed, "two")
+        sh("git", "push", "-q", "origin", "HEAD:main", cwd=seed)
+        probe = (
+            "import importlib.util, json, sys, types\n"
+            "spec = importlib.util.spec_from_file_location('align_probe', sys.argv[1])\n"
+            "tool = importlib.util.module_from_spec(spec); spec.loader.exec_module(tool)\n"
+            "c = types.SimpleNamespace(main=__import__('pathlib').Path(sys.argv[2]), base_branch='integrate/x',\n"
+            "                          raw={'integrationTarget': sys.argv[3]}, remote='origin')\n"
+            "print(json.dumps(tool.align_operator(c)))\n")
+        script = ROOT / "skills/run-delivery/scripts/run_delivery.py"
+        said = json.loads(sh(sys.executable, "-B", "-c", probe, script, operator, "main").stdout)
+        self.assertEqual(said, [True, f"fast-forwarded {operator} to origin/main"])
+        self.assertEqual((operator / "a.txt").read_text(), "two\n")
+        # A checkout on a branch that is neither the base nor the target is the operator's to keep.
+        sh("git", "checkout", "-q", "-b", "mine", cwd=operator)
+        said = json.loads(sh(sys.executable, "-B", "-c", probe, script, operator, "main").stdout)
+        self.assertEqual(said, [None, f"left {operator} where it is: it is on mine"])
+        # Uncommitted changes on the target are left, and named for the operator.
+        sh("git", "checkout", "-q", "main", cwd=operator)
+        (operator / "a.txt").write_text("local\n")
+        said = json.loads(sh(sys.executable, "-B", "-c", probe, script, operator, "main").stdout)
+        self.assertIsNone(said[0])
+        self.assertIn("it has uncommitted changes; align it with origin/main", said[1])
+
     # Another delivery's command holding a base's merge slot until the test writes its release file.
     HOLD_SLOT = """
 import pathlib, sys, time

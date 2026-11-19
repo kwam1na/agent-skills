@@ -3750,7 +3750,8 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertTrue(note.exists(), last)
         code, out = fx.flow("lead-brief", cwd=m)
         self.assertIn(f"supervisor: stopped; the delivery is closed. Archive {archive}; its friction note is {note}; "
-                      "archive the lane sessions", out)
+                      "the lead archives the lane sessions it started and runs ", out)
+        self.assertIn(" lead-retire", out)
         # A further pass closes nothing twice.
         self.once(fx)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1)

@@ -1380,7 +1380,8 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
 
 
 def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
-                    plan: dict | None = None, needs: dict | None = None, files: dict | None = None) -> str:
+                    plan: dict | None = None, needs: dict | None = None, files: dict | None = None,
+                    operator: str | None = None) -> str:
     data = line_map_data(document, runs, config, theme_key=theme_key, history=history, plan=plan, needs=needs,
                          files=files)
     document, runs, reviews, view = (data[key] for key in ("document", "runs", "reviews", "view"))
@@ -1397,7 +1398,7 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
         f"<style>\n{_asset('line-map.css')}{_asset('run-summary.css')}</style>",
         "</head>",
         "<body>",
-        THEME_SWITCH,
+        corner(operator),
         '<main id="app" data-source="embedded"></main>',
         f'<script type="application/json" id="delivery-state">{embed(document)}</script>',
         f'<script type="application/json" id="delivery-runs">{embed(runs)}</script>',
@@ -1421,6 +1422,38 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
 def _asset(name: str) -> str:
     """One of the skill's page assets, inlined into the page as it is."""
     return (ASSETS / name).read_text(encoding="utf-8")
+
+
+def checkout_operator(root: Path) -> str | None:
+    """The checkout's git identity, for the local page's corner; the hosted page never reads it."""
+    try:
+        found = subprocess.run(["git", "config", "user.email"], cwd=root, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    email = found.stdout.strip() if found.returncode == 0 else ""
+    return email if 0 < len(email) <= 254 and "@" in email and not any(c.isspace() for c in email) else None
+
+
+def corner(operator: str | None) -> str:
+    """The page's top-right corner: the theme switch, joined by whose checkout drew the page when that is known."""
+    if not operator:
+        return THEME_SWITCH
+    local, _, domain = operator.partition("@")
+    return ("<div class=\"corner\">"
+            "<div class=\"operator\">"
+            "<button type=\"button\" class=\"operator-mark\" aria-expanded=\"false\" aria-controls=\"operator-email\""
+            " aria-label=\"Whose checkout drew this page\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">"
+            "<path d=\"M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0\"/><path d=\"M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2\"/>"
+            "</svg></button>"
+            f"<span class=\"operator-email\" id=\"operator-email\" title=\"Drawn from {_html_attribute(operator)}'s checkout\">"
+            "<span class=\"visually-hidden\">Drawn from the checkout of </span>"
+            f"<span class=\"operator-local\">{_html_text(local)}</span>"
+            f"<span class=\"operator-domain\">@{_html_text(domain)}</span></span></div>"
+            f"{THEME_SWITCH}</div>")
+
+
+def _html_attribute(value: str) -> str:
+    return _html_text(value).replace('"', "&quot;").replace("'", "&#39;")
 
 
 def _html_text(value: str) -> str:
@@ -1457,7 +1490,8 @@ def line_map(arguments: argparse.Namespace) -> int:
                            history=_renderer_output(inputs.binding, "history"),
                            plan=read_plan_block(inputs.state_directory, document),
                            needs=read_needs_block(inputs.state_directory),
-                           files=read_lane_changes_block(inputs.state_directory))
+                           files=read_lane_changes_block(inputs.state_directory),
+                           operator=checkout_operator(inputs.root))
     sys.stdout.write(page)
     return 0
 
