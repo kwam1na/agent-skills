@@ -333,7 +333,7 @@
             }
           },
           "sources": {
-            "description": "Written by serve's refresh: per source, whether the record observes it, has a stale read of it (and when it was last read), or does not observe it because the binding declares no command. Changes only when a source's status does.",
+            "description": "Written by serve's refresh: per source (tracker, forge and siblings), whether the record observes it, has a stale read of it (and when it was last read), or does not observe it because the binding declares no command. Changes only when a source's status does.",
             "type": "object",
             "additionalProperties": false,
             "properties": {
@@ -372,6 +372,40 @@
                 }
               },
               "forge": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "since"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "observed",
+                      "stale",
+                      "not_observed"
+                    ]
+                  },
+                  "since": {
+                    "$ref": "#/$defs/timestamp"
+                  },
+                  "lastReadAt": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/$defs/timestamp"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "siblings": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
@@ -519,6 +553,103 @@
               "archiveSha256": {
                 "type": "string",
                 "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      },
+      "siblings": {
+        "description": "Sibling deliveries of the same epic in other repositories, by their hosted links: lead-sibling adds and removes one, and reconcile writes what each sibling-snapshot/1 read shows. Optional; the hosted projection never carries it.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "link",
+            "addedAt"
+          ],
+          "properties": {
+            "name": {
+              "description": "The lead's label for the sibling, unique in the record.",
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "link": {
+              "description": "The sibling's hosted live view, <origin>/d/<64 hex>. lead-sibling admits a secure origin, or a loopback receiver for tests.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9+.-]*://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?/d/[a-f0-9]{64}$"
+            },
+            "addedAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "lastOutcome": {
+              "description": "The outcome of the latest read reconcile applied, of any outcome. Absent until the first. The sibling is fresh only while it is read.",
+              "enum": [
+                "read",
+                "stale",
+                "unavailable",
+                "incompatible",
+                "other-epic"
+              ]
+            },
+            "lastAttemptAt": {
+              "description": "When the sibling's current lastOutcome began: the time of the read that changed the outcome. Later reads with the same outcome leave it as it was.",
+              "$ref": "#/$defs/timestamp"
+            },
+            "readAt": {
+              "description": "When the last read that changed the sibling was taken: its stories, trackerParent, updatedAt, closing and terminal come from that read. A later read that changes nothing leaves it as it was, so it can be older than the latest read.",
+              "$ref": "#/$defs/timestamp"
+            },
+            "trackerParent": {
+              "$ref": "#/$defs/name"
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "closing": {
+              "type": "object"
+            },
+            "terminal": {
+              "type": "boolean"
+            },
+            "stories": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "subject",
+                  "title",
+                  "stage"
+                ],
+                "properties": {
+                  "subject": {
+                    "$ref": "#/$defs/name"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "stage": {
+                    "enum": [
+                      "planned",
+                      "building",
+                      "review",
+                      "settled",
+                      "queued",
+                      "syncing",
+                      "synced",
+                      "checking",
+                      "checked",
+                      "merging",
+                      "merged",
+                      "stopped"
+                    ]
+                  },
+                  "changeRequest": {
+                    "$ref": "#/$defs/name"
+                  }
+                }
               }
             }
           }
@@ -1210,6 +1341,66 @@
             "summary": {
               "type": "string",
               "maxLength": 1000
+            }
+          }
+        }
+      },
+      "outside": {
+        "description": "The tracker's children of the parent that a scoped tracker snapshot puts outside this delivery: another repository's work, with its state, status and the values that place it elsewhere, for the views' \"Elsewhere\" section. Optional; reconcile keeps it from the last tracker snapshot that carries an outside list, and never adds these as planned work or follow-ups.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "subject",
+            "state"
+          ],
+          "properties": {
+            "subject": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "backlog",
+                "started",
+                "completed",
+                "canceled"
+              ]
+            },
+            "status": {
+              "type": "string",
+              "minLength": 1
+            },
+            "marks": {
+              "description": "The values of each scoped kind the item carries, by kind: its components, its labels, or its summary's own marker.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "component": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "label": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "prefix": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
             }
           }
         }
@@ -3011,6 +3202,27 @@
               }
             }
           },
+          "siblingSnapshot": {
+            "description": "Optional: the repository's command that prints a sibling-snapshot/1 read of each sibling delivery the record names, for serve's refresh to run. delivery-views ships one: hosted.py siblings --state-dir {stateDirectory}. {stateDirectory} is the resolved state directory the command runs for.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "argv"
+            ],
+            "properties": {
+              "argv": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
           "workHints": {
             "description": "Optional: the repository's command that prints a work-hints/1 document of each item's files and priority, for next to run. {parent} in argv is the record's meta.trackerParent. {stateDirectory} is the resolved state directory the command runs for.",
             "type": "object",
@@ -3287,6 +3499,126 @@
       }
     }
   },
+  "sibling-snapshot/1": {
+    "$id": "urn:agent-skills:orchestrate-work:sibling-snapshot:1",
+    "title": "sibling-snapshot/1",
+    "description": "One read of each sibling delivery the record names, from its published hosted snapshot, as delivery-views' hosted.py siblings prints it. reconcile applies it entry by entry: an entry older than snapshotMaxAgeSeconds counts as stale.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "takenAt",
+      "siblings"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "sibling-snapshot/1"
+      },
+      "takenAt": {
+        "$ref": "#/$defs/timestamp"
+      },
+      "siblings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "link",
+            "readAt",
+            "outcome"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "link": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9+.-]*://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?/d/[a-f0-9]{64}$"
+            },
+            "readAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "outcome": {
+              "enum": [
+                "read",
+                "stale",
+                "unavailable",
+                "incompatible",
+                "other-epic"
+              ]
+            },
+            "trackerParent": {
+              "$ref": "#/$defs/name"
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "closing": {
+              "type": "object"
+            },
+            "stale": {
+              "type": "boolean"
+            },
+            "terminal": {
+              "type": "boolean"
+            },
+            "stories": {
+              "description": "The sibling's stories, from its body's planned and queue: present only when the outcome is read or stale.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "subject",
+                  "title",
+                  "stage"
+                ],
+                "properties": {
+                  "subject": {
+                    "$ref": "#/$defs/name"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "stage": {
+                    "enum": [
+                      "planned",
+                      "building",
+                      "review",
+                      "settled",
+                      "queued",
+                      "syncing",
+                      "synced",
+                      "checking",
+                      "checked",
+                      "merging",
+                      "merged",
+                      "stopped"
+                    ]
+                  },
+                  "changeRequest": {
+                    "$ref": "#/$defs/name"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "$defs": {
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "timestamp": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      }
+    }
+  },
   "work-snapshot/1": {
     "$id": "urn:agent-skills:orchestrate-work:work-snapshot:1",
     "title": "work-snapshot/1",
@@ -3380,6 +3712,10 @@
               "type": "string",
               "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
               "description": "Forge merges only: verified source occurrence time, no later than takenAt. Omit when unknown."
+            },
+            "unmarked": {
+              "description": "Tracker snapshots only, optional: true when the snapshot is scoped and the item carries no value of any scoped kind, such as no component. It stays in scope, flagged, so a forgotten tag shows rather than vanishing.",
+              "const": true
             }
           }
         }
@@ -3404,6 +3740,90 @@
               "canceled"
             ]
           }
+        }
+      },
+      "outside": {
+        "description": "Tracker snapshots only, optional: the parent's children a scope puts outside this delivery, because each carries a value of a scoped kind and matches none. Present whenever the snapshot is scoped, empty when none is outside. reconcile never adds these as planned work or follow-ups, never reports on them, and clears a copy it added earlier.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "subject",
+            "state"
+          ],
+          "properties": {
+            "subject": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "description": "Optional: the ticket's summary, as an item's, kept so work of this delivery the tracker files elsewhere keeps it.",
+              "type": "string",
+              "maxLength": 1000
+            },
+            "state": {
+              "enum": [
+                "backlog",
+                "started",
+                "completed",
+                "canceled"
+              ]
+            },
+            "status": {
+              "type": "string",
+              "minLength": 1
+            },
+            "blockedBy": {
+              "description": "Optional: the subjects of the parent's children that block this one, as an item's.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            },
+            "marks": {
+              "description": "The values of each scoped kind the item carries, by kind: its components, its labels, or its summary's own marker.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "component": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "label": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "prefix": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "statusStates": {
+        "description": "Tracker snapshots only, optional: the states the snapshot's maker was told to read named statuses as, by status name, in place of their category. reconcile reports a merged story whose ticket moves to a status mapped to started.",
+        "type": "object",
+        "additionalProperties": {
+          "enum": [
+            "backlog",
+            "started",
+            "completed",
+            "canceled"
+          ]
         }
       }
     },

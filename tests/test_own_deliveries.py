@@ -34,7 +34,7 @@ CATALOGUE_MODULES = (
     "run_delivery_pr_review",
     "run_delivery_pr_review_gates", "run_delivery_supervisor", "run_delivery_tracker", "run_event_emission_corpus",
     "run_tests", "runless_reviews", "suite_budget", "test_dependency_guard", "test_environment", "tracker_contract", "update_provenance",
-    "validate", "waits", "waits_review", "workflow_graph_contract", "workflow_observation", "workflows",
+    "validate", "siblings", "waits", "waits_review", "workflow_graph_contract", "workflow_observation", "workflows",
 )
 CATALOGUE_IDS = tuple("tests.test_" + name for name in CATALOGUE_MODULES)
 # Test modules left out of the catalogue on purpose, each as (module name, why): none today.
@@ -190,6 +190,17 @@ class StandingBinding(unittest.TestCase):
     def test_this_repository_enforces_the_lead_s_wait(self) -> None:
         settings = json.loads((ROOT / ".agents/run-delivery.json").read_text(encoding="utf-8"))
         self.assertEqual(settings["hooks"], {"lead.may-stop": "enforce"})
+
+    def test_every_lane_gate_runs_the_catalogue_and_durable_text_guards(self) -> None:
+        # The two cheap guards the queue runs on every candidate also run in every lane's gate, so a lane meets them
+        # before review. They run through sh, so a fresh clone without .venv still resolves each gate.
+        settings = json.loads((ROOT / ".agents/run-delivery.json").read_text(encoding="utf-8"))
+        gates = {gate["id"]: gate["argv"] for gate in settings["gates"]}
+        self.assertEqual(gates.get("catalogue"),
+                         ["sh", "-c", "exec .venv/bin/python -B -m unittest tests.test_own_deliveries.StandingBinding"])
+        self.assertEqual(gates.get("durable-text"),
+                         ["sh", "-c", "exec .venv/bin/python -B -m unittest tests.test_linear_qualification."
+                          "LinearQualificationTests.test_durable_corpus_contains_no_plan_or_ticket_ids"])
 
     def test_the_committed_settings_hold_exactly_the_two_dispatcher_entries(self) -> None:
         settings = json.loads((ROOT / ".claude/settings.json").read_text(encoding="utf-8"))

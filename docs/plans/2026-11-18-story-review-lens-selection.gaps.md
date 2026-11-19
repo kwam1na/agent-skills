@@ -46,8 +46,20 @@ Gaps in the workflow or the tool found while delivering this plan, each recorded
   routes left are a hand edit of the record or `lead-init --replace` mid-delivery.
 - **What was done.** The operator kept V26-3618 on lane-1, after V26-3606, rather than set it up as a delivery of its
   own or hand-edit the record. Lane-1's claims, briefly carved into regions, were restored to whole files.
-- **Where it stands.** Tracked with the region mechanics in V26-3591, as a comment there. The carve hit its c2: lane-1's
+- **Where it stands.** Tracked as V26-3628, with the region mechanics in V26-3591, as a comment there. The carve hit its c2: lane-1's
   whole-file claims were revoked, lane-2's grants were then refused, and the V26-3618 lines were left unowned until
   lane-1's claims were restored. It also hit its c3: three adjacent lane-1 regions would have left boundary lines where
   no insertion fits, so whole files were restored instead. Adding a lane to a live delivery is not yet in V26-3591's
   scope.
+
+## A running delivery can't move onto an integration base (workflow)
+
+- **What happened.** After V26-3618 was stopped in the merge queue by another delivery's integration merge into `main`,
+  the operator asked to land the rest of this delivery through an integration branch instead of `main`.
+- **Why the tool couldn't.** A delivery's base is fixed at setup. `lead-setup --integration` refuses a key that already
+  has a delivery file on `main`, and the record holds the base it was set up on. Moving would have meant a new delivery
+  key, taking V26-3618, V26-3620 and V26-3624 out of this one, and restarting V26-3618 on a new branch with its PR
+  retargeted.
+- **What was done.** The operator kept the delivery on `main`. V26-3618 merges the new base under an authorized base
+  merge and hands off again.
+- **Where it stands.** Tracked as V26-3629.

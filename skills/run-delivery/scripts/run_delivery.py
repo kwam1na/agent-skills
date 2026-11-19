@@ -1273,6 +1273,20 @@ def load_state() -> dict:
     return shown_record(cfg().release, cfg().state)
 
 
+def sibling_story_keys(state: Path | None) -> set[str]:
+    """The stories a same-epic sibling delivery holds in the last kept read of it by the record in ``state``: an `after`
+    key may name one. Empty without a record, or one that names no sibling."""
+    try:
+        record = json.loads((Path(state) / "state.json").read_text(encoding="utf-8")) if state else {}
+    except (OSError, ValueError):
+        return set()
+    rows = record.get("siblings") if isinstance(record, dict) else None
+    return {story["subject"] for row in (rows if isinstance(rows, list) else [])
+            if isinstance(row, dict) and row.get("lastOutcome") != "other-epic"
+            for story in (row.get("stories") if isinstance(row.get("stories"), list) else [])
+            if isinstance(story, dict) and isinstance(story.get("subject"), str)}
+
+
 def journal_entries(kind: str, subject: str) -> list[dict]:
     return [e for e in load_state()["journal"] if e.get("kind") == kind and e.get("subject") == subject]
 
@@ -5801,9 +5815,11 @@ def lead_plan(args) -> None:
         if args.lane not in c.lanes:
             raise Stop(f"--lane {args.lane} isn't a lane of {c.delivery}: {', '.join(c.lanes)}")
         after = args.after or []
-        strangers = [other for other in after if other not in stories]
+        held = sibling_story_keys(getattr(c, "state", None))
+        strangers = [other for other in after if other not in stories and other not in held]
         if strangers:
-            raise Stop(f"--after {', '.join(strangers)} isn't a story of {c.delivery}")
+            raise Stop(f"--after {', '.join(strangers)} isn't a story of {c.delivery} or of a sibling delivery it has "
+                       "read")
         problem = why_problem(c, args.why)
         if problem:
             raise Stop(f"{key} {problem}: --why is one line saying why it joins the delivery")
@@ -6810,10 +6826,16 @@ def draft_delivery(c, args, integration_target: str | None = None) -> None:
         stories[g["key"]] = story
     if not stories:
         raise Stop(f"the pattern matched no heading in {args.plan}")
+    try:
+        # A delivery drafted again may already keep a record that has read its siblings; a new one has none.
+        sibling_keys = sibling_story_keys(c.state_of(args.key, json.loads(path.read_text()) if path.exists() else {}))
+    except (OSError, ValueError, Stop):
+        sibling_keys = set()
     for subject, found in read.items():
-        unknown = [after for after in found["after"] if after not in stories]
+        unknown = [after for after in found["after"] if after not in stories and after not in sibling_keys]
         if unknown:
-            notes.append(f"plan story {subject} comes after {', '.join(unknown)}, which the plan has no story for")
+            notes.append(f"plan story {subject} comes after {', '.join(unknown)}, which neither the plan nor a known "
+                         "sibling delivery has a story for")
     lanes, missing = units_owns(text)
     if missing:
         notes.append(missing)
@@ -10728,6 +10750,13 @@ def tracker_item(item: dict) -> dict:
             "kind": "trackerLag", "who": "lead", "fields": {"detail": item["text"]}}
 
 
+def flapping_blockers(c, flapping: tuple[str, ...]) -> set[int]:
+    """The blockers the supervisor journalled for children that flap now: each one's "won't stay up" item stands for it.
+    Every other blocker, a suite checkout's or a child's that no longer flaps, shows as any unresolved blocker does."""
+    return {number for key, number in json_object(lead_file(c, "supervisor.blockers.json")).items()
+            if key.startswith("child:") and key.split(":", 1)[1] in flapping}
+
+
 def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = False) -> list[dict]:
     """What waits on the lead or the operator, each {holding, source, text, clears}: holding items hold the close;
     shown ones are listed in the friction note. The close condition, the supervisor's pass log and the line map read
@@ -10793,8 +10822,9 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           f"--subject {item['subject']} if lead-accept can't take it", "kind": "unaccepted",
                           "who": "lead", "subject": item["subject"], "since": merge.get("at")})
     resolutions = {entry.get("journal") for entry in read_log("resolutions", c.delivery)}
+    shown = flapping_blockers(c, flapping)
     for entry in doc["journal"]:
-        if entry["kind"] in HOLDING_KINDS and not blocker_resolved(c, doc, entry, resolutions):
+        if entry["kind"] in HOLDING_KINDS and entry["id"] not in shown and not blocker_resolved(c, doc, entry, resolutions):
             runners = runner_held(entry)
             items.append({"holding": True, "source": f"journal entry {entry['id']} ({entry['kind']})",
                           "text": f"Blocker {entry['id']}"
@@ -11052,6 +11082,14 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
             added.append({"holding": False, "source": f"{on}'s waits", "clears": f"{on} put back, landing or settling",
                           "text": delivery_state.wait_said(table, "needsYou", "stopped", {"subject": on}) + " " + count,
                           "kind": "stopped", "who": "lead", "subject": on, "waiting": len(waiting), "fields": {"detail": ""}})
+    for wait in found:
+        # An after key that neither a story here nor any sibling holds, with every sibling read fresh: the lead adds the
+        # sibling or fixes the key. It names no piece of this record, so no other item can carry it.
+        if (wait["cause"] == "sibling" and wait["needsSomeone"] and wait["subject"] not in lanes
+                and wait["on"] not in pieces):
+            added.append({"holding": False, "source": f"{wait['subject']}'s waits", "text": wait["words"],
+                          "clears": f"a sibling listing {wait['on']}, or {wait['subject']}'s after key changing",
+                          "kind": "sibling", "who": "lead", "subject": wait["subject"], "fields": {"on": wait["on"]}})
     for free in delivery_state.free_to_start(doc, [*found, *peer_waits_said(c)], words=table):
         # A story free to start is in "Needs you" itself, so what waits on it is counted on its item.
         waiting = list(dict.fromkeys(wait["subject"] for wait in found
@@ -12235,6 +12273,78 @@ def close_out(c, flapping: tuple[str, ...] = (), wait: bool = False) -> tuple[li
     return said, True
 
 
+SUITE_OWNER = "owner.json"
+
+
+def suite_folder(c) -> Path:
+    """Where lead-suite makes its checkouts: the binding's work folder's `suite/`."""
+    binding = c.shelf.json(".agents/orchestration.json") or {}
+    return c.root / (binding.get("workRoot") or f"{c.work}/work") / "suite"
+
+
+def cwd_holders(path: Path) -> list[int]:
+    """The processes whose working directory is `path` or inside it, as lsof names them."""
+    listing = run(["lsof", "-nP", "-d", "cwd", "-Fpn"], check=False).stdout
+    found, pid = [], None
+    root = path.resolve()
+    for line in listing.splitlines():
+        if line.startswith("p"):
+            pid = int(line[1:]) if line[1:].isdigit() else None
+        elif line.startswith("n") and pid is not None:
+            here = Path(line[1:])
+            if here == root or root in here.parents:
+                found.append(pid)
+    return sorted(set(found))
+
+
+def stale_suite_checkout(checkout: Path) -> tuple[str | None, str]:
+    """What keeps a lead-suite checkout from being removed safely, or None, and the commit it holds. It is removed only
+    when its run has ended (the pid its folder names is gone), no process works inside it, it is detached and it holds
+    no change."""
+    owner = json_object(checkout.parent / SUITE_OWNER)
+    commit = str(owner.get("commit") or checkout.parent.name.split("-", 1)[0])
+    if valid_pid(owner.get("pid")) and pid_runs(owner["pid"]):
+        return f"its run (pid {owner['pid']}) is still going", commit
+    held = cwd_holders(checkout)
+    if held:
+        return f"process {', '.join(map(str, held))} works inside it", commit
+    if run(["git", "symbolic-ref", "-q", "HEAD"], cwd=checkout, check=False).returncode == 0:
+        return "it is on a branch, not detached", commit
+    status = run(["git", "status", "--porcelain"], cwd=checkout, check=False)
+    if status.returncode != 0:
+        return f"git can't read it: {(status.stderr or status.stdout).strip()[-200:]}", commit
+    if status.stdout.strip():
+        return "it holds uncommitted changes", commit
+    return None, commit
+
+
+def clear_suite_checkouts(c) -> tuple[list[str], dict[str, str]]:
+    """Remove each checkout an interrupted lead-suite left under the work folder, which the merge queue's serve refuses
+    to run beside, when that is safe: what was removed, and each one kept with why and how to remove it."""
+    folder = suite_folder(c)
+    removed, kept = [], {}
+    for checkout in sorted(folder.glob("*/checkout")) if folder.is_dir() else []:
+        why, commit = stale_suite_checkout(checkout)
+        if why is None:
+            run(["git", "worktree", "remove", "--force", str(checkout)], cwd=c.root, check=False)
+            shutil.rmtree(checkout.parent, ignore_errors=True)
+            run(["git", "worktree", "prune"], cwd=c.root, check=False)
+            removed.append(f"removed the lead-suite checkout of {commit[:12]} that a run left at {checkout}")
+        else:
+            kept[str(checkout)] = (f"A lead-suite checkout of {commit[:12]} is left at {checkout}, and the merge queue's "
+                                   f"serve refuses to run while it is under the work folder, but {why}. Once no run "
+                                   f"uses it, remove it: git worktree remove --force {checkout}")
+    return removed, kept
+
+
+def last_line(path: Path) -> str:
+    try:
+        lines = [line for line in path.read_text(errors="replace").splitlines() if line.strip()]
+    except OSError:
+        return ""
+    return lines[-1].strip()[-300:] if lines else ""
+
+
 class Supervisor:
     """lead-run: one process per record. It holds the flow log's supervisor lock, recording its pid, start time,
     children and the live view's address; keeps `serve` and the live view running; and runs one pass after another
@@ -12253,6 +12363,8 @@ class Supervisor:
         self.before_signals: dict[int, object] = {}
         self.signalled: int | None = None
         self.restarts: dict[str, list[float]] = {}
+        # When each child last started, so a flapping child reads as cleared only once it has stayed up for a pass.
+        self.started_at: dict[str, float] = {}
         self.address: str | None = None
         self.handle = None
         self.started = now()
@@ -12311,6 +12423,7 @@ class Supervisor:
             # In the supervisor's own group, so stopping the group stops them; signals are the defaults it set.
             self.children[name] = subprocess.Popen(argv, cwd=self.c.root, stdin=subprocess.DEVNULL, stdout=out,
                                                    stderr=subprocess.STDOUT)
+        self.started_at[name] = time.monotonic()
         self.write_lock()
 
     def start_live(self) -> None:
@@ -12325,6 +12438,7 @@ class Supervisor:
         if live and pid_runs(live["pid"]) and listens(live["pid"], live["port"]):
             if live.get("renderState") == script:
                 self.view_pid, self.view = live["pid"], None
+                self.started_at["live"] = time.monotonic()
                 self.address = live_address(live["port"])
                 self.write_lock()
                 self.say(f"adopted the live view (pid {live['pid']}) on {self.address}")
@@ -12351,6 +12465,7 @@ class Supervisor:
             started = self.spawn_view(0)
         proc, bound = started
         self.view, self.view_pid, self.address = proc, proc.pid, live_address(bound)
+        self.started_at["live"] = time.monotonic()
         record = {"port": bound, "pid": proc.pid, "renderState": script, "startedAt": now(), "address": self.address}
         if fallback:
             record["fallback"] = {"wanted": fallback[0],
@@ -12403,6 +12518,59 @@ class Supervisor:
         horizon = time.monotonic() - CHILD_FLAP_SECONDS
         return tuple(name for name, times in self.restarts.items()
                      if len([t for t in times if t > horizon]) >= CHILD_FLAPS)
+
+    def blockers(self) -> str:
+        """Journal what the supervisor finds holding the delivery, so the lead's wait hears it: a blocker.recorded when a
+        child first won't stay up, and when a stale lead-suite checkout can't be removed safely; a blocker.resolved,
+        with its reason in the resolutions log, when the child has stayed up for a pass or the checkout has gone. Each
+        is recorded once, keyed in the flow log's supervisor.blockers.json."""
+        c = self.c
+        path = lead_file(c, "supervisor.blockers.json")
+        open_ = {k: v for k, v in json_object(path).items() if type(v) is int}
+        removed, kept = clear_suite_checkouts(c)
+        said = list(removed)
+        holding: dict[str, str] = {f"suite:{where}": text for where, text in kept.items()}
+        flapping = self.flapping()
+        for name in flapping:
+            log = lead_file(c, f"supervisor.{name}.log")
+            line = last_line(log)
+            holding[f"child:{name}"] = (f"The supervisor's {name} won't stay up; its log is {log}"
+                                        + (f", whose last line is: {line}" if line else ""))
+        settled = {}
+        for key in open_:
+            if key in holding:
+                continue
+            if key.startswith("child:"):
+                name = key.split(":", 1)[1]
+                # The live view is held apart from the children, adopted or started; every other child is one of them.
+                proc = self.children.get(name)
+                running = (self.view_pid is not None and not self.view_down()) if name == "live" else \
+                    proc is not None and proc.poll() is None
+                up = running and \
+                    time.monotonic() - self.started_at.get(name, time.monotonic()) >= supervisor_pass_seconds(c)
+                if not up:
+                    holding[key] = ""  # still down, or not up long enough: kept open, not recorded again
+                    continue
+                settled[key] = f"the supervisor's {name} has stayed up for a pass"
+            else:
+                settled[key] = f"the lead-suite checkout {key.split(':', 1)[1]} is gone"
+        doc = load_state() if settled or any(k not in open_ for k in holding) else None
+        resolutions = {r.get("journal") for r in read_log("resolutions", c.delivery)}
+        for key, why in settled.items():
+            number = open_.pop(key)
+            entry = next((e for e in doc["journal"] if e["id"] == number), None)
+            if entry is not None and not blocker_resolved(c, doc, entry, resolutions):
+                append_log("resolutions", c.delivery, {"journal": number, "why": why})
+                state_tool("journal", "--kind", "blocker.resolved", "--data", json.dumps({"why": why}),
+                           "--answers", str(number))
+                said.append(f"resolved blocker {number}: {why}")
+        for key, text in holding.items():
+            if key in open_ or not text:
+                continue
+            open_[key] = journal_id(state_tool("journal", "--kind", "blocker.recorded", "--text", text))
+            said.append(f"recorded blocker {open_[key]}: {text[:120]}")
+        path.write_text(json.dumps(open_, indent=2) + "\n")
+        return "; ".join(said) or "none"
 
     def keep_alive(self) -> None:
         """Restart a child that exited, at most once a pass once it has exited CHILD_FLAPS times in the window: a
@@ -12492,7 +12660,7 @@ class Supervisor:
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
                  ("peerWaits", lambda: write_peer_waits(c)), ("laneChanges", lambda: write_lane_changes(c)),
                  ("publish", lambda: render_views(c, only="publishers")),
-                 ("needs", derive),
+                 ("blockers", self.blockers), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:
             self.honour_signal()
@@ -12657,6 +12825,9 @@ class Supervisor:
                 for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
                     self.before_signals[number] = signal.signal(number, self.on_signal)
                 self.start_live()
+                with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
+                    for line in clear_suite_checkouts(c)[0]:
+                        self.say(line)
                 self.start("serve")
                 print(self.address, flush=True)  # the first line: where the delivery is watched
                 lines, self.held_lines = self.held_lines or [], None
@@ -12771,6 +12942,8 @@ def lead_suite(args) -> None:
     folder = c.root / (binding.get("workRoot") or f"{c.work}/work") / "suite"
     folder.mkdir(parents=True, exist_ok=True)
     checkout = Path(tempfile.mkdtemp(prefix=f"{commit[:12]}-", dir=folder)) / "checkout"
+    # Whose run the folder is: a checkout an interrupted run leaves is the supervisor's to remove once this pid is gone.
+    (checkout.parent / SUITE_OWNER).write_text(json.dumps({"pid": os.getpid(), "commit": commit, "startedAt": now()}))
     # A stop ends the run through main's handler, as an interruption does: its command's group is stopped, by
     # run_group, and its checkout removed, by in_detached_checkout.
     began = time.monotonic()
@@ -12955,6 +13128,35 @@ def lead_hold(args) -> None:
     done = state_tool("journal", "--kind", "story.held", "--subject", args.key, "--data", json.dumps({"text": text}))
     print(f"recorded the hold on {args.key} (journal entry {journal_id(done)}); it ends when {args.key} is assigned, "
           f"or with {flow_command()} lead-hold {args.key} --clear")
+
+
+# A sibling's hosted live view is read over HTTPS; plain http only from a loopback receiver, as hosted.py allows tests.
+SIBLING_SCHEME = re.compile(r"^(?:https://|http://127\.0\.0\.1:[0-9]{1,5}/)")
+
+
+def lead_sibling(args) -> None:
+    """Name a sibling delivery of the same epic by its hosted live view's link, as sibling.added, or remove one, as
+    sibling.removed. serve's refresh reads each one the record names through the binding's state.siblingSnapshot.
+    Refused, with nothing written, for a record with no tracker parent, a link that isn't a hosted live view, or a
+    name the record already holds or, for a removal, doesn't."""
+    if args.action == "add" and not SIBLING_SCHEME.match(args.link or ""):
+        raise Stop("a sibling is named by its hosted live view over HTTPS, https://<origin>/d/<64 hex>; plain http is "
+                   "taken only from http://127.0.0.1:<port>, a loopback test receiver")
+    c = cfg()
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+    try:
+        if args.action == "remove":
+            done = delivery_state.set_sibling(c.state, name=args.name, remove=True)
+            print(f"removed the sibling {args.name} (journal entry {done['entry']})")
+            return
+        done = delivery_state.set_sibling(c.state, name=args.name, link=args.link)
+    except delivery_state.StateError as error:
+        raise Stop(str(error)) from None
+    print(f"named {args.name} as a sibling delivery (journal entry {done['entry']}); serve's refresh reads it through "
+          f"the binding's state.siblingSnapshot")
 
 
 def lead_resolve(args) -> None:
@@ -13414,6 +13616,7 @@ class Doctor:
             ("gh", "gh", ("config",), self.gh),
             ("forge", "forge find", ("config", "gh"), self.forge),
             ("forge-write", "forge write access", ("config",), self.forge_write),
+            ("tracker-scope", "tracker snapshot scope", ("config", "binding"), self.tracker_scope),
             ("tracker-token", "tracker snapshot token", ("binding",), self.tracker_token),
             ("publishing", "snapshots and publishers", ("config", "binding"), self.publishing),
             ("hosted", "hosted delivery", ("config",), self.hosted),
@@ -13790,6 +13993,50 @@ class Doctor:
                                f"{', '.join(unset)}")
         return "ok", f"{', '.join(names) or 'no variables'} set"
 
+    def tracker_scope(self):
+        """The Jira snapshot's --scope and --status-state, against the project: run with --check, it names each
+        component, label or status the project doesn't know, the In Progress statuses left to their category, and the
+        in-scope children that carry no value of a scoped kind."""
+        spec = ((self.binding or {}).get("state") or {}).get("trackerSnapshot") or {}
+        argv = list(spec.get("argv") or [])
+        if not any(part in ("--scope", "--status-state") for part in argv):
+            return self.not_applicable("the tracker snapshot sets no --scope or --status-state")
+        if self.tracker_token()[0] != "ok":  # Its own row, next, says which variable to export.
+            return "skipped", "(needs tracker-token)"
+        state = getattr(self.c, "state", None) or self.c.main / self.c.state_rel
+        try:
+            parent = json.loads((Path(state) / "state.json").read_text())["meta"].get("trackerParent")
+        except (OSError, ValueError, KeyError, TypeError):
+            parent = None
+        parent = parent or getattr(self.c, "delivery", None)
+        if not parent:
+            return self.not_applicable("no delivery's tracker parent to check against")
+        try:
+            taken = run(expand_argv(argv, stateDirectory=str(state), parent=parent) + ["--check"], cwd=self.root,
+                        check=False, timeout=int(spec.get("timeoutSeconds", 60)))
+        except subprocess.TimeoutExpired:
+            return "wrong", "the tracker snapshot's --check timed out"
+        try:
+            found = json.loads(taken.stdout) if taken.returncode == 0 else None
+        except ValueError:
+            found = None
+        if not isinstance(found, dict) or found.get("check") != "tracker-scope/1":
+            return "wrong", f"the tracker snapshot's --check failed: {(taken.stderr or taken.stdout).strip()[-200:]}"
+        lines = []
+        if "--scope" in argv and "--state-dir" not in argv:
+            lines.append("it sets --scope without --state-dir {stateDirectory}, so the delivery file's stories aren't "
+                         "kept in scope; fix: add --state-dir {stateDirectory}")
+        if found["unknown"]:
+            lines.append(f"the project has no {', '.join(found['unknown'])}; fix: correct the binding's trackerSnapshot")
+        if found["unmapped"]:
+            lines.append(f"In Progress statuses with no --status-state: {', '.join(found['unmapped'])}; map each, or "
+                         "leave it to its category")
+        if found["unmarked"]:
+            lines.append(f"in scope with no scoped value: {', '.join(found['unmarked'])}; tag each in the tracker")
+        if found["unknown"]:
+            return "wrong", "; ".join(lines)
+        return ("warn", "; ".join(lines)) if lines else ("ok", "every scope value and mapped status is known")
+
     def hosted(self):
         try:
             settings=hosted_settings(self.c)
@@ -13803,6 +14050,10 @@ class Doctor:
 
     def publishing(self):
         problems = publishing_problems(self.c, self.binding)
+        # Siblings are a snapshot source too: a record that names them, with nothing in the binding to read them.
+        sibling_status, sibling_said = self.siblings()
+        if sibling_status == "wrong":
+            problems.append(sibling_said)
         if problems:
             return "wrong", "; ".join(problems)
         state = self.binding.get("state") or {}
@@ -13810,6 +14061,7 @@ class Doctor:
         updates = {"publisher": f"the {conf['publisher']} tracker publisher posts tracker updates",
                    "manual": f"the lead posts tracker updates by hand ({self.c.name} sets tracker.updates to manual)"}
         said = [*(["a forge snapshot"] if state.get("forgeSnapshot") else []),
+                *([f"sibling deliveries ({sibling_said})"] if sibling_status == "ok" else []),
                 *([updates[conf["mode"]]] if conf["mode"] in updates else [])]
         loose = tracker_publisher.untargeted(conf) if conf["mode"] == "publisher" else []
         if conf["transitions"].get("review"):
@@ -13819,6 +14071,27 @@ class Doctor:
         return "ok", ("; ".join(said) or "the binding has neither a forge snapshot nor a tracker publisher, and needs "
                       "neither") + (f"; these moves name no status in tracker.transitions.targets, so one a person "
                                     f"already made shows as not offered: {', '.join(loose)}" if loose else "")
+
+    def siblings(self):
+        """Each sibling delivery the record names, with its last read's outcome, and a binding that never reads them:
+        part of the snapshots and publishers check."""
+        # A configuration resolves its state directory only once a delivery is selected.
+        state = getattr(self.c, "state", None)
+        if state is None:
+            return self.not_applicable("no delivery selected")
+        try:
+            record = json.loads((Path(state) / "state.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return self.not_applicable("no record yet")
+        named = [row for row in (record.get("siblings") or []) if isinstance(row, dict)] if isinstance(record, dict) else []
+        if not named:
+            return self.not_applicable("the record names no sibling delivery")
+        said = "; ".join(f"{row.get('name')}: {row.get('lastOutcome') or 'never read'}" for row in named)
+        if not ((self.binding or {}).get("state") or {}).get("siblingSnapshot"):
+            return "wrong", (f"the record names sibling deliveries ({said}), but the binding has no "
+                             f"state.siblingSnapshot, so they are never read; fix: add state.siblingSnapshot to the "
+                             f"binding (delivery-views' hosted.py siblings --state-dir {{stateDirectory}} prints one)")
+        return "ok", said
 
     def node(self):
         problem = node_problem(self.release())
@@ -14391,6 +14664,15 @@ def main(argv: list[str] | None = None) -> None:
     held.add_argument("--text", help="why the story waits, in the lead's words")
     held.add_argument("--clear", action="store_true", help="clear the lead's hold, which story.unheld records")
     p.set_defaults(fn=lead_hold)
+    p = command(sub, "lead-sibling", help="name a sibling delivery of the same epic by its hosted link, or remove one")
+    sibling = p.add_subparsers(dest="action", required=True)
+    q = command(sibling, "add", help="name a sibling by its hosted live view's link")
+    q.add_argument("--link", required=True, help="the sibling's hosted live view, https://<origin>/d/<64 hex>")
+    q.add_argument("--name", required=True, help="the sibling's label in this record")
+    q.set_defaults(fn=lead_sibling)
+    q = command(sibling, "remove", help="stop reading a sibling")
+    q.add_argument("--name", required=True, help="the sibling's label in this record")
+    q.set_defaults(fn=lead_sibling, link=None)
     p = command(sub, "lead-resolve", help="resolve a recorded blocker, or rerun a failed fullHealth")
     p.add_argument("id", help="the blocker's journal id, or full-health to rerun a failed fullHealth")
     p.add_argument("--why", required=True)

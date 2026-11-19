@@ -12,6 +12,8 @@
         prints the document with the story the narrator tells of it, as the live server sends a record
     {"builtin": {"document": ..., "registry": <path> | null}}
         prints orchestrate-work's built-in page for the document, its story told with the registry at that path when given
+    {"across": <document>}
+        prints the document with what its sibling deliveries show, as the state wrapper gives it to every view
 """
 
 import json
@@ -51,5 +53,9 @@ elif "builtin" in request:
     if asked.get("registry"):
         render_state.narrator.journal_words.REGISTRY_FILE = Path(asked["registry"])
     sys.stdout.write(render_state.render_static_page(asked["document"]))
+elif "across" in request:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "skills" / "orchestrate-work" / "scripts"))
+    import render_state  # noqa: E402
+    sys.stdout.write(json.dumps(render_state.with_across(request["across"])))
 elif "told" in request:
     sys.stdout.write(json.dumps(render.with_story({key: value for key, value in request["told"].items() if key != "story"}, None)))

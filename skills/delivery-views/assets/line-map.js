@@ -382,19 +382,26 @@
   var rail = el("nav", "rail");
   rail.setAttribute("aria-label", "Chapters");
   app.replaceChildren(rail);
-  CHAPTERS.forEach(function (chapter) {
+  /** A chapter's section and its link on the rail, placed before another chapter's when one is named. */
+  function chapterOf(chapter, before) {
     var section = el("section", "chapter chapter-" + chapter[0]);
     section.id = chapter[0];
     var inner = el("div", "inner");
     section.appendChild(inner);
     parts[chapter[0]] = inner;
-    app.appendChild(section);
     var link = el("a");
     link.setAttribute("href", "#" + chapter[0]);
     link.setAttribute("aria-label", chapter[1]);
     add(link, el("span", null, chapter[1]), el("i"));
-    rail.appendChild(link);
-  });
+    var next = before && parts[before] ? parts[before].parentNode : null;
+    app.insertBefore(section, next);
+    rail.insertBefore(link, next ? rail.querySelector('a[href="#' + before + '"]') : null);
+    // A chapter made after the page was built is watched like the rest; the first ones are watched once all are made.
+    if (watch) { watch.observe(section); }
+    if (arrive) { arrive.observe(section); }
+    return section;
+  }
+  CHAPTERS.forEach(function (chapter) { chapterOf(chapter); });
   // The history page, when the binding declares one: served live at /view/<output>, beside the page as a file.
   if (typeof VIEW.history === "string" && VIEW.history) {
     var historyLink = el("a", "history-link", "Past deliveries and runs");
@@ -438,7 +445,9 @@
     var tickets = isObject(doc.state.tickets) ? doc.state.tickets : {};
     var ticket = Object.prototype.hasOwnProperty.call(tickets, id) && isObject(tickets[id]) ? tickets[id] : null;
     var item = list(doc.state.queue).concat(list(doc.state.planned)).filter(function (entry) { return isObject(entry) && entry.subject === id; })[0] ||
-      list(doc.state.followups).filter(function (entry) { return isObject(entry) && (entry.reference === id || entry.id === id); })[0];
+      list(doc.state.followups).filter(function (entry) { return isObject(entry) && (entry.reference === id || entry.id === id); })[0] ||
+      list(doc.state.outside).filter(function (entry) { return isObject(entry) && entry.subject === id; })[0] ||
+      siblingStory(doc, id);
     var title = (ticket && text(ticket.title)) || (item && text(item.title)) || "";
     var summary = ticket ? text(ticket.summary) : "";
     return title || summary ? { title: title, summary: summary } : null;
@@ -761,16 +770,25 @@
     var closed = closedEntry(doc);
     var step = closed ? null : integrationOf(doc);
     var tally = closed ? closedTally(all) : null;
+    // Every own piece has landed while a sibling delivery's part is open or unread: the state tool's sentences, in place
+    // of a done headline. The first says this repository's part is done; the rest name each sibling.
+    var partDone = isObject(doc.across) ? list(doc.across.partDone).map(text).filter(Boolean) : [];
+    var behind = null;
+    var done = function (words) {
+      if (!partDone.length) { return add(title, words); }
+      behind = partDone.slice(1).join(" ");
+      return add(title, partDone[0]);
+    };
     if (closed && !tally.total) { add(title, all.length ? "Closed with nothing left to land." : "Closed with nothing on the line."); }
-    else if (closed && tally.landed === tally.total) { add(title, "Delivered."); }
+    else if (closed && tally.landed === tally.total) { done("Delivered."); }
     else if (closed) { add(title, "Closed with ", figures(el("b"), "now", tally.landed + " of " + tally.total), " pieces landed."); }
     else if (!all.length) { add(title, "Nothing on the line yet."); }
-    else if (landed === all.length && step && step.landed) { add(title, "Delivered."); }
+    else if (landed === all.length && step && step.landed) { done("Delivered."); }
     else if (landed === all.length && step) {
       add(title, figures(el("b"), "now", plural(landed, "piece")), " landed beside " + step.target + ". ",
         el("span", "title-beat", "Now it rejoins."));
     }
-    else if (landed === all.length) { add(title, "Every piece has landed."); }
+    else if (landed === all.length) { done("Every piece has landed."); }
     else { add(title, figures(el("b"), "now", landed + " of " + all.length), " pieces have landed."); }
     var outcome = plan && isObject(plan.outcome) ? text(plan.outcome.summary) : "";
     var headline = text(meta.headline) || pageTitle();
@@ -808,6 +826,7 @@
     // The outcome, then how much of the plan is proven and how often it changed, linked to the plan chapter.
     var planLink = planNow(doc);
     if (outcome || planLink) { nodes.push(add(el("p", "plan-now"), outcome || null, planLink)); }
+    if (behind) { nodes.push(el("p", "say say-across", behind)); }
     var status = sayLine(doc, all);
     if (status) { nodes.push(el("p", "say", status)); }
     var rejoining = step && !step.landed && landed === all.length && all.length ? driftLine(step) : "";
@@ -3743,6 +3762,68 @@
     return group;
   }
 
+  /* Across repositories */
+  /** A story a sibling delivery's last read listed, by its subject, or undefined. */
+  function siblingStory(doc, id) {
+    var found;
+    list(isObject(doc.across) ? doc.across.groups : null).filter(isObject).forEach(function (group) {
+      found = found || list(group.stories).filter(function (story) { return isObject(story) && story.subject === id; })[0];
+    });
+    return found;
+  }
+  /**
+   * The epic's other repositories, a group each, folded shut: each sibling delivery's name, linked to its live view, since
+   * when it has shown no change or why it can't be read now, and its stories as its last kept read showed them. The chapter is made the first
+   * time a record names a sibling, after What's left, and stays hidden while none is named.
+   */
+  function drawAcross(doc) {
+    var groups = isObject(doc.across) ? list(doc.across.groups).filter(function (group) { return isObject(group) && text(group.name); }) : [];
+    if (!groups.length && !parts.across) { return; }
+    var section = parts.across ? parts.across.parentNode : chapterOf(["across", "Across repositories"], PLAN ? "plan" : "happened");
+    var link = rail.querySelector('a[href="#across"]');
+    section.hidden = !groups.length;
+    if (link) { link.hidden = !groups.length; }
+    if (!groups.length) { parts.across.replaceChildren(); return; }
+    var unread = groups.filter(function (group) { return group.fresh !== true; }).length;
+    var nodes = [el("div", "kicker", "Across repositories"),
+      el("h2", "title", groups.length + (groups.length === 1 ? " other repository delivers this epic." : " other repositories deliver this epic.") +
+        (unread ? " " + unread + " can't be read now." : ""))];
+    var fold = el("details", "across-fold");
+    add(fold, el("summary", null, groups.map(function (group) { return text(group.name); }).join(" · ")));
+    groups.forEach(function (group) {
+      var name = typeof group.link === "string" && /^https?:\/\//.test(group.link) ? el("a", "across-name", text(group.name)) : el("span", "across-name", text(group.name));
+      if (name.tagName === "A") {
+        name.setAttribute("href", group.link);
+        name.setAttribute("target", "_blank");
+        name.setAttribute("rel", "noopener noreferrer");
+        name.setAttribute("aria-label", "Open " + text(group.name) + "'s live view");
+      }
+      // The state tool's time: the last read that changed a fresh sibling, or since when any other has been as it is.
+      var since = text(group.since);
+      var when = since ? el("time", null, spoken(since) || since) : null;
+      if (when) { when.setAttribute("datetime", since); when.setAttribute("title", since); }
+      var reason = text(group.reason);
+      var said = group.fresh === true ? add(el("span", "across-read"), "No change since ", when)
+        : reason && when ? add(el("span", "across-read is-unread"), reason.charAt(0).toUpperCase() + reason.slice(1) + " since ", when,
+          text(group.readAt) ? null : " · never read")
+        : el("span", "across-read is-unread", "Never read");
+      var head = add(el("div", "across-head" + (group.fresh === true ? "" : " is-unread")), name, said);
+      var ul = el("ul", "parked across");
+      list(group.stories).filter(function (story) { return isObject(story) && text(story.subject); }).forEach(function (story) {
+        var row = add(el("li", story.landed === true ? "is-landed" : ""), add(el("span", "p"), issue(text(story.subject))),
+          text(story.title) || text(story.subject));
+        add(row, el("span", "p", stageWords(story)));
+        ul.appendChild(row);
+      });
+      add(fold, add(el("div", "across-group"), head, ul.firstChild ? ul : null));
+    });
+    // Shut by default, as Elsewhere is; a reader who opened it keeps it open through a redraw.
+    if (prev.acrossOpen) { fold.setAttribute("open", ""); }
+    fold.addEventListener("toggle", function () { prev.acrossOpen = fold.hasAttribute("open"); });
+    nodes.push(fold);
+    parts.across.replaceChildren.apply(parts.across, nodes);
+  }
+
   /* 6. Parked */
   function drawParked(doc) {
     var inner = parts.parked;
@@ -3761,7 +3842,40 @@
       nodes.push(ul);
       prev.parked = known;
     }
+    var elsewhere = elsewhereFold(doc);
+    if (elsewhere) { nodes.push(elsewhere); }
     inner.replaceChildren.apply(inner, nodes);
+  }
+
+  /**
+   * The parent's children a scoped tracker snapshot put outside this delivery: another repository's work, folded shut,
+   * each with its tracker status and the value that places it elsewhere. The sweep never takes them in.
+   */
+  function elsewhereFold(doc) {
+    // A child a sibling delivery holds is drawn in that sibling's group instead.
+    var held = isObject(doc.across) && isObject(doc.across.held) ? doc.across.held : {};
+    var items = list(doc.state.outside).filter(function (item) {
+      return isObject(item) && text(item.subject) && !Object.prototype.hasOwnProperty.call(held, item.subject);
+    });
+    if (!items.length) { return null; }
+    var meta = isObject(doc.state.meta) ? doc.state.meta : {};
+    var parent = text(meta.trackerParent);
+    var words = (parent ? "Elsewhere in " + parent : "Elsewhere") + " · " + items.length +
+      (items.length === 1 ? " piece another delivery holds" : " pieces other deliveries hold");
+    var ul = el("ul", "parked elsewhere");
+    items.forEach(function (item) {
+      var marks = isObject(item.marks) ? item.marks : {};
+      var placed = ["component", "label", "prefix"].map(function (kind) { return list(marks[kind]).filter(text).join(", "); })
+        .filter(Boolean).join(" · ");
+      var row = add(el("li"), add(el("span", "p"), issue(text(item.subject))), text(item.title) || text(item.subject));
+      add(row, el("span", "p", [text(item.status) || text(item.state), placed].filter(Boolean).join(" · ")));
+      ul.appendChild(row);
+    });
+    var fold = add(el("details", "elsewhere-fold"), el("summary", null, words), ul);
+    // Shut by default; a reader who opened it keeps it open through a redraw.
+    if (prev.elsewhereOpen) { fold.setAttribute("open", ""); }
+    fold.addEventListener("toggle", function () { prev.elsewhereOpen = fold.hasAttribute("open"); });
+    return fold;
   }
 
   function usable(doc) { return isObject(doc) && isObject(doc.state); }
@@ -3781,6 +3895,7 @@
     drawLine(doc, all);
     drawWho(doc, all);
     drawLeft(doc, all);
+    drawAcross(doc);
     if (parts.plan) { drawPlan(doc); }
     drawHappened(doc);
     drawParked(doc);

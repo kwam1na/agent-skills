@@ -1075,9 +1075,26 @@ class SupervisorProcessTests(unittest.TestCase):
         conf_path.write_text(json.dumps({**json.loads(conf_path.read_text()), "supervisor": {"passSeconds": 4}}))
         commit(m, "FX-1: no finish lines, a pass every four seconds")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        # A checkout an interrupted lead-suite left, its run ended: cleared before serve first starts, so serve never
+        # meets it.
+        ended = subprocess.Popen(["true"])
+        ended.wait()
+        left = m / ".orchestration/work/suite/0123456789ab-left/checkout"
+        left.parent.mkdir(parents=True)
+        sh("git", "worktree", "add", "--detach", "-q", str(left), "HEAD", cwd=m)
+        (left.parent / "owner.json").write_text(json.dumps({"pid": ended.pid, "commit": "0123456789ab"}))
         code, out = fx.flow("lead-init", cwd=m, env=running(fx))
         self.assertEqual(code, 0, out)
         wait_for(lambda: passes(fx), "a first pass")
+        self.assertFalse(left.parent.exists(), "the stale suite checkout outlived the supervisor's start")
+        self.assertNotIn("must not contain a checkout", (fx.tmp / "flow-log/FX-1.supervisor.serve.log").read_text(),
+                         "serve started beside the stale suite checkout")
+        # A lead-wait listening from here wakes on the blocker the supervisor journals once serve won't stay up.
+        calm = ("--load-multiple", "1000000000", "--min-free-bytes", "0", "--swap-growth-bytes", str(2 ** 62))
+        waiting = subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-wait", "--after",
+                                    str(record(fx)["journal"][-1]["id"]), "--timeout", "300", "--poll", "0.5", *calm],
+                                   cwd=m, env=fx.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: (waiting.poll() is None and waiting.kill(), waiting.communicate()))
         serve = lambda: next(child["pid"] for child in settled_lock(fx)["children"] if child["name"] == "serve")
         for _ in range(3):
             before = serve()
@@ -1095,6 +1112,22 @@ class SupervisorProcessTests(unittest.TestCase):
                             "a pass reporting serve won't stay up", 60)
         self.assertTrue(flapping)
         self.assertTrue(alive(settled_lock(fx)["pid"]), "a child that won't stay up ended the supervisor")
+        recorded = wait_for(lambda: [e for e in record(fx)["journal"] if e["kind"] == "blocker.recorded"
+                                     and "serve won't stay up" in e["data"]["text"]], "the flap's blocker", 60)
+        self.assertEqual(len(recorded), 1, recorded)
+        self.assertIn(str(fx.tmp / "flow-log/FX-1.supervisor.serve.log"), recorded[0]["data"]["text"])
+        out, err = waiting.communicate(timeout=120)
+        self.assertEqual(waiting.returncode, 0, out + err)
+        woke = json.loads(out)
+        self.assertEqual(woke["woke"], "event", woke)
+        self.assertIn(recorded[0]["id"], [event.get("id") for event in woke["events"]], woke)
+        # While serve flaps, its "won't stay up" item stands for that blocker: the lead sees it once.
+        later = wait_for(lambda: [p for p in passes(fx) if p.get("blockers") is not None
+                                  and any("serve won't stay up" in item["text"] for item in p.get("needsYou", []))
+                                  and p["startedAt"] > recorded[0]["at"]], "a pass after the blocker", 60)
+        said = [item["text"] for item in later[-1]["needsYou"]]
+        self.assertEqual(len([text for text in said if "serve won't stay up" in text]), 1, said)
+        self.assertFalse([text for text in said if f"Blocker {recorded[0]['id']}" in text], said)
         # A restart that fails is logged, and the supervisor carries on.
         binding_path = m / ".agents/orchestration.json"
         good = binding_path.read_text()
@@ -2221,6 +2254,246 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
 
 
 OC, AT = "lens.outcome-correctness", "lens.adversarial-testing"
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class SupervisorBlockerTests(unittest.TestCase):
+    """The supervisor journals what holds the delivery so the lead's wait hears it: a child that won't stay up, once,
+    resolved once it has stayed up for a pass; and a lead-suite checkout left under the work folder, removed when its
+    run has ended and nothing works in it, else recorded with its fix."""
+
+    def setUp(self) -> None:
+        self.tool = loaded_run_delivery(self, "run_delivery_supervisor_blockers")
+        self.tmp = Path(tempfile.mkdtemp(prefix="supervisor-blockers-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.repo = self.tmp / "repo"
+        self.repo.mkdir()
+        sh("git", "init", "-q", "-b", "main", cwd=self.repo)
+        (self.repo / "a.txt").write_text("a\n")
+        commit(self.repo, "a")
+        self.head = sh("git", "rev-parse", "HEAD", cwd=self.repo).stdout.strip()
+        shelf = types.SimpleNamespace(json=lambda rel: {"workRoot": "work"} if rel == ".agents/orchestration.json" else None)
+        self.c = types.SimpleNamespace(root=self.repo, work=".orchestration", shelf=shelf, delivery="FX-1")
+
+    def suite_checkout(self, owner: dict | None = None) -> Path:
+        suite = self.tool.suite_folder(self.c)
+        suite.mkdir(parents=True, exist_ok=True)
+        folder = Path(tempfile.mkdtemp(prefix=f"{self.head[:12]}-", dir=suite))
+        checkout = folder / "checkout"
+        sh("git", "worktree", "add", "--detach", "-q", str(checkout), self.head, cwd=self.repo)
+        if owner is not None:
+            (folder / self.tool.SUITE_OWNER).write_text(json.dumps(owner))
+        return checkout
+
+    def test_a_suite_checkout_is_removed_only_when_nothing_uses_it(self) -> None:
+        gone_pid = subprocess.Popen(["true"])
+        gone_pid.wait()
+        left = self.suite_checkout({"pid": gone_pid.pid, "commit": self.head})
+        legacy = self.suite_checkout()  # written before runs marked their folder
+        running = self.suite_checkout({"pid": os.getpid(), "commit": self.head})
+        held = self.suite_checkout()
+        (held / "deep").mkdir()
+        worker = subprocess.Popen(["sleep", "60"], cwd=held / "deep")  # working below the checkout's top
+        self.addCleanup(lambda: (worker.kill(), worker.wait()))
+        dirty = self.suite_checkout()
+        (dirty / "a.txt").write_text("changed\n")
+        branched = self.suite_checkout({"pid": gone_pid.pid, "commit": self.head})
+        sh("git", "switch", "-q", "-c", "someone-s-branch", cwd=branched)
+        removed, kept = self.tool.clear_suite_checkouts(self.c)
+        self.assertEqual(sorted(removed), sorted(f"removed the lead-suite checkout of {self.head[:12]} that a run left "
+                                                 f"at {path}" for path in (left, legacy)))
+        self.assertFalse(left.parent.exists() or legacy.parent.exists())
+        listed = sh("git", "worktree", "list", "--porcelain", cwd=self.repo).stdout
+        self.assertNotIn(str(left), listed)
+        self.assertEqual(set(kept), {str(running), str(held), str(dirty), str(branched)})
+        self.assertIn("it is on a branch, not detached", kept[str(branched)])
+        self.assertIn(f"its run (pid {os.getpid()}) is still going", kept[str(running)])
+        self.assertIn(f"process {worker.pid} works inside it", kept[str(held)])
+        self.assertIn("it holds uncommitted changes", kept[str(dirty)])
+        for path in (running, held, dirty, branched):
+            self.assertTrue(path.exists(), f"{path} was removed while in use")
+            self.assertIn(f"git worktree remove --force {path}", kept[str(path)])
+            self.assertIn("the merge queue's serve refuses to run while it is under the work folder", kept[str(path)])
+
+    def supervisor(self, journal: list[dict], flapping=(), children=None, started=0.0):
+        """A Supervisor with the record, flow log and state tool stood in for: what it journals is returned."""
+        tool = self.tool
+        written, resolutions = [], []
+        flow = self.tmp / "flow-log"
+        flow.mkdir(exist_ok=True)
+
+        def state_tool(*argv, **_):
+            kind = argv[argv.index("--kind") + 1]
+            number = (journal[-1]["id"] if journal else 0) + 1
+            data = (json.loads(argv[argv.index("--data") + 1]) if "--data" in argv
+                    else {"text": argv[argv.index("--text") + 1]})
+            journal.append({"id": number, "kind": kind, "data": data, "at": "t",
+                            **({"answers": [int(argv[argv.index("--answers") + 1])]} if "--answers" in argv else {})})
+            written.append(journal[-1])
+            return types.SimpleNamespace(stdout=json.dumps({"ok": True, "entry": {"id": number}}), returncode=0)
+
+        patches = [mock.patch.object(tool, name, value) for name, value in {
+            "state_tool": state_tool, "journal_id": lambda done: json.loads(done.stdout)["entry"]["id"],
+            "load_state": lambda: {"journal": journal, "state": {"meta": {}}},
+            "read_log": lambda name, delivery: list(resolutions) if name == "resolutions" else [],
+            "append_log": lambda name, delivery, entry: resolutions.append(entry),
+            "lead_file": lambda c, name: flow / f"FX-1.{name}",
+            "supervisor_pass_seconds": lambda c: 5}.items()]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        sup = tool.Supervisor.__new__(tool.Supervisor)
+        sup.c = self.c
+        sup.view, sup.view_pid = None, None
+        sup.children = children or {}
+        sup.started_at = {name: started for name in sup.children}
+        sup.flapping = lambda: tuple(flapping)
+        (flow / "FX-1.supervisor.serve.log").write_text("serve: binding_invalid: workRoot must not contain a checkout\n")
+        return sup, written, resolutions
+
+    def test_a_flapping_child_is_recorded_once_and_resolved_once_it_has_stayed_up(self) -> None:
+        journal: list[dict] = []
+        alive = types.SimpleNamespace(poll=lambda: None)
+        sup, written, resolutions = self.supervisor(journal, flapping=("serve",), children={"serve": alive},
+                                                    started=time.monotonic())
+        sup.blockers()
+        sup.blockers()  # a later pass while it still flaps records nothing more
+        self.assertEqual([e["kind"] for e in written], ["blocker.recorded"])
+        text = written[0]["data"]["text"]
+        self.assertIn("The supervisor's serve won't stay up; its log is", text)
+        self.assertIn("FX-1.supervisor.serve.log, whose last line is: serve: binding_invalid", text)
+        # No longer flapping, but up for less than a pass: still open.
+        sup.flapping = lambda: ()
+        sup.blockers()
+        self.assertEqual(len(written), 1)
+        # Down: still open.
+        sup.children = {"serve": types.SimpleNamespace(poll=lambda: 1)}
+        sup.started_at = {"serve": 0.0}
+        sup.blockers()
+        self.assertEqual(len(written), 1)
+        # Up for a pass: resolved, answering the blocker, its reason in the resolutions log.
+        sup.children = {"serve": alive}
+        sup.blockers()
+        self.assertEqual([e["kind"] for e in written], ["blocker.recorded", "blocker.resolved"])
+        self.assertEqual(written[1]["answers"], [written[0]["id"]])
+        self.assertEqual(resolutions, [{"journal": written[0]["id"],
+                                        "why": "the supervisor's serve has stayed up for a pass"}])
+        sup.blockers()
+        self.assertEqual(len(written), 2, "a settled blocker was journalled again")
+
+    def test_a_flapping_live_view_held_apart_from_the_children_is_resolved_once_it_has_stayed_up(self) -> None:
+        journal: list[dict] = []
+        sup, written, resolutions = self.supervisor(journal, flapping=("live",))
+        view = types.SimpleNamespace(poll=lambda: None)
+        sup.view, sup.view_pid = view, 4242
+        sup.started_at = {"live": time.monotonic()}
+        sup.blockers()
+        self.assertEqual([e["kind"] for e in written], ["blocker.recorded"])
+        self.assertIn("The supervisor's live won't stay up", written[0]["data"]["text"])
+        sup.flapping = lambda: ()
+        sup.blockers()  # up for less than a pass
+        sup.view = types.SimpleNamespace(poll=lambda: 1)
+        sup.started_at = {"live": 0.0}
+        sup.blockers()  # down
+        self.assertEqual(len(written), 1)
+        sup.view = view
+        sup.blockers()  # up for a pass
+        self.assertEqual([e["kind"] for e in written], ["blocker.recorded", "blocker.resolved"])
+        self.assertEqual(resolutions[-1]["why"], "the supervisor's live has stayed up for a pass")
+
+    def test_the_live_view_s_start_is_noted_whether_adopted_or_started(self) -> None:
+        tool = self.tool
+        sup, _, _ = self.supervisor([])
+        state = self.tmp / "state"
+        state.mkdir()
+        sup.c = types.SimpleNamespace(**vars(self.c), release=self.tmp, state=state)
+        sup.started_at, sup.write_lock, sup.say = {}, lambda: None, lambda line: None
+        script = str((self.tmp / "skills/orchestrate-work/scripts/render_state.py").resolve())
+        before = time.monotonic()
+        with mock.patch.multiple(tool, recorded_live=lambda state: {"pid": 4242, "port": 1, "renderState": script},
+                                 pid_runs=lambda pid: True, listens=lambda pid, port: True,
+                                 live_address=lambda port: f"http://127.0.0.1:{port}/"):
+            sup.start_live()  # adopted
+        self.assertEqual(sup.view_pid, 4242)
+        self.assertGreaterEqual(sup.started_at.get("live", 0.0), before)
+        sup.started_at, sup.view, sup.view_pid = {}, None, None
+        before = time.monotonic()
+        sup.spawn_view = lambda port: (types.SimpleNamespace(pid=4343), 5555)
+        with mock.patch.multiple(tool, recorded_live=lambda state: None, live_port_setting=lambda: 0,
+                                 live_address=lambda port: f"http://127.0.0.1:{port}/"):
+            sup.start_live()  # started
+        self.assertEqual(sup.view_pid, 4343)
+        self.assertGreaterEqual(sup.started_at.get("live", 0.0), before)
+
+    def test_a_blocker_the_lead_resolved_is_not_resolved_again_nor_recorded_while_it_flaps(self) -> None:
+        journal: list[dict] = []
+        alive = types.SimpleNamespace(poll=lambda: None)
+        sup, written, resolutions = self.supervisor(journal, flapping=("serve",), children={"serve": alive})
+        sup.blockers()
+        resolutions.append({"journal": written[0]["id"], "why": "the lead's"})
+        sup.blockers()
+        self.assertEqual(len(written), 1, "a flap the lead resolved was recorded again while it flaps")
+        sup.flapping = lambda: ()
+        sup.blockers()
+        self.assertEqual(len(written), 1, "a blocker the lead resolved was resolved again")
+
+    def test_only_a_flapping_child_s_blocker_is_left_to_its_won_t_stay_up_item(self) -> None:
+        flow = self.tmp / "flow-log"
+        flow.mkdir(exist_ok=True)
+        (flow / "FX-1.supervisor.blockers.json").write_text(json.dumps({"child:serve": 3, "child:live": 5,
+                                                                         f"suite:{self.tmp}/x/checkout": 4}))
+        with mock.patch.object(self.tool, "lead_file", lambda c, name: flow / f"FX-1.{name}"):
+            self.assertEqual(self.tool.flapping_blockers(self.c, ("serve",)), {3})
+            self.assertEqual(self.tool.flapping_blockers(self.c, ("serve", "live")), {3, 5})
+            # Once it no longer flaps, or with no supervisor to say so, its blocker shows as any other; a suite
+            # checkout's blocker always does.
+            self.assertEqual(self.tool.flapping_blockers(self.c, ()), set())
+        # needs_you applies that filter, and no wider one: with serve flapping only its blocker is left to the "won't
+        # stay up" item, and with nothing flapping both blockers show and hold.
+        doc = {"journal": [{"id": n, "kind": "blocker.recorded", "data": {"text": f"blocker {n}"}, "at": "t"}
+                           for n in (3, 4)], "state": {"queue": [], "meta": {}}}
+        c = types.SimpleNamespace(**vars(self.c), state=self.tmp, flow_log=flow, forge={})
+        stand_ins = {"tracker_conf": lambda c: {}, "base_head": lambda c: None, "full_health_running": lambda c: None,
+                     "lane_needs": lambda state: [], "listener_needed": lambda state: False,
+                     "record_needs": lambda doc, items: [], "waits_needing": lambda c, doc, items: [],
+                     "say_needs": lambda c, doc, items: items, "read_log": lambda name, delivery: [],
+                     "lead_file": lambda c, name: flow / f"FX-1.{name}"}
+        with mock.patch.multiple(self.tool, **stand_ins), \
+                mock.patch.object(self.tool.tracker_publisher, "needs_you", lambda *a, **k: []):
+            blockers = lambda flapping: {item["fields"]["entry"]: item["holding"] for item in
+                                         self.tool.needs_you(c, doc, flapping) if item["kind"] == "blocker"}
+            self.assertEqual(blockers(("serve",)), {4: True})
+            self.assertEqual(blockers(()), {3: True, 4: True})
+
+    def test_the_supervisor_s_blockers_are_pinned_where_the_lead_reads_them(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        normal = lambda path: " ".join((root / path).read_text(encoding="utf-8").split())
+        config = normal("skills/run-delivery/references/config.md")
+        self.assertIn("A child that won't stay up is also journalled, once, as a `blocker.recorded` naming the child, its "
+                      "log and that log's last line, so a running `lead-wait` wakes on it", config)
+        self.assertIn("is removed before `serve` starts and on each pass when its run has ended, no process works inside "
+                      "it, it is detached and it holds no change; otherwise it is recorded as a blocker naming it, why it "
+                      "stays and the command that removes it, resolved once it is gone.", config)
+        skill = normal("skills/run-delivery/SKILL.md")
+        self.assertIn("It journals a blocker, which wakes the lead's `lead-wait`, when a child first won't stay up", skill)
+        self.assertIn("Its folder names its pid, so a checkout an interrupted run leaves is the supervisor's to remove once "
+                      "that run has ended", skill)
+        self.assertIn("are journalled as blockers, so your `lead-wait` wakes on them",
+                      normal("skills/run-delivery/references/adopting.md"))
+
+    def test_a_suite_checkout_in_use_is_recorded_and_resolved_once_it_has_gone(self) -> None:
+        journal: list[dict] = []
+        running = self.suite_checkout({"pid": os.getpid(), "commit": self.head})
+        sup, written, resolutions = self.supervisor(journal)
+        sup.blockers()
+        sup.blockers()
+        self.assertEqual([e["kind"] for e in written], ["blocker.recorded"])
+        self.assertIn(f"A lead-suite checkout of {self.head[:12]} is left at {running}", written[0]["data"]["text"])
+        (running.parent / self.tool.SUITE_OWNER).write_text(json.dumps({"pid": 999999999, "commit": self.head}))
+        sup.blockers()  # its run has ended: removed, and the blocker resolved
+        self.assertFalse(running.exists())
+        self.assertEqual([e["kind"] for e in written], ["blocker.recorded", "blocker.resolved"])
+        self.assertEqual(resolutions[-1]["why"], f"the lead-suite checkout {running} is gone")
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
@@ -6222,6 +6495,10 @@ class LeadSuiteTests(unittest.TestCase):
         (fx.tmp / "suite-mode").write_text("wait")
         proc = self.background(fx, "--at", at)
         wait_for(lambda: (fx.tmp / "suite-gate.started").exists(), "the suite to start")
+        # Its folder names the run, so a checkout the run leaves can be told from one still in use.
+        [owner] = list((m / ".orchestration/work/suite").glob("*/owner.json"))
+        self.assertEqual({k: v for k, v in json.loads(owner.read_text()).items() if k != "startedAt"},
+                         {"pid": proc.pid, "commit": at})
         # The lead edits and commits in its own checkout while the run goes on: the run is the commit's.
         (m / "src/one.txt").write_text("edited under the run\n")
         commit(m, "FX-1: an edit under the suite")
