@@ -512,14 +512,35 @@ def python_block(text: list[str], line: int, statements: list | None = None) -> 
 HEADING = re.compile(r"^(#{1,6})\s")
 
 
+FENCE = re.compile(r"^\s{0,3}(```|~~~)")
+
+
+def markdown_headings(text: list[str]) -> dict[int, int]:
+    """Each heading's line and level, outside fenced code blocks, where a line starting with '#' is code."""
+    headings, fence = {}, None
+    for number, line in enumerate(text, 1):
+        opened = FENCE.match(line)
+        if fence is not None:
+            if opened and opened.group(1) == fence:
+                fence = None
+            continue
+        if opened:
+            fence = opened.group(1)
+            continue
+        heading = HEADING.match(line)
+        if heading:
+            headings[number] = len(heading.group(1))
+    return headings
+
+
 def markdown_block(text: list[str], line: int) -> tuple[int, int]:
-    heading = HEADING.match(text[line - 1])
-    if heading:
-        level = len(heading.group(1))
-        end = next((number for number in range(line + 1, len(text) + 1)
-                    if (other := HEADING.match(text[number - 1])) and len(other.group(1)) <= level), len(text) + 1)
+    headings = markdown_headings(text)
+    if line in headings:
+        level = headings[line]
+        end = next((number for number in sorted(headings) if number > line and headings[number] <= level),
+                   len(text) + 1)
         return line, end
-    plain = lambda number: text[number - 1].strip() and not HEADING.match(text[number - 1])
+    plain = lambda number: text[number - 1].strip() and number not in headings
     start, end = line, line + 1
     while start > 1 and plain(start - 1):
         start -= 1

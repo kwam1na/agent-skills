@@ -106,6 +106,31 @@ class AnchorTests(unittest.TestCase):
         self.assertEqual(self.around("a.md", "its second line"), (7, 9))
         self.assertEqual(self.around("a.md", "### Deeper"), (10, 14))
 
+    def test_each_block_rule_at_its_edge(self) -> None:
+        base = self.repo.commit({
+            "b.py": ["x = 0\n", "if x: a = 1\n", "else: a = 2\n", "y = 3\n"],
+            "b.txt": ["a:\n", "  b\n", "\n", "c\n"],
+            "b.md": ["# H\n", "para one\n", "para two\n", "\n", "after\n"],
+            "many.txt": [f"dup {i}\n" for i in range(12)]})
+        around = lambda path, anchor: regions.anchored(self.repo.root, base, path, anchor)
+        self.assertEqual(around("b.py", "if x: a = 1"), (2, 4))   # the outermost of the statements starting there
+        self.assertEqual(around("b.txt", "a:"), (1, 3))           # a trailing blank line is not the block's
+        self.assertEqual(around("b.md", "para two"), (2, 4))      # a paragraph stops at the heading above it
+        with self.assertRaises(regions.RegionError) as caught:
+            around("many.txt", "dup")
+        said = str(caught.exception)
+        self.assertIn("12 lines of many.txt", said)
+        self.assertIn("line 10: 'dup 9'", said)
+        self.assertNotIn("line 11:", said)
+        self.assertIn("and 2 more", said)
+
+    def test_a_heading_like_line_inside_a_code_fence_is_code_not_a_heading(self) -> None:
+        fenced = ["# Top\n", "\n", "## Usage\n", "\n", "```bash\n", "# install it\n", "make\n", "```\n", "\n",
+                  "More usage.\n", "\n", "## Next\n", "Text.\n"]
+        base = self.repo.commit({"fenced.md": fenced})
+        self.assertEqual(regions.anchored(self.repo.root, base, "fenced.md", "## Usage"), (3, 12))
+        self.assertEqual(regions.anchored(self.repo.root, base, "fenced.md", "# install it"), (5, 9))
+
     def test_a_json_key_names_its_block_with_its_closing_line(self) -> None:
         self.assertEqual(self.around("a.json", '"block": {'), (3, 9))
         self.assertEqual(self.around("a.json", '"more"'), (5, 8))
@@ -138,6 +163,9 @@ class StatementTests(unittest.TestCase):
             self.check("a.py", 12, 16)
         with self.assertRaisesRegex(regions.RegionError, "cuts the statement at lines 11-14"):
             self.check("a.py", 8, 13)
+        for start, end in ((8, 14), (14, 16)):  # one line short of the call's closing line, and starting on it
+            with self.subTest(start=start, end=end), self.assertRaisesRegex(regions.RegionError, "lines 11-14"):
+                self.check("a.py", start, end)
         self.check("a.py", 11, 15)
         self.check("a.py", 19, 22)   # to the end of the file
         self.check("a.txt", 12, 16)  # no statement check outside Python
@@ -163,10 +191,11 @@ class StatementTests(unittest.TestCase):
         text = PYTHON.splitlines()
         self.assertEqual(regions.anchor_for("a.py", text, 16, 17, []), ("        return total", None, (16, 17)))
         self.assertEqual(regions.anchor_for("a.py", text, 11, 15, []), ("    total = compute(", None, (11, 15)))
-        # An insertion after a held block: the block named, widened by the line after it.
-        words, insert, span = regions.anchor_for("a.txt", ["a\n", "  b\n", "c\n", "d\n"], 1, 4, [])
-        self.assertLessEqual(span[0], 1)
-        self.assertGreaterEqual(span[1], 4)
+        # No block holds lines 1-3 alone: the smallest one widened by the line after it does.
+        self.assertEqual(regions.anchor_for("a.txt", ["a", "  b", "c", "d"], 1, 4, []), ("a", "after", (1, 4)))
+        # An insertion's one line, by --insert: never into a claimed line, so the other side's block is named.
+        self.assertEqual(regions.anchor_for("a.txt", ["p", "q", "r"], 2, 3, [], True), ("p", "after", (1, 3)))
+        self.assertEqual(regions.anchor_for("a.txt", ["p", "q", "r"], 2, 3, [(2, 3)], True), ("q", "after", (2, 4)))
 
 
 
@@ -209,6 +238,15 @@ class GrantLinesTests(CommandCase):
         out = self.flow("lead-own", "--carve", "lib/a.py", "--give", "lane-2:12-16", ok=False)
         self.assertIn("the carve of lib/a.py changes nothing: the span [12, 16) cuts the statement", out)
         self.assertEqual(self.claims("lib/a.py"), before)
+        for argv, said in (
+                (("--region", "lib/a.py", "--lane", "lane-1", "--base", base, "--around", "def after", "--start", 1, "--end", 2),
+                 "not both"),
+                (("--revoke-region", "lib/a.py", "--lane", "lane-1", "--base", base, "--around", "def after"),
+                 "a revocation matches the claim by its coordinates"),
+                (("--carve", "lib/a.py", "--around", "def after", "--give", "lane-1:19-22"), "in its --give")):
+            with self.subTest(argv=argv[0]):
+                self.assertIn(said, self.flow("lead-own", *argv, ok=False))
+                self.assertEqual(self.claims("lib/a.py"), before)
         self.grant("lib/a.py", "lane-1", base, 19, 22)  # to the end of the file
         self.grant("lib/a2.txt", "lane-1", base, 12, 16)  # no statement check outside Python
         out = self.flow("lead-own", "--region", "lib/a.py", "--lane", "lane-2", "--base", base, "--around", "def waited_on")
@@ -231,6 +269,18 @@ class GrantLinesTests(CommandCase):
         out = self.grant("lib/w.txt", "lane-3", base, 20, 21, "--insert", "after", ok=False)
         self.assertIn("past the end of the file", out)
         self.assertEqual(self.claims("lib/w.txt"), before)
+        # A give widens the same way, and never into another give's line or another lane's claim.
+        v = numbered(20, "v")
+        vbase = self.push_base({"lib/v.txt": v})
+        out = self.flow("lead-own", "--carve", "lib/v.txt", "--give", "lane-3+after:4-8")
+        self.assertIn("--insert after widens [4, 8) to [4, 9)", out)
+        self.assertEqual(self.claims("lib/v.txt"), [claim_of("lane-3", vbase, 4, 9, "lib/v.txt")])
+        out = self.flow("lead-own", "--carve", "lib/v.txt", "--give", "lane-1:around=v 12", "--give", "lane-2+before:around=v 13",
+                        ok=False)
+        self.assertIn("line 12, which [12, 13) already claims", out)
+        out = self.flow("lead-own", "--carve", "lib/v.txt", "--give", "lane-1+before:9-11", ok=False)
+        self.assertIn("line 8, which [4, 9) already claims", out)
+        self.assertEqual(self.claims("lib/v.txt"), [claim_of("lane-3", vbase, 4, 9, "lib/v.txt")])
         # FX-8 inserts after its asked span's last line, at the original edge: inside the widened span.
         self.flow("lead-assign", "FX-8", "--lane", "lane-3", "--title", "lane-3")
         wt = self.fx.lane("FX-8")
@@ -245,17 +295,24 @@ class GrantLinesTests(CommandCase):
     def test_claims_check_asks_by_anchor_and_the_brief_says_to(self) -> None:
         from tests.test_run_delivery import commit
         lines = numbered(30, "k")
-        base = self.push_base({"lib/k.txt": lines})
+        j = ["group:\n", "  a\n", "end\n", "other 1\n", "other 2\n"]
+        base = self.push_base({"lib/k.txt": lines, "lib/j.txt": j})
         self.grant("lib/k.txt", "lane-2", base, 5, 10)
+        self.grant("lib/j.txt", "lane-3", base, 4, 6)
         wt = self.fx.lane("FX-7")
         (wt / "lib/k.txt").write_text("".join([*lines[:9], "k inserted\n", *lines[9:14], "k fifteen\n", *lines[15:]]))
+        # Two new lines inside the group's block, not at an edge of a span the lane holds: the block, without --insert.
+        (wt / "lib/j.txt").write_text("".join([*j[:1], "  new one\n", "  new two\n", *j[1:]]))
         commit(wt, "FX-7: one at the edge, one outside")
         code, out = self.fx.flow("claims-check", "FX-7", cwd=wt)
         self.assertEqual(code, 1, out)
         requests = [line for line in out.splitlines() if "run_delivery.py lead-own " in line]
-        self.assertEqual(len(requests), 2, out)
+        self.assertEqual(len(requests), 3, out)
+        [grouped] = [line for line in requests if "lib/j.txt" in line]
+        self.assertIn("--around=group:", grouped)
+        self.assertNotIn("--insert", grouped)
         for line in requests:
-            self.assertIn("--around ", line)
+            self.assertIn("--around=", line)
             self.assertNotIn("--start", line)
             self.assertNotIn("--end", line)
         self.assertTrue(any("--insert" in line for line in requests), out)

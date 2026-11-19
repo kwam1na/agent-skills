@@ -6273,7 +6273,7 @@ def claims_report(c, helper, lane: str, key: str, base: str, head: str, state: d
             words, insert, span = found
             clash = [described_claim(claim, other, base) for other, claim in others if helper.overlapping(other, span)]
             needed.append(f"  {command} lead-own --region {shlex.quote(path)} --lane {lane} --base {base} "
-                          f"--around {shlex.quote(words)}" + (f" --insert {insert}" if insert else "")
+                          f"--around={shlex.quote(words)}" + (f" --insert {insert}" if insert else "")
                           + (f" --story {story}" if story else "")
                           + (f"   (overlaps {', '.join(clash)}: a carve gives it)" if clash else ""))
     return held, needed
