@@ -2004,6 +2004,39 @@
       "line": "acs"
     },
     {
+      "kind": "compounding.recorded",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "outcome": "required",
+        "reference": "docs/solutions/delivery/close-on-proof-2026-11-18.md"
+      },
+      "head": "A learning was preserved",
+      "line": "docs/solutions/delivery/close-on-proof-2026-11-18.md"
+    },
+    {
+      "kind": "compounding.recorded",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "outcome": "not-required",
+        "why": "nothing new"
+      },
+      "head": "No new learning to preserve",
+      "line": "nothing new"
+    },
+    {
+      "kind": "compounding.recorded",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "outcome": "skipped",
+        "why": "operator closed early"
+      },
+      "head": "The compound-learning decision was skipped",
+      "line": "operator closed early"
+    },
+    {
       "kind": "hook.held",
       "lane": "lane-1",
       "subject": "APP-12",

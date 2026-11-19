@@ -115,6 +115,7 @@ TABLE = {
     "release.started": ("H", "note", "head", "", "-"),
     "release.finished": ("H", "landed", "head failedAt?", "cause", "epic: Released"),
     "finish.met": ("H", "landed", "finish evidence? by?", "", "epic: Finish line met"),
+    "compounding.recorded": ("H", "decision", "outcome reference? *why?*", "", "epic: Compounding decided"),
     "hook.held": ("S", "note", "hook verdict lanes? pieces?", "", "-"),
     "peer.merged": ("S", "note", "peer head files", "", "-"),
     "delivery.closed": ("H", "landed", "skipped?", "", "epic: Delivery closed"),

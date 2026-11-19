@@ -3335,7 +3335,8 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         theirs = subprocess.Popen(sweep + ["--delivery", "OTHER-9", "lead-run"], cwd=m)
         try:
             time.sleep(0.5)
-            code, out = flow_run("lead-close", cwd=m)
+            # An early close, with work still open: no compound-learning decision can follow the work, so it is skipped.
+            code, out = flow_run("lead-close", "--without-compounding", "an early close in the fixture", cwd=m)
             expect(f"stopped {ours.pid}" in out and f"stopped {theirs.pid}" not in out, f"the sweeps weren't sorted: {out}")
             ours.wait(timeout=5)
             expect(theirs.poll() is None, "lead-close stopped another delivery's sweep")
@@ -4240,7 +4241,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             holder.stdout.close()
         self.addCleanup(stop)
         self.assertEqual(holder.stdout.readline().strip(), "holding")
-        code, out = fx.flow("lead-close", cwd=fx.main)
+        code, out = fx.flow("lead-close", "--without-compounding", "an early close in the fixture", cwd=fx.main)
         left = [line for line in out.splitlines() if line.startswith("  left: ")]
         self.assertEqual(code, 1, out)
         self.assertEqual(left, ["  left: the in-app lease is held (app-check pid 1 since then); gave up after 0s"], out)
@@ -4252,7 +4253,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
     def test_lead_close_with_the_lease_free_names_the_ports_listener_and_the_kill_hint(self) -> None:
         fx = self.closable()
         listener = self.listener(fx.port, "free-lease-mark")  # a build served by hand, outside the lease
-        code, out = fx.flow("lead-close", cwd=fx.main)
+        code, out = fx.flow("lead-close", "--without-compounding", "an early close in the fixture", cwd=fx.main)
         left = [line for line in out.splitlines() if line.startswith("  left: ")]
         self.assertEqual(code, 1, out)
         self.assertIn(f"  done: the in-app lease {fx.tmp / 'app.lock'} is free", out)
@@ -4855,7 +4856,8 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
         stranger = start("notflow.py", "lead-run")
         try:
             time.sleep(0.5)
-            code, out = fx.flow("lead-close", cwd=m, env={**fx.env, "HOME": str(home)})
+            code, out = fx.flow("lead-close", "--without-compounding", "an early close in the fixture", cwd=m,
+                                env={**fx.env, "HOME": str(home)})
             expect(code == 0 and "closed out" in out, out)
             # With no cleanup.archive, the record is archived under the run-delivery default.
             self.assertTrue(list((home / ".local/share/run-delivery/archive/main/FX-1").glob("*/record/journal.jsonl")),
@@ -9951,10 +9953,21 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
             if "run_delivery.py doctor" in block["body"]:
                 self.assertEqual(failing(done.stdout), {}, done.stdout)
         self.assertEqual(used, set(GUIDE_SUBSTITUTIONS), "a pinned substitution is no longer needed; unpin it")
-        # The guide's last block is the lane's last word: the supervisor merges, cleans up, meets the finish line and
-        # closes the delivery itself, then stops. Nothing more is run.
+        # The guide's last block is the lane's last word: the supervisor merges, cleans up and meets the finish line.
+        # Once only the compound-learning decision holds the close, it writes the friction stub, and the lead records
+        # the decision; then the supervisor closes the delivery itself and stops. Nothing more is run.
         closed = repo / ".orchestration/flow-log/FX-1.closed.json"
         deadline = time.monotonic() + 300
+        stub = repo / ".orchestration/flow-log/FX-1.friction.md"
+        while time.monotonic() < deadline and not stub.exists():
+            time.sleep(0.5)
+        log = repo / ".orchestration/flow-log/FX-1.supervisor.jsonl"
+        self.assertTrue(stub.exists(), "the supervisor never wrote the friction stub: "
+                        + (log.read_text()[-3000:] if log.exists() else "it never ran a pass"))
+        decided = subprocess.run([sys.executable, "-B", ".agent-skills/current/skills/run-delivery/scripts/run_delivery.py",
+                                  "lead-compound", "--not-required", "--why", "the guide's delivery taught nothing new"],
+                                 cwd=repo, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
+        self.assertEqual(decided.returncode, 0, decided.stdout)
         while time.monotonic() < deadline and not closed.exists():
             time.sleep(0.5)
         log = repo / ".orchestration/flow-log/FX-1.supervisor.jsonl"
@@ -10866,7 +10879,7 @@ class DeliveryPostureReaderTests(unittest.TestCase):
             "afresh otherwise, leaving the earlier folder without the `finished` mark; `lead-close` always archives the "
             "record afresh. Marking a close finished again changes nothing.",
             "whoever journals it through the state tool, the supervisor or the lead by hand.",
-            "The supervisor's friction note comes after it.",
+            "The archived friction note gains what the close-out left to the operator after it.",
             "**Finished:** both marks name the closing entry. The status line run-delivery's lead commands print, "
             "`doctor`'s supervisor row and the line map say the delivery is closed.",
             "The status line and `doctor`'s supervisor row, as `wrong`, say the close stopped partway and name what "

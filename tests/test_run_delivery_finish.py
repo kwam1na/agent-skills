@@ -145,6 +145,10 @@ class LeadFinishTests(unittest.TestCase):
         self.merged(fx, "FX-3", "lane-2")
         for lane in ("lane-1", "lane-2"):
             state_tool(fx, "focus", "--lane", lane, "--text", "done", "--state", "done")
+        # The close waits on the compound-learning decision too: recorded once the work is done, so the line alone
+        # holds it.
+        code, out = fx.flow("lead-compound", "--not-required", "--why", "nothing new", cwd=fx.main)
+        self.assertEqual(code, 0, out)
         for _ in range(3):
             last = self.once(fx)
             self.assertEqual(self.met(fx), {"deploy": False, "merged": True})
@@ -211,14 +215,17 @@ class LeadFinishReadsTests(unittest.TestCase):
         self.finish = [{"id": "deploy", "text": "Deployed", "met": False}]
         self.calls: list[tuple] = []
         self.answers: list[tuple[int, dict]] = []
-        self.c = types.SimpleNamespace(state=self.tmp, finish=[{"id": "deploy", "text": "Deployed", "covers": {}}],
+        self.c = types.SimpleNamespace(state=self.tmp, release=self.tmp, finish=[{"id": "deploy", "text": "Deployed", "covers": {}}],
                                        flow_log=self.tmp, delivery="FX-1")
 
         def state_tool(*argv, check=True):
             self.calls.append(argv)
             code, answer = self.answers.pop(0)
             return types.SimpleNamespace(returncode=code, stdout=json.dumps(answer), stderr="")
+        self.owed = False
         for name, value in (("cfg", lambda: self.c), ("state_tool", state_tool), ("render_views", lambda c: "rendered"),
+                            ("shown_record", lambda release, state: {"journal": []}),
+                            ("decision_owed", lambda c, doc: self.owed),
                             ("load_state", lambda: {"state": {"version": self.version, "finish": self.finish},
                                                     "journal": []})):
             self.enterContext(mock.patch.object(self.tool, name, value))
@@ -281,6 +288,15 @@ class LeadFinishReadsTests(unittest.TestCase):
             with self.subTest(held=held):
                 log.write_text(json.dumps({"pass": 1, "closeHeldBy": held}) + "\n")
                 self.assertEqual(self.tool.waits_on(self.c), f". The close waits on: {said}")
+        # The compound-learning decision is read from the record too: owed, it stands after the close condition's
+        # parts, where close_holds puts it; recorded since the pass, it goes.
+        self.owed = True
+        log.write_text(json.dumps({"pass": 1, "closeHeldBy": ["not merged: FX-3", "a Needs you item"]}) + "\n")
+        self.assertEqual(self.tool.waits_on(self.c), ". The close waits on: not merged: FX-3; finish lines not met: "
+                         "deploy; the compound-learning decision; a Needs you item")
+        self.owed = False
+        log.write_text(json.dumps({"pass": 1, "closeHeldBy": ["the compound-learning decision"]}) + "\n")
+        self.assertEqual(self.tool.waits_on(self.c), ". The close waits on: finish lines not met: deploy")
         # Every line met, the part goes, and so does the whole when nothing else held.
         state.write_text(json.dumps({"finish": [{"id": "deploy", "met": True}]}))
         log.write_text(json.dumps({"pass": 1, "closeHeldBy": ["finish lines not met: deploy"]}) + "\n")
