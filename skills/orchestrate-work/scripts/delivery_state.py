@@ -6228,6 +6228,9 @@ def journal_patched(directory: Path, *, version: int, selector: str, changes: ob
                          "and this registry has none")
     if not isinstance(data, dict):
         raise StateError("entry_invalid", "an entry carries its facts in data, a JSON object")
+    if kind in (CLOSED_KIND, "base.repaired"):
+        # Their append writes the record itself, which the combined write would then overwrite.
+        raise StateError("entry_invalid", f"{kind} is journalled on its own: its append writes the record")
     written, _, [entry] = _locked_write(directory, change)
     return {"state": written, "entry": entry}
 

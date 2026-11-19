@@ -8123,7 +8123,12 @@ class ElementWriteTests(unittest.TestCase):
         cases = [("/finish/0/met", True, "--element 'finish[id=deploy]' --patch '{\"met\": true}'"),
                  ("/finish/1/met", False, "--element 'finish[id=docs]' --patch '{\"met\": false}'"),
                  ("/finish/0/label", "Deploy", "--element 'finish[id=deploy]' --patch '{\"label\": \"Deploy\"}'"),
-                 ("/finish/0/met", None, "--element 'finish[id=deploy]' --set '{\"/met\": null}'")]
+                 ("/finish/0/met", None, "--element 'finish[id=deploy]' --set '{\"/met\": null}'"),
+                 # A pointer nested below the element's field, or an object value, is a set: a merge patch would be
+                 # another write.
+                 ("/finish/0/covers/criteria", [], "--element 'finish[id=deploy]' --set '{\"/covers/criteria\": []}'"),
+                 ("/finish/0/covers", {"criteria": []},
+                  "--element 'finish[id=deploy]' --set '{\"/covers\": {\"criteria\": []}}'")]
         for pointer, value, form in cases:
             with self.subTest(pointer=pointer, value=value):
                 code, refused = run_tool(self.directory, "patch", "--writer", "lead", "--version", "2",
@@ -8181,16 +8186,29 @@ class ElementWriteTests(unittest.TestCase):
             ("entry_invalid", dict(version=2, data={**good, "evidence": "   "})),
             ("selector_unmatched", dict(version=2, data=good, selector="finish[id=nowhere]")),
             ("patch_invalid", dict(version=2, data=good, changes={"met": "yes"})),
+            # Kinds whose own append writes the record are journalled on their own.
+            ("entry_invalid", dict(version=2, kind="delivery.closed", data={})),
+            ("entry_invalid", dict(version=2, kind="base.repaired", data={"head": HEAD_A})),
         ]
         for code, given in refusals:
             with self.subTest(code=code, given=given):
-                arguments = {"selector": "finish[id=deploy]", "changes": {"met": True}, **given}
+                arguments = {"selector": "finish[id=deploy]", "changes": {"met": True}, "kind": "finish.met", **given}
                 with self.assertRaises(state_tool.StateError) as refused:
-                    state_tool.journal_patched(self.directory, kind="finish.met", subject="deploy", **arguments)
+                    state_tool.journal_patched(self.directory, subject="deploy", **arguments)
                 self.assertEqual(refused.exception.code, code, refused.exception)
                 self.assertEqual(self.written(), before)
+        # A field the lead doesn't own, here one only a lane's hand-off writes, is refused as the lead's patch is.
+        state_tool.patch(self.directory, writer="lead", version=2, changes={"queue": [queue_item("pr-1")]})
+        before = self.written()
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.journal_patched(self.directory, version=3, selector="queue[subject=pr-1]",
+                                       changes={"acceptedRegionPaths": ["src/x.py"]}, kind="finish.met",
+                                       subject="deploy", data=good)
+        self.assertEqual(refused.exception.code, "field_not_owned", refused.exception)
+        self.assertIn("acceptedRegionPaths", str(refused.exception))
+        self.assertEqual(self.written(), before)
         # On the command line it is the lead's alone, and --element, --patch and --version come together.
-        whole = ["--element", "finish[id=deploy]", "--patch", json.dumps({"met": True}), "--version", "2"]
+        whole = ["--element", "finish[id=deploy]", "--patch", json.dumps({"met": True}), "--version", "3"]
         for argv in (["--writer", "lane", "--lane", "lane-1", *whole], whole[:2], whole[:4], [*whole[:2], *whole[4:]]):
             with self.subTest(argv=argv):
                 code, refused = run_tool(self.directory, "journal", "--kind", "finish.met", "--subject", "deploy",

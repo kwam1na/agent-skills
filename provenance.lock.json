@@ -534,7 +534,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "5c014d07fbb19c607200fd5cb489bc3c22746376beedc65cb11364c45425094b"
+          "sha256": "fe7d6a6de74dccc09c7d7584519f7214978aa330e964183d57fe42302882ffd9"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",

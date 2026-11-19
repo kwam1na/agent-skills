@@ -10,6 +10,7 @@ deferral a later round lists as fixed files no follow-up.
 from __future__ import annotations
 
 import contextlib
+import io
 import json
 import shutil
 import tempfile
@@ -196,6 +197,95 @@ class FixedDeferralTests(unittest.TestCase):
         tool.followups_step(c, doc)
         self.assertEqual(filed, [{"finding": "a-r1-2", "followup": "S-1-a-r1-2", "title": "Follow a-r1-2"}])
         self.assertEqual([[item["id"] for item in body["followups"]] for body in patched], [["S-1-a-r1-2"]])
+
+
+class LeadFinishReadsTests(unittest.TestCase):
+    """What lead-finish and the status line read, with the record and the state tool stood in for: the retry after a
+    stale write, the covers plan.json gives, and where the record's unmet lines go among the last pass's holds."""
+
+    def setUp(self) -> None:
+        self.tool = loaded_run_delivery(self, "run_delivery_for_lead_finish_reads")
+        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.version = 7
+        self.finish = [{"id": "deploy", "text": "Deployed", "met": False}]
+        self.calls: list[tuple] = []
+        self.answers: list[tuple[int, dict]] = []
+        self.c = types.SimpleNamespace(state=self.tmp, finish=[{"id": "deploy", "text": "Deployed", "covers": {}}],
+                                       flow_log=self.tmp, delivery="FX-1")
+
+        def state_tool(*argv, check=True):
+            self.calls.append(argv)
+            code, answer = self.answers.pop(0)
+            return types.SimpleNamespace(returncode=code, stdout=json.dumps(answer), stderr="")
+        for name, value in (("cfg", lambda: self.c), ("state_tool", state_tool), ("render_views", lambda c: "rendered"),
+                            ("load_state", lambda: {"state": {"version": self.version, "finish": self.finish},
+                                                    "journal": []})):
+            self.enterContext(mock.patch.object(self.tool, name, value))
+
+    def finish_line(self, line: str = "deploy") -> str:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.tool.lead_finish(types.SimpleNamespace(line=line, evidence=EVIDENCE))
+        return out.getvalue()
+
+    def test_a_stale_write_is_read_again_and_retried_once_journalling_one_entry(self) -> None:
+        stale = (1, {"ok": False, "code": "version_stale", "error": "patch is pinned to version 7; state is at 8"})
+
+        def moved(*argv, check=True):
+            self.version = 8  # another writer moved the record between the read and the write
+            return original(*argv, check=check)
+        original = self.tool.state_tool
+        self.enterContext(mock.patch.object(self.tool, "state_tool", moved))
+        self.answers = [stale, (0, {"ok": True, "entry": {"id": 12}})]
+        self.assertIn("finish line deploy met (journal entry 12); views: rendered", self.finish_line())
+        self.assertEqual(len(self.calls), 2, self.calls)
+        self.assertEqual([argv[argv.index("--version") + 1] for argv in self.calls], ["7", "8"])
+        self.assertTrue(all(argv[:2] == ("journal", "--kind") and argv[2] == "finish.met" for argv in self.calls))
+        # Any other refusal is the state tool's, said, and not retried.
+        self.calls.clear()
+        self.answers = [(1, {"ok": False, "code": "field_not_owned", "error": "not the lead's"})]
+        with self.assertRaises(self.tool.Stop) as refused:
+            self.finish_line()
+        self.assertIn("the state tool refused finish line deploy: not the lead's", str(refused.exception))
+        self.assertEqual(len(self.calls), 1)
+
+    def test_the_covers_plan_json_gives_decide_whose_line_it_is(self) -> None:
+        plan = self.tmp / self.tool.PLAN_FILE
+        # The delivery file calls deploy the lead's, but plan.json, as the supervisor reads it, has it proved.
+        plan.write_text(json.dumps({"finish": [{"id": "deploy", "covers": {"criteria": [], "proofs": ["merged"]}}]}))
+        with self.assertRaises(self.tool.Stop) as refused:
+            self.finish_line()
+        self.assertIn(PROVES, str(refused.exception))
+        self.assertEqual(self.calls, [])
+        # And the other way about: the delivery file has it proved, plan.json calls it the lead's.
+        self.c.finish = [{"id": "deploy", "text": "Deployed", "covers": {"criteria": [], "proofs": ["merged"]}}]
+        plan.write_text(json.dumps({"finish": [{"id": "deploy", "covers": {"criteria": [], "proofs": []}}]}))
+        self.answers = [(0, {"ok": True, "entry": {"id": 3}})]
+        self.assertIn("finish line deploy met", self.finish_line())
+
+    def test_the_records_unmet_lines_go_where_close_holds_puts_them(self) -> None:
+        log = self.tmp / "FX-1.supervisor.jsonl"
+        state = self.tmp / "state.json"
+        state.write_text(json.dumps({"finish": [{"id": "deploy", "met": False}, {"id": "docs", "met": True}]}))
+        cases = [
+            # The last pass named no lines: they go after what is not handed off or not merged, before the rest.
+            (["not handed off: FX-2", "not merged: FX-3", "lanes not idle or done: lane-1"],
+             "not handed off: FX-2; not merged: FX-3; finish lines not met: deploy; lanes not idle or done: lane-1"),
+            (["a Needs you item"], "finish lines not met: deploy; a Needs you item"),
+            # The pass named lines since marked or unmarked: the record's stand in their place.
+            (["not merged: FX-3", "finish lines not met: docs", "a Needs you item"],
+             "not merged: FX-3; finish lines not met: deploy; a Needs you item"),
+        ]
+        for held, said in cases:
+            with self.subTest(held=held):
+                log.write_text(json.dumps({"pass": 1, "closeHeldBy": held}) + "\n")
+                self.assertEqual(self.tool.waits_on(self.c), f". The close waits on: {said}")
+        # Every line met, the part goes, and so does the whole when nothing else held.
+        state.write_text(json.dumps({"finish": [{"id": "deploy", "met": True}]}))
+        log.write_text(json.dumps({"pass": 1, "closeHeldBy": ["finish lines not met: deploy"]}) + "\n")
+        self.assertEqual(self.tool.waits_on(self.c), "")
+        log.unlink()
+        self.assertEqual(self.tool.waits_on(self.c), "", "a status line before the first pass named a hold")
 
 
 if __name__ == "__main__":
