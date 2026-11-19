@@ -2,7 +2,7 @@
   "schemaVersion": "orchestration-binding/1",
   "base": {
     "remote": "origin",
-    "ref": "integrate/epic-across-repos"
+    "ref": "main"
   },
   "bases": [
     "main",
