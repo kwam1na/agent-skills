@@ -12797,7 +12797,8 @@ class IntegrationStepTests(unittest.TestCase):
         (fx.main / "budget.json").write_text(json.dumps({**self.BUDGET, "wallSeconds": 999}) + "\n")
         runs = [("pass", (), 0, "passed", None), ("budget", ("--", "--budget", "budget.json"), 3, "over-budget", 1260),
                 ("budget", (), 3, "failed", None), ("budget", ("--", "--budget", "other-budget.json"), 3, "failed", None),
-                ("budget", ("--", "--budget=missing.json"), 3, "failed", None), ("fail", (), 1, "failed", None),
+                ("budget", ("--", "--budget=missing.json"), 3, "failed", None),
+                ("budget", ("--", "--budget=budget.json"), 3, "over-budget", 1260), ("fail", (), 1, "failed", None),
                 ("pass", ("--", "--budget", "budget.json"), 0, "passed", 1260)]
         for mode, argv, exit_code, result, budget in runs:
             with self.subTest(mode=mode, argv=argv):
@@ -12883,8 +12884,20 @@ class IntegrationStepTests(unittest.TestCase):
         # page's own rows expect: the target in, no suite yet so it is next, round 2's approval and the request at M.
         self.assertEqual(self.stops(self.record(fx)), [["merged", "filled"], ["suite", "next"], ["round", "filled"],
                                                        ["requested", "filled"]])
-        code, out = fx.flow("lead-integrate", "landed", "--head", target, cwd=m)
+        # The target's new head is on the remote only, never fetched here: lead-integrate fetches it before it reads it.
+        elsewhere = fx.tmp / "elsewhere"
+        sh("git", "clone", "-q", "--branch", "main", fx.origin, elsewhere)
+        quieten(elsewhere)
+        sh("git", "config", "user.name", "Fixture", cwd=elsewhere)
+        sh("git", "config", "user.email", "fixture@example.test", cwd=elsewhere)
+        (elsewhere / "src/landed.txt").write_text("the integration landed\n")
+        commit(elsewhere, "Merge the integration")
+        sh("git", "push", "-q", "origin", "HEAD:main", cwd=elsewhere)
+        rejoined = sh("git", "rev-parse", "HEAD", cwd=elsewhere).stdout.strip()
+        self.assertNotEqual(sh("git", "cat-file", "-t", rejoined, cwd=m, check=False).returncode, 0)
+        code, out = fx.flow("lead-integrate", "landed", "--head", rejoined, cwd=m)
         self.assertEqual(code, 0, out)
+        self.assertEqual(sh("git", "rev-parse", "origin/main", cwd=m).stdout.strip(), rejoined)
         entries = self.journal(fx, "integration.merged", "review.round", "integration.requested", "integration.landed")
         self.assertEqual([(e["kind"], e["subject"], e["lane"]) for e in entries],
                          [("integration.merged", "FX-1", None), ("review.round", "FX-1", None),
@@ -12902,7 +12915,7 @@ class IntegrationStepTests(unittest.TestCase):
                          {"round": 2, "head": merge, "verdicts": {"lens.a": "approve"},
                           "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}})
         self.assertEqual(requested, {"changeRequest": "https://forge.test/pull/7", "head": merge})
-        self.assertEqual(landed, {"target": "main", "head": target})
+        self.assertEqual(landed, {"target": "main", "head": rejoined})
         for entry in entries:
             self.validates(fx, entry)
         # A merge with no conflicts says so with an empty list.

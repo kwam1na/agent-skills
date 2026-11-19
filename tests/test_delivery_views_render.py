@@ -1183,12 +1183,23 @@ class IntegrationDriftTests(unittest.TestCase):
         # Three target commits since the start; one since the fix, the newest head a fact names; none on local main.
         self.assertEqual(self.drift(self.document(merged, suite)), {"moved": 3, "behind": 1})
         # A round under the delivery's key names a head too, and a landing names none: the round's is the current head.
-        landed = ("integration.landed", {"target": "main", "head": self.started})
+        landed = ("integration.landed", {"target": "main", "head": self.merge})
         self.assertEqual(self.drift(self.document(suite, ("review.round", {"round": 1, "head": self.started,
                                                                             "startedAt": "2026-11-18T10:00:00Z",
                                                                             "finishedAt": "2026-11-18T10:00:00Z",
                                                                             "verdicts": {}, "findings": {}}), landed)),
                          {"moved": 3, "behind": 3})
+
+    def test_the_page_embeds_the_drift_the_renderer_counted_and_no_block_without_it(self) -> None:
+        document = self.document(("integration.merged", {"target": "main", "targetHead": "a" * 40, "head": self.merge,
+                                                         "conflicts": []}))
+        with mock.patch.object(render, "integration_drift", return_value={"moved": 3, "behind": 1}) as counted:
+            page = render.render_line_map(document, {}, config(), theme_key="local", history=None)
+        self.assertEqual(block(page, "delivery-integration"), {"drift": {"moved": 3, "behind": 1}})
+        self.assertEqual(counted.call_count, 1)
+        with mock.patch.object(render, "integration_drift", return_value=None):
+            page = render.render_line_map(document, {}, config(), theme_key="local", history=None)
+        self.assertIsNone(block(page, "delivery-integration"))
 
     def test_with_no_integration_fact_behind_counts_from_the_base_head(self) -> None:
         self.assertEqual(self.drift(self.document(base_head=self.merge)), {"moved": 3, "behind": 1})

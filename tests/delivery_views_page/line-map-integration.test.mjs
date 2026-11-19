@@ -70,6 +70,15 @@ test("the sentence under it counts the target's moves, the catch-ups and the gap
     .toBe("main moved 1 commit while this worked. The lead has caught up 1 time, and the gap is 0.");
 });
 
+test("a page that polls takes in the renderer's new drift counts, with no reload", async () => {
+  const document = delivery([merged(30, M)]);
+  const page = pageWithRuns(document, {}, { config: CONFIG });
+  const snapshots = await openPage(withDrift(page, { moved: 5, behind: 2 }), { now: NOW,
+    rendered: withDrift(page, { moved: 9, behind: 6 }), steps: [{ push: document }, { wait: 3100 }] });
+  expect(drift(snapshots[0].app)).toBe("main moved 5 commits while this worked. The lead has caught up 1 time, and the gap is 2.");
+  expect(drift(snapshots[2].app)).toBe("main moved 9 commits while this worked. The lead has caught up 1 time, and the gap is 6.");
+});
+
 test("the line draws four stops past the join, labelled by the base, and the target beneath to the finish post", async () => {
   const app = await shown(delivery([]));
   expect(steps(app)).toEqual([["merged", "next"], ["suite", "hollow"], ["round", "hollow"], ["requested", "hollow"]]);
@@ -148,6 +157,9 @@ test("what stands at the current head rings its stop and says what the rejoin st
 
   const apart = await shown(delivery([merged(30, M), suite(31, H1), round(32, H2)]));
   expect(said(apart, "rejoin")).toBe("Needs a passing suite and an approving round at one head.");
+  // Both at one head that a later request moved on from: what is missing is both, at the current head.
+  const moved = await shown(delivery([merged(30, M), suite(31, H1), round(32, H1), requested(33, H2)]));
+  expect(said(moved, "rejoin")).toBe("Needs a passing suite at the current head and an approving round at it.");
 });
 
 test("a row with no fact yet says what will make it", async () => {
