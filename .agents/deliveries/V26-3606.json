@@ -106,6 +106,20 @@
       "after": [
         "V26-3618"
       ]
+    },
+    "V26-3624": {
+      "title": "Say where a story is on its line-map card, with the lane's own words under it",
+      "lane": "lane-1",
+      "why": "The operator agreed this card design from an HTML mockup during this delivery, after V26-3618's card read Being built for the hour after its review was approved, and asked for it to join this delivery after V26-3620, which edits the same line-map files.",
+      "criteria": [
+        {
+          "id": "v26-3624-1",
+          "text": "A story's card shows a state line for each state, worked out from the record and journal, with the dot colour for moving, waiting or checked."
+        }
+      ],
+      "after": [
+        "V26-3620"
+      ]
     }
   },
   "finish": [
