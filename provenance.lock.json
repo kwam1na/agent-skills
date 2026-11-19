@@ -514,11 +514,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
-          "sha256": "9d1765b4aa5dd3e5041ae7d68284f0e041370d964d3ee7e971de4915df077c83"
+          "sha256": "a3ccd55ab619ee45707f4531c9100747354e193e726ecc5eb2e281e108c6903d"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "af90154f17cbf5fe4bea8f089cec0d47370ff9cbaf7a7584430776dbc1f2d6a0"
+          "sha256": "29ca8ec86cd9181f10d75a7e76b860ad0e1d32735a389ab593e4a9f5ab312e26"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -534,7 +534,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "f8ab486e83dfe0b5e200299c70d10507fec4a895cc0d4c4bf8c4dcef0cf108e9"
+          "sha256": "8147d180ba7e75ed5b468594246b96a17c261a8438aa7fbb35f256921812e734"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
@@ -1083,7 +1083,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "a3f9ad4ae01074732e6ebb2f1a8f39dc9c64824fc581285d8823dde443f60f05"
+          "sha256": "441cb56cc63a155cae9a6738a18c220eb1d9ca857c8489fe76100e98248345b5"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1118,12 +1118,16 @@
           "sha256": "35ea9b8934c157b41d0e443cf8080293b8cb6f387c84944a0e5396c0923276f3"
         },
         {
+          "path": "skills/run-delivery/scripts/gaps.py",
+          "sha256": "ddb1d9befa8e8708576e26a64de0d473b5ebe0c93e9a1345a59ed4cc11897ab5"
+        },
+        {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
           "sha256": "aa5b0cd1c6fb9cb52d89aabce8d9882ae431e5ba349fa27e0f6a5a8051739d7b"
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "4236c2a3276d4003d26b35f262b2684452e930ca6e0db12b8435fe30f1d7d175"
+          "sha256": "0ccfe12fa484cc17f894acf10a7e8d04de1c10545617bcaadbb2b85bb87da551"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
@@ -1139,7 +1143,7 @@
         },
         {
           "path": "skills/run-delivery/templates/lane-brief.md",
-          "sha256": "7547933a0d8606f862beca0146a30baf98792186c22cc9ae72d233cb895df2f5"
+          "sha256": "95a7007be0f2e3f71a952c042e068ab3aae95476bf043fba89b82b247db93d53"
         },
         {
           "path": "skills/run-delivery/templates/round-brief.md",

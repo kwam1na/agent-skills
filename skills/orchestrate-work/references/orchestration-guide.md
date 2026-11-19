@@ -8,6 +8,13 @@ skill links to each by name.
 Work through these steps in order. Each step names the state it writes; write
 it through the state tool, then render the views.
 
+Note friction with `note-gap` when it happens, and class it as workflow, repo
+or host. When you write a script to get behaviour the workflow or a tool should
+provide, note a workflow gap with the script as its evidence before moving on.
+One-off reads for understanding don't count; anything you'd need again does.
+The close-out files repo gaps as follow-ups, writes workflow gaps beside the
+archive, and lists every gap in the friction stub.
+
 ### Writing the state
 
 - **Null is written with `--set`, never with a merge patch.** A merge patch
@@ -908,6 +915,17 @@ One attempt, never a gate. When you cannot write to the record, give each
 round in your hand-off as
 `round <n>: <startedAt> → <finishedAt>, <verdict per lens>, findings P0/P1/P2/P3`,
 and the lead records it.
+
+**Gaps**
+
+Note friction with `note-gap` when it happens, and class it as workflow, repo
+or host: `<run-delivery command> note-gap --class workflow|repo|host --text
+"<what>" --why "<what it cost>" [--evidence FILE] [--command "<command>"]
+[--same-as N]`. When you write a script to get behaviour the workflow or a tool
+should provide, note a workflow gap with the script as its evidence before
+moving on. One-off reads for understanding don't count; anything you'd need
+again does. It lists the open gaps of the same class first: name one with
+`--same-as N` when yours repeats it.
 
 **Questions**
 

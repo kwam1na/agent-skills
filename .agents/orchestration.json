@@ -1489,6 +1489,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_run_delivery_gaps",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_gaps.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_gaps.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_run_delivery_pr_review",
         "argv": [
           ".venv/bin/python",
