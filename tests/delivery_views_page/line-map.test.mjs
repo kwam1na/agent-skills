@@ -909,6 +909,8 @@ test("draws whatever the record has, and says so when it has nothing to draw", a
   for (const document of [{ state: {} }, { state: { meta: {}, queue: null, lanes: "x" }, journal: [null, 3] }, { state: { meta: { checking: { now: { steps: [null, {}] } } } } }]) {
     const [{ app }] = await open(document);
     expect(app.querySelector("#now h1.title")?.textContent).toBe("Delivery");
+    // No tracker item and no start: no kicker at all, rather than an empty one above the name.
+    expect(app.querySelector("#now .kicker")).toBeNull();
     expect(app.querySelector("#line")?.textContent).toContain("No work on the line yet.");
     expect(app.querySelector("#left .left-number")?.textContent).toBe("0pieces to go");
   }
@@ -1290,6 +1292,9 @@ test("the delivery's name heads the page, without a ticket key the kicker alread
     .toBe("Checkout resilience");
   expect((await shown(named("PAY-2354: checkout resilience"))).querySelector("#now h1.title").textContent)
     .toBe("Checkout resilience");
+  // A key that doesn't open the name is part of it, and stays.
+  expect((await shown(named("Fix PAY-2354: checkout resilience"))).querySelector("#now h1.title").textContent)
+    .toBe("Fix PAY-2354: checkout resilience");
   // Another ticket's key says something the kicker doesn't, so it stays.
   const other = await shown(named("PAY-2354: checkout resilience", "PAY-9"));
   expect(other.querySelector("#now h1.title").textContent).toBe("PAY-2354: checkout resilience");
@@ -1305,6 +1310,8 @@ test("the delivery's name heads the page, without a ticket key the kicker alread
   const css = readFileSync(path.join(ROOT, "skills/delivery-views/assets/line-map.css"), "utf8");
   expect(css).toContain(".kicker { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; "
     + "white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }");
+  // The count is medium weight, in ink, on the line's softer text.
+  expect(css).toContain(".plan-now-line .now-count { font-weight: 500; color: var(--ink); }");
   // The skill's page says the same opening.
   const skill = readFileSync(path.join(ROOT, "skills/delivery-views/SKILL.md"), "utf8").replace(/\s+/g, " ");
   expect(skill).toContain("Under the delivery's name, its count line says \"Every piece landed\" only when every piece and every live "

@@ -124,6 +124,11 @@ test("opens with only what the engineer acts on, and folds the rest behind count
   expect(now.querySelector(".plan-now-link").textContent).toBe("28 of 29 criteria proven");
   expect(now.querySelector(".plan-now-link").getAttribute("href")).toBe("#plan");
   expect(app.querySelector("#now .facts .plan-now-link")).toBeNull();
+  // With no headline of its own, the delivery is named by its outcome, said once, as the headline.
+  delete document.state.meta.headline;
+  const unnamed = await first(document, plan);
+  expect(unnamed.querySelector("#now h1.title").textContent).toBe("Shoppers can pay again after a dropped connection.");
+  expect(unnamed.querySelector("#now .plan-now").firstChild.className).toBe("plan-now-line");
   // A delivery named for its outcome says it once, as the headline, and the line under it starts with the count.
   document.state.meta.headline = "Shoppers can pay again after a dropped connection.";
   const named = await first(document, plan);
