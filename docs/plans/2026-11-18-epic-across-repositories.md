@@ -172,8 +172,8 @@ its stub left in, and the finish line follows it.
    headline, whatever the siblings say. Once they have landed, each same-epic sibling (any whose `lastOutcome` isn't
    `other-epic`) is counted:
    - **Fresh and all landed:** contributes nothing.
-   - **Open stories in its last kept read, whatever its `lastOutcome`:** "<name> has N open", with "<reason> since
-     <lastAttemptAt>" added when it isn't fresh.
+   - **Open stories in its last kept read, whatever its `lastOutcome`:** "<name> has N open", with ", couldn't be
+     read since <lastAttemptAt>" added when it isn't fresh, whatever the reason.
    - **Never read:** "<name> couldn't be read (never read)".
    - **Not fresh, with no open stories in its last read:** "<name> couldn't be read since <lastAttemptAt>". Its last
      read can't show stories added since.
