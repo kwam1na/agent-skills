@@ -255,6 +255,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `serving.held` | On the epic: the queue is held while its setup is fixed, and why. | the epic | Serving is held |
 | `deferral.breached` | On the ticket: the deferred review note still open past its due point, with its follow-up. | the ticket | Deferred note still open |
 | `blocker.recorded` | On the blocked ticket, or the epic when every ticket is blocked: the blocker, and whose answer or work unblocks it. | the ticket, or the epic | Blocked |
+| `gap.noted` | None: a repo gap is filed as its own follow-up at close-out, and workflow and host gaps stay in the delivery's own reports. | nowhere | - |
 | `blocker.resolved` | On the blocked ticket, or the epic: what unblocked it, and why. | the ticket, or the epic | Blocker resolved |
 | `decision.recorded` | On the ticket the decision concerns, or the epic: what, why, and who decided, the operator or the lead. A deferred finding links its follow-up item. | the ticket, or the epic | Decision |
 | `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. | the ticket, or the epic | Lease granted |

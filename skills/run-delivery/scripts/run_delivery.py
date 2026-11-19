@@ -11249,8 +11249,9 @@ def followups_step(c, doc: dict) -> tuple[bool, str]:
         missing = [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
     # Each repo gap noted since the last close is a follow-up too, filed the same way: a gap is no review finding, so
     # noDeferrals leaves it one.
-    missing += [f for f in gaps.followups(gaps.gaps(doc["journal"], REOPENING), c.delivery)
-                if f"{f['story']}-{f['finding']}" not in have]
+    found = gaps.gaps(doc["journal"], REOPENING)
+    if found:
+        missing += [f for f in gaps.followups(found, c.delivery) if f"{f['story']}-{f['finding']}" not in have]
     for finding in missing:
         with marked_decision(c, followup=finding) as written:
             written.append(journal_id(state_tool("journal", "--kind", "followup.filed", "--subject",
