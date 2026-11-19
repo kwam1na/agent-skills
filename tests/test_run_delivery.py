@@ -12849,7 +12849,7 @@ class IntegrationStepTests(unittest.TestCase):
                 ("budget", (), 3, "failed", None), ("budget", ("--", "--budget", "other-budget.json"), 3, "failed", None),
                 ("budget", ("--", "--budget=missing.json"), 3, "failed", None),
                 ("budget", ("--", "--budget=budget.json"), 3, "over-budget", 1260), ("fail", (), 1, "failed", None),
-                ("pass", ("--", "--budget", "budget.json"), 0, "passed", 1260)]
+                ("pass", ("--", "--budget", "budget.json"), 0, "passed", 1260), ("slow", (), 0, "passed", None)]
         for mode, argv, exit_code, result, budget in runs:
             with self.subTest(mode=mode, argv=argv):
                 code, out = self.suite(fx, mode, *argv)
@@ -12862,6 +12862,10 @@ class IntegrationStepTests(unittest.TestCase):
                 self.assertIsInstance(entry["data"]["seconds"], (int, float))
                 self.assertGreaterEqual(entry["data"]["seconds"], 0)
                 line = self.lines(fx)[-1]
+                # The journal carries the value the run measured, which the flow-log line carries too.
+                self.assertEqual(entry["data"]["seconds"], line["seconds"], (entry, line))
+                if mode == "slow":
+                    self.assertGreaterEqual(entry["data"]["seconds"], 0.2, entry)
                 self.assertEqual((line["commit"], line["result"], line["exit"]), (at, result, exit_code), line)
                 self.assertNotIn("budgetSeconds", line)
                 self.validates(fx, entry)

@@ -6394,9 +6394,12 @@ if mode == "wait":
     while not gate.exists():
         time.sleep(0.05)
     worker.kill()
+if mode == "slow":
+    # A run that takes measurable time, so its recorded seconds can be told from a constant.
+    time.sleep(0.3)
 print("x" * 3000)
 print("src/one.txt reads:", one.read_text().strip() if one.exists() else "(absent)")
-sys.exit({"pass": 0, "fail": 1, "budget": 3, "wait": 0}[mode])
+sys.exit({"pass": 0, "fail": 1, "budget": 3, "wait": 0, "slow": 0}[mode])
 '''
 
 # The prepare step: it marks the checkout prepared and makes the interpreter the suite's argv starts with, a stub that
