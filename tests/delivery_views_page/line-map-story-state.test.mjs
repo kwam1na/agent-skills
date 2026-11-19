@@ -78,6 +78,9 @@ test("the lane's words show only while the lane is on that story, and the review
   // A round started and then ended by the story being assigned again, with no round reduced, isn't in review.
   expect((await stateOf(record([started(1), { at: "2026-11-17T10:03:00Z", kind: "lane.assigned", data: { title: "Work" } }]))).lines[0])
     .toBe("Being built");
+  // A hand-off after a started round ends it too, as the run card reads it.
+  expect((await stateOf(record([started(1), { at: "2026-11-17T10:03:00Z", kind: "candidate.handed", data: { head: B } }]))).lines[0])
+    .toBe("Being built");
   expect((await stateOf(record([started(1), reduced(1, "changes", { P1: 1 }), started(2),
                                 { at: "2026-11-17T10:06:00Z", kind: "lane.assigned", data: { title: "Work" } }]))).lines[0])
     .toBe("Fixing review findings");
