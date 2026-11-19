@@ -64,7 +64,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .chapter + .chapter { border-top: 1px solid var(--hair); }
 .chapter-now { min-height: 82vh; display: grid; align-content: center; }
 .inner { width: 100%; max-width: 980px; margin-inline: auto; display: grid; gap: 24px; }
-.kicker { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; }
+.kicker { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .title { margin: 0; font-family: var(--display); font-weight: 500; font-size: clamp(28px, 4.2vw, 44px); line-height: 1.1; letter-spacing: -0.02em; max-width: 24ch; }
 .chapter-now .title { font-size: clamp(38px, 6vw, 64px); font-weight: 300; line-height: 1.04; max-width: 17ch; text-wrap: balance; }
 .title b { font-weight: 500; }
@@ -704,6 +704,7 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 /* Under the outcome, how much is proven, linked to the plan, and how often the plan changed, on one quiet line. */
 .plan-now-line { display: block; margin-top: 6px; font-size: 14px; color: var(--soft); }
 .plan-now-line .plan-now-link { display: inline; margin: 0; }
+.plan-now-line .now-count { font-weight: 500; color: var(--ink); }
 .plan-now-link:hover, .plan-now-link:focus-visible { color: var(--ink); text-decoration-color: currentColor; }
 .plan-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; max-width: none; }
 /* The plan on the page is older than the record's: said in a quiet line under the headline, with the one thing to do. */

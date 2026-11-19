@@ -60,7 +60,9 @@ test("without a plan the page has no plan chapter, rail entry or Now line, and W
   const [shown, detail] = await open(page, { steps: [{ click: '.stop-btn[data-subject="PAY-4"]' }] });
   expect(rail(shown.app)).toEqual(["Now", "The line", "Who", "What's left", "What happened", "Parked"]);
   expect(shown.app.querySelector("#plan")).toBeNull();
-  expect(shown.app.querySelector(".plan-now")).toBeNull();
+  // The Now line under the name says the count alone: nothing of a plan.
+  expect(shown.app.querySelector("#now .plan-now").textContent).toBe(shown.app.querySelector("#now .now-count").textContent);
+  expect(shown.app.querySelector(".plan-now-link")).toBeNull();
   expect(shown.app.querySelector(".plan-meters")).toBeNull();
   expect(shown.app.querySelector("#left .after").textContent).toBe("NextEvery piece landsThenEvery criterion is proven");
   expect(detail.app.querySelector("#detail .d-plan")).toBeNull();
@@ -72,7 +74,7 @@ test("a record naming a plan with no plan.json flags the chapter as missing, and
   expect(rail(shown.app)).toEqual(CHAPTER_ORDER);
   expect(flags(shown.app)).toEqual(["The plan chapter is missing"]);
   expect(flagWhy(shown.app)).toEqual(["docs/plans/pay.md is the plan on file, and nothing has written plan.json for this page."]);
-  expect(shown.app.querySelector(".plan-now")).toBeNull();
+  expect(shown.app.querySelector(".plan-now-link")).toBeNull();
 });
 
 test("an unreadable plan adds only the chapter and its rail entry, with one flag naming the key path", async () => {
@@ -115,10 +117,23 @@ test("opens with only what the engineer acts on, and folds the rest behind count
   // linked to the chapter; the facts row holds no plan fact.
   expect(app.querySelector("#now .plan-now").firstChild.textContent).toBe("Shoppers can pay again after a dropped connection.");
   const now = app.querySelector("#now .plan-now .plan-now-line");
-  expect(now.textContent).toBe("28 of 29 criteria proven · plan changed 7 times");
+  // The count leads it, in medium ink, then how much is proven and how often the plan changed.
+  expect(now.textContent).toBe("19 of 20 pieces have landed · 28 of 29 criteria proven · plan changed 7 times");
+  expect(now.firstChild.className).toBe("now-count");
+  expect(now.querySelector(".plan-now-plan").textContent).toBe("28 of 29 criteria proven · plan changed 7 times");
   expect(now.querySelector(".plan-now-link").textContent).toBe("28 of 29 criteria proven");
   expect(now.querySelector(".plan-now-link").getAttribute("href")).toBe("#plan");
   expect(app.querySelector("#now .facts .plan-now-link")).toBeNull();
+  // With no headline of its own, the delivery is named by its outcome, said once, as the headline.
+  delete document.state.meta.headline;
+  const unnamed = await first(document, plan);
+  expect(unnamed.querySelector("#now h1.title").textContent).toBe("Shoppers can pay again after a dropped connection.");
+  expect(unnamed.querySelector("#now .plan-now").firstChild.className).toBe("plan-now-line");
+  // A delivery named for its outcome says it once, as the headline, and the line under it starts with the count.
+  document.state.meta.headline = "Shoppers can pay again after a dropped connection.";
+  const named = await first(document, plan);
+  expect(named.querySelector("#now h1.title").textContent).toBe("Shoppers can pay again after a dropped connection.");
+  expect(named.querySelector("#now .plan-now").firstChild.className).toBe("plan-now-line");
   // What's left shows the meters in place of its list.
   expect(app.querySelector("#left .after")).toBeNull();
   expect(app.querySelectorAll("#left .plan-meter")).toHaveLength(2);
@@ -1027,7 +1042,7 @@ test("a closed delivery reads as closed, and work resuming after the close reope
   const landed = [[10, "approve", "A"], [11, "candidate.handed", "A"], [12, "candidate.merged", "A"]];
 
   const app = await first(closing([...landed, close]), plan);
-  expect(app.querySelector("#now .title").textContent).toBe("Delivered.");
+  expect(app.querySelector("#now .now-count").textContent).toBe("Every piece landed");
   expect(app.querySelector("#now .since").className).toBe("fact since closed");
   // Its state is a fact of its own: the label says closed, and the value when and after how long.
   expect(app.querySelector("#now .since .fact-label").textContent).toBe("Closed");
@@ -1045,12 +1060,12 @@ test("a closed delivery reads as closed, and work resuming after the close reope
   expect(app.querySelector(".plan-approvals li span").textContent).toBe("Not recorded");
 
   const short = await first(closing([[10, "approve", "A"], [11, "candidate.handed", "A"], close], [item("A", "queued")]), plan);
-  expect(short.querySelector("#now .title").textContent).toBe("Closed with 0 of 1 pieces landed.");
+  expect(short.querySelector("#now .now-count").textContent).toBe("Closed with 0 of 1 pieces landed");
   expect(short.querySelector("#left .left-number small").textContent).toBe("piece not landed");
   expect(short.querySelector("#now .checking")).toBeNull();
 
   const resumed = await first(closing([...landed, close, [50, "candidate.handed", "A"]], [item("A", "queued")]), plan);
-  expect(resumed.querySelector("#now .title").textContent).not.toMatch(/Delivered|Closed/);
+  expect(resumed.querySelector("#now .now-count").textContent).not.toMatch(/Delivered|Closed/);
   expect(resumed.querySelector("#left .left-number").textContent).toBe("1piece to go");
   expect(resumed.querySelector("#who .st").textContent).toContain("waiting on lead");
   expect(resumed.querySelector("#plan .plan-calm, #plan .plan-needs .ah")).not.toBeNull();
@@ -1058,7 +1073,7 @@ test("a closed delivery reads as closed, and work resuming after the close reope
 });
 
 test("what a closed delivery claims holds in every state the record can leave it", async () => {
-  const titleOf = (app) => app.querySelector("#now .title").textContent;
+  const titleOf = (app) => app.querySelector("#now .now-count").textContent;
   const closedAt = 40;
   const closing = (steps, queue, more = {}) => {
     const document = record({ queue, journal: journal(steps) });
@@ -1070,11 +1085,11 @@ test("what a closed delivery claims holds in every state the record can leave it
 
   // Plan units that never reached the line haven't landed, and nothing on the line claims nothing.
   const missing = await first(closing([...landed, close], [item("A", "merged")]), planFor([unit("A"), unit("B")], { finish: [] }));
-  expect(titleOf(missing)).toBe("Closed with 1 of 2 pieces landed.");
+  expect(titleOf(missing)).toBe("Closed with 1 of 2 pieces landed");
   expect(missing.querySelector("#left .left-number").textContent).toBe("1piece not landed");
   expect(missing.querySelector("#left .say").textContent).toBe("1 of 2 pieces have landed.");
   const empty = await first(closing([close], []));
-  expect(titleOf(empty)).toBe("Closed with nothing on the line.");
+  expect(titleOf(empty)).toBe("Closed with nothing on the line");
   expect(empty.querySelector("#left .title").textContent).toBe("Nothing was on the line.");
   expect(empty.querySelector("#left .left-number")).toBeNull();
   expect(empty.querySelector("#left .say")).toBeNull();
@@ -1093,10 +1108,10 @@ test("what a closed delivery claims holds in every state the record can leave it
 
   // Only new work reopens it, and each kind of new work does.
   for (const kind of ["lane.assigned", "candidate.handed", "check.started"]) {
-    expect([kind, titleOf(await first(closing([...landed, close, [50, kind, "A"]], [item("A", "merged")])))]).toEqual([kind, "Every piece has landed."]);
+    expect([kind, titleOf(await first(closing([...landed, close, [50, kind, "A"]], [item("A", "merged")])))]).toEqual([kind, "Every piece has landed"]);
   }
   for (const kind of ["review.round", "check.finished", "decision.recorded", "candidate.merged"]) {
-    expect([kind, titleOf(await first(closing([...landed, close, [50, kind, "A", kind === "review.round" ? { round: 2 } : {}]], [item("A", "merged")])))]).toEqual([kind, "Delivered."]);
+    expect([kind, titleOf(await first(closing([...landed, close, [50, kind, "A", kind === "review.round" ? { round: 2 } : {}]], [item("A", "merged")])))]).toEqual([kind, "Every piece landed"]);
   }
 
   // Losing the page's connection still shows, and a close time the clock can't call past stands alone.
@@ -1130,7 +1145,7 @@ test("a closed delivery's bar, dots, stops, legend and attention all agree with 
   const plan = planFor(["A", "B", "C", "D", "E", "F"].map((subject) => unit(subject)), { finish: [] });
   const [shown, stop] = await open(render(document, plan), { steps: [{ click: '.stop-btn[data-subject="C"]' }] });
   const app = shown.app;
-  expect(app.querySelector("#now .title").textContent).toBe("Closed with 1 of 6 pieces landed.");
+  expect(app.querySelector("#now .now-count").textContent).toBe("Closed with 1 of 6 pieces landed");
   expect(Math.round(parseFloat(app.querySelector("#now .journey .done").style.width))).toBe(17);
   expect([...app.querySelectorAll("#left .dots i")].map((dot) => dot.className).filter((name) => name === "open")).toHaveLength(5);
   expect(app.querySelector("#left .left-number").textContent).toBe("5pieces not landed");
@@ -1162,7 +1177,7 @@ test("a closed delivery's bar, dots, stops, legend and attention all agree with 
   // A piece the plan removed was no longer meant to land.
   const trimmed = await first(record({ queue: [item("A", "merged"), item("B", "queued")], journal: journal([...landed, close]) }),
     planFor([unit("A"), unit("B", { removed: true })], { finish: [] }));
-  expect(trimmed.querySelector("#now .title").textContent).toBe("Delivered.");
+  expect(trimmed.querySelector("#now .now-count").textContent).toBe("Every piece landed");
   expect(trimmed.querySelectorAll("#left .dots i")).toHaveLength(1);
   expect(trimmed.querySelector("#left .title").textContent).toBe("Nothing left to land.");
 
@@ -1171,7 +1186,7 @@ test("a closed delivery's bar, dots, stops, legend and attention all agree with 
     planFor([unit("A"), unit("B", { removed: true })], { finish: [] }));
   expect(overrun.querySelector("#now .journey .done").style.width).toBe("100%");
   const onlyRemoved = await first(record({ queue: [item("B", "queued")], journal: journal([close]) }), planFor([unit("B", { removed: true })], { finish: [] }));
-  expect(onlyRemoved.querySelector("#now .title").textContent).toBe("Closed with nothing left to land.");
+  expect(onlyRemoved.querySelector("#now .now-count").textContent).toBe("Closed with nothing left to land");
   expect(onlyRemoved.querySelector("#left .title").textContent).toBe("Nothing left to land.");
 
   // A planned stop promises no review rounds to come.
