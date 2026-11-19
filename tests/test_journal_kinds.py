@@ -104,6 +104,7 @@ TABLE = {
     "serving.held": ("H", "problem", "*why*", "", "epic: Serving is held"),
     "deferral.breached": ("H", "problem", "finding *title*", "", "ticket: Deferred note still open"),
     "blocker.recorded": ("H", "problem", "*text*", "opens", "ticket-or-epic: Blocked"),
+    "gap.noted": ("S", "note", "class *text* *why* by release? generation? command? evidence? occurrenceOf?", "", "-"),
     "blocker.resolved": ("H", "landed", "*why*", "answers:blocker.recorded,deferral.breached",
                          "ticket-or-epic: Blocker resolved"),
     "decision.recorded": ("H", "decision", "*text* *why*", "", "ticket-or-epic: Decision"),

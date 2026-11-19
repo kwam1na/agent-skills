@@ -72,6 +72,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pr_review_gates  # noqa: E402
+import gaps  # noqa: E402
 import tracker_publisher  # noqa: E402
 
 TOOL = Path(__file__).resolve().parent.parent
@@ -11292,7 +11293,8 @@ FOLLOWUP = "Deferred finding {finding} of {story} becomes follow-up {story}-{fin
 
 
 def followups_step(c, doc: dict) -> tuple[bool, str]:
-    """One follow-up item per deferred finding, keyed by story and finding id, which is also its followups[] id.
+    """One follow-up item per deferred finding, and per repo gap (its finding gap-<journal id>), keyed by story and
+    finding id, which is also its followups[] id.
     Each is journalled as a decision marked for the tracker publisher to file; the step holds until the publisher's
     ledger covers every one: a transient failure is retried by its next run, and a permanent one is shown. By hand,
     the record's followups are all there is."""
@@ -11306,6 +11308,11 @@ def followups_step(c, doc: dict) -> tuple[bool, str]:
         missing = []
     else:
         missing = [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
+    # Each repo gap noted since the last close is a follow-up too, filed the same way: a gap is no review finding, so
+    # noDeferrals leaves it one.
+    found = gaps.gaps(doc["journal"], REOPENING)
+    if found:
+        missing += [f for f in gaps.followups(found, c.delivery) if f"{f['story']}-{f['finding']}" not in have]
     for finding in missing:
         with marked_decision(c, followup=finding) as written:
             written.append(journal_id(state_tool("journal", "--kind", "followup.filed", "--subject",
@@ -11329,6 +11336,79 @@ def followups_step(c, doc: dict) -> tuple[bool, str]:
     if waiting:
         return False, f"follow-ups: waiting for the tracker publisher to file journal entries {', '.join(map(str, waiting))}"
     return True, f"follow-ups: {len(marks)} filed or refused"
+
+
+def gap_writer(c) -> tuple[str, str | None]:
+    """Who notes a gap from this checkout: ("lead", None) in the lead checkout, else (the lane's id, its story) in a
+    story's own checkout, read from its branch."""
+    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=c.root, check=False)
+    if is_lead_checkout(c, branch):
+        return "lead", None
+    key = next((key for key in c.stories if c.branch(key) == branch), None)
+    if key is None:
+        raise Stop(f"run note-gap in the lead checkout, or in a story's own checkout on its branch: {branch} is neither")
+    return c.lane_of(key), key
+
+
+def running_release(c) -> tuple[str, str]:
+    """The release id and generation of the generation running, from its own entry in the receipt, as the round brief
+    reads them."""
+    return release_tuple()["releaseId"], c.release.resolve().name
+
+
+def note_gap(args) -> None:
+    """Journal gap.noted, as a new gap or as an occurrence of an open one, after listing the open
+    gaps of the same class it could repeat. A lane notes under its own writer, on its current story."""
+    c = cfg()
+    text, why = worded(args.text, "--text"), worded(args.why, "--why")
+    if args.gap_command is not None:
+        worded(args.gap_command, "--command")
+    by, story = gap_writer(c)
+    subject = args.subject or (c.delivery if by == "lead" else story)
+    evidence = Path(args.evidence).resolve() if args.evidence else None
+    if args.cls == "workflow" and evidence is None:
+        raise Stop("a workflow gap needs --evidence: the command's output, or the script you wrote to get the "
+                   "behaviour the workflow should give")
+    if evidence is not None and not evidence.is_file():
+        raise Stop(f"--evidence {args.evidence}: no such file")
+    release = generation = None
+    try:
+        release, generation = running_release(c)
+    except Stop:
+        if args.cls == "workflow":
+            raise
+    journal = load_state()["journal"]
+    try:
+        occurrence = gaps.occurrence_of(journal, args.cls, text, release, args.same_as)
+    except gaps.Refused as error:
+        raise Stop(str(error)) from None
+    listed = gaps.listing(journal, args.cls, release)
+    print(f"open {args.cls} gaps{' on ' + release if args.cls == 'workflow' else ''}, by journal id"
+          f"{' (name one with --same-as N)' if listed else ''}:")
+    print("\n".join(listed) or "  (none)")
+    data = {"class": args.cls, "text": text, "why": why, "by": by,
+            **({"release": release, "generation": generation} if release else {}),
+            **({"command": args.gap_command} if args.gap_command is not None else {}),
+            **({"occurrenceOf": occurrence} if occurrence is not None else {})}
+    entry_id = gaps.next_id(journal)
+    if evidence is not None:
+        try:
+            data["evidence"] = gaps.copy_evidence(c.state, entry_id, evidence)
+        except gaps.Refused as error:
+            raise Stop(str(error)) from None
+    writer = [] if by == "lead" else ["--writer", "lane", "--lane", by]
+    done = state_tool("journal", *writer, "--kind", "gap.noted", "--subject", subject, "--data", json.dumps(data),
+                      check=False)
+    if done.returncode != 0:
+        if evidence is not None:
+            gaps.drop_evidence(c.state, entry_id)
+        raise Stop(f"journal {gaps.KIND} failed: {(done.stderr or done.stdout).strip()[-600:]}")
+    number = journal_id(done)
+    if number != entry_id and evidence is not None:
+        raise Stop(f"gap.noted is journal entry {number}, but its evidence was copied under {entry_id}: another entry "
+                   f"was journalled at the same time; the evidence is at {c.state / data['evidence']['path']}")
+    print(f"noted {args.cls} gap {number} on {subject}" + (f", an occurrence of gap {occurrence}" if occurrence else "")
+          + (f"; evidence copied to {c.state / data['evidence']['path']}" if evidence is not None else ""))
 
 
 # New work after a close reopens the delivery, as the line map reads it.
@@ -11483,15 +11563,28 @@ def archive_step(c, closed: dict) -> tuple[Path, list[str]]:
     return archive, said
 
 
-def friction_step(c, archive: Path, said: list[str], shown: list[str]) -> Path:
-    """The friction note stub beside the archive, for the lead's compound-learning pass."""
+def workflow_gaps_step(c, archive: Path, found: list[dict]) -> Path | None:
+    """The workflow gaps beside the archive, grouped by release, for the workflow's maintainers; the archive holds
+    their evidence. None when no workflow gap was noted."""
+    report = gaps.workflow_report(found, c.delivery, archive, c.state.name)
+    if report is None:
+        return None
+    path = archive.parent / f"{archive.name}.workflow-gaps.md"
+    if not path.exists():
+        path.write_text(report)
+    return path
+
+
+def friction_step(c, archive: Path, said: list[str], shown: list[str], found: list[dict] = ()) -> Path:
+    """The friction note stub beside the archive, for the lead's compound-learning pass, with every gap noted."""
     note = archive.parent / f"{archive.name}.friction.md"
     if note.exists():
         return note
     lines = [f"# {c.delivery}: friction", "", "Written by the supervisor at close-out. Add what was hard and why, then "
              "run compound-learning on it.", "", "## Shown, never holding", ""]
     lines += [f"- {text}" for text in shown] or ["- (none)"]
-    lines += ["", "## What the close-out left to you", ""]
+    lines += ["", *gaps.friction_section(list(found))]
+    lines += ["## What the close-out left to you", ""]
     lines += [f"- {text}" for text in said if text.startswith("left ")]
     lines += [f"- Remove the lead's checkout {c.lane_checkout(c.delivery)} once you no longer need it.",
               "- Archive the lane sessions with your host's own tools.", ""]
@@ -11512,10 +11605,16 @@ def close_out(c, flapping: tuple[str, ...] = (), wait: bool = False) -> tuple[li
     said += archived
     said += finish_close(c, closed, archive)
     # Read once the steps above ran, so a filing the publisher refused for good during them is listed.
-    shown = [item["text"] for item in needs_you(c, load_state(), flapping, closing=True) if not item["holding"]]
-    note = friction_step(c, archive, archived, shown)
+    doc = load_state()
+    shown = [item["text"] for item in needs_you(c, doc, flapping, closing=True) if not item["holding"]]
+    found = gaps.gaps(doc["journal"], REOPENING)
+    report = workflow_gaps_step(c, archive, found)
+    note = friction_step(c, archive, archived, shown, found)
     marker = lead_file(c, "closed.json")
-    marker.write_text(json.dumps({**load_json(marker), "friction": str(note)}, indent=2) + "\n")
+    marker.write_text(json.dumps({**load_json(marker), "friction": str(note),
+                                  **({"workflowGaps": str(report)} if report else {})}, indent=2) + "\n")
+    if report:
+        said.append(f"wrote the workflow gaps {report}: sending it on is your call")
     said.append(f"wrote the friction note stub {note}: write it up, and archive the lane sessions")
     return said, True
 
@@ -13382,6 +13481,14 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--lenses", help="at round 1: the story's lenses, comma-separated, the mandated pair among them; "
                    "fixed for the story (default: every declared story lens)")
     p.add_argument("--lenses-reason", help="with --lenses: why the story's review takes these lenses")
+    p = command(sub, "note-gap", help="journal friction as it happens: a workflow, repo or host gap")
+    p.add_argument("--class", dest="cls", required=True, choices=gaps.CLASSES)
+    p.add_argument("--text", required=True); p.add_argument("--why", required=True)
+    p.add_argument("--subject", help="the story it is on (default: the lane's story, or the delivery's key for the lead)")
+    p.add_argument("--evidence", help="a file: the command's output, or the script you wrote (required for workflow)")
+    p.add_argument("--command", dest="gap_command", help="the command and arguments involved")
+    p.add_argument("--same-as", type=int, help="the journal id of the open gap this note repeats")
+    p.set_defaults(fn=note_gap)
     p = command(sub, "review-reduce"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
     p.set_defaults(fn=review_reduce)
     p = command(sub, "plan-review", help="review the plan before it is approved: prepare, reduce or end a round")

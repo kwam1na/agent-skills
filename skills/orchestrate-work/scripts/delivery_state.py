@@ -2644,9 +2644,10 @@ def append_journal(
     with file_lock(directory / STATE_LOCK):
         current = read_state(directory, for_write=True)
         if writer == "lane":
-            if kind not in LANE_REVIEW_KINDS and kind != AUTHORIZATION_KIND:
-                raise StateError("writer_not_owned", f"a lane journals only its review ({', '.join(LANE_REVIEW_KINDS)}) "
-                                 f"and its own {AUTHORIZATION_KIND}; the tool journals its hand-off")
+            # A lane also notes the gaps it meets on its own story, as they happen.
+            if kind not in LANE_REVIEW_KINDS and kind not in (AUTHORIZATION_KIND, "gap.noted"):
+                raise StateError("writer_not_owned", f"a lane journals only its review ({', '.join(LANE_REVIEW_KINDS)}), "
+                                 f"its own {AUTHORIZATION_KIND} and the gaps it notes; the tool journals its hand-off")
             owner = next((entry.get("assignedLane", entry["lane"]) if entry["stage"] == "stopped" else entry["lane"]
                           for entry in [*current["queue"], *current.get("planned", [])] if entry["subject"] == subject), None)
             if lane is None or owner != lane:

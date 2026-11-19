@@ -8,6 +8,13 @@ skill links to each by name.
 Work through these steps in order. Each step names the state it writes; write
 it through the state tool, then render the views.
 
+Note friction with `note-gap` when it happens, and class it as workflow, repo
+or host. When you write a script to get behaviour the workflow or a tool should
+provide, note a workflow gap with the script as its evidence before moving on.
+One-off reads for understanding don't count; anything you'd need again does.
+The close-out files repo gaps as follow-ups, writes workflow gaps beside the
+archive, and lists every gap in the friction stub.
+
 ### Writing the state
 
 - **Null is written with `--set`, never with a merge patch.** A merge patch
@@ -248,6 +255,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `serving.held` | On the epic: the queue is held while its setup is fixed, and why. | the epic | Serving is held |
 | `deferral.breached` | On the ticket: the deferred review note still open past its due point, with its follow-up. | the ticket | Deferred note still open |
 | `blocker.recorded` | On the blocked ticket, or the epic when every ticket is blocked: the blocker, and whose answer or work unblocks it. | the ticket, or the epic | Blocked |
+| `gap.noted` | None: a repo gap is filed as its own follow-up at close-out, and workflow and host gaps stay in the delivery's own reports. | nowhere | - |
 | `blocker.resolved` | On the blocked ticket, or the epic: what unblocked it, and why. | the ticket, or the epic | Blocker resolved |
 | `decision.recorded` | On the ticket the decision concerns, or the epic: what, why, and who decided, the operator or the lead. A deferred finding links its follow-up item. | the ticket, or the epic | Decision |
 | `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. | the ticket, or the epic | Lease granted |
@@ -914,6 +922,17 @@ One attempt, never a gate. When you cannot write to the record, give each
 round in your hand-off as
 `round <n>: <startedAt> → <finishedAt>, <verdict per lens>, findings P0/P1/P2/P3`,
 and the lead records it.
+
+**Gaps**
+
+Note friction with `note-gap` when it happens, and class it as workflow, repo
+or host: `<run-delivery command> note-gap --class workflow|repo|host --text
+"<what>" --why "<what it cost>" [--evidence FILE] [--command "<command>"]
+[--same-as N]`. When you write a script to get behaviour the workflow or a tool
+should provide, note a workflow gap with the script as its evidence before
+moving on. One-off reads for understanding don't count; anything you'd need
+again does. It lists the open gaps of the same class first: name one with
+`--same-as N` when yours repeats it.
 
 **Questions**
 

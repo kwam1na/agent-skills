@@ -1749,6 +1749,73 @@
       "line": "Carry the review across the base merge"
     },
     {
+      "kind": "gap.noted",
+      "lane": "lane-2",
+      "subject": "APP-12",
+      "data": {
+        "class": "workflow",
+        "text": "review-prepare can't read a round its own reduce wrote",
+        "why": "I wrote a script to read the round instead",
+        "by": "lane-2",
+        "release": "linear-v2.4.0",
+        "generation": "20261118T101500",
+        "command": "run_delivery.py review-prepare APP-12 --round 2",
+        "evidence": {
+          "path": "gaps/41/read-round.py",
+          "sha256": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b9f3c2b1a0e9d8c7b6a5f4e3d"
+        }
+      },
+      "head": "A workflow gap was noted on APP-12",
+      "line": "review-prepare can't read a round its own reduce wrote"
+    },
+    {
+      "kind": "gap.noted",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "class": "workflow",
+        "text": "Review-prepare can't read a round its own reduce wrote",
+        "why": "Met again at round 3",
+        "by": "lead",
+        "release": "linear-v2.4.0",
+        "generation": "20261118T101500",
+        "evidence": {
+          "path": "gaps/52/round-3.txt",
+          "sha256": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f9014e66a0571b2c3d4e5f607182"
+        },
+        "occurrenceOf": 41
+      },
+      "head": "A workflow gap was noted again, as gap 41",
+      "line": "Review-prepare can't read a round its own reduce wrote"
+    },
+    {
+      "kind": "gap.noted",
+      "lane": null,
+      "subject": "APP-1",
+      "data": {
+        "class": "repo",
+        "text": "The suite budget names no machine for Linux",
+        "why": "A lane can't tell whether its run went over",
+        "by": "lead",
+        "occurrenceOf": 17
+      },
+      "head": "A repo gap was noted on APP-1 again, as gap 17",
+      "line": "The suite budget names no machine for Linux"
+    },
+    {
+      "kind": "gap.noted",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "class": "host",
+        "text": "The shell drops PATH between commands",
+        "why": "Every run_delivery command needs Node 22 first on PATH",
+        "by": "lead"
+      },
+      "head": "A host gap was noted",
+      "line": "The shell drops PATH between commands"
+    },
+    {
       "kind": "blocker.resolved",
       "lane": "lane-1",
       "subject": "APP-12",
