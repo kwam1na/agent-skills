@@ -38,6 +38,10 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 - Branch: `{{branch}}`. Commit subjects start with the story key.
 - Never touch: {{never_touch}}. Change only the files your lane owns (below, and `lanes.<lane>.owns` in
   the delivery file). The lead refuses a hand-off that changes anything else.{{listings}}
+- Before your first review round, run `{{flow}} claims-check <key>` in your checkout: it lists every change your
+  claims don't hold, each with the request for the lead. Ask the lead for the span of a file lanes share by lines by
+  anchor (`--around TEXT`) or a quoted line, with `--insert before` or `--insert after` for an insertion at a span's
+  edge, never by bare line numbers.
 - Long commands (gates, builds, in-app checks) can take minutes: run them in the background or with a long timeout,
   never under a short tool timeout.
 
