@@ -61,8 +61,9 @@ Checked against `main` at `aeeeafce` on 2026-11-19:
    - This skips every hook, commit-msg and secret scanning included, not only formatters. That is right for these
      commits: the tool writes the delivery file and the plan itself, and a sync merge brings in commits that already
      passed their authors' hooks. The config reference says so in its "Host hooks" neighbourhood, by name.
-   - A corpus test fails when `run_delivery.py` holds a `git("commit"` or a `git merge` that builds a commit outside
-     `tool_commit`.
+   - A corpus test fails when `run_delivery.py` builds a commit outside `tool_commit`, in any spelling: `git("commit"`,
+     `git("merge"`, and `run(["git", "commit"` or `run(["git", "merge"`. A `git merge` that only prints a command for a
+     person to run is not building one.
    - Nothing is journalled for it. The ticket asked for a journal record, but the skip is unconditional, so a field
      would always say the same thing, and the commits it covers have no journal entry of their own to carry it.
 2. **Readiness agrees with the publisher** (V26-3655). `story_readiness` walks `start` as `move` does. A leading move
@@ -70,15 +71,24 @@ Checked against `main` at `aeeeafce` on 2026-11-19:
    is ready when the item offers the first move not yet made. A `backlog` item with every move made is ready. The
    refusal names the item's status and that first move: `"<key> is in <status>: \"<move>\" isn't offered; refine it
    first"`. A non-`backlog` item is ready, as today. Without `targets`, nothing changes.
+   - The walk reads `status` first and needs `offeredTransitions` only to judge the first move not yet made. An item
+     whose `status` is the target of every leading move is ready even with no `offeredTransitions`. An item that still
+     needs a move and has no `offeredTransitions` reads as not checked, as today.
+   - The Linear snapshot (`skills/delivery-views/scripts/snapshot.py`) writes each item's `status` as its state's
+     name, by selecting `name` beside `type` in `LINEAR_QUERY`'s state. Today only the Jira reader writes `status`.
+     Linear writes no `offeredTransitions`, since its workflow doesn't restrict moves.
 3. **`transitions.refine`** (V26-3653). An optional list of the adopter's move names, in `tracker.transitions`.
    `tracker_conf` validates it as it validates `start`, and requires a `targets` entry for its last move, so a move
    already made reads as made on a tracker that lists only the moves out of a status. The tooling assumes no names,
-   statuses or step count.
+   statuses or step count. `untargeted` lists `refine`'s moves with the others, so `doctor` warns of an intermediate
+   refine move with no target.
 4. **`story.approved` carries the refine moves** (V26-3653). A new kind, posted on the story's ticket, with data
    `{title, plan, review?}`: the plan's path and its review record's path, as the delivery file names them. Its
    tracker update says the plan holding this story was approved for delivery and names both paths.
    - `lead-init` journals one per planned story, in plan order, after `record.started`, only when `refine` is set.
-   - A story added later journals one after its `story.added`, only when `refine` is set.
+   - A story added later journals one after its `story.added`, only when `refine` is set, at both places that journal
+     `story.added`: `lead-plan change --kind added`, and the registration `lead-brief`, `lead-assign` and the sweep
+     share.
    - `moves` maps `story.approved` to `refine`. `move` already records an item at the target as made, and an item the
      move isn't offered from as `handled`, with "belongs to people" in the update. Nothing new is needed there.
    - Without `refine`, nothing journals it, so nothing is posted.
@@ -95,14 +105,21 @@ Checked against `main` at `aeeeafce` on 2026-11-19:
    command report. Two declarations that disagree are a conflict, as `use` is.
 7. **The default set** (V26-3651). A round 1 with no `--lenses` runs the mandated pair, every story lens not on
    request, and every lens the story's brief names. With no lens on request and no brief lenses, that is every story
-   lens, as today. `--lenses` still accepts any story lens, on request or not.
+   lens, as today, with today's reason, `every declared story lens`. Otherwise the reason recorded says what the set
+   is: `every story lens not on request`, followed by `, and the brief's <ids>` when the brief names any. `--lenses`
+   still accepts any story lens, on request or not.
 8. **The brief asks for a lens** (V26-3651). A delivery file's story entry may carry `lenses`, a list of declared
    story lens ids. `lead-setup` drafts it from a `Lenses:` sentence in the story's plan section, as it drafts files
    from `Files:`. It is part of the plan: frozen at `lead-init`, and after that changed only by
    `lead-plan change --kind lenses --subjects KEY --lenses IDS --text WHY`, which records the change and commits the
-   delivery file, as other plan changes do. `--lenses` with an empty list removes the field.
+   delivery file, as other plan changes do. `--lenses` with an empty list removes the field. Every id in a story's
+   `lenses` must be a declared story lens: any other, in the delivery file or in `--kind lenses`, is refused, naming
+   it. The field is part of what the plan chapter compares, so a hand edit after init shows as an unrecorded plan
+   change, and a recorded `--kind lenses` change doesn't.
 9. **A brief lens can't be dropped** (V26-3651). A round 1 `--lenses` that leaves out a lens the story's entry names
-   is refused, naming the lens and that the story's brief asks for it, as a missing mandated lens is.
+   is refused, naming the lens and that the story's brief asks for it, as a missing mandated lens is. A brief lens
+   added after a story's round 1 is held the same way at the end: `handoff` and `lead-accept` refuse a story whose
+   set lacks a lens its entry now names, naming it and `review-prepare <key> --round 1 --restart`.
 10. **Where a lens came from** (V26-3651). Round 1's meta gains `requested`: each on-request lens in the set, mapped to
     `lane` or `brief`. A lens both the brief and `--lenses` name is `brief`. `handoff`'s message, `lead-accept`'s
     lens line and `lead-brief`'s lens list show it. `review.started` is unchanged: its `lenses` already holds the
@@ -111,7 +128,8 @@ Checked against `main` at `aeeeafce` on 2026-11-19:
     of their own, each with its charter's purpose, as `charter_purpose` reads it.
 12. **The written paths agree.** `skills/run-delivery/references/config.md` describes `refine`, `story.approved` and
     the lens `default` with neutral example names. `skills/run-delivery/references/adopting.md` says when an adopter
-    sets `refine`. `skills/run-delivery/SKILL.md`'s rows for `review-prepare` and `lead-plan` say what changed.
+    sets `refine`. `skills/run-delivery/SKILL.md`'s rows for `review-prepare` and `lead-plan` say what changed. The
+    orchestration guide's "Tracker updates" table gains `story.approved`, as its pin to the registry requires.
 
 ## Out of scope
 
@@ -138,7 +156,10 @@ Sensors:
 - `tests/test_run_delivery_lens_request.py` (new, V26-3651).
 - `tests/test_run_delivery.py`, whose readiness and lens tests these stories extend.
 - `tests/test_journal_kinds.py`, `tests/test_journal_shape.py` and `tests/fixtures/journal-kinds/vectors.json` for
-  `story.approved`.
+  `story.approved`, and `tests/test_orchestration_state.py`, which pins the guide's "Tracker updates" table to the
+  registry.
+- `tests/test_delivery_views_adopter.py` and `tests/test_delivery_views_snapshots.py`, which a `snapshot.py` change
+  brings.
 - `tests/test_own_deliveries.py`, which holds every test module to the binding's catalogue.
 - `scripts/validate-registry.py` and `scripts/update-provenance.py --check`.
 
@@ -156,17 +177,24 @@ its budget makes other tests in the same change cheaper; no budget number moves.
 - A `commit-msg` hook that exits 1 doesn't stop them either.
 - A plain `git commit` in the same checkout still runs the failing hook and fails, so the setting never leaks into
   the repository's configuration.
-- The corpus guard: a `git("commit"` added outside `tool_commit` fails it, shown by a fixture source.
+- The corpus guard: a fixture source per spelling, `git("commit"`, `git("merge"`, `run(["git", "commit"` and
+  `run(["git", "merge"`, each outside `tool_commit`, fails it. A fixture that only prints a `git merge` command
+  passes it.
+- The same three commits skip the hooks under the binding's `hooks` set to `bypass` and with it unset.
 
 `tests/test_run_delivery_tracker.py`:
 - V26-3655, each with made-up names `Groom` and `Begin`, `start: ["Groom", "Begin"]` and `targets: {"Groom":
   "Groomed"}`:
   - a Jira-shaped snapshot item in `Groomed`, offering only `Begin`: ready;
-  - the same with a Linear-shaped item: ready;
+  - a Linear item in `Groomed`, built by `snapshot.py`'s Linear reader from a faked GraphQL answer, with `status`
+    `Groomed` and no `offeredTransitions`, under `start: ["Groom"]`: ready; under `start: ["Groom", "Begin"]`: not
+    checked, since `Begin` still needs offered moves;
   - an item in `Backlog` offering `Groom`: ready, as today;
+  - an item in `Backlog` offering only `Begin`: refused, naming `Backlog` and `Groom`;
   - an item in `Backlog` offering neither: refused, naming `Backlog` and `Groom`;
   - an item in `Groomed` offering nothing: refused, naming `Groomed` and `Begin`;
   - `start: ["Begin"]` alone behaves as it does today in each of these.
+- `snapshot.py`'s Linear reader writes `status` as the state's name for every item, and its Jira reader is unchanged.
 - V26-3653, with `refine: ["Groom"]` (one step) and with `refine: ["Triage", "Groom"]` (two steps), `targets` naming
   each:
   - `lead-init` journals one `story.approved` per planned story, in plan order, after `record.started`;
@@ -177,11 +205,17 @@ its budget makes other tests in the same change cheaper; no budget number moves.
     update;
   - a story added with `lead-plan change --kind added` after init journals `story.approved` and is refined the same
     way;
-  - readiness under `refine` accepts a story offering `Groom`, and one already `Groomed`, and refuses one offering
-    neither, naming its status;
+  - a story added to the delivery file after init and registered by `lead-brief` journals `story.approved` and is
+    refined the same way;
+  - readiness under one-step `refine`: an item in `Backlog` offering `Groom`, and one already `Groomed`, are ready;
+    one in `Backlog` offering neither is refused, naming `Backlog`;
+  - readiness under two-step `refine`: an item in `Triaged` offering `Groom` is ready; one in `Backlog` offering only
+    `Groom` is refused, naming `Backlog` and `Triage`;
   - `lead-init` prints each story's refine outcome, and `doctor --delivery` prints the same before init;
-  - without `refine`, `lead-init` journals no `story.approved` and the publisher posts and moves exactly what it did.
+  - without `refine`: `lead-init`, `lead-plan change --kind added` and a `lead-brief` registration journal no
+    `story.approved`, and the publisher posts and moves exactly what it did.
 - `tracker_conf` refuses a `refine` that isn't a list of names, and one whose last move has no `targets` entry.
+  `doctor` warns of an intermediate refine move with no target.
 
 `tests/test_run_delivery_lens_request.py`, with lenses `lens.standards` and `lens.data` declared for story use and
 `lens.data` on request:
@@ -190,14 +224,25 @@ its budget makes other tests in the same change cheaper; no budget number moves.
 - `--lenses` naming `lens.data` runs it, with `requested: {"lens.data": "lane"}`.
 - A story whose entry names `lens.data` gets it with no `--lenses`, with `requested: {"lens.data": "brief"}`.
 - That story's `--lenses` leaving out `lens.data` is refused, naming it and the brief.
+- That story's `--lenses` including `lens.data` is accepted, with `requested: {"lens.data": "brief"}`.
+- A brief lens added with `lead-plan change --kind lenses` after the story's round 1: `handoff` and `lead-accept`
+  refuse it, naming the lens and the restart.
 - The same through `review.default` for a `harness.config.ts` lens.
 - Conflicts: `default: false` on a mandated lens, on a plan-only lens and on an undeclared one, and `review.lenses`
-  and `review.default` disagreeing, are each reported by `doctor`.
-- With nothing on request and no brief lenses, a round 1 with no `--lenses` runs exactly what it runs on the base.
+  and `review.default` disagreeing, are each reported by `doctor`. `default: true` runs the lens by default, as
+  leaving the key out does, and `review.lenses` and `review.default` that agree are no conflict.
+- A story entry naming an undeclared or a plan-only lens is a conflict `doctor` reports, naming it, and
+  `lead-plan change --kind lenses` naming one is refused.
+- With nothing on request and no brief lenses, a round 1 with no `--lenses` runs exactly what it runs on the base,
+  and records `every declared story lens`. With `lens.data` on request, the reason is
+  `every story lens not on request`.
 - `handoff` and `lead-accept` show `lens.data` as asked for by the brief. `lead-brief`, `doctor` and `config` list
   `lens.data` as on request with its charter's purpose.
 - `lead-setup` drafts `lenses` from a `Lenses:` sentence. `lead-plan change --kind lenses` after init changes it,
-  commits, and records the change; `--lenses` on another kind is refused by name.
+  commits, and records the change; `--lenses` on another kind is refused by name. `--lenses ''` removes the field.
+- After init, a hand edit of a story's `lenses` shows as an unrecorded plan change, and a `--kind lenses` change adds
+  none.
+- `lead-brief`'s lens list shows where each on-request lens of a story came from.
 
 `tests/fixtures/journal-kinds/vectors.json`:
 - `story.approved` with and without `review`; one with no `plan`, rejected.
@@ -206,7 +251,7 @@ its budget makes other tests in the same change cheaper; no budget number moves.
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3654, V26-3655, V26-3653 | `skills/run-delivery/scripts/tracker_publisher.py`, `skills/orchestrate-work/references/journal-kinds.json`, `tests/fixtures/journal-kinds/vectors.json`, `tests/test_run_delivery_tool_commits.py`, `tests/test_run_delivery_tracker.py` |
+| 1 | 1 | V26-3654, V26-3655, V26-3653 | `skills/run-delivery/scripts/tracker_publisher.py`, `skills/delivery-views/scripts/snapshot.py`, `skills/orchestrate-work/references/journal-kinds.json`, `tests/fixtures/journal-kinds/vectors.json`, `tests/test_journal_kinds.py`, `tests/test_journal_shape.py`, `tests/test_run_delivery_tool_commits.py`, `tests/test_run_delivery_tracker.py` |
 | 1 | 2 | V26-3651 | `tests/test_run_delivery_lens_request.py` |
 
 V26-3655 and V26-3653 both change `story_readiness`, so they share a lane, V26-3655 first. V26-3654 goes first in
@@ -219,9 +264,9 @@ against the integration base's head at `lead-init`:
   - Lane 1: `tool_commit` beside `def git(`; the commit lines in `lead_plan` and `lead_sync`; `story_readiness`;
     `lead_init`'s journal and print block; `story_added`'s callers' journal lines; `Doctor.story_readiness`.
   - Lane 2: `Config`'s lens use block through `self.plan_lenses_declared`; `story_lens_set` through `lenses_text`;
-    `review_prepare`'s meta; `handoff`'s and `lead_accept`'s lens lines; `lead_brief`'s lens list; `lead_plan`'s
-    `takes` map and a `lenses` branch; `draft_delivery`'s story drafting; the `lead-plan` parser's `--kind` and
-    `--lenses`; the doctor's lens row.
+    `review_prepare`'s meta; `handoff`'s and `lead_accept`'s lens checks and lines; `lead_brief`'s lens list;
+    `lead_plan`'s `takes` map and a `lenses` branch; the plan chapter's story view and `plan_drift`'s explanations;
+    `draft_delivery`'s story drafting; the `lead-plan` parser's `--kind` and `--lenses`; the doctor's lens row.
 - `skills/run-delivery/references/config.md`: lane 1 the `tracker.transitions` block and "Host hooks"; lane 2
   `review.lenses` and `review.use`.
 - `skills/run-delivery/references/adopting.md`: lane 1 the tracker section; lane 2 the review section.
@@ -229,6 +274,7 @@ against the integration base's head at `lead-init`:
   for a span on the `lead-plan` row's `--kind` list once lane 1's V26-3654 has merged.
 - `.agents/orchestration.json`: each lane a span after `tests.test_run_delivery_gaps`'s catalogue entry for its new
   module's entry.
+- `skills/orchestrate-work/references/orchestration-guide.md`: lane 1 the "Tracker updates" table.
 
 Both lanes refresh digests in `catalog.json`, `profiles/*` and `provenance.lock.json` as the repository's rules say
 for a releasable skill change. Those are regenerable files under the listing guard. Neither lane adds or removes a
@@ -251,8 +297,8 @@ Implement Decision 1.
 
 ### V26-3655. Read a story as ready when its status is already a start move's target
 
-Lane 1, tier 1, after V26-3654. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py` and
-`tests/test_run_delivery_tracker.py`.
+Lane 1, tier 1, after V26-3654. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+`skills/delivery-views/scripts/snapshot.py` and `tests/test_run_delivery_tracker.py`.
 
 Implement Decision 2.
 
@@ -260,7 +306,8 @@ Implement Decision 2.
 
 Lane 1, tier 1, after V26-3655. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
 `skills/run-delivery/scripts/tracker_publisher.py`, `skills/orchestrate-work/references/journal-kinds.json`,
-`tests/fixtures/journal-kinds/vectors.json`, `skills/run-delivery/references/config.md`,
+`skills/orchestrate-work/references/orchestration-guide.md`, `tests/fixtures/journal-kinds/vectors.json`,
+`tests/test_journal_kinds.py`, `tests/test_journal_shape.py`, `skills/run-delivery/references/config.md`,
 `skills/run-delivery/references/adopting.md` and `tests/test_run_delivery_tracker.py`.
 
 Implement Decisions 3 to 5, and Decision 12's tracker parts.

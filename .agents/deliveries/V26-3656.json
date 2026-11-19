@@ -23,8 +23,11 @@
     "lane-1": {
       "owns": [
         "skills/run-delivery/scripts/tracker_publisher.py",
+        "skills/delivery-views/scripts/snapshot.py",
         "skills/orchestrate-work/references/journal-kinds.json",
         "tests/fixtures/journal-kinds/vectors.json",
+        "tests/test_journal_kinds.py",
+        "tests/test_journal_shape.py",
         "tests/test_run_delivery_tool_commits.py",
         "tests/test_run_delivery_tracker.py"
       ]
