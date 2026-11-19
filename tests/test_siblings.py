@@ -516,9 +516,11 @@ class SiblingTests(unittest.TestCase):
             copied["siblings"][0]["readAt"] = copied["takenAt"] = at(seconds_ago)
             return copied
 
-        self.reconcile(taken(30), max_age=5)
+        # One copy, read once: a second call could stamp the next second.
+        stale = taken(30)
+        self.reconcile(stale, max_age=5)
         began = self.sibling()["lastAttemptAt"]
-        self.assertEqual((self.sibling()["lastOutcome"], began), ("stale", taken(30)["siblings"][0]["readAt"]))
+        self.assertEqual((self.sibling()["lastOutcome"], began), ("stale", stale["siblings"][0]["readAt"]))
         held = ((self.record / "state.json").read_bytes(), (self.record / "journal.jsonl").read_bytes())
         result = self.reconcile(taken(15), max_age=5)
         self.assertEqual((result["drift"], result["changes"]), (False, []))
