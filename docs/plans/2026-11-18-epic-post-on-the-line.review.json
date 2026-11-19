@@ -1,0 +1,128 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-18-epic-post-on-the-line.md",
+  "planSha256": "14aa0d34c0831576ee7d26c0b5ba567d7f25feaf5347e73d7cee5245ce9be85b",
+  "planCommit": "1e35904170350474768bdf0f0f8a0d0cc0f8b37f",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "46c29e27b374dcc60d2b476931fa44003054dd6a",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-19T02:47:39.720914Z",
+      "finishedAt": "2026-11-19T02:51:16.431698Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "5064d76d33b94fd4c5c6fca0c9760ed74de1a678",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-19T02:52:25.490010Z",
+      "finishedAt": "2026-11-19T02:54:17.575928Z",
+      "open": [
+        "outcome-correctness-r2-1",
+        "adversarial-testing-r2-1",
+        "adversarial-testing-r2-2"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "1e35904170350474768bdf0f0f8a0d0cc0f8b37f",
+      "outcome": "aligned",
+      "startedAt": "2026-11-19T02:54:41.226534Z",
+      "finishedAt": "2026-11-19T02:55:25.590505Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "epic-post-on-the-line.plan",
+        "candidateRef": "1e35904170350474768bdf0f0f8a0d0cc0f8b37f",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "outcome-correctness-r2-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 4 now says the `.lines` box keeps its -16px margin, so the added headroom adds height above the line, not an overlap with the paragraph before it. The margin-following clause is gone. The stylesheet scenario adds that `.lines-track`'s top padding and `.line-merge`'s `top` use `var(--merge-top)`, and that the `.lines` rule's block margin stays `-16px` and doesn't read `--merge-top`."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree 4987cfc473abbbb221491b4358be38ad14c38433 at HEAD 1e35904170350474768bdf0f0f8a0d0cc0f8b37f. At the start, `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty, and both checks passed again at the end. No probes were made and nothing was changed.",
+          "Delta derived with `git diff 5064d76d33b94fd4c5c6fca0c9760ed74de1a678..1e35904170350474768bdf0f0f8a0d0cc0f8b37f`: four hunks in docs/plans/2026-11-18-epic-post-on-the-line.md (Decision 4, the Two unreadable scenario, the stylesheet scenario and the Motion scenario). All of it was reviewed.",
+          "Re-check of outcome-correctness-r2-1: fixed exactly as its approval condition asked. The `.lines` margin stays -16px, so the raised `--merge-top` headroom sits inside the box and doesn't pull up over the `.say` paragraph across `.inner`'s 24px gap (line-map.css:66, 240). The stylesheet assertion pins it.",
+          "Delta review, Two unreadable: the never-read sibling (no stories, share 0 by Decision 2) ranks ahead of the stale sibling at 1 of 3 (share 0.33), so drawing it first and reading 'Never read' is consistent with Decisions 2 and 7.",
+          "Delta review, Motion: stubbing the track's computed paddingTop to the drawn `--merge-top` removes the jsdom 0 fallback I noted as a P3 in round 2. drawFlow's `top` (line-map.js:1673) then matches the SVG's offset, so the y check is meaningful.",
+          "P3 (not filed): the new stylesheet bullet says neither the top padding nor `.line-merge`'s `top` holds a literal `16px`. `.lines-track`'s padding shorthand today also carries a 16px bottom padding (line-map.css:246), which this story doesn't change. The test has to check the top value, not the whole rule, or the padding has to be split. This is a test-authoring detail, not an outcome defect.",
+          "Scope: plan review. No sensors or tests were run, as the brief says. Mutation and fault injection did not apply.",
+          "Model class: Opus 5.5, a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals to this lens, a limitation noted here.",
+          "Approval conditions: no findings were raised this round, so there are none to state. The one carried finding, outcome-correctness-r2-1, is fixed."
+        ]
+      },
+      "resultSha256": "a123e96435f98d35482e9b91067cb6fd2fa6012f67f492c199dc4f0a9ae14d99"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "epic-post-on-the-line.plan",
+        "candidateRef": "1e35904170350474768bdf0f0f8a0d0cc0f8b37f",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r2-1",
+            "state": "fixed",
+            "resolution": "Adopted, with one design change that the new pins cover. 'The stylesheet' now asserts that `.lines-track`'s top padding and `.line-merge`'s `top` use `var(--merge-top)`, with no literal `16px` left in either. Decision 4 now keeps the `.lines` box's -16px margin on purpose, and the scenario pins that: the rule stays `-16px` and doesn't read `--merge-top`. Each mutation I filed now fails. Leaving 16px literal in the padding or the `top` fails the rule-text check. Wiring `.lines` to the property, against the decision, also fails."
+          },
+          {
+            "id": "adversarial-testing-r2-2",
+            "state": "fixed",
+            "resolution": "Adopted as written. Two unreadable now gives the stale sibling 1 of 3 landed, and the never-read sibling has no stories. The scenario asserts that the never-read sibling is drawn first, because it ranks as share 0, and reads 'Never read'. The stale sibling is second and reads 'Couldn't be read since &lt;since&gt;'. A mutation that ranks every sibling with no stories last puts the never-read sibling second, so it fails."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA 4987cfc473abbbb221491b4358be38ad14c38433 at candidateRef 1e35904170350474768bdf0f0f8a0d0cc0f8b37f. The start identity check passed: HEAD^{tree} matched and `git status --porcelain` was empty. The end check, run after the review, also passed: same tree, clean status.",
+          "Delta reviewed: `git diff 5064d76d33b94fd4c5c6fca0c9760ed74de1a678..1e35904170350474768bdf0f0f8a0d0cc0f8b37f`. It changes only docs/plans/2026-11-18-epic-post-on-the-line.md, in four places: the `.lines` margin in Decision 4, Two unreadable, a new stylesheet bullet for `--merge-top`, and the Motion `paddingTop` stub.",
+          "Re-checked both carried findings. adversarial-testing-r2-1 is fixed, and the deliberate departure on the `.lines` margin is pinned on both sides. adversarial-testing-r2-2 is fixed as written.",
+          "Reviewed the delta's Motion change. The `{ run }` step now gives the track's computed `paddingTop` the drawn `--merge-top`. With siblings that value is above 16px, so two mutations now fail the trunk-y assertion: a `drawFlow` that ignores the padding (falls back to 0), and one that hard-codes 16. The stub doesn't just agree with itself, because the rule-text bullet separately pins `.lines-track`'s top padding to `var(--merge-top)`. This resolves the P3 I noted in round 2.",
+          "No new findings. Every change in the delta has a row that fails under its natural mutation. I found nothing to raise against lines unchanged since round 2.",
+          "Model class: Claude Opus-class model (claude-opus-5-5), running as a native subagent. No progress or permission signals were exposed to me.",
+          "Realization basis: host-convention.",
+          "Scope: plan review. The brief names no sensor commands and no test files, so I ran no tests and planted no mutants. The mutations are reasoned only against the plan's changed lines and the code they would touch.",
+          "Still noted, not filed: the record's-order tie-break in the ranking has no fixture. I declined this in round 2 as a marginal rule.",
+          "Approval conditions: no findings raised this round, so there are none to resolve."
+        ]
+      },
+      "resultSha256": "0a83a3b3156dd1627f970bde7a03c0b659a14cf4d59e6ccdb8f36a9584fdc3f1"
+    }
+  ],
+  "residualRisks": [
+    "3 review rounds; findings open after each round: 8, 3, 0."
+  ]
+}
