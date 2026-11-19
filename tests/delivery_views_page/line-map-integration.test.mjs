@@ -1,6 +1,6 @@
-// A delivery that rejoins its target after its pieces land: the headline's two beats, the line past the integration base
-// with its four stops and the target beneath, the ledger of proofs pinned to their heads, and the journey's share. Each
-// is read from the record's meta.integration and its integration facts alone.
+// A delivery that rejoins its target after its pieces land: the count's two beats under the name, the line past the
+// integration base with its four stops and the target beneath, the ledger of proofs pinned to their heads, and the
+// journey's share. Each is read from the record's meta.integration and its integration facts alone.
 import { test } from "node:test";
 
 import { REPLAYED_RUNS, expect, openPage, pageWithRuns, withAcross } from "./support.mjs";
@@ -37,7 +37,7 @@ async function shown(document, drift = null) {
   const [first] = await openPage(drift ? withDrift(page, drift) : page, { now: NOW, store: false });
   return first.app;
 }
-const title = (app) => app.querySelector("#now .title").textContent;
+const count = (app) => app.querySelector("#now .now-count").textContent;
 const drift = (app) => app.querySelector("#now .say-drift")?.textContent ?? null;
 const steps = (app) => [...app.querySelectorAll("#line .mg-step")].map((stop) => [stop.getAttribute("data-step"), stop.getAttribute("data-state")]);
 const states = (app) => steps(app).map(([, state]) => state);
@@ -48,15 +48,15 @@ const share = (app) => parseFloat(app.querySelector("#now .journey .done").style
 const short = (head) => head.slice(0, 7);
 const near = (actual, expected) => expect(Math.round(actual * 1000)).toBe(Math.round(expected * 1000));
 
-test("the headline says the two beats once every piece has landed, today's count while one is open, and Delivered after the landing", async () => {
+test("the count says the two beats once every piece has landed, today's count while one is open, and every piece landed after the landing", async () => {
   const rejoining = await shown(delivery([merged(30, M)]));
-  expect(title(rejoining)).toBe("2 pieces landed beside main. Now it rejoins.");
-  expect(rejoining.querySelector("#now .title .title-beat").textContent).toBe("Now it rejoins.");
+  expect(count(rejoining)).toBe("2 pieces landed beside main · Now it rejoins");
+  expect(rejoining.querySelector("#now .now-count .title-beat").textContent).toBe("Now it rejoins");
   const open = await shown(delivery([], { open: true }));
-  expect(title(open)).toBe("1 of 2 pieces have landed.");
+  expect(count(open)).toBe("1 of 2 pieces have landed");
   expect(drift(open)).toBe(null);
   const done = await shown(delivery([merged(30, M), suite(31, M), round(32, M), requested(33, M), rejoined(34)]));
-  expect(title(done)).toBe("Delivered.");
+  expect(count(done)).toBe("Every piece landed");
   expect(done.querySelector("#line .rejoin")).toBe(null);
   expect(drift(done)).toBe(null);
 });
@@ -184,7 +184,7 @@ test("the journey's share counts the filled stops, gives back a superseded one, 
 
 test("a round under the delivery's key on a record without an integration draws nothing of it", async () => {
   const app = await shown(delivery([round(30, M)], { integration: null }));
-  expect(title(app)).toBe("Every piece has landed.");
+  expect(count(app)).toBe("Every piece has landed");
   expect(app.querySelector("#line .mg-step")).toBe(null);
   expect(app.querySelector("#line .rejoin")).toBe(null);
   expect(app.querySelector("#line .mg-target")).toBe(null);
