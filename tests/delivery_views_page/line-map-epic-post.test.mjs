@@ -142,6 +142,7 @@ test("met: every sibling turns in solid, and so do the epic's line and post", as
     expect(classOf(svg, ".mg-sib, .mg-epic, .mg-epic-post")).toEqual(["mg-epic", "mg-sib", "mg-sib", "mg-epic-post"]);
     expect(texts(svg).slice(2)).toEqual([["mg-label", 293, 21, "Epic"], ["mg-count", 293, 35, "5/5 landed"]]);
     expect(rows(snap)).toEqual(["api1 of 1 landed", "docs2 of 2 landed"]);
+    expect([...snap.app.querySelectorAll(".line.sibling .stops")].map((stops) => stops.getAttribute("style"))).toEqual(["--solid: 100%;", "--solid: 100%;"]);
     expect(svg.getAttribute("height")).toBe(String(3 * 84 + 46));
   }
 });
@@ -190,6 +191,8 @@ test("many: the waited-on sibling and the furthest behind are drawn, the rest fo
     expect(rows(snap)).toEqual(["alpha2 of 3 landed", "beta0 of 2 landed"]);
     const chip = snap.app.querySelector(".more-chip");
     expect(chip.textContent).toBe("+3 more");
+    // Under the epic's post, which ends 20 below the trunk at 65.
+    expect(chip.getAttribute("style")).toBe("--chip-y: 93px;");
     expect(chip.getAttribute("aria-label")).toBe("+3 more: gamma, eps and delta");
     expect(texts(svgOf(snap)).slice(2)).toEqual([["mg-label", 293, 21, "Epic"], ["mg-count", 293, 35, "4/10 landed"]]);
     expect(aria(snap)).toBe("Every lane merges into one main line: 1 of 2 pieces landed; the epic: 4 of 10 pieces landed across 6 repositories, 3 more not drawn");
@@ -200,6 +203,24 @@ test("many: the waited-on sibling and the furthest behind are drawn, the rest fo
   expect(texts(svgOf(pushed)).slice(2)).toEqual([["mg-label", 293, 21, "Epic"], ["mg-count", 293, 35, "4/12 landed"]]);
   expect([...svgOf(pushed).querySelectorAll("text.flip-out, text.flip-in")].map((node) => [node.getAttribute("class"), node.textContent]))
     .toEqual([["mg-count flip-out", "4/10 landed"], ["mg-count flip-in", "4/12 landed"]]);
+});
+
+test("the ranking's edges: a fresh sibling with no stories turns in dashed, only a sibling wait counts, and waited-on keep the record's order", async () => {
+  // A fresh sibling with nothing listed has nothing landed to show: dashed, its row open and empty of fill.
+  for (const snap of await both(document({ siblings: [sibling("api", [])] }))) {
+    expect(classOf(svgOf(snap), ".mg-sib")).toEqual(["mg-sib open"]);
+    expect(snap.app.querySelector(".line.sibling").getAttribute("class")).toBe("line sibling open");
+    expect(snap.app.querySelector(".line.sibling .stops").getAttribute("style")).toBe("--solid: 0%;");
+  }
+  const siblings = [sibling("ahead", ["merged", "merged", "building"]), sibling("behind", ["building", "building"]), sibling("last", ["merged"])];
+  const drawn = async (waits) => rows((await both(document({ lanes: [["building"]], siblings, waits })))[0]);
+  // Unwaited, behind is furthest behind and ahead next.
+  expect(await drawn([])).toEqual(["behind0 of 2 landed", "ahead2 of 3 landed"]);
+  // A wait of another cause naming last's story changes nothing; a sibling wait on it puts last first.
+  expect(await drawn([{ ...waitOn("APP-21", "LAST-1"), cause: "order" }])).toEqual(["behind0 of 2 landed", "ahead2 of 3 landed"]);
+  expect(await drawn([waitOn("APP-21", "LAST-1")])).toEqual(["last1 of 1 landed", "behind0 of 2 landed"]);
+  // Two waited on keep the record's order, though ahead's share is higher than behind's.
+  expect(await drawn([waitOn("APP-21", "BEHIND-1"), waitOn("APP-21", "AHEAD-3")])).toEqual(["ahead2 of 3 landed", "behind0 of 2 landed"]);
 });
 
 // The new rules, by selector, as the stylesheet holds them.

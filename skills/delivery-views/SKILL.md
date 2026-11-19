@@ -1032,8 +1032,8 @@ print those words. A record with no siblings draws exactly as before.
   from below: first those holding a story this repository waits on, then the
   furthest behind, by the lowest share landed, then the most open. The rest
   fold into a "+N more" chip by the post, whose accessible name lists them. A
-  sibling's turn is solid once all of its stories have landed and dashed
-  before. The epic's line and post are solid only once every piece here and
+  sibling's turn is solid once it has stories and all of them have landed, and
+  dashed before, a fresh sibling with no stories included. The epic's line and post are solid only once every piece here and
   every sibling story has landed and every sibling is fresh.
 - **An unreadable sibling.** A same-epic sibling that isn't fresh turns in
   dotted, and its row reads "Never read" or "Couldn't be read since <at>". The
