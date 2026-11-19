@@ -109,12 +109,26 @@ test("before every own story has landed, the headline is today's whatever the si
   expect(said(shown)).toEqual({ title: "0 of 1 pieces have landed.", across: [] });
 });
 
-test("a sibling of another epic is drawn without stories and isn't named in the headline", async () => {
-  const [shown] = await open(document([sibling("backend", stories("merged")), sibling("legacy", stories("building"), "other-epic")]));
+test("a sibling of another epic is named under Also linked, without stories, and isn't named in the headline", async () => {
+  const [shown] = await open(document([sibling("legacy", stories("building"), "other-epic"), sibling("backend", stories("merged"))]));
   expect(said(shown)).toEqual({ title: "Every piece has landed.", across: [] });
-  const groups = [...shown.app.querySelectorAll("#across .across-group")];
-  expect(groups[1].querySelector(".across-head").textContent).toBe("legacyDelivers another epic since 5 minutes ago");
-  expect(groups[1].querySelector("li")).toBeNull();
+  const chapter = shown.app.querySelector("#across");
+  // The chapter counts and folds the epic's own groups; another epic's comes after them, outside the fold.
+  expect(chapter.querySelector(".title").textContent).toBe("1 other repository delivers this epic.");
+  expect(chapter.querySelector(".across-fold summary").textContent).toBe("backend");
+  expect([...chapter.querySelectorAll(".across-group .across-name")].map((node) => node.textContent)).toEqual(["backend"]);
+  const also = chapter.querySelector(".across-also");
+  expect(also.previousElementSibling.classList.contains("across-fold")).toBe(true);
+  expect(also.querySelector(".across-also-head").textContent).toBe("Also linked");
+  expect(also.querySelector(".across-head").textContent).toBe("legacyDelivers another epic since 5 minutes ago");
+  expect(also.querySelector("a.across-name").getAttribute("href")).toBe(LINK);
+  expect(also.querySelector("li")).toBeNull();
+  // With only another epic's group the chapter still names it, and says no other repository delivers this epic.
+  const [alone] = await open(document([sibling("legacy", stories("building"), "other-epic")]));
+  expect(alone.app.querySelector("#across").hidden).toBe(false);
+  expect(alone.app.querySelector("#across .title").textContent).toBe("No other repository delivers this epic.");
+  expect(alone.app.querySelector("#across .across-fold")).toBeNull();
+  expect(alone.app.querySelector("#across .across-also .across-head").textContent).toBe("legacyDelivers another epic since 5 minutes ago");
 });
 
 test("an outside child a sibling holds is drawn in its group; one no sibling holds stays elsewhere", async () => {
