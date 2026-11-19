@@ -10632,6 +10632,21 @@ class StateReadInProcessTests(unittest.TestCase):
         self.assertIn("failed: ", broken)
         self.assertIn("SyntaxError", broken)
 
+    def test_a_stop_that_lands_while_the_state_tool_loads_is_still_a_stop(self) -> None:
+        """A supervisor signalled while its first read loads the state tool exits; it doesn't take the stop for a tool
+        that exits as it loads, and carry on with the tool run as a command."""
+        release = self.release("import os, signal\nos.kill(os.getpid(), signal.SIGTERM)\n"
+                               "def show(directory): return {}\ndef publication(*a): return {}\n"
+                               "def emitted(*a): return []\nclass StateError(Exception): pass\n")
+        # The supervisor's own handler, as run-delivery installs it, for the signal the tool sends itself as it loads.
+        self.addCleanup(signal.signal, signal.SIGTERM, signal.signal(signal.SIGTERM, self.tool._terminate))
+        with mock.patch.object(self.tool, "run", side_effect=AssertionError("the stop ran the tool as a command")), \
+                self.assertRaises(SystemExit) as stop:
+            self.tool.shown_record(release, self.record)
+        self.assertEqual(stop.exception.code, 128 + signal.SIGTERM)
+        self.assertEqual(self.tool.STATE_READERS, {}, "a stopped load is remembered as a tool that can't be read with")
+        self.assertEqual([name for name in sys.modules if name.startswith("delivery_state_reader_")], [])
+
     def test_a_release_without_its_state_tool_is_named_before_any_read(self) -> None:
         c = types.SimpleNamespace(release=self.folder / "no-release", state=self.record)
         with mock.patch.object(self.tool, "cfg", lambda: c), self.assertRaises(self.tool.Stop) as stop:

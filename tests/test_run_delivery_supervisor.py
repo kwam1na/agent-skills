@@ -8,6 +8,7 @@ process they start; the pass cases run `lead-run --once`, one pass at a time, so
 from __future__ import annotations
 
 import datetime
+import errno
 import fcntl
 import html
 import importlib.util
@@ -266,6 +267,24 @@ def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True, deferred: bo
     code, out = fx.flow("handoff", key, "--pr", url, *(["--checks", checks] if checks is not None else []), cwd=wt)
     assert code == 0, out
     return out if checks is not None else wt
+
+
+def remove_live_record(folder: Path) -> None:
+    """Remove a record its running supervisor may be writing into: a write's temporary file can be renamed away after
+    the removal lists it, or land in a folder it has just emptied, so the removal goes on until the folder is gone."""
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            shutil.rmtree(folder)
+            return
+        except FileNotFoundError:
+            if not folder.exists():
+                return
+        except OSError as error:
+            if error.errno != errno.ENOTEMPTY:
+                raise
+        if time.monotonic() > deadline:
+            raise AssertionError(f"{folder} could not be removed while its supervisor wrote into it")
 
 
 def record(fx: Fixture) -> dict:
@@ -6327,7 +6346,7 @@ class NoSupervisorOutlivesItsCaseTests(unittest.TestCase):
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
         recorded = self.started(fx)
-        shutil.rmtree(fx.tmp / "record")
+        remove_live_record(fx.tmp / "record")
         wait_for(lambda: not alive(recorded["pid"]), "the supervisor to exit once its record is gone", 30)
         self.assertEqual([c["pid"] for c in recorded["children"] if alive(c["pid"])], [], "its children outlived it")
         self.assertIn("supervisor: stopping: its record", self.supervisor_log(fx))
@@ -6338,7 +6357,7 @@ class NoSupervisorOutlivesItsCaseTests(unittest.TestCase):
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
         recorded = self.started(fx)
-        shutil.rmtree(fx.tmp / "record")
+        remove_live_record(fx.tmp / "record")
         (fx.tmp / "record/views").mkdir(parents=True)
         (fx.tmp / "record/state.lock").write_text("")
         wait_for(lambda: not alive(recorded["pid"]), "the supervisor to exit once its record's state is gone", 30)
@@ -6368,7 +6387,7 @@ class NoSupervisorOutlivesItsCaseTests(unittest.TestCase):
         recorded = self.started(fx, pass_seconds=60)
         wait_for(lambda: passes(fx), "the first pass")
         removed = time.monotonic()
-        shutil.rmtree(fx.tmp / "record")
+        remove_live_record(fx.tmp / "record")
         wait_for(lambda: not alive(recorded["pid"]), "the supervisor to exit while it waits for its next pass", 15)
         self.assertLess(time.monotonic() - removed, 15, "it waited out its pass interval")
 

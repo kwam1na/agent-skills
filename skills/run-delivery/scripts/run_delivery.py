@@ -148,9 +148,14 @@ class Transient(Stop):
     429. A PR-review wait's loop tries it again; everywhere else it refuses at once, as any Stop does."""
 
 
+class Terminated(SystemExit):
+    """A stop by SIGTERM or SIGHUP. It exits as SystemExit does, and code that takes a module's own exit as a failed
+    load re-raises it, so a stop that lands while a module loads is never lost."""
+
+
 def _terminate(signum, _frame):
     # A kill from the agent's tool timeout becomes an exception, so `finally` blocks stop processes and leases.
-    raise SystemExit(128 + signum)
+    raise Terminated(128 + signum)
 
 
 
@@ -1242,7 +1247,8 @@ def state_reader(script: Path):
             spec.loader.exec_module(tool)
         except BaseException as error:
             sys.modules.pop(name, None)
-            if isinstance(error, KeyboardInterrupt):
+            # A tool that exits as it loads is run as a command; a stop that lands while it loads is still a stop.
+            if isinstance(error, (KeyboardInterrupt, Terminated)):
                 raise
             tool = None
         if tool is not None and not all(callable(getattr(tool, wanted, None)) for wanted in STATE_READER_NAMES):
@@ -13138,6 +13144,7 @@ class Supervisor:
             while True:
                 number += 1
                 closed = self.one_pass(number)
+                self.honour_signal()
                 if closed or self.once or self.stop_asked() or self.lose():
                     break
                 deadline = time.monotonic() + supervisor_pass_seconds(c)
