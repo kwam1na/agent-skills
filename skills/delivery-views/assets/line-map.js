@@ -2032,8 +2032,11 @@
       stage.appendChild(when);
     }
     add(line, " · ", stage);
-    var nodes = [owner, el("div", "d1", titleOf(doc, item)), line].concat(unlanded ? [] : waitLines(doc, subject, "div", "d2 d-wait"));
-    var inPlan = planStop(doc, subject);
+    // Where the story is, in one line, with how its review ended or the lane's own words under it.
+    var state = unlanded ? null : storyState(doc, piece);
+    var nodes = [owner, el("div", "d1", titleOf(doc, item)), line].concat(state ? [state] : [],
+      unlanded ? [] : waitLines(doc, subject, "div", "d2 d-wait"));
+    var inPlan = planStop(doc, subject, Boolean(state));
     if (inPlan) { nodes.push(inPlan); }
     var batch = item.stage !== "merged" && !unlanded && batchNow(doc, pieces(doc));
     if (batch && batch.some(function (member) { return member.subject === item.subject; })) {
@@ -2057,6 +2060,9 @@
         (ahead === null ? "start time unknown" : ahead > 60 ? "starts around " + clock(estimate.expectedStart) + " (estimate)" : "starts any moment now (estimate)")));
     }
     var run = runFor(doc, item);
+    // The state line says how the review stands, so the summary's own count of notes raised is left to the reports.
+    var counted = state && run ? run.querySelector(".run-summary > p.run-story") : null;
+    if (counted && !run.querySelector(".run-bead.is-running")) { counted.remove(); }
     if (run) { nodes.push(run); }
     var timeline = timelineFor(doc, item);
     if (timeline) { nodes.push(timeline); }
@@ -2068,6 +2074,83 @@
     Array.prototype.forEach.call(document.querySelectorAll(".stop-btn"), function (button) {
       button.setAttribute("aria-pressed", String(button.getAttribute("data-subject") === subject));
     });
+  }
+
+  /**
+   * Where a story stands before it lands, as a state line with a dot: green while its lane moves it, amber while it
+   * waits on something, grey while the merge queue checks it. Before hand-off, how its review ended; and, while its
+   * lane is on it, the lane's own words and how long ago it said them. Null for a story that has landed, stopped or not
+   * been started.
+   */
+  function storyState(doc, piece) {
+    var item = piece.item, subject = item.subject, key = stageKey(item);
+    var queued = !piece.planned && list(doc.state.queue).some(function (entry) { return isObject(entry) && entry.subject === subject; });
+    var words, tone, review = null;
+    if (queued && key === "pending") { words = "Waiting for the lead to accept"; tone = "waiting"; }
+    else if (queued && (key === "queued" || IN_CHECKS[key])) { words = "Being checked before it lands"; tone = "checked"; }
+    else if (!queued && (key === "building" || key === "review")) {
+      var entries = journalFor(doc, subject, { "review.started": true, "review.round": true });
+      var start = entries.filter(function (entry) { return entry.kind === "review.started"; }).slice(-1)[0];
+      var rounds = entries.filter(function (entry) { return entry.kind === "review.round" && isObject(entry.data); });
+      var last = rounds.slice(-1)[0];
+      var answered = start && rounds.some(function (entry) {
+        return (entry.id || 0) > (start.id || 0) && (list(entry.answers).indexOf(start.id) >= 0
+          || (isObject(start.data) && entry.data.round === start.data.round));
+      });
+      if (start && !answered && isObject(start.data) && typeof start.data.round === "number") {
+        words = "In review, round " + start.data.round; tone = "moving";
+      } else if (last) {
+        var verdicts = isObject(last.data.verdicts) ? Object.keys(last.data.verdicts).map(function (lens) { return last.data.verdicts[lens]; }) : [];
+        var approved = verdicts.length > 0 && verdicts.every(function (verdict) { return verdict === "approve"; });
+        if (approved) { words = "Reviewed, getting ready to hand off"; tone = "moving"; review = reviewEnded(doc, subject, rounds); }
+        else { words = "Fixing review findings"; tone = "waiting"; }
+      } else { words = "Being built"; tone = "moving"; }
+    }
+    if (!words) { return null; }
+    var box = add(el("div", "d-state is-" + tone), el("div", "d-now", words));
+    if (review) { box.appendChild(el("div", "d-said", review)); }
+    var lane = list(doc.state.lanes).filter(function (entry) { return isObject(entry) && entry.id === item.lane; })[0];
+    var took = lane ? list(doc.journal).filter(function (entry) {
+      return isObject(entry) && entry.kind === "lane.assigned" && entry.lane === lane.id;
+    }).slice(-1)[0] : null;
+    if (lane && text(lane.focus) && took && took.subject === subject) {
+      var at = seconds(lane.focusAt), ago = at === null ? null : Date.now() / 1000 - at;
+      var said = add(el("div", "d-said" + (review ? " d-lane" : "")), text(lane.focus));
+      if (ago !== null && ago >= 0) {
+        var age = el("time", null, ago < 45 ? "just now" : duration(ago));
+        age.setAttribute("datetime", text(lane.focusAt));
+        add(said, " · ", age);
+      }
+      box.appendChild(said);
+    }
+    return box;
+  }
+  /**
+   * How an approved review ended, from its recorded reports: "Approved on round 3 · all 8 notes fixed", or the notes
+   * deferred to a follow-up, or still open. Without readable reports, the journal's counts say only what was raised.
+   */
+  function reviewEnded(doc, subject, rounds) {
+    var last = rounds[rounds.length - 1];
+    var number = typeof last.data.round === "number" ? last.data.round : rounds.length;
+    var head = number === 1 ? "Approved on the first round" : "Approved on round " + number;
+    var native = Object.prototype.hasOwnProperty.call(nativeReviews, subject) ? nativeReviews[subject] : null;
+    var detail = isObject(native) && native.unavailable !== true ? list(native.roundDetail).filter(isObject) : [];
+    var raised = [];
+    detail.forEach(function (round) { list(round.raised).filter(isObject).forEach(function (note) { raised.push(note); }); });
+    var notes = function (count) { return count + (count === 1 ? " note" : " notes"); };
+    if (detail.length) {
+      var deferred = raised.filter(function (note) { return note.state === "deferred"; }).length;
+      var open = raised.filter(function (note) { return note.state === "unresolved"; }).length;
+      if (deferred) { return head + " · " + notes(deferred) + " deferred to a follow-up"; }
+      if (open) { return head + " · " + notes(open) + " still open"; }
+      return head + " · " + (!raised.length ? "nothing raised" : raised.length === 1 ? "its 1 note fixed" : "all " + raised.length + " notes fixed");
+    }
+    var total = 0;
+    rounds.forEach(function (round) {
+      var counts = isObject(round.data.findings) ? round.data.findings : {};
+      ["P0", "P1", "P2", "P3"].forEach(function (severity) { total += typeof counts[severity] === "number" ? counts[severity] : 0; });
+    });
+    return head + " · " + (total ? notes(total) + " raised" : "nothing raised");
   }
 
   // The candidate a stop's review evidence must name. A handed stop's is its head. A planned stop has no head before
@@ -3247,7 +3330,7 @@
   }
 
   /** In a stop's panel: where its unit stands, in the plan's own words, and separately a way to it. */
-  function planStop(doc, subject) {
+  function planStop(doc, subject, stated) {
     if (!plan) { return null; }
     var unit = planUnits(plan.units).filter(function (entry) { return entry.subject === subject; })[0];
     if (!unit) { return null; }
@@ -3255,8 +3338,9 @@
     var removed = unit.removed === true;
     var box = add(el("div", "d-plan-row" + (!removed && proof.proven ? " proven" : removed ? " removed" : "") +
       (!removed && proof.next && proofStuck(proof.next, proof) ? " stuck" : "")),
-      el("span", "pu-standing", removed ? "Removed from the plan" : unitStanding(proof)));
-    if (!removed && proof.next) { box.appendChild(el("span", "d-plan-next", proofSaid(proof.next, proof, Boolean(closedEntry(doc))))); }
+      // A story whose card says where it stands leaves its proofs to the plan, behind the button.
+      stated && !removed && !proof.proven ? null : el("span", "pu-standing", removed ? "Removed from the plan" : unitStanding(proof)));
+    if (!removed && proof.next && !stated) { box.appendChild(el("span", "d-plan-next", proofSaid(proof.next, proof, Boolean(closedEntry(doc))))); }
     var go = el("button", "d-plan", "See in the plan");
     go.type = "button";
     go.setAttribute("data-plan-unit", subject);

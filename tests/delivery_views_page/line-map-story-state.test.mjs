@@ -1,0 +1,133 @@
+// Where a story is, on its card: one state line with a dot, green while its lane moves it, amber while it waits, grey
+// while the merge queue checks it; before hand-off, how its review ended; and the lane's own words while the lane is on
+// the story. The card no longer says proofs left, that it hasn't been handed off, or the summary's count of notes raised.
+process.env.TZ = "UTC";
+
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { test } from "node:test";
+
+import { ROOT, expect, openPage, pageWithRuns } from "./support.mjs";
+
+const B = "b".repeat(40);
+const LENSES = ["lens.outcome-correctness", "lens.adversarial-testing"];
+const NOW = "2026-11-17T10:12:00Z";
+const pick = { click: '[data-subject="WORK-1"]' };
+
+/** WORK-1 on lane 1, planned (before hand-off) or `queued` as given, with `journal` after its assignment. */
+function record(journal = [], { queued = null, focus = "Writing the tests", focusAt = "2026-11-17T10:00:00Z" } = {}) {
+  const entries = [{ id: 1, at: "2026-11-17T09:00:00Z", kind: "lane.assigned", lane: "lane-1", subject: "WORK-1", data: { title: "Work" } }];
+  const story = { subject: "WORK-1", title: "Work", lane: "lane-1", stage: "building" };
+  const doc = { state: { lanes: [{ id: "lane-1", state: "working", focus, focusAt }],
+                         queue: queued ? [{ ...story, order: 1, head: B, ...queued }] : [], planned: queued ? [] : [story] },
+                journal: entries, status: { source: "derived", text: "" }, focus: {}, stats: {} };
+  journal.forEach((entry) => entries.push({ lane: "lane-1", subject: "WORK-1", ...entry, id: entries.length + 1 }));
+  return doc;
+}
+const started = (round) => ({ at: "2026-11-17T10:01:00Z", kind: "review.started", data: { round, head: B, lenses: LENSES, restart: false } });
+const reduced = (round, verdict, findings = {}) => ({ at: "2026-11-17T10:05:00Z", kind: "review.round", data: { round,
+  startedAt: "2026-11-17T10:01:00Z", finishedAt: "2026-11-17T10:05:00Z", verdicts: { [LENSES[0]]: "approve", [LENSES[1]]: verdict },
+  findings: { P0: 0, P1: 0, P2: 0, P3: 0, ...findings } } });
+
+/** The card's state block as the reader sees it: its tone, its lines and the lane line's own class. */
+async function stateOf(doc) {
+  const [, shown] = await openPage(pageWithRuns(doc), { now: NOW, steps: [pick] });
+  const box = shown.app.querySelector("#detail .d-state");
+  return box && { tone: [...box.classList].find((name) => name.startsWith("is-")),
+                  lines: [...box.children].map((line) => line.textContent),
+                  lane: box.querySelector(".d-lane")?.textContent ?? null, app: shown.app };
+}
+
+test("each state before the line says where the story is, with the dot for moving, waiting or checked", async () => {
+  // No review round yet: being built, the lane's words second, at the card's soft size.
+  const built = await stateOf(record());
+  expect([built.tone, built.lines]).toEqual(["is-moving", ["Being built", "Writing the tests · 12m"]]);
+  expect(built.lane).toBeNull();
+  // A round started and not yet answered.
+  expect((await stateOf(record([started(1)]))).lines[0]).toBe("In review, round 1");
+  expect((await stateOf(record([started(1), reduced(1, "changes", { P1: 1 }), started(2)]))).lines[0]).toBe("In review, round 2");
+  // The last round asked for changes: the story waits on its fixes.
+  const fixing = await stateOf(record([started(1), reduced(1, "changes", { P1: 1 })]));
+  expect([fixing.tone, fixing.lines[0]]).toEqual(["is-waiting", "Fixing review findings"]);
+  // Approved and not handed off: how the review ended, then the lane's words, quieter.
+  const ready = await stateOf(record([started(1), reduced(1, "changes", { P1: 1, P3: 2 }), started(2), reduced(2, "approve")],
+    { focus: "Full suite on the hand-off head" }));
+  expect([ready.tone, ready.lines]).toEqual(["is-moving",
+    ["Reviewed, getting ready to hand off", "Approved on round 2 · 3 notes raised", "Full suite on the hand-off head · 12m"]]);
+  expect(ready.lane).toBe("Full suite on the hand-off head · 12m");
+  expect(ready.app.querySelector("#detail .d-state time").getAttribute("datetime")).toBe("2026-11-17T10:00:00Z");
+  // Handed off and waiting on the lead, then checked by the queue.
+  const pending = await stateOf(record([started(1), reduced(1, "approve")], { queued: { stage: "queued", pending: true } }));
+  expect([pending.tone, pending.lines[0]]).toEqual(["is-waiting", "Waiting for the lead to accept"]);
+  for (const stage of ["queued", "checking", "merging"]) {
+    const checked = await stateOf(record([], { queued: { stage } }));
+    expect([stage, checked.tone, checked.lines[0]]).toEqual([stage, "is-checked", "Being checked before it lands"]);
+  }
+  // Landed or stopped: no state block; the card says those as it always has.
+  expect(await stateOf(record([], { queued: { stage: "merged" } }))).toBeNull();
+  expect(await stateOf(record([], { queued: { stage: "stopped" } }))).toBeNull();
+});
+
+test("the lane's words show only while the lane is on that story, and the review line only before hand-off", async () => {
+  // The lane moved on to another story: its words are that story's, not this one's.
+  const moved = record([started(1), reduced(1, "approve"), { at: "2026-11-17T10:06:00Z", kind: "lane.assigned", subject: "WORK-2",
+                                                             data: { title: "Next" } }]);
+  moved.state.planned.push({ subject: "WORK-2", title: "Next", lane: "lane-1", stage: "building" });
+  expect((await stateOf(moved)).lines).toEqual(["Reviewed, getting ready to hand off", "Approved on the first round · nothing raised"]);
+  // No words at all: just the state line.
+  expect((await stateOf(record([], { focus: null }))).lines).toEqual(["Being built"]);
+  // Handed off: the review line is gone; the lane's words stay while the lane is on it.
+  const handed = await stateOf(record([started(1), reduced(1, "approve")], { queued: { stage: "queued", pending: true }, focus: "Handed off" }));
+  expect(handed.lines).toEqual(["Waiting for the lead to accept", "Handed off · 12m"]);
+});
+
+test("the review line reads the recorded reports: every note fixed, deferred to a follow-up, or still open", async () => {
+  const doc = (findings) => {
+    const made = record([started(1), reduced(1, "approve", { P2: findings.length }),
+                         { at: "2026-11-17T10:05:30Z", kind: "review.recorded", data: { digest: "d".repeat(64), candidateRef: B } }]);
+    made.reviewEvidence = { "WORK-1": { candidateRef: B, digest: "d".repeat(64), outcomes: [{ round: 1, outcome: "aligned", entries: [{
+      lens: LENSES[0], state: "obtained", binding: { subjectRef: "WORK-1", candidateRef: B, round: 1 }, result: {
+        schemaVersion: "review-lens-result/1", lensId: LENSES[0], subjectRef: "WORK-1", candidateRef: B, round: 1, evidence: { observed: true },
+        outcome: "aligned", findings }}] }] } };
+    return made;
+  };
+  const note = (id, state) => ({ id, severity: "P2", summary: "A note.", state, ...(state === "deferred" ? { deferredIssue: "Later." } : {}) });
+  expect((await stateOf(doc([note("F1", "deferred"), note("F2", "deferred")]))).lines[1])
+    .toBe("Approved on the first round · 2 notes deferred to a follow-up");
+  expect((await stateOf(doc([note("F1", "deferred")]))).lines[1]).toBe("Approved on the first round · 1 note deferred to a follow-up");
+  expect((await stateOf(doc([]))).lines[1]).toBe("Approved on the first round · nothing raised");
+  // Two notes raised in round 1 and fixed by round 2, which approved.
+  const A = "a".repeat(40);
+  const entry = (round, candidate, result) => ({ lens: LENSES[0], state: "obtained", binding: { subjectRef: "WORK-1", candidateRef: candidate, round },
+    result: { schemaVersion: "review-lens-result/1", lensId: LENSES[0], subjectRef: "WORK-1", candidateRef: candidate, round, evidence: { observed: true }, ...result } });
+  const fixed = record([started(1), reduced(1, "changes", { P2: 2 }), started(2), reduced(2, "approve"),
+                        { at: "2026-11-17T10:05:30Z", kind: "review.recorded", data: { digest: "e".repeat(64), candidateRef: B } }]);
+  fixed.reviewEvidence = { "WORK-1": { candidateRef: B, digest: "e".repeat(64), outcomes: [
+    { round: 1, outcome: "unresolved", entries: [entry(1, A, { outcome: "changes-requested", findings: [note("F1", "open"), note("F2", "open")] })] },
+    { round: 2, outcome: "aligned", entries: [entry(2, B, { outcome: "aligned", findings: [], resolvedFindings: [
+      { id: "F1", state: "fixed", fixCommit: B, resolution: "Fixed." }, { id: "F2", state: "fixed", fixCommit: B, resolution: "Fixed." }] })] }] } };
+  expect((await stateOf(fixed)).lines[1]).toBe("Approved on round 2 · all 2 notes fixed");
+});
+
+test("the card drops proofs left, \"hasn't been handed off\" and the summary's count, and keeps the rest", async () => {
+  const shown = await stateOf(record([started(1), reduced(1, "approve", { P3: 1 })]));
+  const card = shown.app.querySelector("#detail").textContent;
+  for (const gone of ["proofs left", "proof left", "hasn't been handed off"]) {
+    expect([gone, card.includes(gone)]).toEqual([gone, false]);
+  }
+  // The summary's own sentence of notes raised is gone; the state block's review line says how the review ended.
+  expect(shown.app.querySelector("#detail .run-story")).toBeNull();
+  expect(shown.lines[1]).toBe("Approved on the first round · 1 note raised");
+  expect(shown.app.querySelector("#detail .d-owner").textContent).toContain("1");
+  expect(shown.app.querySelector("#detail .d1").textContent).toBe("Work");
+  expect(shown.app.querySelector("#detail .d-meta").textContent).toContain("WORK-1");
+});
+
+test("the skill's page says the card's state block", () => {
+  const skill = readFileSync(path.join(ROOT, "skills/delivery-views/SKILL.md"), "utf8").replace(/\s+/g, " ");
+  expect(skill).toContain("A piece's detail panel says where the story is before it lands, in one state line with a dot");
+  expect(skill).toContain("The dot is green while the story's lane moves it, amber while it waits on something and grey while the "
+    + "merge queue checks it.");
+  expect(skill).toContain("The panel leaves a unit's proofs to the plan chapter, and the review's count of notes raised to the "
+    + "recorded reports.");
+});
