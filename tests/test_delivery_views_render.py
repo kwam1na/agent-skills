@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import tempfile
 import threading
 import time
@@ -9,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests.quiet_git import quiet_clone, quieten
 from tests.delivery_views_fixtures import (
     FIX, LISTED, RUN_ID, VIEW, Repository, Runs, block, config, document_naming, reading, readings, reference,
     render, report, report_view, table, views_common,
@@ -1115,6 +1117,102 @@ def narrated(name: str) -> bytes:
     plan = json.loads((folder / "plan.json").read_text(encoding="utf-8")) if (folder / "plan.json").is_file() else None
     story = render.narrator.narrate(journal, state=state, plan=plan)
     return (json.dumps(story, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+class IntegrationDriftTests(unittest.TestCase):
+    """How far the target moved while the delivery worked, and how far the integration's current head is behind it,
+    counted at render time against the remote-tracking ref, and absent whenever git can't say."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.folder = Path(tempfile.mkdtemp(prefix="integration-drift-"))
+        cls.addClassCleanup(lambda: __import__("shutil").rmtree(cls.folder, ignore_errors=True))
+        origin, cls.repo, other = cls.folder / "origin.git", cls.folder / "lead", cls.folder / "other"
+        git = lambda where, *argv: subprocess.run(["git", *argv], cwd=where, check=True, capture_output=True,
+                                                  text=True).stdout.strip()
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+        quieten(origin)
+        cls.folder.joinpath("seed").mkdir()
+        seed = cls.folder / "seed"
+        git(seed, "init", "-q", "-b", "main")
+        quieten(seed)
+
+        def change(where: Path, name: str) -> str:
+            (where / name).write_text(name + "\n")
+            git(where, "add", name)
+            git(where, "-c", "user.name=F", "-c", "user.email=f@example.test", "commit", "-q", "-m", name)
+            return git(where, "rev-parse", "HEAD")
+        cls.started = change(seed, "start")
+        git(seed, "push", "-q", str(origin), "main")
+        quiet_clone(origin, cls.repo)
+        quiet_clone(origin, other)
+        # The integration base works beside the target, which moves twice; the lead catches up, then fixes.
+        git(cls.repo, "checkout", "-q", "-b", "integrate/app")
+        change(cls.repo, "story")
+        change(other, "target-1")
+        change(other, "target-2")
+        git(other, "push", "-q", "origin", "main")
+        git(cls.repo, "fetch", "-q", "origin")
+        git(cls.repo, "-c", "user.name=F", "-c", "user.email=f@example.test", "merge", "-q", "--no-ff", "-m", "catch up",
+            "origin/main")
+        cls.merge = git(cls.repo, "rev-parse", "HEAD")
+        cls.fix = change(cls.repo, "fix")
+        # The target moves again after the catch-up; the lead's local main stays where it started.
+        change(other, "target-3")
+        git(other, "push", "-q", "origin", "main")
+        git(cls.repo, "fetch", "-q", "origin")
+        assert git(cls.repo, "rev-parse", "main") == cls.started
+
+    def document(self, *facts: tuple[str, dict], target: str = "main", base_head: str | None = None) -> dict:
+        journal = [{"id": 1, "at": "2026-11-18T10:00:00Z", "kind": "record.started", "lane": None, "subject": None,
+                    "data": {"base": {"ref": "integrate/app", "head": self.started}}}]
+        for number, (kind, data) in enumerate(facts, start=2):
+            journal.append({"id": number, "at": "2026-11-18T10:00:00Z", "kind": kind, "lane": None, "subject": "APP",
+                            "data": data})
+        return {"state": {"meta": {"headline": "App", "trackerParent": "APP", "baseHead": base_head or self.merge,
+                                   "integration": {"base": "integrate/app", "target": target, "remote": "origin"}},
+                          "queue": [], "planned": []}, "journal": journal}
+
+    def drift(self, document: dict):
+        data = render.line_map_data(document, {}, config(), theme_key="local", history=None, repository=self.repo)
+        return data.get("integration", {}).get("drift")
+
+    def test_the_counts_are_against_the_remote_target_from_the_start_and_from_the_current_head(self) -> None:
+        merged = ("integration.merged", {"target": "main", "targetHead": "a" * 40, "head": self.merge, "conflicts": []})
+        suite = ("integration.suite", {"head": self.fix, "result": "passed", "seconds": 3})
+        # Three target commits since the start; one since the fix, the newest head a fact names; none on local main.
+        self.assertEqual(self.drift(self.document(merged, suite)), {"moved": 3, "behind": 1})
+        # A round under the delivery's key names a head too; a landing names none, and another story's round counts not.
+        landed = ("integration.landed", {"target": "main", "head": self.started})
+        self.assertEqual(self.drift(self.document(suite, ("review.round", {"round": 1, "head": self.started,
+                                                                            "startedAt": "2026-11-18T10:00:00Z",
+                                                                            "finishedAt": "2026-11-18T10:00:00Z",
+                                                                            "verdicts": {}, "findings": {}}), landed)),
+                         {"moved": 3, "behind": 3})
+
+    def test_with_no_integration_fact_behind_counts_from_the_base_head(self) -> None:
+        self.assertEqual(self.drift(self.document(base_head=self.merge)), {"moved": 3, "behind": 1})
+        self.assertEqual(self.drift(self.document(base_head=self.started)), {"moved": 3, "behind": 3})
+
+    def test_a_missing_ref_a_git_that_times_out_or_is_absent_and_no_integration_leave_it_absent(self) -> None:
+        self.assertIsNone(self.drift(self.document(target="nowhere")))
+        real = subprocess.run
+        calls = []
+
+        def slow(argv, **kwargs):
+            calls.append(kwargs.get("timeout"))
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+        with mock.patch.object(render.subprocess, "run", side_effect=slow):
+            self.assertIsNone(self.drift(self.document()))
+        self.assertEqual(calls, [5])
+        with mock.patch.object(render.subprocess, "run", side_effect=FileNotFoundError("git")):
+            self.assertIsNone(self.drift(self.document()))
+        plain = self.document()
+        del plain["state"]["meta"]["integration"]
+        with mock.patch.object(render.subprocess, "run", side_effect=AssertionError("no git call")):
+            data = render.line_map_data(plain, {}, config(), theme_key="local", history=None, repository=self.repo)
+        self.assertNotIn("integration", data)
+        self.assertIs(subprocess.run, real)
 
 
 class StoryFixtureTests(unittest.TestCase):
