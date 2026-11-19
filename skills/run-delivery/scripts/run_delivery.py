@@ -11229,7 +11229,7 @@ def lane_change_needs(c, state: dict) -> list[dict]:
                 items.append({**facts, "source": source, "kind": "laneOutside",
                               "text": f"{named} changed `{path}`, which it doesn't hold.",
                               "clears": "the branch no longer changing it, or the lead granting the file",
-                              "fields": {"path": path}})
+                              "fields": {"path": path, "detail": "It doesn't hold the file."}})
                 continue
             for change in changes:
                 if change.get("inside", True):
@@ -11242,7 +11242,7 @@ def lane_change_needs(c, state: dict) -> list[dict]:
                 items.append({**facts, "source": source, "kind": "laneOutside",
                               "text": f"{named} {said} of `{path}`, outside its span.",
                               "clears": "the branch no longer changing those lines, or the lead granting them",
-                              "fields": {"path": path, "lines": lines}})
+                              "fields": {"path": path, "lines": lines, "detail": f"It {said}, outside its span."}})
     return items
 
 
@@ -12394,7 +12394,8 @@ class Supervisor:
                  ("lenses", lambda: journal_lens_returns(c)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
-                 ("peerWaits", lambda: write_peer_waits(c)), ("publish", lambda: render_views(c, only="publishers")),
+                 ("peerWaits", lambda: write_peer_waits(c)), ("laneChanges", lambda: write_lane_changes(c)),
+                 ("publish", lambda: render_views(c, only="publishers")),
                  ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:

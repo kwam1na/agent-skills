@@ -7,7 +7,6 @@ its "Needs you" items in process, with the record handed to them and the release
 from __future__ import annotations
 
 import importlib.util
-import inspect
 import json
 import os
 import subprocess
@@ -391,10 +390,33 @@ class LaneChangesTests(unittest.TestCase):
             self.assertEqual((later["lanes"]["lane-1"]["story"], later["lanes"]["lane-1"]["branch"]), ("S-3", "claude/S-3"))
             self.assertEqual([f["path"] for f in later["lanes"]["lane-1"]["files"]], ["docs/guide.md"])
 
-    def test_needs_you_lists_the_branch_reads_items_before_the_records_own(self) -> None:
-        body = inspect.getsource(run_delivery.needs_you)
-        self.assertLess(body.index('items += lane_change_needs(c, doc["state"])'), body.index("items += record_needs(doc, items)"))
-
+    def test_needs_you_says_the_branch_reads_items_in_the_tables_words_before_the_records_own(self) -> None:
+        d = self.delivery()
+        d.push(d.story("S-1", "lane-1"), {"src/two.js": "function two() {\n  return 3;\n}\n"})
+        d.push(d.story("S-2", "lane-2"), {"src/two.js": "function two() {\n  return 4;\n}\n"})
+        d.one_pass()
+        # A stopped story in the queue, which the record's own items name.
+        d.state["queue"].append({"order": 1, "subject": "S-9", "title": "Stop", "lane": "lane-2", "stage": "stopped",
+                                 "head": "b" * 40, "syncedHead": None, "leadInputs": [], "reportedRounds": 1,
+                                 "runId": None, "checks": []})
+        doc = {"state": json.loads(json.dumps(d.state)), "journal": []}
+        c = d.config()
+        c.release, c.flow_log, c.delivery, c.forge = ROOT, Path("/nonexistent"), "APP", {}
+        with mock.patch.multiple(run_delivery, tracker_conf=lambda c: {}, base_head=lambda c: None,
+                                 full_health_running=lambda c: None, read_log=lambda *a, **k: [],
+                                 lead_listener=lambda *a, **k: {"pid": 1}, only_full_health_breaks=lambda journal: False), \
+                mock.patch.object(run_delivery.tracker_publisher, "needs_you", lambda *a, **k: []):
+            items = run_delivery.needs_you(c, doc)
+        kinds = [item["kind"] for item in items]
+        self.assertEqual(kinds[:1], ["laneOutside"], items)
+        self.assertIn("stopped", kinds)
+        self.assertLess(kinds.index("laneOutside"), kinds.index("stopped"))
+        [outside] = [item for item in items if item["kind"] == "laneOutside"]
+        self.assertEqual((outside["lane"], outside["subject"], outside["holding"]), ("lane-1", "S-1", False))
+        self.assertEqual(outside["said"]["headline"], "Lane 1 changed src/two.js outside what it holds")
+        self.assertEqual(outside["said"]["why"], "It doesn't hold the file.")
+        self.assertEqual(outside["said"]["clears"], "Clears when the branch no longer changes it, or the lead grants it.")
+        self.assertEqual(outside["said"]["who"], "The lead")
 
 if __name__ == "__main__":
     unittest.main()

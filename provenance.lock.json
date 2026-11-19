@@ -530,7 +530,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
-          "sha256": "d7e4577cf9c1cec62ed1a5506d7b4cd05373f5fde0f1a88db8512cd88ef7e8a7"
+          "sha256": "3a5e2f91381b7315ace2371b372cfc89fd7a1aa3f786786459c54b570d35d0bd"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
@@ -1123,7 +1123,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "bdfc2a0b4e55738ec3cf12398558094b85b6b056c9a61097c4fc584fd0eda4a5"
+          "sha256": "b2b3a77bd89a09e59c61e09a494df70496be42c41217b4f48483edda569920df"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
