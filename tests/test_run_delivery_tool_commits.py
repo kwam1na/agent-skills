@@ -205,6 +205,15 @@ class ToolCommitHookTests(unittest.TestCase):
         fx = self.fixture("bypass")
         hooks, ran = self.install_hooks(fx, {"pre-commit": "exit 1", "commit-msg": "exit 1",
                                              "pre-merge-commit": "exit 1"})
+        # Whatever was left in the tool's own empty folder, by a crash or by hand, is cleared before it can run.
+        common = Path(sh("git", "rev-parse", "--path-format=absolute", "--git-common-dir", cwd=fx.main).stdout.strip())
+        empty = common / "run-delivery" / "empty-hooks"
+        (empty / "left-folder").mkdir(parents=True)
+        (empty / "left-folder" / "pre-commit").write_text("#!/bin/sh\nexit 1\n")
+        for name in ("pre-commit", "commit-msg"):
+            left = empty / name
+            left.write_text(f"#!/bin/sh\ntouch '{ran}/left-{name}'\nexit 1\n")
+            left.chmod(left.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         made = self.three_commits(fx)
         self.assertEqual(sorted(os.listdir(ran)), [], made)
         self.assert_configuration_kept(fx, hooks)
