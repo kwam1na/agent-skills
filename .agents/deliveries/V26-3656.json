@@ -1,0 +1,191 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3656",
+  "headline": "V26-3656: fit a delivery to the adopter's tracker workflow, review lenses and git hooks",
+  "outcome": {
+    "summary": "An adopter's tracker workflow, review lenses and git hooks fit a delivery without hand moves, lane-remembered rules or workarounds.",
+    "text": "An adopter's tracker workflow, review lenses and git hooks fit a delivery without hand moves, lane-remembered rules or workarounds. Readiness agrees with the publisher about which moves are made, the plan's approval can refine every story, a story lens can be on request, asked for by the lane or by the story's brief, and the tool's own commits never run repository hooks."
+  },
+  "baseBranch": "integrate/fit-to-adopter",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-19-fit-delivery-to-adopter.md",
+  "laneBrief": "docs/plans/2026-11-19-fit-delivery-to-adopter.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-19-fit-delivery-to-adopter.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions",
+      "Units and order"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/run-delivery/scripts/tracker_publisher.py",
+        "skills/orchestrate-work/references/journal-kinds.json",
+        "tests/fixtures/journal-kinds/vectors.json",
+        "tests/test_run_delivery_tool_commits.py",
+        "tests/test_run_delivery_tracker.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "tests/test_run_delivery_lens_request.py"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3654": {
+      "title": "Commit run-delivery's own files without running the repository's git hooks",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3654-1",
+          "text": "c1: lead-plan's change and approval commits and lead-sync --merge's commit run no repository hook. A pre-commit or commit-msg hook that fails or rewrites files affects none of them."
+        },
+        {
+          "id": "v26-3654-2",
+          "text": "c2: Every commit run-delivery makes for itself goes through one helper, and a corpus test fails on a plain commit outside it."
+        },
+        {
+          "id": "v26-3654-3",
+          "text": "c3: A commit a lane or the lead makes with plain git still runs the repository's hooks."
+        },
+        {
+          "id": "v26-3654-4",
+          "text": "c4: The config reference says the tool's own commits skip every repository hook, and why."
+        }
+      ]
+    },
+    "V26-3655": {
+      "title": "Read a story as ready when its status is already a start move's target",
+      "lane": "lane-1",
+      "after": [
+        "V26-3654"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3655-1",
+          "text": "c1: With a refine-then-start start list and targets, an item already at the refine move's target is ready, on a Jira-shaped and on a Linear-shaped snapshot."
+        },
+        {
+          "id": "v26-3655-2",
+          "text": "c2: An item offering the first start move is ready. One offering neither that move nor the next is refused, naming its status and the move it waits on."
+        },
+        {
+          "id": "v26-3655-3",
+          "text": "c3: A one-move start behaves as it did before."
+        }
+      ]
+    },
+    "V26-3653": {
+      "title": "Refine a delivery's stories in the tracker when its plan is approved",
+      "lane": "lane-1",
+      "after": [
+        "V26-3655"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3653-1",
+          "text": "c1: With refine set, lead-init journals one story.approved per planned story, and the publisher makes the refine moves once on each story that needs them, with an update naming the plan and its review record."
+        },
+        {
+          "id": "v26-3653-2",
+          "text": "c2: A story already at the refine target is recorded as made. One the move isn't offered from is left alone, with a \"belongs to people\" note."
+        },
+        {
+          "id": "v26-3653-3",
+          "text": "c3: A story added after init is refined the same way."
+        },
+        {
+          "id": "v26-3653-4",
+          "text": "c4: Under refine, lead-assign accepts a story offering the refine move, and lead-init and doctor --delivery say which stories approval will refine."
+        },
+        {
+          "id": "v26-3653-5",
+          "text": "c5: Without refine, nothing is journalled, posted or moved that wasn't before."
+        },
+        {
+          "id": "v26-3653-6",
+          "text": "c6: The config reference and the adoption guide describe refine with neutral example names."
+        }
+      ]
+    },
+    "V26-3651": {
+      "title": "Let a story lens be available but run only when named",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3651-1",
+          "text": "c1: A lens marked on request is left out of a round 1 with no --lenses, and runs when --lenses names it."
+        },
+        {
+          "id": "v26-3651-2",
+          "text": "c2: A story whose delivery entry names an on-request lens gets it with no --lenses, and a --lenses that leaves it out is refused."
+        },
+        {
+          "id": "v26-3651-3",
+          "text": "c3: Round 1's meta, the hand-off and lead-accept say who asked for each on-request lens."
+        },
+        {
+          "id": "v26-3651-4",
+          "text": "c4: With nothing on request, a round 1 with no --lenses runs exactly what it runs today."
+        },
+        {
+          "id": "v26-3651-5",
+          "text": "c5: A default on a mandated, plan-only or undeclared lens, or two declarations that disagree, is a conflict doctor reports. It works for a harness.config.ts lens through review.default."
+        },
+        {
+          "id": "v26-3651-6",
+          "text": "c6: doctor, config and lead-brief list on-request lenses with their purpose, and the config reference and the adoption guide describe them."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "V26-3654, V26-3655, V26-3653 and V26-3651 land on integrate/fit-to-adopter through its merge queue",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration head, with --workers 4 --budget tests/suite-budget.json, inside the budget",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide's integration review says, and the operator merges it into main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-19"
+  },
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}
