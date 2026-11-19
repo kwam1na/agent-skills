@@ -439,3 +439,214 @@ def carve(repo: Path, claims: list[dict], path: str, base: str, gives: list[dict
     added = [claim for claim in result if not any(claim is kept for kept in on_path)]
     others = [claim for claim in claims if claim["path"] != path]
     return {"claims": others + result, "removed": removed, "added": added}
+
+
+# -- grants that show and resolve their lines -------------------------------------------------------------------
+
+SHOWN = 100
+
+
+def text_lines(repo: Path, commit: str, path: str) -> list[str]:
+    """``path``'s lines at ``commit`` as text, without their line ends."""
+    _, oid = entry(repo, commit, path)
+    return [line.decode("utf-8", "replace").rstrip("\r\n") for line in lines(repo, oid)]
+
+
+def shown(text: str) -> str:
+    return text if len(text) <= SHOWN else text[:SHOWN]
+
+
+def span_lines(repo: Path, commit: str, path: str, start: int, end: int) -> str:
+    """Decision 9: a span's first and last line as text at ``commit``, each cut to 100 characters."""
+    text = text_lines(repo, commit, path)
+    first, last = text[start - 1], text[end - 2]
+    if end - start == 1:
+        return f"line {start}: {shown(first)!r}"
+    return f"line {start}: {shown(first)!r} ... line {end - 1}: {shown(last)!r}"
+
+
+def kind_of(path: str) -> str:
+    lowered = path.lower()
+    if lowered.endswith((".py", ".pyi")):
+        return "python"
+    if lowered.endswith((".md", ".markdown")):
+        return "markdown"
+    return "text"
+
+
+def matches(text: list[str], anchor: str) -> list[int]:
+    """The one-based lines holding ``anchor`` as an exact substring."""
+    return [number for number, line in enumerate(text, 1) if anchor in line]
+
+
+def python_statements(source: str) -> list[tuple[int, int]] | None:
+    """Every statement as (first line with its decorators, last line), or None when the file doesn't parse."""
+    import ast
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return None
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.stmt):
+            first = min([node.lineno, *(d.lineno for d in getattr(node, "decorator_list", []))])
+            found.append((first, node.end_lineno or node.lineno, node.lineno))
+    return found
+
+
+def python_block(text: list[str], line: int, statements: list | None = None) -> tuple[int, int] | None:
+    statements = python_statements("\n".join(text) + "\n") if statements is None else statements
+    if statements is None:
+        return None
+    starting = [(first, last) for first, last, own in statements if line in (first, own)]
+    if starting:
+        first, last = max(starting, key=lambda span: span[1] - span[0])  # the outermost
+        return first, last + 1
+    inside = [(first, last) for first, last, _ in statements if first <= line <= last]
+    if inside:
+        first, last = min(inside, key=lambda span: span[1] - span[0])  # the smallest
+        return first, last + 1
+    return line, line + 1
+
+
+HEADING = re.compile(r"^(#{1,6})\s")
+
+
+def markdown_block(text: list[str], line: int) -> tuple[int, int]:
+    heading = HEADING.match(text[line - 1])
+    if heading:
+        level = len(heading.group(1))
+        end = next((number for number in range(line + 1, len(text) + 1)
+                    if (other := HEADING.match(text[number - 1])) and len(other.group(1)) <= level), len(text) + 1)
+        return line, end
+    plain = lambda number: text[number - 1].strip() and not HEADING.match(text[number - 1])
+    start, end = line, line + 1
+    while start > 1 and plain(start - 1):
+        start -= 1
+    while end <= len(text) and plain(end):
+        end += 1
+    return start, end
+
+
+def indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" \t"))
+
+
+def text_block(text: list[str], line: int) -> tuple[int, int]:
+    own = indent(text[line - 1])
+    end = line + 1
+    while end <= len(text) and (not text[end - 1].strip() or indent(text[end - 1]) > own):
+        end += 1
+    while end - 1 > line and not text[end - 2].strip():
+        end -= 1  # trailing blank lines are not the block's
+    if end <= len(text) and indent(text[end - 1]) == own and text[end - 1].lstrip().startswith(("}", "]", ")")):
+        end += 1
+    return line, end
+
+
+def block(path: str, text: list[str], line: int, statements: list | None = None) -> tuple[int, int]:
+    """Decision 10: the enclosing block of ``line``, by the file's kind. ``statements``, a Python file's, read once
+    by a caller that asks for many blocks."""
+    kind = kind_of(path)
+    if kind == "python":
+        found = python_block(text, line, statements)
+        if found is not None:
+            return found
+    if kind == "markdown":
+        return markdown_block(text, line)
+    return text_block(text, line)
+
+
+def anchored(repo: Path, commit: str, path: str, anchor: str) -> tuple[int, int]:
+    """The span ``--around ANCHOR`` names at ``commit``: the block of the one line holding it."""
+    if not anchor:
+        raise RegionError("an anchor names some text of a line")
+    text = text_lines(repo, commit, path)
+    found = matches(text, anchor)
+    if not found:
+        raise RegionError(f"no line of {path} at {commit[:12]} holds {anchor!r}")
+    if len(found) > 1:
+        listed = "; ".join(f"line {number}: {shown(text[number - 1])!r}" for number in found[:10])
+        more = f"; and {len(found) - 10} more" if len(found) > 10 else ""
+        raise RegionError(f"{len(found)} lines of {path} at {commit[:12]} hold {anchor!r}: {listed}{more}. "
+                          "Quote more of the line")
+    return block(path, text, found[0])
+
+
+def logical_lines(source: str) -> list[tuple[int, int]] | None:
+    """Each Python logical line that spans several physical lines, as (first, last), from the standard library's
+    tokenize; None when the file doesn't tokenize."""
+    import io
+    import tokenize
+    spans, first = [], None
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type in (tokenize.NL, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT, tokenize.ENCODING,
+                              tokenize.ENDMARKER):
+                continue
+            if first is None:
+                first = token.start[0]
+            if token.type == tokenize.NEWLINE:
+                if token.start[0] > first:
+                    spans.append((first, token.start[0]))
+                first = None
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return None
+    return spans
+
+
+def check_statements(repo: Path, commit: str, path: str, start: int, end: int) -> None:
+    """Decision 11: in a Python file, each edge of a span falls at the start of a logical line or at the file's
+    end, so no statement is cut in two. Other files have no statement check."""
+    if kind_of(path) != "python":
+        return
+    text = text_lines(repo, commit, path)
+    spans = logical_lines("\n".join(text) + "\n")
+    if spans is None:
+        return
+    for edge in (start, end):
+        cut = next(((first, last) for first, last in spans if first < edge <= last), None)
+        if cut:
+            first, last = cut
+            raise RegionError(f"the span [{start}, {end}) cuts the statement at lines {first}-{last} of {path} "
+                              f"({shown(text[first - 1].strip())!r}) at line {edge}. Grant it whole")
+
+
+def widened(start: int, end: int, insert: str | None, size: int, held: list[tuple[int, int]]) -> tuple[int, int]:
+    """Decision 12: [start, end) one line wider past the edge an insertion goes at, so it falls strictly inside.
+    The line taken must exist and be unclaimed (``held`` lists the claimed spans)."""
+    if insert is None:
+        return start, end
+    line = start - 1 if insert == "before" else end
+    if line < 1 or line > size:
+        raise RegionError(f"--insert {insert} would take line {line}, which {'is before' if line < 1 else 'is past the end of'} "
+                          "the file: an insertion there needs a whole-file claim")
+    taker = next(((first, last) for first, last in held if first <= line < last), None)
+    if taker:
+        raise RegionError(f"--insert {insert} would take line {line}, which [{taker[0]}, {taker[1]}) already claims")
+    return (line, end) if insert == "before" else (start, end + 1)
+
+
+def anchor_for(path: str, text: list[str], start: int, end: int, claimed: list[tuple[int, int]],
+               widening: bool = False) -> tuple[str, str | None, tuple[int, int]] | None:
+    """Decision 13: the request that names [start, end) by its text, never by numbers: the line, unique in the file,
+    whose block alone or widened by one unclaimed line (``--insert``) covers the lines with the fewest lines over.
+    With ``widening``, for an insertion at the edge of a span already held, only a block widened by --insert is
+    named. Returns (that line, the --insert side or None, the span it names), or None when no line names one."""
+    statements = python_statements("\n".join(text) + "\n") if kind_of(path) == "python" else None
+    free = lambda line: 1 <= line <= len(text) and not any(first <= line < last for first, last in claimed)
+    best = None
+    for line in range(max(1, start - 300), min(len(text), end + 1) + 1):
+        words = text[line - 1]
+        if not words.strip() or len(matches(text, words)) != 1:
+            continue
+        first, last = block(path, text, line, statements)
+        for insert, span, taken in ((None, (first, last), None), ("after", (first, last + 1), last),
+                                    ("before", (first - 1, last), first - 1)):
+            if (taken is not None and not free(taken)) or (widening and taken is None):
+                continue
+            if span[0] <= start and end <= span[1]:
+                cost = (span[1] - span[0], insert is not None)
+                if best is None or cost < best[0]:
+                    best = (cost, words, insert, span)
+    return best[1:] if best else None
