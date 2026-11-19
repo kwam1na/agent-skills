@@ -123,6 +123,10 @@
         {
           "id": "v26-3624-3",
           "text": "The card shows the lane's own words and their age when the lane is on that story."
+        },
+        {
+          "id": "v26-3624-4",
+          "text": "Proofs left, hasn't been handed off and the review-counts sentence are gone, the rest of the card is kept, and the page tests cover each state."
         }
       ],
       "after": [
