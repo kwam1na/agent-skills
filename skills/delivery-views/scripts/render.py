@@ -45,6 +45,7 @@ import importlib.util
 import json
 import math
 import re
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -1189,8 +1190,61 @@ def left_open(document: dict) -> dict | None:
         return None
 
 
+# The integration facts that name the integration's head, in journal order; integration.landed ends it and names the
+# target's. A review round is one only under the delivery's own key.
+INTEGRATION_HEADS = ("integration.merged", "integration.suite", "integration.requested")
+DRIFT_TIMEOUT_SECONDS = 5
+
+
+def integration_head(document: dict) -> str | None:
+    """The integration's current head: the newest head an integration fact names, or the base head before any."""
+    state = document.get("state") if _is_object(document.get("state")) else {}
+    meta = state.get("meta") if _is_object(state.get("meta")) else {}
+    key = meta.get("trackerParent")
+    head = meta.get("baseHead") if isinstance(meta.get("baseHead"), str) else None
+    for entry in document.get("journal") if isinstance(document.get("journal"), list) else ():
+        if not _is_object(entry) or not _is_object(entry.get("data")):
+            continue
+        if entry.get("kind") in INTEGRATION_HEADS or (entry.get("kind") == "review.round" and key is not None
+                                                      and entry.get("subject") == key):
+            named = entry["data"].get("head")
+            head = named if isinstance(named, str) else head
+    return head
+
+
+def integration_drift(document: dict, repository: Path | None = None) -> dict | None:
+    """How far the integration's target moved while it worked, ``moved``, and how far its current head is behind the
+    target, ``behind``, each a count of commits on the remote-tracking ref in the repository the renderer runs in. None
+    for a record without an integration, and whenever git can't say: absent, slow, missing a ref, or failing."""
+    state = document.get("state") if _is_object(document.get("state")) else {}
+    meta = state.get("meta") if _is_object(state.get("meta")) else {}
+    integration = meta.get("integration")
+    if not _is_object(integration) or not all(isinstance(integration.get(name), str) and integration[name]
+                                              for name in ("target", "remote")):
+        return None
+    started = next((entry["data"]["base"].get("head") for entry in document.get("journal") or []
+                    if _is_object(entry) and entry.get("kind") == "record.started" and _is_object(entry.get("data"))
+                    and _is_object(entry["data"].get("base"))), None)
+    current = integration_head(document)
+    target = f"refs/remotes/{integration['remote']}/{integration['target']}"
+    counts = []
+    for since in (started, current):
+        if not isinstance(since, str) or not re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", since):
+            return None
+        try:
+            done = subprocess.run(["git", "rev-list", "--count", f"{since}..{target}", "--"], cwd=repository,
+                                  capture_output=True, text=True, timeout=DRIFT_TIMEOUT_SECONDS)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if done.returncode != 0 or not done.stdout.strip().isdigit():
+            return None
+        counts.append(int(done.stdout.strip()))
+    return {"moved": counts[0], "behind": counts[1]}
+
+
 def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
-                  plan: dict | None = None, needs: dict | None = None, story: bool = True) -> dict:
+                  plan: dict | None = None, needs: dict | None = None, story: bool = True,
+                  repository: Path | None = None) -> dict:
     """The shared bounded view data; local HTML and public projection consume the same cut. Without ``story``, the
     record is not narrated: a cut that publishes no story tells none."""
     reviews = native_review_summaries(document)
@@ -1230,6 +1284,10 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
     if story:
         # What a closed delivery left open goes with the story too: the published cut tells none.
         data["leftOpen"] = left_open(document)
+        # How far the target moved goes with the story: it is read from this repository, and the published cut has none.
+        drift = integration_drift(document, repository)
+        if drift is not None:
+            data["integration"] = {"drift": drift}
     return data
 
 
@@ -1261,6 +1319,8 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
         *([f'<script type="application/json" id="delivery-needs">{embed(needs)}</script>'] if needs is not None else []),
         *([f'<script type="application/json" id="delivery-left-open">{embed(data["leftOpen"])}</script>']
           if data.get("leftOpen") is not None else []),
+        *([f'<script type="application/json" id="delivery-integration">{embed(data["integration"])}</script>']
+          if data.get("integration") is not None else []),
         f"<script>\n{_asset('run-summary.js')}{_asset('line-map.js')}</script>",
         "</body>",
         "</html>",

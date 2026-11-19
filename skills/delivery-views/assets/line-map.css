@@ -272,6 +272,28 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .mg-post { stroke: var(--ink); stroke-width: 3; stroke-linecap: round; }
 .mg-label { font: 550 13px var(--text); fill: var(--ink); }
 .mg-count { font: 500 11px var(--mono); fill: var(--faint); }
+/* The integration step: the main line runs on through four stops and bends into the target, drawn beneath it. */
+.lines-track.rejoining { padding-right: 460px; padding-bottom: 74px; min-width: calc(704px + var(--most, 1) * 46px); }
+.mg-target { fill: none; stroke: var(--edge); stroke-width: 4; stroke-linecap: round; }
+.mg-step { fill: var(--paper); stroke: color-mix(in oklab, var(--ink) 30%, transparent); stroke-width: 2; }
+.mg-step.filled { fill: var(--ink); stroke: var(--ink); }
+.mg-step.danger { stroke: var(--held); stroke-width: 3; }
+.mg-step.warning { stroke: var(--wait); stroke-width: 3; }
+.mg-step.next { stroke: var(--l1); stroke-width: 3; }
+.mg-step-label { font: 500 10px var(--text); fill: var(--soft); }
+.mg-base, .mg-target-label { font-size: 11px; fill: var(--soft); }
+.title-beat { color: var(--faint); }
+.rejoin { margin: 18px 0 6px; }
+.rejoin-title { font: 600 14px var(--text); margin: 0 0 8px; }
+.rejoin-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rj-row { display: grid; grid-template-columns: 96px 1fr; gap: 12px; font: 400 13px var(--text); color: var(--ink); }
+.rj-name { color: var(--soft); }
+.rj-head { font: 500 12px var(--mono); }
+.rj-head.struck { color: var(--faint); }
+.rj-dots { display: inline-flex; gap: 3px; vertical-align: middle; }
+.rj-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.rj-dot.approve { background: var(--landed); }
+.rj-dot.changes { background: var(--wait); }
 /* A stop: an 18px mark in its lane's hue. Circles fill as the piece goes; a hollow diamond waits on the lead; a triangle is stopped. */
 .stop-btn { position: absolute; top: 14px; z-index: 1; width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--c);
   background: var(--paper); cursor: pointer; padding: 0; transition: transform .15s var(--ease); }

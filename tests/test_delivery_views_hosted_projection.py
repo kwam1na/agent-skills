@@ -224,7 +224,12 @@ class ProjectionTests(unittest.TestCase):
         round_facts = copy.deepcopy(doc['journal'][0]['data'])
         doc['journal'].append({'id': 6, 'at': '2026-11-15T00:02:00Z', 'kind': 'review.round', 'lane': None,
                                'subject': 'APP', 'data': {**round_facts, 'head': head}})
-        value = public.project(doc, runs, config(), source_fingerprint='1' * 64)
+        # Even where the renderer can count the drift, the published cut carries none.
+        with mock.patch.object(public.render, 'integration_drift', return_value={'moved': 3, 'behind': 1}):
+            local = public.render.line_map_data(doc, {}, config(), theme_key='local', history=None)
+            value = public.project(doc, runs, config(), source_fingerprint='1' * 64)
+        self.assertEqual(local['integration'], {'drift': {'moved': 3, 'behind': 1}})
+        self.assertNotIn('integration', value)
         public.validate(value)
         self.assertEqual(value['document']['journal'][1:], [
             *({'id': number, 'at': '2026-11-15T00:01:00Z', 'kind': kind, 'lane': None, 'subject': 'APP'}
