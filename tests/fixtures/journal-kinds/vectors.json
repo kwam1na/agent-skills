@@ -1398,6 +1398,135 @@
       "line": ""
     },
     {
+      "kind": "ownership.released",
+      "lane": "lane-1",
+      "subject": "APP-12",
+      "data": {
+        "path": "skills/run.py",
+        "span": {
+          "first": 40,
+          "after": 52
+        },
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "merge": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "skills/run.py was released from Lane 1",
+      "line": "From line 40 up to 52 at 9f3c2b1, when APP-12 landed at 4e66a05"
+    },
+    {
+      "kind": "ownership.carried",
+      "lane": "lane-1",
+      "subject": "APP-12",
+      "data": {
+        "path": "skills/run.py",
+        "from": {
+          "first": 10,
+          "after": 20
+        },
+        "to": {
+          "first": 10,
+          "after": 24
+        },
+        "was": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+        },
+        "story": "APP-13",
+        "inFlight": [
+          "APP-13"
+        ]
+      },
+      "head": "skills/run.py was carried for Lane 1",
+      "line": "From line 10 up to 20 at 9f3c2b1 to line 10 up to 24 at 4e66a05, for APP-13; APP-13 must merge the base to use it"
+    },
+    {
+      "kind": "ownership.carried",
+      "lane": "lane-1",
+      "subject": "APP-12",
+      "data": {
+        "path": "skills/run.py",
+        "from": {
+          "first": 10,
+          "after": 20
+        },
+        "to": {
+          "first": 12,
+          "after": 22
+        },
+        "was": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+        }
+      },
+      "head": "skills/run.py was carried for Lane 1",
+      "line": "From line 10 up to 20 at 9f3c2b1 to line 12 up to 22 at 4e66a05"
+    },
+    {
+      "kind": "ownership.carved",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "path": "skills/run.py",
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "removed": [
+          {
+            "lane": "lane-1",
+            "baseHead": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+            "start": 1,
+            "end": 30
+          }
+        ],
+        "added": [
+          {
+            "lane": "lane-1",
+            "baseHead": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+            "start": 1,
+            "end": 10
+          },
+          {
+            "lane": "lane-2",
+            "baseHead": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+            "start": 10,
+            "end": 30,
+            "story": "APP-14"
+          }
+        ]
+      },
+      "head": "skills/run.py was carved at 9f3c2b1",
+      "line": "2 claims written, replacing 1 claim"
+    },
+    {
+      "kind": "ownership.carved",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "path": "skills/run.py",
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "removed": [],
+        "added": [
+          {
+            "lane": "lane-2",
+            "baseHead": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+            "start": 10,
+            "end": 30
+          }
+        ]
+      },
+      "head": "skills/run.py was carved at 9f3c2b1",
+      "line": "1 claim written"
+    },
+    {
       "kind": "ownership.claimed",
       "lane": "lane-1",
       "subject": "APP-12",

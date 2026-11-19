@@ -367,6 +367,39 @@
         }
       }
     },
+    "regionClaims": {
+      "description": "Region claims on one path: each lane, its anchor, its half-open lines and any story.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "lane",
+          "baseHead",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "lane": {
+            "$ref": "#/$defs/name"
+          },
+          "baseHead": {
+            "$ref": "#/$defs/commit"
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "story": {
+            "$ref": "#/$defs/name"
+          }
+        }
+      }
+    },
     "recovery": {
       "description": "A recovered merge's source identity.",
       "type": "object",
@@ -1697,6 +1730,110 @@
       "explain": "The lead changed which lane may edit a file.",
       "tracker": null,
       "instruction": "None: which lane may edit a file shows in the record and the views."
+    },
+    "ownership.released": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Lines released",
+      "data": {
+        "path": {
+          "type": "path"
+        },
+        "span": {
+          "type": "span"
+        },
+        "base": {
+          "type": "base"
+        },
+        "merge": {
+          "type": "commit"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{path} was released from {lane:lane}",
+        "line": "From line {span.first} up to {span.after} at {base.head:commit}, when {subject:ticket} landed at {merge:commit}"
+      },
+      "explain": "A story landed, so the lines claimed for it went back to no lane.",
+      "tracker": null,
+      "instruction": "None: which lane may edit which lines shows in the record and the views."
+    },
+    "ownership.carried": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Lines carried",
+      "data": {
+        "path": {
+          "type": "path"
+        },
+        "from": {
+          "type": "span"
+        },
+        "to": {
+          "type": "span"
+        },
+        "was": {
+          "type": "commit"
+        },
+        "base": {
+          "type": "base"
+        },
+        "story": {
+          "type": "name",
+          "optional": true
+        },
+        "inFlight": {
+          "type": "names",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{path} was carried for {lane:lane}",
+        "line": "From line {from.first} up to {from.after} at {was:commit} to line {to.first} up to {to.after} at {base.head:commit}[, for {story:ticket}][; {inFlight:list:ticket} must merge the base to use it]"
+      },
+      "explain": "A story of the lane landed inside a claim of the lane, so the claim moved to the merge with those lines in it.",
+      "tracker": null,
+      "instruction": "None: which lane may edit which lines shows in the record and the views."
+    },
+    "ownership.carved": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Lines carved",
+      "data": {
+        "path": {
+          "type": "path"
+        },
+        "base": {
+          "type": "base"
+        },
+        "removed": {
+          "type": "regionClaims"
+        },
+        "added": {
+          "type": "regionClaims"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{path} was carved at {base.head:commit}",
+        "line": "{added:count:claim} written[, replacing {removed:count:claim}]"
+      },
+      "explain": "The lead split a file's lines between lanes in one step.",
+      "tracker": null,
+      "instruction": "None: which lane may edit which lines shows in the record and the views."
     },
     "ownership.claimed": {
       "altitude": "bookkeeping",

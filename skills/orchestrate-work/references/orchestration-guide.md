@@ -234,6 +234,9 @@ the lead and the lanes make them instead, as the commands print them.
 | `base.merge.authorized` | None: the lane runs the merge the lead authorized, and its hand-off posts with `candidate.handed`. | nowhere | - |
 | `ownership.granted` | None: which lane may edit a file shows in the record and the views. | nowhere | - |
 | `ownership.revoked` | None: which lane may edit a file shows in the record and the views. | nowhere | - |
+| `ownership.released` | None: which lane may edit which lines shows in the record and the views. | nowhere | - |
+| `ownership.carried` | None: which lane may edit which lines shows in the record and the views. | nowhere | - |
+| `ownership.carved` | None: which lane may edit which lines shows in the record and the views. | nowhere | - |
 | `ownership.claimed` | None: the delivery's claim on a path of the shared base shows in the record and the views, and a peer delivery's lead is warned of it. | nowhere | - |
 | `plan.updated` | None: the plan chapter shows the rebuilt plan. | nowhere | - |
 | `cleanup.done` | None: a landed piece's branch and checkout are gone, and its merge already posted with `candidate.merged`. | nowhere | - |
