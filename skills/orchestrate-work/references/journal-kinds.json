@@ -606,6 +606,38 @@
       },
       "instruction": "On the epic: the piece the lead added to the plan, its title, and why."
     },
+    "story.approved": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Plan approved",
+      "data": {
+        "title": {
+          "type": "prose"
+        },
+        "plan": {
+          "type": "path"
+        },
+        "review": {
+          "type": "path",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "The plan with {subject} was approved for delivery",
+        "line": "{title}. The plan is {plan}[; its review record is {review}]"
+      },
+      "explain": "The lead started the delivery of an approved plan that holds this piece, so the tracker can refine it.",
+      "tracker": {
+        "posts": "ticket",
+        "heading": "Plan approved"
+      },
+      "instruction": "On the ticket: the plan this story is in was approved for delivery, naming the plan and its review record; the refine moves are made with it."
+    },
     "lane.assigned": {
       "altitude": "story",
       "tone": "note",

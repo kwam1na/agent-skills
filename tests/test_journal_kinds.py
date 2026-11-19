@@ -55,6 +55,7 @@ words_tool = state_tool.journal_words
 TABLE = {
     "record.started": ("H", "note", "base", "", "epic: Delivery started"),
     "story.added": ("H", "decision", "*title* *why*", "", "epic: Story added"),
+    "story.approved": ("S", "note", "*title* plan review?", "", "ticket: Plan approved"),
     "lane.assigned": ("S", "note", "*title* *note?*", "", "ticket: Started"),
     "review.round": ("S", "note", "round head? startedAt finishedAt verdicts findings refused? restarts?", "answers:review.started", "-"),
     "review.started": ("S", "note", "round head lenses restart moved? *why?*", "", "-"),
@@ -439,6 +440,13 @@ class JournalFactsTests(unittest.TestCase):
         self.assertEqual({key: entry[key] for key in ("id", "kind", "lane", "subject", "data")},
                          {"id": 1, "kind": "candidate.merged", "lane": None, "subject": "APP-12", "data": merged})
         self.assertNotIn("summary", entry)
+
+    def test_a_plan_approval_names_its_plan(self) -> None:
+        approved = {"title": "Keep facts in the journal", "plan": "docs/plans/facts.md"}
+        self.refused("story.approved", {"title": approved["title"]}, "/data: missing plan", subject="APP-12")
+        self.refused("story.approved", {**approved, "review": ""}, "/data/review", subject="APP-12")
+        entry = self.append("story.approved", {**approved, "review": "docs/plans/facts.review.json"}, subject="APP-12")
+        self.assertEqual(entry["data"]["review"], "docs/plans/facts.review.json")
 
     def test_a_reserved_kind_is_refused_with_the_reservations_own_error(self) -> None:
         self.refused("x.weighed", {"finish": "acs"}, "x.weighed is reserved", code="kind_reserved")

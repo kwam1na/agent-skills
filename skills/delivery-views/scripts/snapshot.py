@@ -696,7 +696,7 @@ LINEAR_QUERY = f"""query Children($parent: String!, $after: String) {{
         createdAt
         title
         description
-        state {{ type }}
+        state {{ type name }}
         inverseRelations(first: 50) {{ nodes {{ type issue {{ identifier }} }} }}
       }}
       pageInfo {{ hasNextPage endCursor }}
@@ -919,6 +919,9 @@ def linear_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
                 if criteria is not None:
                     item["criteria"] = criteria
                 item["state"] = state
+                # The state's own name, for readiness to read beside the move targets; an answer without one gives none.
+                if node["state"].get("name") is not None:
+                    item["status"] = _text(node["state"]["name"], f"{_shown(identifier)}'s state name")
                 if blockers:
                     item["blockedBy"] = blockers
                 items.append(item)
