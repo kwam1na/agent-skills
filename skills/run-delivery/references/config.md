@@ -124,12 +124,15 @@ checks may need no file at all.
                                               // head; pr-open: as the PR opens; pipeline-green: pr-review makes it
                                               // once the pipeline's review is current and its checks green (needs
                                               // review.pr). Absent: nothing moves by itself, and open-pr prints it
+      "refine": ["Accept"],                   // optional: the moves that refine a story when its plan is
+                                              // approved, in order; the publisher makes them on each story's
+                                              // story.approved. Its last move needs a targets entry
       "lead": {                               // later journal kinds to the moves the publisher makes for them
         "candidate.merged": ["Complete"],     // absent, or an empty list: no move, and the update says the move
         "delivery.closed": ["Close epic"]     // belongs to people (the default)
       },
-      "targets": { "Complete": "Done" }       // the status a move leads to, for a move the tracker doesn't list
-                                              // from the ticket's status, so one already made reads as made
+      "targets": { "Accept": "Accepted",      // the status a move leads to, for a move the tracker doesn't list
+                   "Complete": "Done" }       // from the ticket's status, so one already made reads as made
     }
   },
   "harness": "ignore",                        // only to skip an unreadable harness.config.ts on purpose
@@ -716,7 +719,13 @@ says, and its follow-up is still filed.
 `<delivery>.lane-starts.jsonl`, at or after the entry. It then gets the start update and the `start` moves, once per
 story: never after the ledger holds the story's start or review move, and never when the ticket carries a start
 marker from the same delivery under an earlier record. An entry whose story is handed off, merged, reassigned or
-removed before it starts gets a `skip` line. The `lead` moves are made for their kinds. Each move reads the ticket's
+removed before it starts gets a `skip` line. With `refine` set, the plan's approval refines each story:
+`lead-init` journals a `story.approved` on each planned story, in plan order, after `record.started`, and a story added
+later, by `lead-plan change --kind added` or by the registration `lead-brief`, `lead-assign` and the sweep share,
+journals one after its `story.added`. Its data is `{title, plan, review?}`, the plan's path and its review record's,
+and its update on the story's ticket says the plan holding it was approved for delivery and names both. The publisher
+makes the `refine` moves for it; without `refine` nothing journals it. The tooling assumes no move names, statuses or
+step count: `refine` names the adopter's own. The `lead` moves are made for their kinds. Each move reads the ticket's
 status first: a move whose target status the ticket already has is skipped and reported as made by someone else, and
 one the tracker doesn't offer from the current status is `handled`: shown, never retried or journalled. A move's
 target is what the tracker lists for it, or else its `targets` entry; with neither, a move not listed is `handled`.

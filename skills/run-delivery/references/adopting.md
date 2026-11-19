@@ -765,6 +765,14 @@ The run-delivery configuration names the forge, the tracker's moves and the pipe
 }
 ```
 
+A team that refines its tickets before anyone starts them sets `transitions.refine` to the moves that refine a ticket,
+in its own names, with a `targets` entry for the last one, such as `"refine": ["Accept"]` and
+`"targets": {"Accept": "Accepted"}`. Then the plan's approval is what refines the delivery's stories: `lead-init`
+journals a `story.approved` on each story, the publisher makes the refine moves on its ticket and posts that the plan
+holding it was approved for delivery, and a story added later is refined the same way. A ticket already refined is left
+as it is, and one in a status the move isn't offered from is left to people. Leave `refine` out when people refine
+tickets themselves, or when the start moves already cover it.
+
 With `"reviewWhen": "pipeline-green"`, a lane's `pr-review <story-key> --wait` makes the review move once the pipeline
 is green at the change request's head, and `lead-accept` requires the pipeline's review current there, triaged by the
 lane. The binding's `reviewGate` checks it once more just before each merge:

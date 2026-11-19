@@ -206,6 +206,7 @@ the lead and the lanes make them instead, as the commands print them.
 | --- | --- | --- | --- |
 | `record.started` | On the epic: the delivery started, naming its base and the head it started from. | the epic | Delivery started |
 | `story.added` | On the epic: the piece the lead added to the plan, its title, and why. | the epic | Story added |
+| `story.approved` | On the ticket: the plan this story is in was approved for delivery, naming the plan and its review record; the refine moves are made with it. | the ticket | Plan approved |
 | `lane.assigned` | On the ticket: it moves to started, naming the lane and what it delivers. | the ticket | Started |
 | `review.round` | None: a lane posts each round on its own ticket, as its brief says, and the lead posts the integration review's rounds on the epic. | nowhere | - |
 | `review.started` | None: a lane posts each round on its own ticket once it is reduced, and the round in flight shows in the record and the views. | nowhere | - |
