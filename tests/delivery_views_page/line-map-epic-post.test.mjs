@@ -111,7 +111,7 @@ test("waiting: both posts are drawn, the epic's words above its own, and a sibli
     // The sibling's row sits under this repository's lanes, with its count and no stops.
     expect(rows(snap)).toEqual(["api1 of 2 landed"]);
     expect(snap.app.querySelector(".line.sibling .stop-btn")).toBeNull();
-    expect([...trackOf(snap).children].map((node) => node.getAttribute("class"))).toEqual(["line", "line", "line sibling", "line-merge"]);
+    expect([...trackOf(snap).children].map((node) => node.getAttribute("class"))).toEqual(["line", "line", "line sibling open", "line-merge"]);
     expect(aria(snap)).toBe("Every lane merges into one main line: 2 of 2 pieces landed; the epic: 3 of 4 pieces landed across 2 repositories");
   }
 });
@@ -122,7 +122,7 @@ test("mixed epics: only the same-epic sibling is drawn and counted, and the othe
     const svg = svgOf(snap);
     expect(rows(snap)).toEqual(["api0 of 1 landed"]);
     expect(classOf(svg, ".mg-sib")).toEqual(["mg-sib open"]);
-    expect(classOf(svg, ".mg-epic, .mg-epic-post, .mg-label")).toEqual(["mg-epic open", "mg-epic-post open", "mg-label", "mg-label"]);
+    expect(classOf(svg, ".mg-epic, .mg-epic-post, .mg-label")).toEqual(["mg-epic open", "mg-label", "mg-epic-post open", "mg-label"]);
     expect(texts(svg).slice(2)).toEqual([["mg-label", 293, 21, "Epic"], ["mg-count", 293, 35, "1/3 landed"]]);
     expect(aria(snap)).toBe("Every lane merges into one main line: 1 of 2 pieces landed; the epic: 1 of 3 pieces landed across 2 repositories");
     const chapter = snap.app.querySelector("#across");

@@ -241,9 +241,12 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .lines::-webkit-scrollbar { display: none; }
 /* The rows keep 16px of room above and below inside the scroll area, so a stop's glow and pulse and the last row's labels
    are never clipped; scrolling sideways (on a phone) never brings a vertical scroll with it. */
-/* The track's least width: the lane-name column and its gap (220 + 24, or 104 + 12 on a phone) and the merge's 176
-   (MERGE_WIDTH in line-map.js), plus 46 for each stop of the longest lane, so stops never crowd under their keys. */
-.lines-track { position: relative; display: grid; gap: 20px; padding: 16px 176px 16px 0; min-width: calc(420px + var(--most, 1) * 46px); }
+/* The track's least width: the lane-name column and its gap (220 + 24, or 104 + 12 on a phone) and the merge's width,
+   plus 46 for each stop of the longest lane, so stops never crowd under their keys. The drawing sets the merge's width,
+   --merge-width (176, or 304 with the epic's post), and the room above the line, --merge-top (16, or more for the epic's
+   words), on the track, so the padding, the least width and the drawing's place all follow the one number. */
+.lines-track { position: relative; display: grid; gap: 20px; padding-top: var(--merge-top); padding-right: var(--merge-width); padding-bottom: 16px; padding-left: 0;
+  min-width: calc(244px + var(--merge-width) + var(--most, 1) * 46px); }
 .line { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; height: 64px; }
 /* The lane's name stays pinned at the left while its row scrolls, so a lane is named wherever the reader has scrolled to. */
 .line .name { position: sticky; left: 0; z-index: 2; align-self: stretch; padding: 3px 12px 10px 0; margin-bottom: -10px; font-size: 12px; line-height: 16px; color: var(--faint); overflow: hidden;
@@ -255,7 +258,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .stops::before { content: ""; position: absolute; left: 0; right: 0; top: 22px; height: 2.5px; border-radius: 2px;
   background: linear-gradient(90deg, var(--c) var(--solid, 0%), color-mix(in oklab, var(--c) 30%, transparent) var(--solid, 0%)); }
 .seg { position: relative; flex: 0 0 calc(100% / var(--most, 1)); height: 64px; display: grid; place-items: center; min-width: 0; }
-.line-merge { position: absolute; top: 16px; right: 0; overflow: visible; }
+.line-merge { position: absolute; top: var(--merge-top); right: 0; overflow: visible; }
 .mg-trunk { fill: none; stroke: var(--ink); stroke-width: 4; stroke-linecap: round; }
 .mg-trunk.open { stroke: color-mix(in oklab, var(--ink) 30%, transparent); }
 .mg-turn { fill: none; stroke: var(--c); stroke-width: 2.5; stroke-linecap: round; }
@@ -272,6 +275,24 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .mg-post { stroke: var(--ink); stroke-width: 3; stroke-linecap: round; }
 .mg-label { font: 550 13px var(--text); fill: var(--ink); }
 .mg-count { font: 500 11px var(--mono); fill: var(--faint); }
+/* The epic's post: past this repository's finish line the main line runs on to it, and sibling repositories turn in from
+   rows under the lanes. Every stroke of it is neutral: dashed while work is open, dotted for a sibling that can't be read,
+   solid once everything has landed. No warning colour, since a sibling out of reach is not trouble here. */
+.line.sibling .name b { font-weight: 500; color: var(--soft); }
+.line.sibling .name span { color: var(--faint); }
+.mg-sib { fill: none; stroke: var(--edge); stroke-width: 2.5; stroke-linecap: round; }
+.mg-sib.open { stroke: var(--edge); stroke-dasharray: 5 5; }
+.mg-sib.unread { stroke: var(--edge); stroke-dasharray: .5 5; }
+.mg-epic { fill: none; stroke: var(--edge); stroke-width: 4; stroke-linecap: round; }
+.mg-epic.open { stroke: var(--edge); stroke-dasharray: 8 6; }
+.mg-epic.unread { stroke: var(--edge); stroke-width: 2.5; stroke-dasharray: 8 6; }
+.mg-epic-post { stroke: var(--edge); stroke-width: 3; stroke-linecap: round; }
+.mg-epic-post.open { stroke: var(--edge); stroke-dasharray: 4 5; }
+.mg-epic-post.unread { stroke: var(--edge); stroke-dasharray: 4 5; }
+.mg-epic-join { fill: var(--edge); }
+.mg-label.unread { fill: var(--soft); }
+.more-chip { position: absolute; right: 0; top: calc(var(--merge-top) + var(--chip-y)); display: inline-flex; align-items: center; height: 22px;
+  padding: 0 9px; border-radius: 11px; font: 500 11px var(--mono); color: var(--soft); background: color-mix(in oklab, var(--edge) 14%, transparent); }
 /* A stop: an 18px mark in its lane's hue. Circles fill as the piece goes; a hollow diamond waits on the lead; a triangle is stopped. */
 .stop-btn { position: absolute; top: 14px; z-index: 1; width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--c);
   background: var(--paper); cursor: pointer; padding: 0; transition: transform .15s var(--ease); }
@@ -662,7 +683,7 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
   .checking { padding: 18px 16px; border-radius: 12px; }
   .ck-run, .ck-fails li { margin: 0 -6px; }
   .rail { display: none; }
-  .lines-track { min-width: calc(292px + var(--most, 1) * 46px); }
+  .lines-track { min-width: calc(116px + var(--merge-width) + var(--most, 1) * 46px); }
   .line { grid-template-columns: 104px minmax(0, 1fr); gap: 12px; }
   .person { grid-template-columns: 20px minmax(0, 1fr); padding: 14px 16px; }
   .detail { padding: 18px 16px; border-radius: 12px; }
