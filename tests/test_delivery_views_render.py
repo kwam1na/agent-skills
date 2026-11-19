@@ -1182,7 +1182,7 @@ class IntegrationDriftTests(unittest.TestCase):
         suite = ("integration.suite", {"head": self.fix, "result": "passed", "seconds": 3})
         # Three target commits since the start; one since the fix, the newest head a fact names; none on local main.
         self.assertEqual(self.drift(self.document(merged, suite)), {"moved": 3, "behind": 1})
-        # A round under the delivery's key names a head too; a landing names none, and another story's round counts not.
+        # A round under the delivery's key names a head too, and a landing names none: the round's is the current head.
         landed = ("integration.landed", {"target": "main", "head": self.started})
         self.assertEqual(self.drift(self.document(suite, ("review.round", {"round": 1, "head": self.started,
                                                                             "startedAt": "2026-11-18T10:00:00Z",
