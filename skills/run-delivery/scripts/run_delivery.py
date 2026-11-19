@@ -928,6 +928,36 @@ class Config:
                 self.conflicts.append(f"{where} narrows {lens}, a mandated lens, whose use is plan and story")
             self.lens_use[lens] = tuple(u for u in LENS_USES if u in use)
         self.story_lenses = [lens for lens in lenses if "story" in self.lens_use[lens]]
+        # A story lens on request: `"default": false` in its review.lenses entry, or review.default for a
+        # harness.config.ts lens, as review.use gives one its use. It runs only when --lenses or the brief names it.
+        declared_default: dict[str, tuple[object, str]] = {}
+        for lens, spec in review.get("lenses", {}).items():
+            if "default" in spec:
+                declared_default[lens] = (spec["default"], f"{own} review.lenses.{lens}.default")
+        defaults = review.get("default", {})
+        if not isinstance(defaults, dict):
+            self.conflicts.append(f"{own} review.default must map lens ids to true or false, not {defaults!r}")
+            defaults = {}
+        for lens, default in defaults.items():
+            if lens not in lenses:
+                self.conflicts.append(f"{own} review.default names {lens}, which isn't a declared lens")
+            elif lens in declared_default and declared_default[lens][0] != default:
+                self.conflicts.append(f"{own} review.default gives {lens} the default {default!r}, but review.lenses "
+                                      f"gives it {declared_default[lens][0]!r}")
+            else:
+                declared_default[lens] = (default, f"{own} review.default.{lens}")
+        self.on_request: list[str] = []
+        for lens in lenses:
+            default, where = declared_default.get(lens, (True, ""))
+            if not isinstance(default, bool):
+                self.conflicts.append(f"{where} must be true or false, not {default!r}")
+            elif default is False and lens in MANDATED_LENSES:
+                self.conflicts.append(f"{where} puts {lens}, a mandated lens, on request; it runs in every round")
+            elif default is False and "story" not in self.lens_use[lens]:
+                self.conflicts.append(f"{where} puts {lens} on request, but its use is plan only: only a story lens "
+                                      "can be on request")
+            elif default is False:
+                self.on_request.append(lens)
         self.plan_lenses_declared = [lens for lens in lenses if "plan" in self.lens_use[lens]]
         self.prepare = take("review.prepare", (b.get("prepare"), "orchestration binding"), flow=review.get("prepare"),
                             default=[])
@@ -1144,6 +1174,7 @@ class Config:
         self.brief_notes = d.get("brief", {}).get("notes")
         for k in self.stories:
             self.requirements(k)  # validated on load
+            brief_lenses(self, k)
 
     def effective_ownership(self, state: dict) -> dict[str, list[str]]:
         return state.get("laneOwnership", {lane: entry["owns"] for lane, entry in self.lanes.items()})
@@ -1712,17 +1743,100 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
 LEGACY_LENSES = "none recorded: the story's review began before lenses were chosen, so every declared lens runs"
 
 
-def story_lens_set(c, folder: Path) -> tuple[list[str], str | None]:
-    """The story's review lenses and why, fixed by round 1's meta. A round 1 meta with no reason was prepared before
+NOT_ON_REQUEST = "every story lens not on request"
+
+
+def brief_lenses(c, key: str) -> list[str]:
+    """The lenses a story's delivery-file entry asks for, its brief lenses, in declaration order. Each must be a
+    declared story lens: any other is refused, naming it."""
+    return story_brief_lenses(c.story_lenses, key, c.stories[key])
+
+
+def story_brief_lenses(story_lenses: list[str], key: str, story: dict) -> list[str]:
+    named = story.get("lenses", [])
+    if (not isinstance(named, list) or not all(isinstance(lens, str) for lens in named)
+            or len(set(named)) != len(named)):
+        raise Stop(f"story {key}: lenses must list story lens ids, each once, not {named!r}")
+    for lens in named:
+        if lens not in story_lenses:
+            raise Stop(f"story {key}: lenses names {lens}, which isn't a declared story lens; the declared story "
+                       f"lenses are {', '.join(story_lenses)}")
+    return [lens for lens in story_lenses if lens in named]
+
+
+def plan_lenses(c) -> dict:
+    """Each story's brief lenses, for the stories that name any."""
+    return {key: story["lenses"] for key, story in c.stories.items() if story.get("lenses")}
+
+
+def lenses_words(lenses: list[str]) -> str:
+    """A story's brief lenses as a plan change's before or after reads them."""
+    return f"lenses: {', '.join(lenses)}" if lenses else "no lenses"
+
+
+def on_request_line(c) -> str:
+    """The lane brief's line for the lenses on request: each with its purpose and the stories whose brief asks for it."""
+    def item(lens: str) -> str:
+        asking = [key for key in c.stories if lens in c.stories[key].get("lenses", [])]
+        origin = f" (the brief of {', '.join(asking)} asks for it)" if asking else ""
+        return f"`{lens}`{origin}: {charter_purpose(c.lenses[lens][1]) or '(its charter states no purpose)'}"
+    return ("- On request, run only when `--lenses` or the story's brief names it: "
+            + "; ".join(item(lens) for lens in c.on_request))
+
+
+def accepted_brief(c, key: str, lenses: list[str], meta: dict | None) -> tuple[str, list[str]]:
+    """At acceptance: where each lens on request in the story's set came from, as its lens line shows it, and each
+    brief lens the set lacks, as a problem naming its removal."""
+    if not (meta or {}).get("lensesReason"):
+        return "", []
+    folder = next((folder for folder in (c.lane_checkout(key) / c.work / "review" / key, evidence_dir(key))
+                   if (folder / "round-1.meta.json").exists()), None)
+    requested = latest_lenses(c, folder)[2] if folder is not None else {}
+    return (requested_text({lens: who for lens, who in requested.items() if lens in lenses}),
+            unrun_brief_lenses(c, key, lenses))
+
+
+def latest_lenses(c, folder: Path) -> tuple[list[str], str | None, dict[str, str]]:
+    """The story's review lenses, why, and where each lens on request in them came from, fixed by round 1's meta, as
+    obtain-review fixes a review's lens set before its first round. A round 1 meta with no reason was prepared before
     lenses were chosen: its story runs every declared lens, as it did then, plan-only lenses included."""
     first = load_json(folder / "round-1.meta.json") or {}
     if not first.get("lensesReason"):
-        return list(c.lenses), None
+        return list(c.lenses), None, {}
     gone = [lens for lens in first["lenses"] if lens not in c.lenses]
     if gone:
         raise Stop(f"the story's review lenses include {', '.join(gone)}, which this repository no longer declares; "
                    "declare it again, or restart round 1 with --restart and other --lenses")
-    return list(first["lenses"]), first["lensesReason"]
+    return list(first["lenses"]), first["lensesReason"], dict(first.get("requested", {}))
+
+
+def story_lens_set(c, folder: Path) -> tuple[list[str], str | None]:
+    """The story's review lenses and why, fixed by round 1's meta (see `latest_lenses`)."""
+    lenses, reason, _ = latest_lenses(c, folder)
+    return lenses, reason
+
+
+def default_lenses(c, key: str) -> tuple[list[str], str]:
+    """Round 1's set without --lenses: the mandated pair, every story lens not on request, and the brief's lenses."""
+    brief = brief_lenses(c, key)
+    lenses = [lens for lens in c.story_lenses if lens not in c.on_request or lens in brief]
+    if not c.on_request and not brief:
+        return lenses, EVERY_STORY_LENS
+    return lenses, NOT_ON_REQUEST + (f", and the brief's {', '.join(brief)}" if brief else "")
+
+
+def requested_lenses(c, key: str, lenses: list[str]) -> dict[str, str]:
+    """Where each lens on request in a round 1 set came from: the story's brief, or else the lane's --lenses."""
+    brief = brief_lenses(c, key)
+    return {lens: "brief" if lens in brief else "lane" for lens in lenses if lens in c.on_request}
+
+
+def unrun_brief_lenses(c, key: str, lenses: list[str]) -> list[str]:
+    """Each brief lens the story's set lacks, which only a hand edit after round 1 leaves: the set is fixed there, so
+    the lens comes out of the entry, and a review it missed belongs in a follow-up."""
+    return [f"{key}'s brief asks for {lens}, but its review's lens set, fixed at round 1, lacks it: take it out of the "
+            f"story's entry with lead-plan change --kind lenses --subjects {key} --lenses <the others> --why <why>"
+            for lens in brief_lenses(c, key) if lens not in lenses]
 
 
 def chosen_lenses(c, args) -> tuple[list[str], str] | None:
@@ -1751,8 +1865,22 @@ def chosen_lenses(c, args) -> tuple[list[str], str] | None:
     return [lens for lens in c.story_lenses if lens in named], reason.strip()
 
 
-def lenses_text(lenses: list[str], reason: str | None) -> str:
-    return f"{', '.join(lenses)}; reason: {reason or LEGACY_LENSES}"
+def requested_text(requested: dict[str, str] | None) -> str:
+    """Where each lens on request came from, as the lens lines show it after the reason; nothing when none ran."""
+    return (f"; on request: {', '.join(f'{lens} (asked for by the {who})' for lens, who in requested.items())}"
+            if requested else "")
+
+
+def lenses_text(lenses: list[str], reason: str | None, requested: dict[str, str] | None = None) -> str:
+    return f"{', '.join(lenses)}; reason: {reason or LEGACY_LENSES}{requested_text(requested)}"
+
+
+def on_request_text(c) -> str:
+    """The lenses on request, each with its charter's purpose, as doctor and config list them."""
+    def purpose(lens: str) -> str:
+        charter = Path(c.lenses[lens][1])
+        return (charter.exists() and charter_purpose(charter)) or "(its charter states no purpose)"
+    return "; ".join(f"{lens}: {purpose(lens)}" for lens in c.on_request)
 
 
 def charter_purpose(path: Path) -> str:
@@ -1796,12 +1924,19 @@ def review_prepare(args) -> None:
     if previous and not args.restart:
         raise Stop(f"round {n} is already prepared (at {previous['candidate'][:10]}). Reduce it, or pass --restart to "
                    "discard it; a restart is recorded and the lead has to accept it")
-    # The story's lenses, fixed at round 1: chosen there with --lenses, else every declared story lens.
+    # The story's lenses, fixed at round 1: chosen there with --lenses, else the default set.
     chosen = chosen_lenses(c, args)
     if n == 1:
-        lenses, reason = chosen or (list(c.story_lenses), EVERY_STORY_LENS)
+        if chosen:
+            left = [lens for lens in brief_lenses(c, key) if lens not in chosen[0]]
+            if left:
+                raise Stop(f"--lenses leaves out {', '.join(left)}: the story's brief asks for "
+                           f"{'it' if len(left) == 1 else 'them'}, so every round of it runs "
+                           f"{'it' if len(left) == 1 else 'them'}; name {'it' if len(left) == 1 else 'them'} too")
+        lenses, reason = chosen or default_lenses(c, key)
+        requested = requested_lenses(c, key, lenses)
     else:
-        lenses, reason = story_lens_set(c, folder)
+        lenses, reason, requested = latest_lenses(c, folder)
         if chosen and chosen[0] != lenses:
             raise Stop(f"--lenses names {', '.join(chosen[0])}, but the story's lenses, fixed at round 1, are "
                        f"{', '.join(lenses)}: leave --lenses out to keep them")
@@ -1861,12 +1996,13 @@ def review_prepare(args) -> None:
         print(f"{key} round {n}: the record's writer is another generation, so this round's start isn't journalled: "
               "the views won't show it as under way")
     meta_path.write_text(json.dumps({"round": n, "candidate": candidate, "tree": tree, "startedAt": now(),
-                                     "lenses": lenses, **({"lensesReason": reason} if reason else {}),
+                                     "lenses": lenses, **({"lensesReason": reason, "requested": requested}
+                                                          if reason else {}),
                                      "attempts": attempts, "restarts": restarts}, indent=2))
     append_log("prepares", key, {"round": n, "candidate": candidate, "restart": bool(previous)})
     state_tool("focus", "--lane", lane, "--text", f"{key} review round {n}", "--state", "reviewing", check=False)
     print(f"{key} round {n}: candidate {candidate[:10]}, tree {tree[:10]}" + (f" (restart {len(restarts)})" if restarts else ""))
-    print(f"lenses: {lenses_text(lenses, reason)}")
+    print(f"lenses: {lenses_text(lenses, reason, requested)}")
     print()
     if n == 1 and not restarts:
         print("Start one reviewer per lens, in parallel, each with exactly this prompt. Keep track of each reviewer: "
@@ -5068,7 +5204,10 @@ def handoff(args) -> None:
     last = outcomes[-1]
     if last["outcome"] != "aligned":
         raise Stop(f"round {last['round']} is {last['outcome']}; the lenses have not all approved")
-    story_lenses, lenses_reason = story_lens_set(c, folder)
+    story_lenses, lenses_reason, requested = latest_lenses(c, folder)
+    unrun = unrun_brief_lenses(c, key, story_lenses) if lenses_reason else []
+    if unrun:
+        raise Stop("\n  ".join(unrun))
     if {e["lens"] for e in last["entries"]} != set(story_lenses):
         raise Stop(f"round {last['round']} doesn't carry every lens of the story's set, {', '.join(story_lenses)}")
     notes = evidence_notes(last) if c.no_deferrals else []
@@ -5174,7 +5313,7 @@ def handoff(args) -> None:
           if base_merge else []),
         "- review rounds: " + "; ".join(f"r{o['round']} {o['outcome']}" for o in outcomes) + " (review evidence captured)"
         + (f"; history: {'; '.join(histories)}" if histories else ""),
-        f"- review lenses: {lenses_text(story_lenses, lenses_reason)}",
+        f"- review lenses: {lenses_text(story_lenses, lenses_reason, requested)}",
         f"- validation: {validation}",
         *([f"- checks run: {checks_shown(ran, added)}"] if ran else []),
         *([f"- PR review: {pr_line}"] if pr_line else []),
@@ -5435,15 +5574,18 @@ def plan_finish(c, at: str) -> list[dict]:
 
 
 def plan_view(c) -> dict:
-    """What drift detection compares: each story's criteria and each finish line's covers."""
+    """What drift detection compares: each story's criteria, each finish line's covers, and, when any story names
+    some, each story's brief lenses (left out otherwise, so a plan with none compares as it always did)."""
     return {"criteria": {key: {item["id"]: item["text"] for item in story.get("criteria", [])}
                          for key, story in c.stories.items()},
-            "covers": {line["id"]: plan_covers(line) for line in c.finish}}
+            "covers": {line["id"]: plan_covers(line) for line in c.finish},
+            **({"lenses": lenses} if (lenses := plan_lenses(c)) else {})}
 
 
 def view_of_snapshot(snapshot: dict) -> dict:
     return {"criteria": {unit["subject"]: {item["id"]: item["text"] for item in unit["criteria"]} for unit in snapshot["units"]},
-            "covers": {line["id"]: line["covers"] for line in snapshot["finish"]}}
+            "covers": {line["id"]: line["covers"] for line in snapshot["finish"]},
+            **({"lenses": snapshot["lenses"]} if snapshot.get("lenses") else {})}
 
 
 def view_digest(view: dict) -> str:
@@ -5453,7 +5595,7 @@ def view_digest(view: dict) -> str:
 def snapshot_entry(c, late: bool) -> dict:
     at = now()
     return {"type": "snapshot", "at": at, "late": late, "units": [plan_unit(c, key) for key in c.stories],
-            "finish": plan_finish(c, at)}
+            "finish": plan_finish(c, at), **({"lenses": lenses} if (lenses := plan_lenses(c)) else {})}
 
 
 def write_snapshot(c, late: bool) -> dict:
@@ -5495,6 +5637,8 @@ def plan_drift(c, log: list[dict]) -> list[dict]:
                 return True
             if kind == "finish" and change["kind"] == "finish" and change.get("finish") == finish and change.get("after") == after:
                 return True
+            if kind == "lenses" and "lenses" in change and key in change["subjects"] and change["lenses"] == after:
+                return True
         return False
 
     found = []
@@ -5513,6 +5657,13 @@ def plan_drift(c, log: list[dict]) -> list[dict]:
         for ident, text in old.items():
             if ident not in criteria and not explained("criterion", key, ident, None):
                 found.append({"kind": "changed", "subjects": [key], "criteria": [ident], "before": text})
+    # A story's brief lenses, recorded as a `changed` change carrying the lenses it leaves, since the plan's change
+    # kinds are the view's.
+    for key in view["criteria"]:
+        old, new = before.get("lenses", {}).get(key, []), view.get("lenses", {}).get(key, [])
+        if old != new and not explained("lenses", key, after=new):
+            found.append({"kind": "changed", "subjects": [key], "lenses": new, "before": lenses_words(old),
+                          "after": lenses_words(new)})
     for ident, covers in view["covers"].items():
         if before["covers"].get(ident) != covers and not explained("finish", finish=ident, after=covers):
             found.append({"kind": "finish", "subjects": [], "finish": ident,
@@ -5781,9 +5932,10 @@ def lead_plan(args) -> None:
     if args.action == "change":
         # A flag the kind doesn't read is refused rather than ignored: --criterion on a story's removal once removed
         # the whole story. --lane and --after are for a story --kind added brings into the delivery.
-        takes = {"subjects": ("added", "removed", "relaxed", "changed"), "criterion": ("added", "removed", "relaxed", "changed"),
+        takes = {"subjects": ("added", "removed", "relaxed", "changed", "lenses"),
+                 "criterion": ("added", "removed", "relaxed", "changed"),
                  "text": ("added", "relaxed", "changed", "finish"), "lane": ("added",), "after": ("added",),
-                 "finish": ("finish",), "covers": ("finish",), "label": ("finish",)}
+                 "finish": ("finish",), "covers": ("finish",), "label": ("finish",), "lenses": ("lenses",)}
         for flag, kinds in takes.items():
             given = getattr(args, flag) != [] if flag == "subjects" else getattr(args, flag) is not None  # --subjects defaults to []
             if given and args.kind not in kinds:
@@ -5873,6 +6025,36 @@ def lead_plan(args) -> None:
             change["before"] = existing["text"]
             existing["text"] = args.text
         change.update(criteria=[args.criterion], after=args.text)
+    elif args.kind == "lenses":
+        # The story's brief lenses, recorded as a `changed` change carrying the lenses it leaves; '' removes them.
+        if len(change["subjects"]) != 1 or args.lenses is None:
+            raise Stop("--kind lenses takes one story in --subjects and --lenses, the lens ids its brief asks for "
+                       "('' for none)")
+        key = change["subjects"][0]
+        named = [lens.strip() for lens in args.lenses.split(",") if lens.strip()]
+        story = f"the declared story lenses are {', '.join(c.story_lenses)}"
+        for lens in named:
+            if lens not in c.story_lenses:
+                raise Stop(f"--lenses names {lens}, which isn't a declared story lens; {story}")
+        if len(set(named)) != len(named):
+            raise Stop(f"--lenses names a lens more than once; {story}")
+        before = stories[key].get("lenses", [])
+        after = [lens for lens in c.story_lenses if lens in named]
+        added = [lens for lens in after if lens not in before]
+        started = (c.state / "state.json").exists() and any(
+            e.get("kind") == "review.started" and e.get("subject") == key and e["data"].get("round") == 1
+            for e in load_state()["journal"])
+        if added and started:
+            raise Stop(f"{key}'s review has begun, and its lens set is fixed at round 1, so its brief can't add "
+                       f"{', '.join(added)}; a review the story missed belongs in a follow-up. Removing a brief lens "
+                       "is accepted")
+        if after == before:
+            raise Stop(f"{key}'s brief lenses are already {', '.join(after) or 'none'}: nothing to change")
+        if after:
+            stories[key]["lenses"] = after
+        else:
+            stories[key].pop("lenses", None)
+        change.update(kind="changed", lenses=after, before=lenses_words(before), after=lenses_words(after))
     elif dropping:
         # One criterion leaves the story, which stays; the change keeps its wording, and no `after` says it is gone.
         if len(change["subjects"]) != 1:
@@ -6837,6 +7019,15 @@ def draft_delivery(c, args, integration_target: str | None = None) -> None:
             if found["after"]:
                 story["after"] = found["after"]
             read[g["key"]] = found
+        # A `Lenses:` sentence asks for lenses on the story's brief, as `Files:` names its files.
+        asked = plan_sentence(section_body(section), "Lenses:")
+        named = re.findall(r"`([^`\n]+)`", asked) if asked is not None else []
+        for lens in named:
+            if lens not in c.story_lenses:
+                notes.append(f"plan story {g['key']}'s Lenses sentence names {lens}, which isn't a declared story lens: "
+                             "drafted it without")
+        if any(lens in c.story_lenses for lens in named):
+            story["lenses"] = [lens for lens in c.story_lenses if lens in named]
         if g.get("label"):
             story["label"] = g["label"]
         if g.get("pinned"):
@@ -7519,7 +7710,8 @@ def lead_brief(args) -> None:
         "state": str(c.state.resolve()), "lead_checkout": str(c.root.resolve()), "bound": str(c.bound), "work": c.work,
         "lenses": "\n".join([f"- {', '.join(f'`{lens}`' for lens in MANDATED_LENSES)}: mandated, in every round.",
                               *(f"- `{lens}`: {charter_purpose(c.lenses[lens][1]) or '(its charter states no purpose)'}"
-                                for lens in c.story_lenses if lens not in MANDATED_LENSES)]),
+                                for lens in c.story_lenses if lens not in MANDATED_LENSES and lens not in c.on_request),
+                              *([on_request_line(c)] if c.on_request else [])]),
         "gates": "\n".join(f"   - `{' '.join(expand_argv(g['argv'], base=c.base_ref, key='<key>', delivery=c.delivery))}`"
                            for g in c.gates) or "   - (none declared)",
         "never_touch": ", ".join(f"`{p}`" for p in c.never_touch) or "(nothing listed)",
@@ -8914,8 +9106,10 @@ def accept_story(c, args) -> None:
     last = max(rounds, key=lambda e: e["data"]["round"], default=None)
     first_meta = handed_round_one_meta(c, key)
     story_lenses = accepted_lenses(list(c.lenses), doc["journal"], key, first_meta)
+    asked, unrun = accepted_brief(c, key, story_lenses, first_meta)
     print(f"  review lenses: {', '.join(story_lenses)}; reason: "
-          f"{(first_meta or {}).get('lensesReason') or 'reason not found'}")
+          f"{(first_meta or {}).get('lensesReason') or 'reason not found'}{asked}")
+    problems += unrun
     if not last or set(last["data"]["verdicts"]) != set(story_lenses) or set(last["data"]["verdicts"].values()) != {"approve"}:
         problems.append(f"the last journaled round is not approved by every lens of the story's set, "
                         f"{', '.join(story_lenses)}")
@@ -13834,12 +14028,14 @@ def show_config(args) -> None:
         ("branchPattern", c.branch_pattern), ("laneCheckout", c.lane_pattern), ("deliveries", c.deliveries),
         ("tracker.issueUrl", c.issue_url), ("forge", json.dumps(c.forge)), ("review.bound", c.bound),
         ("review.lenses", ", ".join(f"{k} ({v[1]}; use: {' and '.join(c.lens_use[k])})" for k, v in c.lenses.items())),
+        *([("review.lenses on request", on_request_text(c))] if c.on_request else []),
         ("review.prepare", json.dumps(c.prepare)),
         ("gates", "; ".join(f"{g['id']}: {' '.join(g['argv'])}" for g in c.gates)),
         ("neverTouch", ", ".join(c.never_touch)), ("inApp", "declared" if c.in_app else "none"),
     ]
     keys = ["remote", "workDirectory", "stateDirectory", "branchPattern", "laneCheckout", "deliveries", "tracker.issueUrl",
-            "forge", "review.bound", "review.lenses", "review.prepare", "gates", "neverTouch", "inApp"]
+            "forge", "review.bound", "review.lenses", *(["review.lenses"] if c.on_request else []), "review.prepare",
+            "gates", "neverTouch", "inApp"]
     if c.delivery:
         rows += [("delivery", c.delivery), ("baseBranch", c.base_branch), ("state", c.state),
                  ("stories", len(c.stories)), ("lanes", len(c.lanes))]
@@ -14154,8 +14350,21 @@ class Doctor:
 
     def review_lenses(self):
         """Each declared lens on its own line: its use and where it was declared."""
-        return "ok", [(f"lens {lens}", f"{', '.join(self.c.lens_use[lens])}, from {self.c.lens_origin[lens]}")
-                      for lens in self.c.lenses]
+        # With --delivery, each story's brief lenses too: a story entry naming any other lens is wrong here, by name.
+        key = self.args.doctor_delivery or self.args.delivery
+        path = self.c.deliveries / f"{key}.json" if key else None
+        if path is not None and path.is_file():
+            try:
+                for story_key, story in (json.loads(path.read_text()).get("stories") or {}).items():
+                    story_brief_lenses(self.c.story_lenses, story_key, story)
+            except (ValueError, AttributeError):
+                pass  # the delivery file's own row says what is wrong with it
+            except Stop as error:
+                return "wrong", f"{error}; fix: name only declared story lenses in its lenses"
+        asked = lambda lens: ", on request" if lens in self.c.on_request else ""
+        return "ok", [*((f"lens {lens}", f"{', '.join(self.c.lens_use[lens])}{asked(lens)}, from {self.c.lens_origin[lens]}")
+                        for lens in self.c.lenses),
+                      *([("lenses on request", on_request_text(self.c))] if self.c.on_request else [])]
 
     def release(self) -> Path:
         """The generation the checks read: the configured release, or the one this tool runs from."""
@@ -15145,8 +15354,9 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "lead-plan", help="record a change to the approved plan, or a reason for one")
     plan_commands = p.add_subparsers(dest="action", required=True)
     q = command(plan_commands, "change", help="edit and commit the delivery file, recording before and after")
-    q.add_argument("--kind", required=True, choices=["added", "removed", "relaxed", "changed", "finish"])
+    q.add_argument("--kind", required=True, choices=["added", "removed", "relaxed", "changed", "finish", "lenses"])
     q.add_argument("--subjects", nargs="*", default=[]); q.add_argument("--criterion"); q.add_argument("--text")
+    q.add_argument("--lenses", help="lenses: the story's brief lenses, comma-separated; '' for none")
     q.add_argument("--finish", help="finish: the line's id"); q.add_argument("--covers", help="finish: its covers, as JSON")
     q.add_argument("--label", help="finish: a new line's label"); q.add_argument("--why", required=True)
     q.add_argument("--by", default="lead"); q.add_argument("--ref"); q.add_argument("--title")

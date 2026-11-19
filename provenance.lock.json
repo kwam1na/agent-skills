@@ -1083,7 +1083,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "f88efc521491337103f529097768a46b4613df243a51660b15b6bc9c1c401ce3"
+          "sha256": "0604593fc44cffc9f8a112bde983d8aec570bd73e5ce047b1be713aad8e2ee9e"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1111,11 +1111,11 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "ad7fe7a71847e50bec6157699c680595d2a1b364afea98ef628bfeac9aea84a6"
+          "sha256": "f421cdc55869ed1eb15096bf9753d91eb47ee304e8d30e055925577456871be6"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "405c49df2b73eaf3e19e225ecd93bf3428c9d81974cdc73e4796780c0c86c8fd"
+          "sha256": "c643e8c4f7e415263f7f783cb5d426f4393c3e9adbeb01bb8706acbb15a823d2"
         },
         {
           "path": "skills/run-delivery/scripts/gaps.py",
@@ -1127,7 +1127,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "15a72d3e8c7280f20ee56ba56e51c1bb2fc413ee616750ef82a5b5c339be7c75"
+          "sha256": "54ee318c66175b460058021d670bbd29e2acbcbfe662b4106b0415516cd4e92a"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
