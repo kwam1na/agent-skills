@@ -7760,10 +7760,15 @@ def no_summary(key: str) -> str:
 
 
 def story_readiness(c, key: str) -> tuple[str, str | None]:
-    """Whether a story's tracker item offers the first start move, from the tracker snapshot: ("ready", None),
-    ("not-ready", why), or ("not-checked", why) when the snapshot can't say. Nothing to check with no start move, or
-    for an item already under way. It reads; it never moves anything."""
-    moves = tracker_conf(c)["transitions"].get("start") or []
+    """Whether a story's tracker item offers the first start move not yet made, from the tracker snapshot: ("ready",
+    None), ("not-ready", why), or ("not-checked", why) when the snapshot can't say. It walks the start moves as the
+    publisher's move does: a move whose `targets` entry is the item's status is made, the whole start is made when the
+    last move's is, and a backlog item with every move made is ready. An item with a status and no offered moves is on a tracker that restricts no move, so its next
+    move reads as offered. Nothing to check with no start move, or for an item already under way. It reads; it never
+    moves anything."""
+    transitions = tracker_conf(c)["transitions"]
+    moves = transitions.get("start") or []
+    targets = transitions.get("targets") or {}
     if not moves:
         return "ready", None
     items = tracker_snapshot_items(c)
@@ -7774,13 +7779,18 @@ def story_readiness(c, key: str) -> tuple[str, str | None]:
         return "not-checked", f"{key}: readiness wasn't checked: the tracker snapshot doesn't list it"
     if item.get("state") != "backlog":
         return "ready", None
+    status = item.get("status")
     offered = item.get("offeredTransitions")
-    if not isinstance(offered, list):
+    if not isinstance(offered, list) and not status:
         return "not-checked", f"{key}: readiness wasn't checked: the tracker snapshot doesn't list its offered moves"
-    if moves[0] in offered:
+    # As the publisher's move: an item at the last move's target has had the whole start made, and otherwise the next
+    # move is the first whose own target isn't the item's status.
+    done = bool(status) and targets.get(moves[-1]) == status
+    following = None if done else next((move for move in moves if not status or targets.get(move) != status), None)
+    if following is None or not isinstance(offered, list) or following in offered:
         return "ready", None
-    return "not-ready", (f"{key} is in {item.get('status') or 'a status the snapshot does not name'}: "
-                         f"\"{moves[0]}\" isn't offered; refine it first")
+    return "not-ready", (f"{key} is in {status or 'a status the snapshot does not name'}: "
+                         f"\"{following}\" isn't offered; refine it first")
 
 
 def is_lead_checkout(c, branch: str) -> bool:
@@ -14930,7 +14940,7 @@ class Doctor:
             return "warn", "; ".join(unready + unchecked) + "; fix: have each item made ready before its lane starts"
         if unchecked:
             return self.not_applicable("; ".join(unchecked))
-        return "ok", (f"each of the {len(found)} stories still planned is offered its first start move"
+        return "ok", (f"each of the {len(found)} stories still planned is ready for its next start move"
                       if found else "no story is still waiting to start")
 
     def story_summaries(self):
@@ -15255,7 +15265,7 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "lead-assign"); p.add_argument("keys", nargs="+"); p.add_argument("--lane", required=True)
     p.add_argument("--title", required=True); p.add_argument("--note")
     p.add_argument("--force", action="store_true",
-                   help="assign a story whose tracker item doesn't offer the first start move")
+                   help="assign a story whose tracker item doesn't offer its next start move")
     p.set_defaults(fn=lead_assign)
     p = command(sub, "lead-accept"); p.add_argument("key", nargs="?"); p.add_argument("--accept-blocked", action="append")
     p.add_argument("--requeue", metavar="KEY", help="re-queue a stopped candidate you resolved, with no new hand-off")

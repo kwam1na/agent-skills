@@ -462,12 +462,14 @@ brief:
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-assign <story-key> --lane lane-1 --title "Lane 1"
 ```
 
-Before it assigns anything, `lead-assign` checks that each story's tracker item offers the first start move the
-configuration names, as the kept tracker snapshot reads it. A story that isn't ready is refused, naming its status and
-the move that isn't offered, and nothing is written; `--force` assigns it anyway. Neither `lead-assign` nor
-`doctor --delivery`, which warns of the same stories, moves the item. Only a snapshot that lists each item's offered
-moves can say (the Jira snapshot does; Linear's doesn't), so otherwise both commands print that readiness wasn't
-checked, and why.
+Before it assigns anything, `lead-assign` checks that each story's tracker item offers the first start move not yet
+made, as the kept tracker snapshot reads it. The start moves are walked as the tracker publisher walks them: a move
+whose `targets` entry is the item's status is already made, and an item with every move made is ready. A story that
+isn't ready is refused, naming its status and the move that isn't offered, and nothing is written; `--force` assigns
+it anyway. Neither `lead-assign` nor `doctor --delivery`, which warns of the same stories, moves the item. The Jira
+snapshot lists each item's status and offered moves. Linear's lists the status alone, since Linear restricts no move,
+so a Linear item's next move reads as offered. A snapshot that names neither can't say, so both commands print that
+readiness wasn't checked, and why.
 
 Once the delivery has started, change the plan's criteria and finish lines only through `lead-plan change`. It records
 what the plan said before and after and why, edits the delivery file, and commits it; it never pushes, and it refuses
@@ -1046,11 +1048,11 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
 - **`is missing (lead-setup writes it)`**: the delivery file doesn't exist yet. `lead-setup` drafts it.
 - **`stories without a lane`**: give each story a lane listed in `lanes`.
 - **`lanes own the same files`**: make each lane's `owns` disjoint, so no file belongs to two lanes.
-- **`isn't offered; refine it first`**: the story's tracker item is in a status its first start move isn't offered
-  from, as the tracker snapshot reads it, so its lane can't start it. Have the item made ready (in the tracker, by
+- **`isn't offered; refine it first`**: the story's tracker item is in a status its first start move not yet made
+  isn't offered from, as the tracker snapshot reads it, so its lane can't start it. Have the item made ready (in the tracker, by
   whoever owns that status), then assign it. `lead-assign` refuses the story until then, and `--force` assigns it
-  anyway. Neither command moves the item. A snapshot that doesn't list a story's offered moves, or no snapshot at all,
-  leaves readiness unchecked, and both commands say so.
+  anyway. Neither command moves the item. A snapshot that names neither a story's status nor its offered moves, or no
+  snapshot at all, leaves readiness unchecked, and both commands say so.
 - **``has no `## Summary`; its card will show none``**: the story's tracker ticket has no `## Summary` section, so its
   card on the live view shows no summary. Add a one-paragraph `## Summary` to the ticket. `lead-setup` notes it while
   it drafts the delivery file, and `doctor --delivery` reports it as `warn` from the kept tracker snapshot, which
