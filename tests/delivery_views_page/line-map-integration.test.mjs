@@ -3,7 +3,7 @@
 // is read from the record's meta.integration and its integration facts alone.
 import { test } from "node:test";
 
-import { REPLAYED_RUNS, expect, openPage, pageWithRuns } from "./support.mjs";
+import { REPLAYED_RUNS, expect, openPage, pageWithRuns, withAcross } from "./support.mjs";
 import { LENSES, headOf, item, journal, record } from "./plan-fixtures.mjs";
 
 const NOW = "2026-10-30T12:00:00Z";
@@ -189,4 +189,32 @@ test("a round under the delivery's key on a record without an integration draws 
   expect(app.querySelector("#line .rejoin")).toBe(null);
   expect(app.querySelector("#line .mg-target")).toBe(null);
   expect(drift(app)).toBe(null);
+});
+
+test("a delivery with a same-epic sibling draws the rejoin while it rejoins, and the epic's post once it closes", async () => {
+  // A sibling as reconcile leaves it: read, with one story still open.
+  const api = { name: "api", link: "https://views.example/d/" + "a".repeat(64), addedAt: "2026-10-30T10:00:00Z", lastOutcome: "read",
+    lastAttemptAt: "2026-10-30T11:55:00Z", readAt: "2026-10-30T11:50:00Z", stories: [{ subject: "API-1", title: "api 1", stage: "building" }] };
+  const withSibling = (facts) => {
+    const doc = delivery(facts);
+    doc.state.siblings = [api];
+    return withAcross(doc);
+  };
+  const approved = Object.fromEntries(LENSES.map((lens) => [lens, "approve"]));
+  const width = (app) => app.querySelector("#line .lines-track").style.getPropertyValue("--merge-width");
+  for (const facts of [[merged(30, M)], [merged(30, M), suite(31, M), round(32, M, approved), requested(33, M), rejoined(34)]]) {
+    const app = await shown(withSibling(facts));
+    expect(app.querySelector("#line .lines-track").classList.contains("rejoining")).toBe(true);
+    expect(steps(app).length).toBe(4);
+    expect(width(app)).toBe("478px");
+    expect([app.querySelector("#line .mg-epic"), app.querySelector("#line .mg-epic-post"), app.querySelector("#line .line.sibling")])
+      .toEqual([null, null, null]);
+    expect(app.querySelector("#line .line-merge").getAttribute("aria-label")).not.toContain("the epic");
+  }
+  const closed = await shown(withSibling([merged(30, M), suite(31, M), round(32, M, approved), requested(33, M), rejoined(34), [40, "delivery.closed", null]]));
+  expect(closed.querySelector("#line .lines-track").classList.contains("rejoining")).toBe(false);
+  expect(closed.querySelector("#line .mg-step")).toBe(null);
+  expect(width(closed)).toBe("304px");
+  expect(closed.querySelector("#line .mg-epic-post") !== null).toBe(true);
+  expect(closed.querySelectorAll("#line .line.sibling").length).toBe(1);
 });

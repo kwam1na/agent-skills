@@ -1033,7 +1033,31 @@ print those words. A record with no siblings draws exactly as before.
   "couldn't be read", "stale", "needs a compatible snapshot" or "delivers
   another epic". A sibling no read has reached says "never read". A sibling of
   another epic shows no stories. The line map adds the chapter after What's
-  left, the Markdown view and the built-in page after Planned.
+  left, the Markdown view and the built-in page after Planned. In the line
+  map's chapter a sibling of another epic sits outside the fold, under an "Also
+  linked" row after the epic's own groups, with its outcome, and the chapter's
+  title counts only the epic's own.
+- **The epic's post.** With a same-epic sibling, the line map's main line runs
+  on past this repository's "Finish line" post, which keeps its place and
+  counts, to a second post for the epic. Its label, "Epic", and its count, "L/T
+  landed" across this repository's pieces and every same-epic sibling's
+  stories, stack above it. At most two siblings get a row under the lanes, with
+  their name and "L of T landed" and no stops, and turn in at the epic's post
+  from below: first those holding a story this repository waits on, then the
+  furthest behind, by the lowest share landed, then the most open. The rest
+  fold into a "+N more" chip by the post, whose accessible name lists them. A
+  sibling's turn is solid once it has stories and all of them have landed, and
+  dashed before, a fresh sibling with no stories included. The epic's line and post are solid only once every piece here and
+  every sibling story has landed and every sibling is fresh.
+- **An unreadable sibling.** A same-epic sibling that isn't fresh turns in
+  dotted, and its row reads "Never read" or "Couldn't be read since <at>". The
+  epic's line and post go dashed, the label reads "Epic ?", and under it goes
+  the sibling's name, or "N can't be read". Every stroke of the epic's post is
+  the neutral edge colour, never a warning colour. The drawing's accessible
+  name adds the epic's count across its repositories, each sibling that can't
+  be read and how many are folded. A sibling of another epic draws nothing on
+  the line and counts for nothing there. With no same-epic sibling the line is
+  drawn exactly as before.
 - **The headline.** Until every one of this delivery's own stories has landed
   it is unchanged. Once they have, a same-epic sibling with open stories in its
   last kept read, one never read, or one not fresh adds its sentence, and the
