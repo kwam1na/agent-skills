@@ -130,6 +130,10 @@ class AnchorTests(unittest.TestCase):
         base = self.repo.commit({"fenced.md": fenced})
         self.assertEqual(regions.anchored(self.repo.root, base, "fenced.md", "## Usage"), (3, 12))
         self.assertEqual(regions.anchored(self.repo.root, base, "fenced.md", "# install it"), (5, 9))
+        # A fence closes only on its own marker: a ~~~ line inside a ``` fence is code, and so is the # after it.
+        mixed = ["## Usage\n", "\n", "```\n", "~~~\n", "# not a heading\n", "```\n", "\n", "## Next\n"]
+        base = self.repo.commit({"mixed.md": mixed})
+        self.assertEqual(regions.anchored(self.repo.root, base, "mixed.md", "## Usage"), (1, 8))
 
     def test_a_json_key_names_its_block_with_its_closing_line(self) -> None:
         self.assertEqual(self.around("a.json", '"block": {'), (3, 9))

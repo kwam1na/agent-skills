@@ -666,8 +666,7 @@ def anchor_for(path: str, text: list[str], start: int, end: int, claimed: list[t
                                     ("before", (first - 1, last), first - 1)):
             if (taken is not None and not free(taken)) or (widening and taken is None):
                 continue
-            if span[0] <= start and end <= span[1]:
-                cost = (span[1] - span[0], insert is not None)
-                if best is None or cost < best[0]:
-                    best = (cost, words, insert, span)
+            # The fewest lines wins; on a tie the first found, which a line's own block is before its widenings.
+            if span[0] <= start and end <= span[1] and (best is None or span[1] - span[0] < best[0]):
+                best = (span[1] - span[0], words, insert, span)
     return best[1:] if best else None
