@@ -1,7 +1,11 @@
 {
   "schemaVersion": "delivery-flow-delivery/1",
   "delivery": "V26-3623",
-  "headline": "V26-3623",
+  "headline": "V26-3623: close a delivery only on what it proved and what it taught",
+  "outcome": {
+    "summary": "A delivery closes only when what it proved is on the record and what it taught has been decided.",
+    "text": "A delivery closes only when what it proved is on the record and what it taught has been decided. Lines the record can't prove stay pending until the lead marks them met with evidence. The close holds on a recorded compounding decision. Gaps are journalled when they happen and reach that decision as evidence. Workflow gaps go to the workflow, never into the adopter's tracker. The supervised and manual close-out paths say the same order."
+  },
   "baseBranch": "integrate/close-on-proof",
   "integrationTarget": "main",
   "plan": "docs/plans/2026-11-18-close-on-proof-and-learning.md",
