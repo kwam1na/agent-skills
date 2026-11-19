@@ -12858,7 +12858,9 @@ class IntegrationStepTests(unittest.TestCase):
                 self.assertEqual((entry["subject"], entry["lane"]), ("FX-1", None), entry)
                 self.assertEqual(entry["data"], {"head": at, "result": result, "seconds": entry["data"]["seconds"],
                                                  **({"budgetSeconds": budget} if budget is not None else {})})
-                self.assertGreater(entry["data"]["seconds"], 0)
+                # Rounded to a tenth of a second, a fixture's suite on a fast host reads 0.0, so only the shape is pinned.
+                self.assertIsInstance(entry["data"]["seconds"], (int, float))
+                self.assertGreaterEqual(entry["data"]["seconds"], 0)
                 line = self.lines(fx)[-1]
                 self.assertEqual((line["commit"], line["result"], line["exit"]), (at, result, exit_code), line)
                 self.assertNotIn("budgetSeconds", line)
