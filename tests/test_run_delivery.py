@@ -12833,6 +12833,23 @@ class IntegrationStepTests(unittest.TestCase):
                                                "interpreter", "at"]))
         self.assertEqual(line["result"], "over-budget")
 
+    def stops(self, document: dict) -> list[list[str]]:
+        """The integration stops the live page draws for a record, rendered by this source's line_map_data and opened
+        in the page lane's own harness."""
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("the round trip opens the page under Node, which this machine lacks")
+        support = (ROOT / "tests/delivery_views_page/support.mjs").as_uri()
+        script = (f"import {{ openPage, pageWithRuns }} from {json.dumps(support)};\n"
+                  "const page = pageWithRuns(JSON.parse(process.argv[1]), {}, { config: { spec: 'delivery-views-config/1' } });\n"
+                  "const [shown] = await openPage(page, { store: false });\n"
+                  "console.log(JSON.stringify([...shown.app.querySelectorAll('#line .mg-step')].map("
+                  "(stop) => [stop.getAttribute('data-step'), stop.getAttribute('data-state')])));\n")
+        done = subprocess.run([node, "--input-type=module", "-e", script, json.dumps(document)], cwd=ROOT,
+                              capture_output=True, text=True, timeout=120, env={**os.environ, "PYTHON": sys.executable})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout.strip().splitlines()[-1])
+
     def merge_of_target(self, fx: Fixture) -> tuple[str, str]:
         """A merge of the target into the integration in the lead checkout, and the target's head it took in."""
         m = fx.main
@@ -12862,6 +12879,10 @@ class IntegrationStepTests(unittest.TestCase):
         code, out = fx.flow("lead-integrate", "requested", "--change-request", "https://forge.test/pull/7", "--head", merge,
                             cwd=m)
         self.assertEqual(code, 0, out)
+        # Round trip: the record these commands wrote, read through line_map_data into the page, draws the stops the
+        # page's own rows expect: the target in, no suite yet so it is next, round 2's approval and the request at M.
+        self.assertEqual(self.stops(self.record(fx)), [["merged", "filled"], ["suite", "next"], ["round", "filled"],
+                                                       ["requested", "filled"]])
         code, out = fx.flow("lead-integrate", "landed", "--head", target, cwd=m)
         self.assertEqual(code, 0, out)
         entries = self.journal(fx, "integration.merged", "review.round", "integration.requested", "integration.landed")
