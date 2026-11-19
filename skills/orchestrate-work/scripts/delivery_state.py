@@ -1008,9 +1008,10 @@ def init(directory: Path, headline: str, seed: dict | None = None) -> dict:
                 raise StateError("state_invalid",
                                  "init seed may set only meta, planned, finish, laneOwnership and regionsSettled")
             if not isinstance(seed.get("meta", {}), dict) or set(seed.get("meta", {})) - {
-                "trackerParent", "handoffsNeedAcceptance"
+                "trackerParent", "handoffsNeedAcceptance", "integration"
             }:
-                raise StateError("state_invalid", "init seed meta may set only trackerParent and handoffsNeedAcceptance")
+                raise StateError("state_invalid",
+                                 "init seed meta may set only trackerParent, handoffsNeedAcceptance and integration")
             state = merge_patch(state, seed)
             errors = state_errors(state)
             if errors:

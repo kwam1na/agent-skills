@@ -28,6 +28,8 @@ SCHEMA_FILE = SKILL / "references/schemas.json"
 VECTORS = ROOT / "tests/fixtures/journal-kinds/vectors.json"
 HEAD = "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
 BASE_HEAD = "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+ROUND = {"round": 1, "startedAt": "2026-11-18T10:00:00Z", "finishedAt": "2026-11-18T10:20:00Z",
+         "verdicts": {"lens.outcome-correctness": "approve"}, "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}
 
 
 def _load(name: str):
@@ -54,7 +56,7 @@ TABLE = {
     "record.started": ("H", "note", "base", "", "epic: Delivery started"),
     "story.added": ("H", "decision", "*title* *why*", "", "epic: Story added"),
     "lane.assigned": ("S", "note", "*title* *note?*", "", "ticket: Started"),
-    "review.round": ("S", "note", "round startedAt finishedAt verdicts findings refused? restarts?", "answers:review.started", "-"),
+    "review.round": ("S", "note", "round head? startedAt finishedAt verdicts findings refused? restarts?", "answers:review.started", "-"),
     "review.started": ("S", "note", "round head lenses restart moved? *why?*", "", "-"),
     "review.lens.returned": ("B", "note", "round lens verdict findings", "", "-"),
     "review.recorded": ("B", "note", "digest candidateRef", "", "-"),
@@ -86,6 +88,10 @@ TABLE = {
     "base.verified": ("S", "note", "source head after?", "", "-"),
     "base.flaky": ("S", "problem", "source head after? failing", "", "-"),
     "base.moved": ("S", "note", "from to merged *why*", "", "epic: Delivery base updated"),
+    "integration.merged": ("S", "note", "target targetHead head conflicts", "", "-"),
+    "integration.suite": ("S", "note", "head result seconds budgetSeconds?", "", "-"),
+    "integration.requested": ("S", "ready", "changeRequest head", "", "-"),
+    "integration.landed": ("S", "landed", "target head", "", "-"),
     "base.published": ("B", "note", "base from", "", "-"),
     "base.merge.authorized": ("S", "decision", "reviewed baseCommits token by?", "", "-"),
     "ownership.granted": ("B", "note", "path span? base? movedFrom?", "", "-"),
@@ -447,6 +453,10 @@ class JournalFactsTests(unittest.TestCase):
             ("candidate.handed", {"head": HEAD, "changeRequest": "", "rounds": 1, "checks": []},
              "/data/changeRequest: shorter than 1",
              {"head": HEAD, "changeRequest": "pr-12", "rounds": 1, "checks": []}),
+            # An integration review round names the candidate it read by its full commit, or no head at all.
+            ("review.round", {**ROUND, "head": HEAD[:10]}, "/data/head: does not match", {**ROUND, "head": HEAD}),
+            ("integration.suite", {"head": HEAD, "result": "timed-out", "seconds": 3}, "/data/result: not one of the allowed values",
+             {"head": HEAD, "result": "over-budget", "seconds": 3, "budgetSeconds": 2}),
         ]
         for kind, wrong, expected, right in cases:
             with self.subTest(kind=kind, wrong=wrong):

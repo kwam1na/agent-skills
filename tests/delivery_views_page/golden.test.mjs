@@ -12,7 +12,7 @@ const CASES = readdirSync(CORPUS).filter((name) => existsSync(path.join(CORPUS, 
 const CONFIG = readJson(path.join(CORPUS, "linked-config.json"));
 
 test("the corpus holds every captured case", () => {
-  assert.deepEqual(CASES, ["delivery-records-epic", "parked-no-runs", "parked-round-report-unreadable", "parked-round-reports",
+  assert.deepEqual(CASES, ["delivery-records-epic", "integration", "parked-no-runs", "parked-round-report-unreadable", "parked-round-reports",
     "parked-run-view", "plan-in-app", "plan-record-only", "plan-review", "round-card-record"]);
 });
 

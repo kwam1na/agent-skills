@@ -311,6 +311,27 @@
             "description": "Set by the lead. true makes every lane hand-off wait as pending until the lead accepts it; absent or false, a hand-off is accepted as it is made.",
             "type": "boolean"
           },
+          "integration": {
+            "description": "Set by lead-init only when the delivery declares an integrationTarget: the integration base its stories land on, the target it rejoins, and the remote both are fetched from. A record without it is a delivery with no integration step.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "base",
+              "target",
+              "remote"
+            ],
+            "properties": {
+              "base": {
+                "$ref": "#/$defs/name"
+              },
+              "target": {
+                "$ref": "#/$defs/name"
+              },
+              "remote": {
+                "$ref": "#/$defs/name"
+              }
+            }
+          },
           "sources": {
             "description": "Written by serve's refresh: per source, whether the record observes it, has a stale read of it (and when it was last read), or does not observe it because the binding declares no command. Changes only when a source's status does.",
             "type": "object",

@@ -6284,7 +6284,7 @@ class LeadSuiteTests(unittest.TestCase):
         code, out = fx.flow("lead-suite", cwd=fx.main)
         self.assertEqual(code, 1, out)
         failed = self.lines(fx)[-1]
-        self.assertEqual((failed["result"], failed["exit"], failed["interpreter"]), ("failed", 1, None), failed)
+        self.assertEqual((failed["result"], failed["exit"], failed["interpreter"]), ("unreadable", 1, None), failed)
         self.assertIn("the prepare step", failed["output"])
         self.assertIn("before its interpreter was asked", failed["interpreterUnread"])
         self.assertEqual(self.suite_checkouts(fx), [])
