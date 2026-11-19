@@ -370,14 +370,16 @@ def _status_lines(status: object) -> list[str]:
 
 
 def render_markdown(document: dict) -> str:
-    document = with_waits(document)
+    document = with_across(with_waits(document))
     waiting, holding = _waits_by(document, "waits"), _waits_by(document, "waitedOn")
     state = document["state"]
     meta = state["meta"]
+    siblings = document.get("across") or {}
     lines = [
         f"# {_markdown_text(meta['headline'])}",
         "",
         *_status_lines(document.get("status")),
+        *([_markdown_text(" ".join(siblings["partDone"])), ""] if siblings.get("partDone") else []),
         *[f"- {_markdown_text(text)}" for text in [*waiting.get("lead", []), *holding.get("lead", [])]],
         *([""] if waiting.get("lead") or holding.get("lead") else []),
         f"Updated {_markdown_text(meta['updatedAt'])} · state version {_markdown_text(state['version'])}",
@@ -449,6 +451,7 @@ def render_markdown(document: dict) -> str:
                                                                *holding.get(item["subject"], [])])
         rows.extend(stats_row(item, "  "))
     lines += _markdown_section("Planned", rows, "Nothing planned outside the queue.")
+    lines += _markdown_across(document)
 
     derived = document.get("focus") or {}
 
@@ -479,6 +482,30 @@ def render_markdown(document: dict) -> str:
 
     lines += _markdown_story(document)
     return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def _markdown_across(document: dict) -> list[str]:
+    """The sibling deliveries' stories, a group each, then the outside children no sibling holds: nothing for a record
+    with neither."""
+    siblings = document.get("across") or {}
+    lines: list[str] = []
+    if siblings.get("groups"):
+        rows = []
+        for group in siblings["groups"]:
+            rows.append(f"- {_markdown_text(group['name'])}" + (f" · {_markdown_text(group['link'])}" if group.get("link") else "")
+                        + f" · {_markdown_text(group['words'])}")
+            rows.extend(f"  - {_markdown_text(story['subject'])}: {_markdown_text(story.get('title') or story['subject'])}, "
+                        f"{_markdown_text(story['stage'])}" for story in group["stories"])
+        lines += _markdown_section("Across repositories", rows, "")
+    held = siblings.get("held") or {}
+    outside = [item for item in document["state"].get("outside") or []
+               if isinstance(item, dict) and item.get("subject") not in held]
+    if outside:
+        parent = document["state"]["meta"].get("trackerParent")
+        rows = [f"- {_markdown_text(item['subject'])}: {_markdown_text(item.get('title') or item['subject'])}, "
+                f"{_markdown_text(item.get('status') or item.get('state'))}" for item in outside]
+        lines += _markdown_section(f"Elsewhere in {_markdown_text(parent)}" if parent else "Elsewhere", rows, "")
+    return lines
 
 
 def _markdown_story(document: dict) -> list[str]:
@@ -545,6 +572,89 @@ def _waits_by(document: dict, name: str) -> dict[str, list[str]]:
     return said
 
 
+# Why a sibling isn't read and fresh, by its latest read's outcome; None is a sibling no read has reached yet.
+# What a sibling's latest outcome says of it, other than read: each is said "since" the time that outcome began.
+SIBLING_REASONS = {
+    "stale": "stale",
+    "unavailable": "couldn't be read",
+    "incompatible": "needs a compatible snapshot",
+    "other-epic": "delivers another epic",
+}
+PART_DONE = "This repository's part is done."
+
+
+def _sibling_landed(story: dict) -> bool:
+    """A sibling story has landed when it merged, or settled as planned work: the record's own test."""
+    return story.get("stage") in ("merged", "settled")
+
+
+def across(document: dict) -> dict | None:
+    """What the record's sibling deliveries show, worded once for every view: None for a record with no siblings.
+
+    ``groups`` holds one group per sibling, in the record's order: its name and link, whether it is fresh, its stories
+    from its last kept read, and its time. ``readAt`` is the last read that changed the sibling and ``lastAttemptAt``
+    when its latest outcome began, so a fresh sibling has had no change since ``readAt``, and any other has been as
+    its ``reason`` says since ``lastAttemptAt``; ``since`` is that time. A sibling of another epic draws no stories.
+    ``partDone`` is the headline's sentences, present only once every one of this delivery's own stories has landed
+    and a same-epic sibling still has work open or can't be shown to have none. ``held`` names the sibling each drawn
+    story belongs to, so a view draws a child there rather than elsewhere.
+    """
+    state = document.get("state") if isinstance(document, dict) else None
+    rows = state.get("siblings") if isinstance(state, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return None
+    groups, said, held = [], [], {}
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("name"), str):
+            continue
+        outcome, read_at = row.get("lastOutcome"), row.get("readAt")
+        fresh = outcome == "read"
+        stories = [] if outcome == "other-epic" else [
+            {**{name: story[name] for name in ("subject", "title", "stage", "changeRequest") if name in story},
+             "landed": _sibling_landed(story)}
+            for story in row.get("stories") or [] if isinstance(story, dict) and isinstance(story.get("subject"), str)]
+        for story in stories:
+            held.setdefault(story["subject"], row["name"])
+        reason = SIBLING_REASONS.get(outcome) if outcome and not fresh else None
+        since = read_at if fresh else row.get("lastAttemptAt") or read_at if reason else None
+        if fresh:
+            words = f"no change since {read_at}"
+        elif reason:
+            words = f"{reason} since {since}" + ("" if read_at else " · never read")
+        else:
+            words = "never read"
+        groups.append({"name": row["name"], "link": row.get("link"), "fresh": fresh, "lastOutcome": outcome,
+                       "readAt": read_at, "since": since, "reason": reason, "stories": stories, "words": words})
+        if outcome == "other-epic":
+            continue
+        open_count = sum(1 for story in stories if not story["landed"])
+        if open_count:
+            said.append(f"{row['name']} has {open_count} open" + ("." if fresh else f", couldn't be read since {since}."))
+        elif not read_at:
+            said.append(f"{row['name']} couldn't be read (never read).")
+        elif not fresh:
+            said.append(f"{row['name']} couldn't be read since {since}.")
+    # This delivery's own stories have all landed: each queued one merged and each planned one settled.
+    own = [(item, landed_as) for name, landed_as in (("queue", "merged"), ("planned", "settled"))
+           for item in state.get(name) or [] if isinstance(item, dict)]
+    landed = bool(own) and all(item.get("stage") == landed_as for item, landed_as in own)
+    found: dict = {"groups": groups, "held": held}
+    if landed and said:
+        found["partDone"] = [PART_DONE, *said]
+    return found
+
+
+def with_across(document: dict) -> dict:
+    """The record with what its siblings show, as ``across`` words it; a record with no siblings is left as it was."""
+    if isinstance(document.get("across"), dict):
+        return document
+    try:
+        found = across(document)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return document
+    return document if found is None else {**document, "across": found}
+
+
 # What this delivery waits on in the other deliveries on its base, and theirs on it: written beside the record by each
 # supervisor pass, and added to the record's own waits only while it is fresh.
 PEER_WAITS_FILE = "peer-waits.json"
@@ -590,7 +700,7 @@ def with_story(shown: dict, directory: Path) -> dict:
         plan = read if isinstance(read, dict) else None
     except (OSError, ValueError):
         pass
-    shown = with_peer_waits(with_waits(shown), directory)
+    shown = with_across(with_peer_waits(with_waits(shown), directory))
     try:
         return {**shown, "story": narrator.narrate(shown["journal"], state=shown["state"], plan=plan)}
     except (ValueError, KeyError, TypeError):
@@ -842,6 +952,9 @@ _PAGE_PROGRAM = """
       parts.push(el("p", "Status: " + doc.status.text +
         (doc.status.source === "override" ? " (set by the lead, until " + show(doc.status.expiresAt) + ")" : ""), "status"));
     }
+    /* Every own story has landed while a sibling delivery's part is open or unread: the state tool's sentences. */
+    var across = isObject(doc.across) ? doc.across : null;
+    if (across && isArray(across.partDone)) { parts.push(el("p", across.partDone.join(" "), "status across")); }
     /* What the lead waits on in another delivery, and what waits on the lead: the state tool's sentences. */
     ["waits", "waitedOn"].forEach(function (name) {
       (isArray(doc[name]) ? doc[name] : []).forEach(function (wait) {
@@ -928,6 +1041,36 @@ _PAGE_PROGRAM = """
       }
       return withWaits(entry, item.subject, ["waits", "waitedOn"]);
     }));
+
+    /* The sibling deliveries' stories, a group each, folded shut; then the outside children no sibling holds. */
+    if (across && isArray(across.groups) && across.groups.length) {
+      parts.push(el("h2", "Across repositories"));
+      var fold = el("details");
+      fold.appendChild(el("summary", across.groups.length + (across.groups.length === 1 ? " sibling delivery" : " sibling deliveries")));
+      fold.appendChild(list("ul", across.groups, "", function (group) {
+        var entry = row(show(group.name), (typeof group.link === "string" ? group.link + " \u00b7 " : "") + show(group.words));
+        if (group.stories.length) {
+          entry.appendChild(list("ul", group.stories, "", function (story) {
+            return row(show(story.subject) + ": " + show(story.title || story.subject), "", story.stage);
+          }));
+        }
+        return entry;
+      }));
+      parts.push(fold);
+    }
+    var heldBy = across && isObject(across.held) ? across.held : {};
+    var outside = (isArray(state.outside) ? state.outside : []).filter(function (item) {
+      return isObject(item) && !Object.prototype.hasOwnProperty.call(heldBy, item.subject);
+    });
+    if (outside.length) {
+      parts.push(el("h2", typeof meta.trackerParent === "string" ? "Elsewhere in " + meta.trackerParent : "Elsewhere"));
+      var away = el("details");
+      away.appendChild(el("summary", outside.length + (outside.length === 1 ? " piece another delivery holds" : " pieces other deliveries hold")));
+      away.appendChild(list("ul", outside, "", function (item) {
+        return row(show(item.subject) + ": " + show(item.title || item.subject), "", item.status || item.state);
+      }));
+      parts.push(away);
+    }
 
     parts.push(el("h2", "Lanes"));
     var derivedFocus = isObject(doc.focus) ? doc.focus : {};
@@ -1084,7 +1227,7 @@ def render_static_page(document: dict, *, live: bool = False, flags: tuple[str, 
                        banner: str | None = None) -> str:
     """The page. `banner` is the supervisor's banner markup, given only when the view reads a status file."""
     adapter = f"<script>\n{_LIVE_ADAPTER}\n</script>\n" if live else ""
-    document = with_waits(_told(document))
+    document = with_across(with_waits(_told(document)))
     return (
         "<!doctype html>\n"
         '<html lang="en">\n'

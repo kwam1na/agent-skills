@@ -100,7 +100,7 @@ test("a hostile title stays text in the page's title and headline", async () => 
   const page = pageWithRuns({ state: { queue: [] }, journal: [] }, {}, { config: { ...CONFIG, title } });
   expect(page).toContain("<title>&lt;img src=x onerror=alert(1)&gt; &amp; co</title>");
   const [first] = await openPage(page, { now: NOW });
-  expect(first.app.querySelector("#now .kicker .headline").textContent).toBe(title);
+  expect(first.app.querySelector("#now h1.title").textContent).toBe(title);
   expect(first.app.querySelector("img")).toBeNull();
 });
 

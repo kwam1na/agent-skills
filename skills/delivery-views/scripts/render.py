@@ -695,6 +695,14 @@ def page_links(document: object, runs: dict, config: dict, reviews: dict | None 
     for item in state.get("followups") if isinstance(state.get("followups"), list) else ():
         if _is_object(item):
             keys.extend((item.get("reference"), item.get("id")))
+    for item in state.get("outside") if isinstance(state.get("outside"), list) else ():
+        if _is_object(item):
+            keys.append(item.get("subject"))
+    # A sibling delivery's stories are tickets of the same parent, drawn in its group.
+    for row in state.get("siblings") if isinstance(state.get("siblings"), list) else ():
+        for item in row.get("stories") if _is_object(row) and isinstance(row.get("stories"), list) else ():
+            if _is_object(item):
+                keys.append(item.get("subject"))
     journal = document.get("journal") if _is_object(document) else None
     for entry in journal if isinstance(journal, list) else ():
         if _is_object(entry):

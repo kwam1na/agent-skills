@@ -128,6 +128,19 @@ GIT_OWN_DIRECTORIES = frozenset({
 CHECKOUT_MARKER = "merge-queue-checkout"
 
 
+def suite_checkout_words(path: Path, work: Path) -> str:
+    """What a checkout under workRoot/suite is: one a lead-suite run made and didn't remove, and how to remove it."""
+    try:
+        parts = folded(path).relative_to(folded(work)).parts
+    except ValueError:
+        return ""
+    if len(parts) != 3 or parts[0] != "suite" or parts[2] != "checkout":
+        return ""
+    commit = path.parent.name.split("-", 1)[0]
+    return (f"; it is a lead-suite checkout of {commit} that its run didn't remove. The supervisor removes it once no "
+            f"run uses it; otherwise, once no run uses it, remove it: git worktree remove --force {path}")
+
+
 def folded(path: Path) -> PurePath:
     """The path without case or Unicode normal form: a filesystem may name one folder by every such variant."""
     return PurePath(unicodedata.normalize("NFC", str(path)).casefold())
@@ -1666,7 +1679,8 @@ class Runner:
             checkouts.append((self.repository, False, False))
         for path, _, prunable in checkouts:
             if within(path, work) and not self.own_checkout(path, prunable):
-                raise Stop("binding_invalid", f"workRoot must not contain a checkout of the repository: {path}")
+                raise Stop("binding_invalid", f"workRoot must not contain a checkout of the repository: {path}"
+                           + suite_checkout_words(path, work))
         for directory in git_directories:
             if within(directory, work) and folded(directory) != folded(work):
                 raise Stop("binding_invalid", "workRoot must not contain the git directory")

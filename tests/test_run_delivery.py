@@ -5207,6 +5207,23 @@ def add_story(fx: Fixture, path: Path, key: str, **story) -> None:
     commit(fx.main, f"FX-1: {key} added")
 
 
+def read_sibling_into(record: Path, *subjects: str) -> None:
+    """The record at ``record`` as if serve had read a same-epic sibling holding ``subjects``, unlanded. Written as
+    reconcile leaves it: the sibling row alone, which the record's schema checks."""
+    path = record / "state.json"
+    state = json.loads(path.read_text()) if path.exists() else {
+        "schemaVersion": "delivery-state/1", "version": 1,
+        "meta": {"headline": "x", "updatedAt": "2026-11-18T10:00:00Z", "baseHead": None, "releasedHead": None,
+                 "checking": {"now": None, "next": []}},
+        "lanes": [], "queue": [], "finish": [], "followups": [], "leases": [], "extensions": {}}
+    state["siblings"] = [{"name": "mobile", "link": "https://views.example.com/d/" + "a" * 64,
+                          "addedAt": "2026-11-18T10:00:00Z", "lastOutcome": "read", "lastAttemptAt": "2026-11-18T10:05:00Z",
+                          "readAt": "2026-11-18T10:05:00Z",
+                          "stories": [{"subject": subject, "title": subject, "stage": "building"} for subject in subjects]}]
+    record.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2) + "\n")
+
+
 def plan_delivery(fx: Fixture, path: Path | None = None) -> Path:
     """The fixture delivery with the plan chapter on: criteria, an outcome, and finish lines with covers and labels.
     Given the delivery file a fixture already set up, it adds them to that one."""
@@ -5362,9 +5379,16 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual((drafted["stories"]["EX-4"]["lane"], drafted["stories"]["EX-4"]["after"]), ("lane-3", ["EX-9"]))
         self.assertEqual(drafted["lanes"]["lane-3"], {"owns": []})
-        self.assertIn("note: plan story EX-4 comes after EX-9, which the plan has no story for", out)
+        self.assertIn("note: plan story EX-4 comes after EX-9, which neither the plan nor a known sibling delivery has a story for", out)
         self.assertIn("note: lane-3 has stories but no row in the plan's 'Units and order' table: drafted it owning "
                       "nothing", out)
+        # Scenario 24: a key a known sibling's stories hold is not noted.
+        read_sibling_into(fx.tmp / "sibling-record", "EX-9")
+        code, out = fx.flow("lead-setup", "EX-1", "--plan", "docs/format-plan.md", "--base", "feature/FX-1",
+                            "--no-authority", "--force", cwd=fx.main,
+                            env={**fx.env, "DELIVERY_STATE": str(fx.tmp / "sibling-record")})
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("comes after EX-9", out)
 
     def test_criteria_come_from_the_tracker_snapshot_and_a_story_without_any_is_named(self) -> None:
         fx = self.fixture()
@@ -6391,6 +6415,32 @@ class RunDeliveryPlanTests(unittest.TestCase):
         self.assertIn("FX-5 has no `why`", out)
         self.assertEqual(before(), held)
 
+    def test_lead_plan_takes_an_after_key_a_sibling_holds_and_still_refuses_one_held_by_nothing(self) -> None:
+        """Scenario 24: an added story may come after a sibling delivery's story the record has read."""
+        fx = self.fixture()
+        plan_delivery(fx)
+        m = fx.main
+        fx.flow("lead-init", cwd=m)
+        read_sibling_into(fx.tmp / "record", "MOB-7")
+        story = ["lead-plan", "change", "--kind", "added", "--subjects", "FX-4", "--title", "Thing four", "--text",
+                 "It works", "--why", "W", "--lane", "lane-1", "--after"]
+        code, out = fx.flow(*story, "ZZZ-1", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("--after ZZZ-1 isn't a story of FX-1 or of a sibling delivery it has read", out)
+        # A key only another epic's sibling holds is no sibling story of this epic's.
+        state = json.loads((fx.tmp / "record/state.json").read_text())
+        state["siblings"][0]["lastOutcome"] = "other-epic"
+        (fx.tmp / "record/state.json").write_text(json.dumps(state, indent=2) + "\n")
+        code, out = fx.flow(*story, "MOB-7", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("--after MOB-7 isn't a story of FX-1 or of a sibling delivery it has read", out)
+        read_sibling_into(fx.tmp / "record", "MOB-7")
+        code, out = fx.flow(*story, "MOB-7", cwd=m)
+        self.assertEqual(code, 0, out)
+        planned = next(item for item in json.loads((fx.tmp / "record/state.json").read_text())["planned"]
+                       if item["subject"] == "FX-4")
+        self.assertEqual(planned.get("after"), ["MOB-7"])
+
     def test_lead_plan_removes_a_story_added_without_a_why_and_records_no_added_change_for_it(self) -> None:
         fx = self.fixture()
         path = plan_delivery(fx)
@@ -6661,7 +6711,7 @@ TROUBLESHOOTING_KEYS = [
     "no plan at", "has no configuration for lanes", "forge.mergeNeedsReady says the merge step refuses a draft",
     "the supervisor is down", "don't have the default signal dispositions", "it runs Node",
     "it runs with no node on its PATH", "it recorded no Node", "supervisor: down (<why>)", "it wanted port",
-    "binding doesn't serve the base", "isn't offered; refine it first", "isn't a valid knowledge-properties/1",
+    "binding doesn't serve the base", "isn't offered; refine it first", "isn't a valid knowledge-properties/1", "the record names sibling deliveries",
 ]
 
 
@@ -6674,7 +6724,7 @@ def troubleshooting_section() -> str:
 DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candidate step", "configuration",
                  "lens lens.outcome-correctness", "lens lens.adversarial-testing", "release generation",
                  "host hooks", "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
-                 "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
+                 "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot scope", "tracker snapshot token",
                  "snapshots and publishers", "hosted delivery", "in-app adapters", "in-app adapter contract", "video evidence tools",
                  "Node", "harness configuration", "knowledge library properties", "delivery file", "plan chapter", "added stories' reasons",
                  "plan sections", "story files", "story readiness", "story summaries", "context sections", "finish lines",
@@ -8815,7 +8865,7 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         out = self.doctor(fx, "--run-adapters", "--run-gates", expect_code=0)
         lines = doctor_lines(out)
         self.assertEqual(list(lines), DOCTOR_LABELS, out)
-        expected_skips = {"pipeline PR review", "gh", "forge write access", "plan chapter", "added stories' reasons",
+        expected_skips = {"pipeline PR review", "gh", "forge write access", "tracker snapshot scope", "plan chapter", "added stories' reasons",
                           "story summaries", "pull requests marked ready", "delivery supervisor", "hosted delivery"}
         expected_skips |= set() if self.ffmpeg else {"video evidence tools"}
         expected_skips |= set() if self.node22 else {"harness configuration"}

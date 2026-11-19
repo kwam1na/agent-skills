@@ -459,8 +459,14 @@ The close condition: every planned and queued story merged or removed, every mer
 finish line met, every lane idle or done, and no "Needs you" item holding. "Needs you" is derived each pass, and its file is only that pass's view of it,
 never read back: a failed `fullHealth` at the
 current base head, unless the base declares the `focused` posture, a broken base, a blocked lane or one waiting on the lead, an unresolved `blocker.recorded`, a
-child that won't stay up, and the tracker publisher's own items. `lead-resolve <journal id> --why TEXT` resolves a
-blocker; `lead-resolve full-health --why TEXT` asks the next pass to rerun a failed `fullHealth` (under the `focused` posture, once
+child that won't stay up, and the tracker publisher's own items. A child that won't stay up is also journalled, once,
+as a `blocker.recorded` naming the child, its log and that log's last line, so a running `lead-wait` wakes on it; while
+it flaps its "won't stay up" item stands for that blocker, and the supervisor journals a `blocker.resolved` answering
+it once the child has stayed up for a pass. A checkout an interrupted `lead-suite` left under the binding's work folder,
+which the merge queue's `serve` refuses to run beside, is removed before `serve` starts and on each pass when its run
+has ended, no process works inside it, it is detached and it holds no change; otherwise it is recorded as a blocker
+naming it, why it stays and the command that removes it, resolved once it is gone. `lead-resolve <journal id> --why
+TEXT` resolves a blocker; `lead-resolve full-health --why TEXT` asks the next pass to rerun a failed `fullHealth` (under the `focused` posture, once
 the base returns to `gate`). The runner's own
 blocker clears when its hold does, or with `base.repaired`. Each item says whether it holds the close or is only
 shown, where it comes from and what clears it. The line map's Now chapter lists the holding items first. A list
@@ -665,6 +671,40 @@ journal write, the post and the line; when the tracker refuses it, the hand-off 
 later. With `tracker.updates` manual, the commands print each move and post for the lane to make; with the
 publisher, they print none. `lead-setup --review-when` records `reviewWhen`;
 it is never inferred from `review.pr`.
+
+### A Jira parent shared across repositories
+
+When one epic's children are split by codebase, and each repository runs its own delivery for its own children, scope
+the binding's Jira `trackerSnapshot` to this repository's tickets, next to `--canceled-statuses`:
+
+```json
+"argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/snapshot.py", "--kind", "jira",
+         "--site", "https://example.atlassian.net", "--parent", "{parent}", "--user-env", "JIRA_EMAIL",
+         "--token-env", "JIRA_API_TOKEN", "--state-dir", "{stateDirectory}",
+         "--scope", "component=Mobile App",
+         "--status-state", "Ready for QA=completed", "--status-state", "In QA=completed",
+         "--status-state", "Ready for Release=completed", "--status-state", "QA Return=started"]
+```
+
+- `--scope` is repeatable, and a child matching any value is in scope. `component=`, `label=` and `prefix=` are its
+  kinds. `--state-dir` keeps every story the delivery file lists in scope, whatever the tracker marks it with. Without
+  it, a story the tracker files elsewhere is kept only by what the record knows, such as its lane, files or order.
+  Lane-less, its ticket's start doesn't move it.
+- Another repository's children are `outside`. The sweep never adds them as planned work or follow-ups and never
+  reports on them. A copy an earlier sweep added is cleared once, journaled as `work.cleared`. The line map lists
+  them in its collapsed "Elsewhere in KEY" fold, and a tracker snapshot without `--scope` empties it. A child with
+  no value of a scoped kind stays in scope, flagged.
+- `--status-state` reads a named status as a state in place of its Jira category. A delivery's work ends at merge,
+  so map post-merge statuses in the In Progress category to `completed`. `next` then counts another repository's
+  deployed work as done when it reaches them. Map a status that sends work back to `started`: the sweep reports a
+  merged story whose ticket moves to it, "returned after merge".
+- `doctor`'s `tracker snapshot scope` row runs the snapshot with `--check`:
+  - it is `wrong` for a component, label or mapped status the project doesn't know;
+  - it warns for In Progress statuses left unmapped, so a new status gets a decision, and for in-scope children
+    with no scoped value;
+  - it warns for `--scope` without `--state-dir`.
+
+  Without `--scope` or `--status-state` the row doesn't apply, and the snapshot reads as before.
 
 ## The tracker adapter contract (`tracker-adapter/1`)
 

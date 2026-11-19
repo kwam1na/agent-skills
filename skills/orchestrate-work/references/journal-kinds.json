@@ -204,7 +204,8 @@
     "snapshotSource": {
       "enum": [
         "tracker",
-        "forge"
+        "forge",
+        "siblings"
       ]
     },
     "posture": {
@@ -1862,6 +1863,31 @@
       "tracker": null,
       "instruction": "None: the follow-up is its own ticket, and the decision that deferred its note posted with `decision.recorded`."
     },
+    "work.cleared": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Cleared from the record",
+      "data": {
+        "from": {
+          "type": "name"
+        },
+        "why": {
+          "type": "prose"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{subject} was cleared from the record",
+        "line": "{why}"
+      },
+      "explain": "The tracker sweep removed work it had added itself, because that work belongs to another delivery.",
+      "tracker": null,
+      "instruction": "None: the work belongs to another delivery, and its ticket is that delivery's to update."
+    },
     "snapshot.stale": {
       "altitude": "bookkeeping",
       "tone": "note",
@@ -1915,6 +1941,107 @@
       "explain": "The tracker or forge was read again after a gap.",
       "tracker": null,
       "instruction": "None: the views read the fresh snapshot."
+    },
+    "sibling.added": {
+      "altitude": "bookkeeping",
+      "tone": "decision",
+      "label": "Sibling named",
+      "data": {
+        "sibling": {
+          "type": "name"
+        },
+        "link": {
+          "type": "url"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "The lead named {sibling} as a sibling delivery",
+        "line": "Its stories are read from its hosted view"
+      },
+      "explain": "The lead named another repository's delivery of the same epic, by its hosted link.",
+      "tracker": null,
+      "instruction": "None: the views show the sibling's stories once it is read."
+    },
+    "sibling.removed": {
+      "altitude": "bookkeeping",
+      "tone": "decision",
+      "label": "Sibling removed",
+      "data": {
+        "sibling": {
+          "type": "name"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "The lead removed {sibling} as a sibling delivery",
+        "line": "It is no longer read"
+      },
+      "explain": "The lead stopped reading another repository's delivery.",
+      "tracker": null,
+      "instruction": "None: the views stop showing the sibling."
+    },
+    "sibling.mismatched": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Sibling of another epic",
+      "data": {
+        "sibling": {
+          "type": "name"
+        },
+        "parent": {
+          "type": "name",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{sibling} belongs to another epic",
+        "line": "Its stories are not counted"
+      },
+      "explain": "A sibling's published snapshot names another tracker parent, so its stories are not part of this epic.",
+      "tracker": null,
+      "instruction": "None: the lead removes the sibling or fixes its link."
+    },
+    "sibling.landed": {
+      "altitude": "story",
+      "tone": "landed",
+      "label": "Sibling story landed",
+      "data": {
+        "sibling": {
+          "type": "name"
+        },
+        "subject": {
+          "type": "name"
+        },
+        "firstSeenAt": {
+          "type": "instant"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{subject} landed in {sibling}",
+        "line": "First seen landed when {sibling} was read"
+      },
+      "explain": "A fresh read of a sibling delivery first showed one of its stories landed. The time is when it was seen, not when it merged.",
+      "tracker": null,
+      "instruction": "None: the views draw the sibling's story as landed."
     },
     "evidence.published": {
       "altitude": "story",

@@ -2,7 +2,7 @@
   "schemaVersion": "orchestration-binding/1",
   "base": {
     "remote": "origin",
-    "ref": "integrate/close-on-proof"
+    "ref": "main"
   },
   "bases": [
     "main",
@@ -1772,6 +1772,24 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_validate.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_siblings",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_siblings.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_siblings.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600

@@ -80,7 +80,7 @@ test("a delivery closed partway counts what the close tallied, with nothing in t
     journal: journal([[10, "approve", "A"], [11, "candidate.handed", "A"], [12, "candidate.merged", "A"], [40, "delivery.closed", "A"]]) });
   const plan = planFor(["A", "B", "C", "D", "E", "F"].map((subject) => unit(subject)), { finish: [] });
   const app = await facts(document, plan);
-  expect(app.querySelector("#now .title").textContent).toBe("Closed with 1 of 6 pieces landed.");
+  expect(app.querySelector("#now .now-count").textContent).toBe("Closed with 1 of 6 pieces landed");
   expect(app.querySelector("#now .stories .fact-value").textContent).toBe("1 of 6 landed");
   expect(app.querySelector("#now .stories .fact-said")).toBeNull();
   expect(track(app)).toEqual([["is-landed", 17]]);
@@ -109,7 +109,7 @@ test("the plan's proof moves under the plan-now sentence with its change count, 
   plan.changes = [{ id: "c1", at: minute(30), kind: "changed", subjects: ["PAY-2"], by: "lead", why: "Clarified." }];
   const app = await facts(document, plan);
   const now = app.querySelector("#now .plan-now");
-  expect(now.querySelector(".plan-now-line").textContent).toBe("4 of 6 criteria proven · plan changed 1 time");
+  expect(now.querySelector(".plan-now-plan").textContent).toBe("4 of 6 criteria proven · plan changed 1 time");
   expect(now.querySelector(".plan-now-line .plan-now-link").textContent).toBe("4 of 6 criteria proven");
   expect(now.querySelector(".plan-now-link").getAttribute("href")).toBe("#plan");
   expect(app.querySelector("#now .facts .plan-now-link")).toBeNull();
@@ -157,18 +157,19 @@ test("the kicker ends with how long the delivery has run, a time element that sa
   };
   // The record's first entry is minute 10, 06:10 UTC; the clock reads on, so a later look says a longer run.
   const time = await at(NOW);
-  expect(time.textContent).toBe("delivering · 5 h 50 min");
+  expect(time.textContent).toBe("Started 5 h 50 min ago");
   expect(time.getAttribute("datetime")).toBe(minute(10));
   const [hidden, lines, titled] = await said(pageWithRuns(underway(), {}, { config: FORGE }));
   expect([hidden, lines.length, titled]).toEqual([false, 1, 0]);
   expect(lines[0]).toMatch(/^Started .+ \(2026-10-30 06:10:00 UTC\)$/);
   expect(time.getAttribute("tabindex")).toBe("0");
-  expect(time.parentNode.textContent).toMatch(/ · delivering · 5 h 50 min$/);
-  expect((await at("2026-10-30T06:40:00Z")).textContent).toBe("delivering · 30 min");
+  // The kicker is that one fact when the record names no tracker item: no state word, nothing before it.
+  expect(time.parentNode.textContent).toBe("Started 5 h 50 min ago");
+  expect((await at("2026-10-30T06:40:00Z")).textContent).toBe("Started 30 min ago");
   // A whole hour says no minutes; from 48 hours it says days, to the nearest.
   for (const [now, said] of [["2026-10-30T12:10:00Z", "6 h"], ["2026-11-01T06:09:00Z", "47 h 59 min"], ["2026-11-01T06:10:00Z", "2 days"],
     ["2026-11-01T18:10:00Z", "3 days"]]) {
-    expect([now, (await at(now)).textContent]).toEqual([now, "delivering · " + said]);
+    expect([now, (await at(now)).textContent]).toEqual([now, "Started " + said + " ago"]);
   }
   // A journal that no longer holds its first entry has no honest start, so the kicker says no duration.
   const trimmed = underway();
@@ -181,7 +182,7 @@ test("the kicker ends with how long the delivery has run, a time element that sa
     runsCommands: readJson(path.join(folder, "runs-commands.json")) });
   const [closed] = await openPage(page, { now: NOW, store: false });
   const span = closed.app.querySelector("#now .kicker time.kicker-time");
-  expect(span.textContent).toBe("delivered in 1 h 34 min");
+  expect(span.textContent).toBe("Closed after 1 h 34 min");
   const [shut, ends] = await said(page);
   expect([shut, ends.map((line) => /^(Started|Closed) .+ \(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC\)$/.exec(line)?.[1])]).toEqual([false, ["Started", "Closed"]]);
 });

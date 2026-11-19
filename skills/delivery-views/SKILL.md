@@ -75,7 +75,9 @@ python3 -B .agent-skills/current/skills/delivery-views/scripts/views_common.py c
 `scripts/render.py line-map` reads the delivery record on stdin and prints one
 page: the delivery told in six chapters (now, the line, who, what's left, what
 happened, parked), and a seventh, the plan, when the delivery has one (see
-"The plan chapter" below), with a detail panel for each piece of work. Its style and
+"The plan chapter" below), and one more, across repositories, while the record
+names sibling deliveries (see "What the views show of siblings" below), with a
+detail panel for each piece of work. Its style and
 program are the skill's `assets/line-map.css`, `assets/line-map.js`,
 `assets/run-summary.css` and `assets/run-summary.js`, inlined into the page, and
 it loads only its three typefaces from Google Fonts. It
@@ -83,6 +85,19 @@ opts in to the live stream, so `live` serves it at `/view/<output>` and the
 page follows every record write; opened as a file, it shows the record as it
 was rendered. A history renderer declared in the same binding (`render.py
 history`) is linked from its footer.
+
+A piece's detail panel says where the story is before it lands, in one state
+line with a dot: "Being built", "In review, round N", "Fixing review
+findings", "Reviewed, getting ready to hand off", "Waiting for the lead to
+accept" or "Being checked before it lands", worked out from the record and its
+journal. The dot is green while the story's lane moves it, amber while it waits
+on something and grey while the merge queue checks it. Before hand-off the
+panel says how the review ended, from the recorded reports: the round it was
+approved on, and its notes fixed, deferred to a follow-up or still open. While
+the story's lane is on it, the lane's own words follow, with how long ago they
+were set. A landed or stopped piece shows none of these. The panel leaves a
+unit's proofs to the plan chapter, and the review's count of notes raised to the
+recorded reports.
 
 What happened tells the delivery's story at three depths, one row for each beat: its
 time, its mark, its sentence and its tone's word. A row opens to nothing; the ticket,
@@ -251,13 +266,14 @@ A criterion is **proven**; a finish line is **met**, as the record says.
 A journal `delivery.closed` entry makes the page read the delivery as closed,
 until a lane is assigned, a candidate is handed or a check starts after it. Now
 says so and says when, with no warning about silence, though a lost connection
-still shows. It says "Delivered." only when every piece and every live plan unit
-landed; proofs and finish lines keep their own counts beside it. What's left stops
+still shows. Under the delivery's name, its count line says "Every piece landed"
+only when every piece and every live plan unit landed; proofs and finish lines keep
+their own counts beside it. What's left stops
 counting down once nothing is left to land, and counts plan units that never reached
 the line. Lanes read as finished whatever the record last said they waited on, an
 unlanded stop reads "Not landed" and stops pulsing, and leftover holds, leases and
 stale sources no longer show. The progress bar and dots use the same count as the
-headline, and a piece the plan removed isn't counted. Now and the plan call what
+count line, and a piece the plan removed isn't counted. Now and the plan call what
 remains left open at close rather than asking for anything. The close is journaled
 before the supervisor stops, so its Needs you box still shows while a running,
 current list holds the close, and otherwise doesn't show.
@@ -443,10 +459,12 @@ for the whole run (25 when absent; set it below the binding's
 
 **Jira Cloud** (tracker): `--kind jira --site https://<site>.atlassian.net
 --parent {parent} --user-env JIRA_EMAIL --token-env JIRA_API_TOKEN
-[--canceled-statuses "Won't Do,Duplicate"] [--blocks-link Blocks]`. The
+[--canceled-statuses "Won't Do,Duplicate"] [--blocks-link Blocks]
+[--scope "component=Mobile App" ...] [--status-state "Ready for QA=completed" ...]
+[--state-dir {stateDirectory}]`. The
 parent's children come from the enhanced JQL search, paged by
 `nextPageToken`, with Basic email and API token. A status listed as canceled
-is `canceled`; otherwise its category maps `new` to `backlog`,
+is `canceled`, after any `--status-state` mapping; otherwise its category maps `new` to `backlog`,
 `indeterminate` to `started` and `done` to `completed`. The issue's summary
 is the title, its description flattened to plain text of at most 1000
 characters is the summary, and `blockedBy` holds the other children linked
@@ -456,6 +474,46 @@ tracker no longer has the parent, or answers it with something other than
 JSON, `parent` is left out and the children's snapshot still prints, so
 nothing says the parent closed. A JSON answer with no fields object, or with
 a status category it doesn't know, fails the snapshot.
+
+A Jira parent can span repositories, each delivering its own children. Each
+`--scope "<kind>=<value>"`, repeatable, keeps the children that carry it:
+`component=<name>` (the most reliable, since Jira can require a component),
+`label=<name>`, or `prefix=<marker>`, a summary starting with the marker,
+ignoring case. With `--state-dir {stateDirectory}`, every story the
+delivery's `plan.json` lists stays in scope too, whatever the tracker marks
+it with. A child that carries a value of a scoped kind and matches no
+`--scope` is listed under `outside`, with its state, status and `marks`, the
+values that place it there (for `prefix`, a leading `[Tag]` or `Word:`), and
+its summary and blockers.
+`reconcile` never adds an outside child as planned work or a follow-up and
+never reports on it. It clears a copy the sweep added earlier, planned work
+with no lane or a follow-up, journaling `work.cleared` once. It keeps
+`outside` in the record, and the line map shows it in a collapsed "Elsewhere
+in KEY" fold. An unscoped tracker snapshot empties it. Work of this delivery
+that the tracker marks outside is never cleared: queued work, work with a
+lane, or planned work with the plan's order, files, change request or run. A
+lane-less story of this delivery that the tracker marks outside keeps its
+shape: its ticket's start doesn't move it. A child with no value of any scoped kind stays in scope,
+flagged `unmarked`. Without `--scope`, every child is in scope, as before.
+
+A child a sibling delivery holds is left to it, with or without `--scope`:
+when its subject is in any sibling's last kept read, even while that sibling
+can't be read, unless it now reads as another epic's, and no story of this
+delivery holds it, `reconcile` never adds
+it or reports on it, and clears a copy the sweep added earlier the same way,
+journaling `work.cleared` once with "held by sibling <name>". Only a tracker
+snapshot's pass clears one. The views draw it in that sibling's group rather
+than under "Elsewhere".
+
+Each `--status-state "<status name>=<state>"`, repeatable, reads that status
+as `backlog`, `started`, `completed` or `canceled` in place of its category.
+Map post-merge statuses in the In Progress category, such as Ready for QA, to
+`completed`. Map a status that sends work back, such as QA Return, to
+`started`: `reconcile` then reports a merged story whose ticket moves there,
+"returned after merge". The snapshot carries the map as `statusStates`.
+`--check` prints, in place of the snapshot, what run-delivery's `doctor`
+reports: each component, label or mapped status the project doesn't know,
+the In Progress statuses left unmapped, and the unmarked children.
 
 **Bitbucket Cloud** (forge): `--kind bitbucket --workspace <workspace>
 --repo <repository> --binding .agents/orchestration.json --state-dir
@@ -927,6 +985,93 @@ by the terminal deadline. Only the selected terminal metadata and referenced
 bodies enter archives. Live pending status retains the public URL and preceding
 receipt; active archive polling tolerates bounded unavailability before strict
 post-exit identity/status checks.
+
+### Reading sibling deliveries
+
+`hosted.py siblings` reads the sibling deliveries a record names, each from its
+hosted live view, and prints one `sibling-snapshot/1`. Declare it as the
+binding's `state.siblingSnapshot`, and `serve` runs it on its refresh:
+
+```json
+"siblingSnapshot": {
+  "argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/hosted.py", "siblings", "--state-dir", "{stateDirectory}"],
+  "timeoutSeconds": 60
+}
+```
+
+It needs no `hosted` member, key or token: it reads public cuts only. Each
+sibling is read the way the trusted viewer reads one: `current`, then the body
+by its digest, whose bytes must hash to that digest, validate as the
+`hosted-delivery-snapshot/2` this generation publishes and carry `current`'s
+fingerprint. Another renderer version, a body the schema refuses or a failed
+digest or fingerprint check is `incompatible`, which the hosted page words as
+needing a compatible snapshot. A network failure, an HTTP error status, a
+timeout of ten seconds per sibling or any redirect is `unavailable`. A body
+whose tracker parent is not the record's is `other-epic`, with no stories. The
+requests carry no `Authorization` or `Cookie` header, whatever the environment
+holds, never use the publishing client, and follow no redirect. A link is read
+over HTTPS, or from `http://127.0.0.1:<port>`, a loopback test receiver.
+
+A body the service calls stale reads as `stale`, unless it is a confirmed
+terminal cut: the last of `delivery.closed`, `lane.assigned`,
+`candidate.handed` and `check.started` in its journal is `delivery.closed`, and
+`current`, read again, names no newer cut. That reads as `read` with
+`terminal: true`, as the viewer retains a completed delivery, so a closed
+sibling's last stories still land.
+
+### What the views show of siblings
+
+The state wrapper words what the record's siblings show once, as the
+document's `across`, and the line map, the Markdown view and the built-in page
+print those words. A record with no siblings draws exactly as before.
+
+- **Across repositories.** One group per sibling, folded shut: its name, linked
+  to its live view, its stories at the stages its last kept read showed, and a
+  time. A sibling's `readAt` is the last read that changed it, and
+  `lastAttemptAt` is when its latest outcome began. A fresh sibling says "no
+  change since <readAt>"; any other says its outcome "since <lastAttemptAt>":
+  "couldn't be read", "stale", "needs a compatible snapshot" or "delivers
+  another epic". A sibling no read has reached says "never read". A sibling of
+  another epic shows no stories. The line map adds the chapter after What's
+  left, the Markdown view and the built-in page after Planned. In the line
+  map's chapter a sibling of another epic sits outside the fold, under an "Also
+  linked" row after the epic's own groups, with its outcome, and the chapter's
+  title counts only the epic's own.
+- **The epic's post.** With a same-epic sibling, the line map's main line runs
+  on past this repository's "Finish line" post, which keeps its place and
+  counts, to a second post for the epic. Its label, "Epic", and its count, "L/T
+  landed" across this repository's pieces and every same-epic sibling's
+  stories, stack above it. At most two siblings get a row under the lanes, with
+  their name and "L of T landed" and no stops, and turn in at the epic's post
+  from below: first those holding a story this repository waits on, then the
+  furthest behind, by the lowest share landed, then the most open. The rest
+  fold into a "+N more" chip by the post, whose accessible name lists them. A
+  sibling's turn is solid once it has stories and all of them have landed, and
+  dashed before, a fresh sibling with no stories included. The epic's line and post are solid only once every piece here and
+  every sibling story has landed and every sibling is fresh.
+- **An unreadable sibling.** A same-epic sibling that isn't fresh turns in
+  dotted, and its row reads "Never read" or "Couldn't be read since <at>". The
+  epic's line and post go dashed, the label reads "Epic ?", and under it goes
+  the sibling's name, or "N can't be read". Every stroke of the epic's post is
+  the neutral edge colour, never a warning colour. The drawing's accessible
+  name adds the epic's count across its repositories, each sibling that can't
+  be read and how many are folded. A sibling of another epic draws nothing on
+  the line and counts for nothing there. With no same-epic sibling the line is
+  drawn exactly as before.
+- **The done count.** Until every one of this delivery's own stories has landed
+  it is unchanged. Once they have, a same-epic sibling with open stories in its
+  last kept read, one never read, or one not fresh adds its sentence, and the
+  views say "This repository's part is done." with those sentences in place of
+  a done count: "<name> has N open." ("..., couldn't be read since <at>."
+  when it isn't fresh), "<name> couldn't be read (never read).", or "<name>
+  couldn't be read since <at>.". The line map shows the first as the count under
+  the delivery's name, without its full stop, and the siblings' sentences below
+  it; the Markdown view and the built-in page say them as they are. Every
+  same-epic sibling fresh with everything landed leaves the usual done count.
+  The delivery still closes by itself.
+- **Elsewhere.** An outside child a drawn sibling's stories hold appears in that
+  sibling's group; the rest stay under "Elsewhere in KEY", which the Markdown
+  view and the built-in page now draw too.
 
 ### Installed archive qualification
 

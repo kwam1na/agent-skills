@@ -28,7 +28,7 @@ const flips = (node) => [...node.querySelectorAll(".flip")].map((digit) => [digi
 /** The places that count, each with its words and its flipping digits. */
 function counts(app) {
   const places = {
-    now: app.querySelector("#now h1.title b"),
+    now: app.querySelector("#now .now-count span"),
     stories: app.querySelector("#now .fact-count span"),
     queued: app.querySelector("#now .fact-said"),
     plan: app.querySelector("#now .plan-now-link"),
@@ -90,7 +90,7 @@ test("a live update flips each changed digit of every count, from the right, and
     held: ["1"],
   });
   // The words are the new value throughout: both turning digits are the stylesheet's to draw, with no text of their own.
-  expect(second.app.querySelector("#now h1.title").textContent).toBe("11 of 12 pieces have landed.");
+  expect(second.app.querySelector("#now .now-count").textContent).toBe("11 of 12 pieces have landed");
   expect(second.text).not.toContain("10 of 12");
   for (const digit of second.app.querySelectorAll(".flip")) {
     expect(digit.getAttribute("aria-hidden")).toBe("true");
@@ -173,10 +173,10 @@ test("as time passes, the kicker's running time and a waiting row's age flip; wo
   const at = (when) => [{ run: (window) => { window.Date.now = () => Date.parse(when); } }, { tick: true }];
   const [, , minute, , hour] = await openPage(page, { now: NOW, store: {}, motion: {}, steps: [...at("2026-10-30T12:01:00Z"), ...at("2026-10-30T13:01:00Z")] });
   const place = (shot, selector) => { const node = shot.app.querySelector(selector); return { words: node.firstChild.data, flips: flips(node) }; };
-  expect(place(minute, ".kicker-time")).toEqual({ words: "delivering · 5 h 51 min", flips: [["0", "1"]] });
+  expect(place(minute, ".kicker-time")).toEqual({ words: "Started 5 h 51 min ago", flips: [["0", "1"]] });
   expect(place(minute, ".nr-age")).toEqual({ words: "for 3m", flips: [["2", "3"]] });
   expect(minute.app.querySelector(".kicker-time").getAttribute("tabindex")).toBe("0");
   // An hour on, the age reads in hours where it read in minutes: a new shape, not a turn of the same number.
   expect(place(hour, ".nr-age").flips).toEqual([]);
-  expect(place(hour, ".kicker-time")).toEqual({ words: "delivering · 6 h 51 min", flips: [["5", "6"]] });
+  expect(place(hour, ".kicker-time")).toEqual({ words: "Started 6 h 51 min ago", flips: [["5", "6"]] });
 });
