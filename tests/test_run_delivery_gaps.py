@@ -24,6 +24,7 @@ GUIDE = ROOT / "skills/orchestrate-work/references/orchestration-guide.md"
 LANE_BRIEF = ROOT / "skills/run-delivery/templates/lane-brief.md"
 
 sys.path.insert(0, str(ROOT / "skills" / "run-delivery" / "scripts"))
+import gaps  # noqa: E402
 import tracker_publisher  # noqa: E402
 
 
@@ -71,6 +72,38 @@ class BriefWordingTests(unittest.TestCase):
                 self.assertTrue(said, name)
                 for sentence in said:
                     self.assertIn("`note-gap`", sentence)
+
+
+REOPENING = ("lane.assigned", "candidate.handed", "check.started")
+
+
+def gap(n: int, text: str, cls: str = "repo", **data) -> dict:
+    return {"id": n, "kind": "gap.noted", "subject": None, "data": {"class": cls, "text": text, "why": "w", "by": "lead",
+                                                                     **data}}
+
+
+class GapWindowTests(unittest.TestCase):
+    """Which gaps a close routes and which are open: those noted since the close before the standing one, or since
+    the latest close once new work reopened the delivery."""
+
+    JOURNAL = [gap(1, "old"), gap(2, "old again", occurrenceOf=1), {"id": 3, "kind": "delivery.closed", "data": {}},
+               {"id": 4, "kind": "lane.assigned", "data": {}}, gap(5, "new"), gap(6, "NEW ", occurrenceOf=5)]
+
+    def test_a_close_routes_its_own_gaps_with_their_occurrences(self) -> None:
+        closed = [*self.JOURNAL, {"id": 7, "kind": "delivery.closed", "data": {}}]
+        found = gaps.gaps(closed, REOPENING)
+        self.assertEqual([(g["entry"]["id"], g["count"]) for g in found], [(5, 2)])
+        # Before the first close stands, every gap is the close's; while it stands, still its own.
+        self.assertEqual([g["entry"]["id"] for g in gaps.gaps(self.JOURNAL[:3], REOPENING)], [1])
+        self.assertEqual([g["entry"]["id"] for g in gaps.gaps(self.JOURNAL[:2], REOPENING)], [1])
+
+    def test_a_gap_an_earlier_close_routed_is_neither_matched_nor_named_with_same_as(self) -> None:
+        self.assertIsNone(gaps.occurrence_of(self.JOURNAL, REOPENING, "repo", "old", None, None))
+        self.assertEqual(gaps.occurrence_of(self.JOURNAL, REOPENING, "repo", "new", None, None), 5)
+        for named in (1, 2):
+            with self.subTest(named=named), self.assertRaisesRegex(gaps.Refused, "routed by an earlier close-out"):
+                gaps.occurrence_of(self.JOURNAL, REOPENING, "repo", "x", None, named)
+        self.assertEqual(gaps.occurrence_of(self.JOURNAL, REOPENING, "repo", "x", None, 6), 5)
 
 
 class NoteGapTests(unittest.TestCase):

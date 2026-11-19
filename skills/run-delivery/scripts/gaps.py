@@ -88,7 +88,11 @@ def occurrence_of(journal: list[dict], reopening: tuple[str, ...], cls: str, tex
         if named["data"]["class"] != cls:
             raise Refused(f"--same-as {same_as}: journal entry {same_as} is a {named['data']['class']} gap, "
                           f"not a {cls} gap")
-        return named["data"].get("occurrenceOf", named["id"])
+        root = named["data"].get("occurrenceOf", named["id"])
+        if root <= since(journal, reopening):
+            # An occurrence of a gap already routed would be counted nowhere.
+            raise Refused(f"--same-as {same_as}: gap {root} was routed by an earlier close-out; note it as a new gap")
+        return root
     wanted = normalized(text)
     hit = next((gap for gap in matching(gaps(journal, reopening), cls, release)
                 if normalized(gap["entry"]["data"]["text"]) == wanted), None)
