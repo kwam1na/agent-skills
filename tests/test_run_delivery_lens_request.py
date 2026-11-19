@@ -195,6 +195,10 @@ class LensOnRequestTests(unittest.TestCase):
         self.assertIn(f"FX-3's review has begun, and its lens set is fixed at round 1, so its brief can't add "
                       f"{', '.join(brief)}", out)
         self.assertEqual((path.read_text(), self.plan_log(fx)), (kept, log), "the refusal recorded something")
+        # Only that story's: FX-2, whose review hasn't begun, can still gain a brief lens.
+        code, out = self.lead_plan(fx, "--kind", "lenses", "--subjects", "FX-2", "--lenses", "lens.data", "--why", "W")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(path.read_text())["stories"]["FX-2"]["lenses"], ["lens.data"])
         self.results(fx, wt, 1, first)
         code, out = fx.flow("review-reduce", "FX-3", "--round", 1, cwd=wt)
         self.assertEqual(code, 0, out)
@@ -327,6 +331,15 @@ class LensOnRequestTests(unittest.TestCase):
         _, out = fx.flow("doctor", "--offline", cwd=fx.main)
         self.assertNotIn("lenses on request", doctor_lines(out))
 
+    def test_with_nothing_on_request_a_brief_lens_still_names_the_reason(self) -> None:
+        fx, wt, node = self.fixture(on_request=False, brief=True)
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, cwd=wt)
+        self.assertEqual(code, 0, out)
+        meta = self.meta(wt, 1)
+        self.assertEqual((meta["lenses"], meta["lensesReason"], meta["requested"]),
+                         ([OC, AT, *(["lens.h"] if node else []), "lens.standards", "lens.data"],
+                          "every story lens not on request, and the brief's lens.data", {}))
+
     def test_a_story_entry_names_only_declared_story_lenses(self) -> None:
         fx, wt, node = self.fixture()
         m = fx.main
@@ -345,6 +358,10 @@ class LensOnRequestTests(unittest.TestCase):
         status, detail = doctor_lines(out)["review lenses"]
         self.assertEqual(status, "wrong", out)
         self.assertIn("story FX-3: lenses names lens.p, which isn't a declared story lens", detail)
+        # Every command refuses such a delivery file on load, not only the doctor.
+        code, out = fx.flow("lead-brief", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("story FX-3: lenses names lens.p, which isn't a declared story lens", out)
         path.write_text(kept)
 
     def test_lead_plan_changes_a_storys_lenses_and_a_hand_edit_shows_as_unrecorded(self) -> None:
@@ -419,7 +436,6 @@ class LensOnRequestTests(unittest.TestCase):
         self.assertIn("a lens on request (`\"default\": false`) runs only when `--lenses` or the story's brief names it",
                       skill)
         self.assertIn("`--kind lenses --subjects KEY --lenses IDS` sets the story's brief lenses", skill)
-        self.assertTrue(re.search(r"lenses", skill))
 
 
 if __name__ == "__main__":

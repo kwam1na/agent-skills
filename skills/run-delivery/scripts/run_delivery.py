@@ -1789,9 +1789,8 @@ def accepted_brief(c, key: str, lenses: list[str], meta: dict | None) -> tuple[s
     brief lens the set lacks, as a problem naming its removal."""
     if not (meta or {}).get("lensesReason"):
         return "", []
-    folder = next((folder for folder in (c.lane_checkout(key) / c.work / "review" / key, evidence_dir(key))
-                   if (folder / "round-1.meta.json").exists()), None)
-    requested = latest_lenses(c, folder)[2] if folder is not None else {}
+    # Round 1's own record, as handed: no lookup that a lens since withdrawn could stop.
+    requested = (meta or {}).get("requested") or {}
     return (requested_text({lens: who for lens, who in requested.items() if lens in lenses}),
             unrun_brief_lenses(c, key, lenses))
 
