@@ -2,7 +2,7 @@
   "schemaVersion": "orchestration-binding/1",
   "base": {
     "remote": "origin",
-    "ref": "integrate/fit-to-adopter"
+    "ref": "main"
   },
   "bases": [
     "main",
