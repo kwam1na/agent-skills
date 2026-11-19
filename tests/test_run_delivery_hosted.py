@@ -546,6 +546,8 @@ class OwnedProcessTests(unittest.TestCase):
         self.wait_for(lambda:hosted.read_json(self.state/hosted.STATUS).get('code')=='unauthorized')
         cleanup();self.clock.write_text('700')
         self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK))
+        # The watcher lets its lock go before its process is gone, and a retry refuses while the recorded owner runs.
+        self.wait_for(lambda:not hosted.process_matches(owner))
         self.assertEqual(hosted.archive_status(self.archive)['state'],'final-publication-pending')
         self.assertEqual(hosted.read_json(self.archive/hosted.IDENTITY)['publicId'],identity['publicId'])
         self.clock.write_text('0');self.api.code=None
