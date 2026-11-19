@@ -338,6 +338,11 @@ Write the approved plan, with one heading per story:
 - Scenarios: the page shows the greeting.
 ```
 
+When a lens is broad, or costly, and only some stories call for it, put a broad lens on request with `"default": false`
+(`config.md`, "Review lenses"): no story runs it unless its lane names it in `--lenses` or the plan asks for
+it, with a `Lenses:` sentence in the story's section, such as ``Lenses: `lens.data`.``, which `lead-setup` drafts
+into the story's entry.
+
 Review a plan before it is approved, with or without a delivery. Give it a `reviewSlug` in its front matter, so its
 review survives a rename, commit it, and run `plan-review prepare` with the lenses that review it:
 
