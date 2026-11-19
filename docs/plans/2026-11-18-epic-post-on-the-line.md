@@ -74,8 +74,9 @@ Checked against `main` at `6ff36e8a` on 2026-11-18:
    No literal `176px`, `420px` or `292px` is left in those rules: `420px` becomes 244px plus the width, and `292px`
    becomes 116px plus the width. The phone layout keeps its 104px name column. With siblings drawn, the drawing also
    sets `--merge-top`. That is the track's top padding and the SVG's top offset, 16px without siblings, raised by the
-   height of the epic's stacked text so that every line of it lies inside the track. The no-sibling path keeps 16px,
-   and the `.lines` box's negative margin follows the same property.
+   height of the epic's stacked text so that every line of it lies inside the track. The no-sibling path keeps 16px.
+   The `.lines` box keeps its -16px margin, so the added headroom adds height above the line, not an overlap with the
+   paragraph before it.
 5. **The epic's count.** It counts this repository's pieces plus every same-epic sibling's stories from its last kept
    read, drawn or folded, as "L/T landed". The epic's line and post are solid only when all three hold: every one of
    this repository's pieces has landed, every same-epic sibling story has landed, and every same-epic sibling is
@@ -153,8 +154,9 @@ In `tests/delivery_views_page/line-map-epic-post.test.mjs`. Every state is opene
 - **One unreadable.** One stale sibling. Its turn is dotted, and its row reads "Couldn't be read since <since>" with
   the fixture's exact time. The epic's line and post are dashed, the label is "Epic ?" with the sibling's name under
   it, and the `aria-label` names it.
-- **Two unreadable.** One stale sibling, plus one attempted but never read (`readAt` null, `since` set). "2 can't be
-  read" is under the label. The first row reads "Couldn't be read since <since>" and the second "Never read".
+- **Two unreadable.** One stale sibling with 1 of 3 stories landed, plus one attempted but never read (`readAt` null,
+  `since` set, no stories). "2 can't be read" is under the label. The never-read sibling ranks as share 0, so it is
+  drawn first and reads "Never read". The stale one is second and reads "Couldn't be read since <since>".
 - **Many, and the ranking.** There are five same-epic siblings. The waited-on one has the highest landed share, so
   only the wait puts it first. Two share the lowest share and differ in open stories, and the one with more open
   stories is drawn second. One is fresh with no stories and folds into the chip. The chip reads "+3 more" and names
@@ -167,6 +169,8 @@ In `tests/delivery_views_page/line-map-epic-post.test.mjs`. Every state is opene
   - The dashed and dotted variants set different, non-empty `stroke-dasharray` values, and the solid ones set none.
   - `.lines-track`'s padding and both least widths use `var(--merge-width)`, and none still holds `176px`, `420px`
     or `292px`.
+  - `.lines-track`'s top padding and `.line-merge`'s `top` use `var(--merge-top)`, and neither still holds a literal
+    `16px`. The `.lines` rule's block margin stays `-16px` and doesn't read `--merge-top`.
   - The phone rule keeps the `104px` column.
   - Every token the new rules use is defined in `:root` and in both dark rules, and none is `--held` or `--wait`.
   
@@ -175,7 +179,8 @@ In `tests/delivery_views_page/line-map-epic-post.test.mjs`. Every state is opene
 - **Headroom.** A one-lane record with one stale sibling. For every text of the epic segment, its `y` plus
   `--merge-top`, less its font size, is at least 0, measured from the track's top.
 - **Motion.** The Waiting state with a check running, under `motion`. A `{ run }` step gives the track a
-  `clientWidth` and `clientHeight`, and gives the track and each stop button a `getBoundingClientRect`, before a push
+  `clientWidth` and `clientHeight`, gives the track and each stop button a `getBoundingClientRect`, and gives the
+  track's computed `paddingTop` the drawn `--merge-top`, so that no 0 fallback can pass, before a push
   redraws the page. The `flow-trunk` path ends at this repository's post's x (the track's width less 304, plus 162),
   not at the epic's post. Its y is the drawn trunk's.
 
