@@ -21,7 +21,7 @@ Seen on release `linear-v3.2.0` (generation `e13cd6d1`), the installed workflow 
   `lead-assign` refuse a lane the record's `laneOwnership` doesn't hold. The lead hand-edited the delivery file (the
   lane, the story and its six criteria), the plan's story section and its Units row, then wrote the record's lane with
   the state tool's raw `patch --set /laneOwnership/lane-3`. That patch skips the overlap checks `lead-own` makes. V26-3553
-  logged the same gap (its lane 3) and left it open. Open: a command that adds a lane to the delivery file and the
+  logged the same gap (its lane 3) and left it open. Fix: V26-3628 (backlog), a command that adds a lane to the delivery file and the
   record in one write, with `lead-own`'s checks, and lets `lead-plan change --kind added` name it.
 - **A story with its own reviewed plan joins with a stub section.** V26-3589's design and scenarios live in its own
   plan, `2026-11-18-integration-step-on-the-live-view.md`, reviewed to alignment. This delivery's plan gained a story
