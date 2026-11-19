@@ -204,7 +204,7 @@
     {
       "id": "integration-review",
       "label": "Into main",
-      "text": "The integration base is reviewed for main, as the orchestrate-work guide’s integration review says, and merged into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide\u2019s integration review says, and merged into main",
       "covers": {
         "criteria": [],
         "proofs": []
@@ -213,7 +213,7 @@
     {
       "id": "local-suite",
       "label": "Local suite",
-      "text": "The full local suite passes on macOS with Python 3.11 at main’s head after the integration merge, inside tests/suite-budget.json",
+      "text": "The full local suite passes on macOS with Python 3.11 at main\u2019s head after the integration merge, inside tests/suite-budget.json",
       "covers": {
         "criteria": [],
         "proofs": []
@@ -243,7 +243,8 @@
     {
       "id": "approval-3",
       "text": "The operator approves merging `integrate/ownership-follows-work` into `main` after its review.",
-      "state": "waiting"
+      "state": "done",
+      "who": "Kwamina"
     }
   ],
   "outOfScope": [
