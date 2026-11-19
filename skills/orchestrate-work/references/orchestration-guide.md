@@ -230,6 +230,10 @@ the lead and the lanes make them instead, as the commands print them.
 | `base.verified` | None: the post-merge `fullHealth` passed at the base head the named merge reached, and the result shows in the record and the views. | nowhere | - |
 | `base.flaky` | None: the post-merge `fullHealth` failed and its failing tests passed when re-run alone, so the base isn't broken; the flaky tests show in the record, the views and "Needs you". | nowhere | - |
 | `base.moved` | On the epic, record the previous and published base heads and the default branch commit. | the epic | Delivery base updated |
+| `integration.merged` | None: the integration step shows in the record and the live view. | nowhere | - |
+| `integration.suite` | None: the integration step shows in the record and the live view. | nowhere | - |
+| `integration.requested` | None: the integration step shows in the record and the live view. | nowhere | - |
+| `integration.landed` | None: the integration step shows in the record and the live view. | nowhere | - |
 | `base.published` | None: the push shows in the record and the views; a base move posts with `base.moved`. | nowhere | - |
 | `base.merge.authorized` | None: the lane runs the merge the lead authorized, and its hand-off posts with `candidate.handed`. | nowhere | - |
 | `ownership.granted` | None: which lane may edit a file shows in the record and the views. | nowhere | - |

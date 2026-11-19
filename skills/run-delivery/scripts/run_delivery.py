@@ -7184,7 +7184,10 @@ def lead_init(args) -> None:
     overlaps = ownership_overlaps(ownership, tracked_at_base(c), shared_outputs(c))
     if overlaps:
         raise Stop(f"lanes own the same files: {'; '.join(overlaps)}")
-    seed = {"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True}, "planned": planned,
+    # The integration step's facts are read against this: written only when the delivery rejoins a target.
+    target = c.raw.get("integrationTarget")
+    integration = {"integration": {"base": c.base_branch, "target": target, "remote": c.remote}} if target else {}
+    seed = {"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True, **integration}, "planned": planned,
             "finish": finish, "laneOwnership": ownership, "regionsSettled": 0}
     for line in replace_record(c) if args.replace else []:
         print(line)
@@ -12380,7 +12383,7 @@ def lead_suite(args) -> None:
     """The lead's own run of the binding's fullHealth, under any posture, at --at or the base head on the remote: in a
     detached checkout of that commit under the binding's work folder, prepared first and removed after, so nothing the
     lead does in its own checkout reaches the run. Its result is one line of the flow log's suite.jsonl, which the lead
-    cites when marking a finish line; it journals nothing."""
+    cites when marking a finish line, and, on a record with an integration step, an integration.suite entry."""
     c = cfg()
     binding = c.shelf.json(".agents/orchestration.json") or {}
     if not binding.get("fullHealth"):
@@ -12400,28 +12403,100 @@ def lead_suite(args) -> None:
     # run_group, and its checkout removed, by in_detached_checkout.
     began = time.monotonic()
 
-    def suite(checkout: Path) -> tuple[int, str, tuple[str | None, str | None]]:
+    def suite(checkout: Path) -> tuple[int, str, tuple[str | None, str | None], float | None]:
         asked = program_version(argv[0], checkout)
         try:
             code, out = run_group(argv, checkout, full_health_timeout(binding))
         except Stop as error:  # its timeout: a failure, with the version already read
             code, out = 1, str(error)
-        return code, out, asked
+        return code, out, asked, suite_budget(argv, checkout)
     print(f"lead-suite: running {shlex.join(argv)} at {commit[:10]} in {checkout}", flush=True)
+    started = True
     try:
-        code, out, (version, unread) = in_detached_checkout(c, commit, checkout, suite, full_health_timeout(binding))
+        code, out, (version, unread), budget = in_detached_checkout(c, commit, checkout, suite,
+                                                                    full_health_timeout(binding))
     except Stop as error:  # the checkout or a prepare step failed, before the interpreter was asked
-        code, out, version, unread = 1, str(error), None, "the run ended before its interpreter was asked"
+        code, out, version, unread, budget = 1, str(error), None, "the run ended before its interpreter was asked", None
+        started = False
     seconds = round(time.monotonic() - began, 1)
-    result = "passed" if code == 0 else "failed"
+    # Exit 3 is over its budget only where the run itself was held to a suite-budget/1 file; elsewhere it is a failure.
+    result = ("unreadable" if not started else "passed" if code == 0 else
+              "over-budget" if code == 3 and budget is not None else "failed")
     append_log("suite", c.delivery, {"commit": commit, "result": result, "exit": code, "argv": argv, "seconds": seconds,
                                      "output": out[-2000:], "platform": platform.platform(), "interpreter": version,
                                      **({"interpreterUnread": unread} if unread else {})})
+    integration = record_integration()
+    if integration:
+        state_tool("journal", "--kind", "integration.suite", "--subject", c.delivery, "--data", json.dumps(
+            {"head": commit, "result": result, "seconds": seconds,
+             **({"budgetSeconds": budget} if budget is not None else {})}))
     print(out[-2000:].rstrip())
     print(f"lead-suite: {result} at {commit[:10]} (exit {code}, {seconds}s); "
-          f"recorded in {flow_log('suite', c.delivery)}")
+          f"recorded in {flow_log('suite', c.delivery)}" + ("" if not integration else " and the journal"))
     if code:
-        sys.exit(code if 0 < code < 256 else 1)
+        raise SystemExit(code if 0 < code < 256 else 1)
+# The run's budget: the file a --budget argument names, read in the run's own checkout at the head it ran, as its
+# wall seconds when it reads as suite-budget/1, and None otherwise.
+def suite_budget(argv: list[str], checkout: Path) -> float | None:
+    named = next((argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--budget"),
+                 next((arg.split("=", 1)[1] for arg in argv if arg.startswith("--budget=")), None))
+    if not named:
+        return None
+    try:
+        budget = json.loads((checkout / named).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(budget, dict) or budget.get("schemaVersion") != "suite-budget/1":
+        return None
+    wall = budget.get("wallSeconds")
+    return wall if isinstance(wall, (int, float)) and not isinstance(wall, bool) and wall >= 0 else None
+# The record's integration step, {base, target, remote}, or None for a delivery without one or with no record yet.
+def record_integration() -> dict | None:
+    if not (cfg().state / "state.json").exists():
+        return None
+    integration = load_state()["state"]["meta"].get("integration")
+    return integration if isinstance(integration, dict) else None
+# The lead's record of the integration step: each fact under the delivery's own key, at a head the lead checkout has.
+def lead_integrate(args) -> None:
+    """Journal one fact of the integration step: the target merged in, an integration review round, the change request
+    into the target, or its merge. Refused, with nothing journalled, on a record without an integration step and for a
+    head that isn't a commit here, once the target is fetched."""
+    c = cfg()
+    integration = record_integration()
+    if not integration:
+        raise Stop("the record has no integration step: lead-init writes one only for a delivery with an "
+                   "integrationTarget")
+    target, remote = integration["target"], integration["remote"]
+    git("fetch", "-q", remote, target, check=False)
+    head = git("rev-parse", "--verify", "--quiet", f"{args.head}^{{commit}}", check=False)
+    if not head:
+        raise Stop(f"{args.head} is no commit in this repository; fetch it, or name another")
+    if args.fact == "merged":
+        parents = git("rev-list", "--parents", "-n", "1", head).split()[1:]
+        if len(parents) != 2:
+            raise Stop(f"{args.head} is no merge of {target}: it has {len(parents)} parents, and a merge has two")
+        kind, data = "integration.merged", {"target": target, "targetHead": parents[1], "head": head,
+                                            "conflicts": list(args.conflict or [])}
+    elif args.fact == "round":
+        verdicts = {}
+        for said in args.verdict:
+            lens, _, verdict = said.partition("=")
+            if not lens or verdict not in ("approve", "changes"):
+                raise Stop(f"--verdict {said} is not LENS=approve or LENS=changes")
+            verdicts[lens] = verdict
+        counts = args.findings.split(",")
+        if len(counts) != 4 or not all(n.isdigit() for n in counts):
+            raise Stop(f"--findings {args.findings} is not four counts, P0,P1,P2,P3")
+        moment = now()
+        kind, data = "review.round", {"round": args.round, "head": head, "verdicts": verdicts,
+                                      "findings": dict(zip(("P0", "P1", "P2", "P3"), map(int, counts))),
+                                      "startedAt": args.started or moment, "finishedAt": args.finished or moment}
+    elif args.fact == "requested":
+        kind, data = "integration.requested", {"changeRequest": args.change_request, "head": head}
+    else:
+        kind, data = "integration.landed", {"target": target, "head": head}
+    done = state_tool("journal", "--kind", kind, "--subject", c.delivery, "--data", json.dumps(data))
+    print(f"recorded {kind} {journal_id(done)} at {head[:10]}")
 
 
 def moved_head_stands(c, doc: dict, head: str, last: dict | None) -> str:
@@ -13901,6 +13976,24 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=lead_carry_review)
     p = command(sub, "lead-suite", help="run the binding's fullHealth at a commit, in a detached checkout of its own")
     p.add_argument("--at", help="the commit to run at; the base head on the remote when absent")
+    q = command(sub, "lead-integrate", help="journal a fact of the integration step under the delivery's own key")
+    facts = q.add_subparsers(dest="fact", required=True)
+    one = facts.add_parser("merged", help="the target merged into the integration candidate at --head")
+    one.add_argument("--head", required=True, help="the merge commit, whose second parent is the target's head")
+    one.add_argument("--conflict", action="append", help="a path whose conflict was resolved by hand; repeat for each")
+    one = facts.add_parser("round", help="an integration review round on the candidate at --head")
+    one.add_argument("--round", type=int, required=True, help="the round's number, from 1")
+    one.add_argument("--head", required=True, help="the candidate the round read")
+    one.add_argument("--verdict", action="append", required=True, help="LENS=approve or LENS=changes; one each lens")
+    one.add_argument("--findings", required=True, help="the round's finding counts, P0,P1,P2,P3")
+    one.add_argument("--started", help="when the round started; now when absent")
+    one.add_argument("--finished", help="when the round finished; now when absent")
+    one = facts.add_parser("requested", help="the change request into the target, opened or moved to --head")
+    one.add_argument("--change-request", required=True, help="the change request's address")
+    one.add_argument("--head", required=True, help="the head it was opened at")
+    one = facts.add_parser("landed", help="the change request into the target merged")
+    one.add_argument("--head", required=True, help="the target's new head")
+    q.set_defaults(fn=lead_integrate)
     p.add_argument("extra", nargs=argparse.REMAINDER, help="after --, arguments appended to the fullHealth argv")
     p.set_defaults(fn=lead_suite)
     p = command(sub, "lead-decide", help="record a decision and why it was made")
