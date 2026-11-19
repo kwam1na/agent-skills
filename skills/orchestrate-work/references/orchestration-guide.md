@@ -684,9 +684,9 @@ three steps, with the supervisor or without it:
    that line when marking the finish line that asks for the suite. On a
    delivery with an `integrationTarget`, whose record `lead-init` gives an
    integration step, it also journals the run as `integration.suite` at that
-   commit: `passed`, `over-budget` when every test passed and a run held to a
-   `suite-budget/1` file went over it, `failed`, or `unreadable` when its
-   checkout or a prepare step failed first. Record each merge of the target
+   commit: `passed`, `over-budget` when every test passed and a run held to
+   the suite's own budget file with `--budget` went over it, `failed`, or
+   `unreadable` when its checkout or a prepare step failed first. Record each merge of the target
    into the integration with `lead-integrate merged --head <merge>`, adding
    `--conflict <path>` for each path whose conflict you resolved by hand.
 2. **Review the integration.** Run `$review-work` with the delivery's lenses and
