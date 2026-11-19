@@ -514,11 +514,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
-          "sha256": "652936f3e20dc814ef604bd509553a78f84fa63600df6b3377b6d52a524816bb"
+          "sha256": "3ef3229d692a1a9768fd976f1c9a7c2dd92730e27822df1c9ac94ce0f668ad50"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "0c6a7e2c4344118e5998df3e5fdd00ac9aa78883de33747fac6e570e6c60bb75"
+          "sha256": "9686a6d5880da530eeb0bac496a6b10d573a3c81a851d3c9d274ebc87964cea9"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -530,7 +530,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
-          "sha256": "17d9077c44884be42373689eb371729902ccd8a6e70bf305315446562294634e"
+          "sha256": "b3d18dc08ac9a54880d2f845310d23a16be4e3f298a616d8d6ba2271b9756c59"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
@@ -1083,7 +1083,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "20b1afdabacc076166ddb808b39c141906b093456495d1d3189a8f0fb95fb0e3"
+          "sha256": "ef18a98cc63d5111637adb83f9639a4f7ca1242bfe36fe1fbabefba5361ab293"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1111,7 +1111,7 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "f0d369cb29ce4a1f5754879096a8cddfa909c662d93771ef88130a66b52da136"
+          "sha256": "e3391a3240bbe2eb203199c52e7eb4e4c4a2d80218e693d1159f93eab89b227d"
         },
         {
           "path": "skills/run-delivery/references/config.md",
@@ -1127,7 +1127,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "29e90ce8ae0875673f2b9333876f9746f60cbba19d262dc52d18bb9bda6a5a7f"
+          "sha256": "f4e5408ff9ac84cad260cb60c9d3bb62d31c62d2698c227996aa2de7cb826862"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

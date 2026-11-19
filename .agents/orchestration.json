@@ -1417,6 +1417,24 @@
         "timeoutSeconds": 5400
       },
       {
+        "id": "tests.test_run_delivery_compounding",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_compounding.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_compounding.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_run_delivery_finish",
         "argv": [
           ".venv/bin/python",

@@ -262,6 +262,19 @@
       "type": "string",
       "pattern": "\\S"
     },
+    "compoundingOutcome": {
+      "description": "What the delivery's compound-learning decision was: a learning preserved, none needed, or the decision skipped at a lead-close.",
+      "enum": [
+        "required",
+        "not-required",
+        "skipped"
+      ]
+    },
+    "compoundingReference": {
+      "description": "Where the preserved learning is, such as a solution note's path. It holds something other than spaces.",
+      "type": "string",
+      "pattern": "\\S"
+    },
     "rerunVerdict": {
       "description": "What a re-run on the main line found: the main line is broken, the failure is the piece's, or no verdict was reached.",
       "enum": [
@@ -2435,6 +2448,46 @@
         "heading": "Finish line met"
       },
       "instruction": "On the epic: the finish line and the evidence that met it."
+    },
+    "compounding.recorded": {
+      "altitude": "headline",
+      "tone": "decision",
+      "label": "Compounding decided",
+      "data": {
+        "outcome": {
+          "type": "compoundingOutcome"
+        },
+        "reference": {
+          "type": "compoundingReference",
+          "optional": true
+        },
+        "why": {
+          "type": "prose",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": {
+          "by": "outcome",
+          "cases": {
+            "required": "A learning was preserved",
+            "not-required": "No new learning to preserve"
+          },
+          "otherwise": "The compound-learning decision was skipped"
+        },
+        "line": "[{reference}][{why}]"
+      },
+      "explain": "The lead's compound-learning decision for the delivery, which its close waits on.",
+      "tracker": {
+        "posts": "epic",
+        "heading": "Compounding decided"
+      },
+      "instruction": "On the epic: whether a learning was preserved and where, or why none was, or why the decision was skipped."
     },
     "hook.held": {
       "altitude": "story",

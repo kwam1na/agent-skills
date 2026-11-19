@@ -8916,6 +8916,13 @@ def lead_close(args) -> None:
     busy = [q["subject"] for q in state["queue"] if q.get("stage") not in ("merged", "stopped")]
     if busy or (state["meta"].get("checking") or {}).get("now"):
         raise Stop(f"the queue still holds work ({busy or 'a check is running'}); let it finish or stop it first")
+    skipped = None
+    if decision_owed(c, doc):
+        if args.without_compounding is None:
+            raise Stop(f"{DECISION_HOLD} is not recorded since the delivery last reopened: record it with "
+                       f"{flow_command()} lead-compound --required --ref REF, or --not-required --why TEXT, or close "
+                       "without it with lead-close --without-compounding WHY")
+        skipped = worded(args.without_compounding, "--without-compounding")
     # The run is stopped while the supervisor finishes its pass, which under --once waits on it, and again once the
     # supervisor has stopped, in case that pass started one.
     runs: list[str | None] = []
@@ -8925,6 +8932,11 @@ def lead_close(args) -> None:
             print(line)
     lead = c.lane_checkout(c.delivery)
     done, left = [], []
+    if skipped is not None:
+        # Journalled once the supervisor runs no pass, so none closes out beside this close on the decision it frees.
+        entry = journal_id(state_tool("journal", "--kind", COMPOUNDING_KIND, "--data",
+                                      json.dumps({"outcome": "skipped", "why": skipped})))
+        done.append(f"recorded {DECISION_HOLD} as skipped (journal entry {entry}): {skipped.strip()}")
     # Holds nothing: before the final render and the archive, so both carry it.
     try:
         posture = delivery_posture(c)
@@ -9230,7 +9242,8 @@ def supervisor_down_words(state: Path) -> str:
 def waits_on(c) -> str:
     """What the supervisor's last pass found holding the close: its "Needs you", and the close condition's open parts.
     Read from its pass log, where each pass writes it; empty before the first pass, or once nothing holds it. The
-    finish lines not met are read from the record as it stands, so a line marked since the pass is not named."""
+    finish lines not met and the compound-learning decision are read from the record as it stands, so a line marked
+    or a decision recorded since the pass is not named."""
     unmet_lines = "finish lines not met: "  # as close_holds words that part
     path = lead_file(c, "supervisor.jsonl")
     lines = [line for line in path.read_text().splitlines() if line.strip()] if path.exists() else []
@@ -9249,6 +9262,17 @@ def waits_on(c) -> str:
              if isinstance(line, dict) and not line.get("met")]
     if unmet:
         held.insert(at, unmet_lines + ", ".join(unmet))
+    # The compound-learning decision, as the record stands: a decision recorded since the pass drops it.
+    try:
+        owed = decision_owed(c, shown_record(c.release, c.state))
+    except (Stop, ValueError, OSError):
+        owed = DECISION_HOLD in held
+    at = held.index(DECISION_HOLD) if DECISION_HOLD in held else sum(
+        1 for item in held if item.startswith(("not handed off: ", "not merged: ", unmet_lines,
+                                               "lanes not idle or done: ", "not cleaned up: ")))
+    held = [item for item in held if item != DECISION_HOLD]
+    if owed and last.get("closeHeldBy") is not None:
+        held.insert(at, DECISION_HOLD)
     if not held:
         return ""
     shown = "; ".join(held[:5]) + (f"; and {len(held) - 5} more" if len(held) > 5 else "")
@@ -9316,8 +9340,13 @@ def finishing_command(c, doc: dict) -> str:
     # holding need waits on the lead, so a resumed supervisor would hold on it for good.
     with configured(c):  # doctor reads a delivery's close while its own configuration is the global one
         needs = [item for item in needs_you(c, doc, closing=True) if not clears_by_itself(item)]
-    unmet = [hold for hold in close_holds(c, doc, needs) if not hold.startswith("not cleaned up:")]
-    return "lead-run --resume" if not unmet else "lead-close"
+    unmet = [hold for hold in close_holds(c, doc, needs) if not hold.startswith("not cleaned up:") and hold != DECISION_HOLD]
+    command = "lead-run --resume" if not unmet else "lead-close"
+    if decision_owed(c, doc):
+        # The close waits on the decision first, whichever finishes it.
+        return (f"lead-compound --required --ref REF, or --not-required --why TEXT, then {command}; or lead-close "
+                "--without-compounding WHY")
+    return command
 
 
 @contextlib.contextmanager
@@ -9345,7 +9374,7 @@ def closed_status(c) -> str | None:
     if progress == "partway":
         command = finishing_command(c, doc)
         return (f"stopped partway through the close; finish it with {flow_command()} {command}"
-                + ("; lead-close doesn't wait for the tracker" if command == "lead-close" else ""))
+                + ("; lead-close doesn't wait for the tracker" if command.endswith("lead-close") else ""))
     if progress == "finished":
         return "stopped; the delivery is closed. " + (closed_words(closed) if closed else "")
     if closed:
@@ -9354,10 +9383,10 @@ def closed_status(c) -> str | None:
 
 
 def closed_words(closed: dict) -> str:
-    """Where a closed delivery went, and what is left: the friction note to write up, and the host's steps."""
+    """Where a closed delivery went: its archive, and the friction note archived in it, written up before the close."""
     note = closed.get("friction")
-    return f"Archive {closed.get('archive')}" + (f"; write up the friction note {note}, then archive the lane "
-                                                  "sessions" if note else "")
+    return f"Archive {closed.get('archive')}" + (f"; its friction note is {note}; archive the lane sessions"
+                                                  if note else "")
 
 
 def supervisor_off() -> bool:
@@ -10389,8 +10418,19 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           f"refuses drafts: {', '.join(drafts)}. Mark each ready, then lead-accept --requeue it if it "
                           "stopped", "clears": "marking each ready, then lead-accept --requeue for one that stopped",
                           "kind": "drafts", "who": "operator", "fields": {"subjects": drafts}})
+    if decision_owed(c, doc) and not open_work(c, doc):
+        stub = friction_stub_path(c)
+        items.append({"holding": True, "source": COMPOUNDING_SOURCE,
+                      "text": f"The compound-learning decision: write up the friction stub {stub} (the supervisor "
+                      "writes it once nothing else holds the close), run compound-learning on it, and record its "
+                      f"decision with {flow_command()} lead-compound",
+                      "clears": f"{flow_command()} lead-compound --required --ref REF, or --not-required --why TEXT",
+                      "kind": "compounding", "who": "lead", "fields": {"stub": str(stub)}})
     items += record_needs(doc, items)
     return say_needs(c, doc, items + waits_needing(c, doc, items))
+
+
+COMPOUNDING_SOURCE = "compound-learning"
 
 
 def lane_named(lane: str) -> str:
@@ -10721,14 +10761,8 @@ def removed_subjects(c) -> set[str]:
 
 def close_holds(c, doc: dict, needs: list[dict]) -> list[str]:
     """What holds the close: the close condition, read as the reasons it doesn't hold yet."""
-    state, removed = doc["state"], removed_subjects(c)
-    holds = []
-    planned = [p["subject"] for p in state.get("planned", []) if p["subject"] not in removed and p["stage"] != "settled"]
-    if planned:
-        holds.append(f"not handed off: {', '.join(planned)}")
-    unmerged = [q["subject"] for q in state["queue"] if q["stage"] != "merged" and q["subject"] not in removed]
-    if unmerged:
-        holds.append(f"not merged: {', '.join(unmerged)}")
+    state = doc["state"]
+    holds = open_work(c, doc)
     unmet = [line["id"] for line in state["finish"] if not line.get("met")]
     if unmet:
         holds.append(f"finish lines not met: {', '.join(unmet)}")
@@ -10741,7 +10775,9 @@ def close_holds(c, doc: dict, needs: list[dict]) -> list[str]:
             and c.lane_checkout(q["subject"]).exists()]
     if left:
         holds.append(f"not cleaned up: {', '.join(left)}")
-    holds += [item["text"] for item in needs if item["holding"]]
+    if decision_owed(c, doc):
+        holds.append(DECISION_HOLD)
+    holds += [item["text"] for item in needs if item["holding"] and item["source"] != COMPOUNDING_SOURCE]
     return holds
 
 
@@ -11431,6 +11467,56 @@ def last_close(journal: list[dict]) -> dict | None:
     return next((e for e in sorted(journal, key=lambda e: e["id"], reverse=True) if e["kind"] == "delivery.closed"), None)
 
 
+COMPOUNDING_KIND = "compounding.recorded"
+# How the close condition names the compound-learning decision while it is owed.
+DECISION_HOLD = "the compound-learning decision"
+
+
+def reopened_at(journal: list[dict]) -> int:
+    """The id of the entry that last reopened the delivery after a close, or 0 when it never was."""
+    at, closed = 0, False
+    for entry in sorted(journal, key=lambda e: e["id"]):
+        if entry["kind"] == "delivery.closed":
+            closed = True
+        elif entry["kind"] in REOPENING and closed:
+            at, closed = entry["id"], False
+    return at
+
+
+def compounding_decision(journal: list[dict]) -> dict | None:
+    """The latest compound-learning decision recorded since the delivery last reopened, or None."""
+    since = reopened_at(journal)
+    return next((e for e in sorted(journal, key=lambda e: e["id"], reverse=True)
+                 if e["kind"] == COMPOUNDING_KIND and e["id"] > since), None)
+
+
+def close_finished(c, doc: dict) -> bool:
+    """Whether the delivery's close has finished: its delivery.closed entry is named by a finished mark or by
+    closed.json. Such a close stands as it is, with or without a decision, as a record kept before decisions does."""
+    closed = latest_close(doc["journal"])
+    return closed is not None and (close_progress(doc) == "finished" or kept_close(c, closed) is not None)
+
+
+def decision_owed(c, doc: dict) -> bool:
+    """Whether the close waits on the compound-learning decision: none recorded since the latest reopening, and no
+    finished close to exempt it."""
+    return compounding_decision(doc["journal"]) is None and not close_finished(c, doc)
+
+
+def open_work(c, doc: dict) -> list[str]:
+    """The work still open, as the close condition words it: a planned story not settled, and a queued one not
+    merged, each leaving out the subjects a plan change removed."""
+    state, removed = doc["state"], removed_subjects(c)
+    holds = []
+    planned = [p["subject"] for p in state.get("planned", []) if p["subject"] not in removed and p["stage"] != "settled"]
+    if planned:
+        holds.append(f"not handed off: {', '.join(planned)}")
+    unmerged = [q["subject"] for q in state["queue"] if q["stage"] != "merged" and q["subject"] not in removed]
+    if unmerged:
+        holds.append(f"not merged: {', '.join(unmerged)}")
+    return holds
+
+
 def tracker_owed(c, doc: dict, closed: dict) -> str | None:
     """What the tracker hasn't had yet through the closing entry, or None when it has every update."""
     mode = tracker_conf(c)["mode"]
@@ -11575,20 +11661,59 @@ def workflow_gaps_step(c, archive: Path, found: list[dict]) -> Path | None:
     return path
 
 
-def friction_step(c, archive: Path, said: list[str], shown: list[str], found: list[dict] = ()) -> Path:
-    """The friction note stub beside the archive, for the lead's compound-learning pass, with every gap noted."""
-    note = archive.parent / f"{archive.name}.friction.md"
-    if note.exists():
-        return note
-    lines = [f"# {c.delivery}: friction", "", "Written by the supervisor at close-out. Add what was hard and why, then "
-             "run compound-learning on it.", "", "## Shown, never holding", ""]
+HARD = "## What was hard"
+LEFT = "## What the close-out left to you"
+# The stub's sections the supervisor writes, which end what the lead wrote under HARD.
+GENERATED = ("## Shown, never holding", "## Gaps noted", LEFT)
+
+
+def friction_stub_path(c) -> Path:
+    """Where the friction stub is kept until the close-out archives it: among the lead-side files."""
+    return lead_file(c, "friction.md")
+
+
+def write_friction_stub(c, shown: list[str], found: list[dict]) -> Path:
+    """Write the friction stub's generated sections, "Shown, never holding" and "Gaps noted", as known now, keeping
+    whatever the lead wrote under "What was hard". The supervisor writes it once nothing but the compound-learning
+    decision holds the close, and again on each later pass until the close-out archives it."""
+    stub = friction_stub_path(c)
+    hard = ["- (yours: what was hard, and why)", ""]
+    if stub.exists():
+        lines = stub.read_text().splitlines()
+        if HARD in lines:
+            body = lines[lines.index(HARD) + 1:]
+            # The lead's text runs to the first generated section, its own "## " sections included.
+            end = next((n for n, line in enumerate(body) if line in GENERATED), len(body))
+            kept = body[:end]
+            while kept and not kept[0].strip():
+                kept = kept[1:]
+            hard = [*kept] if kept else hard
+            if hard[-1].strip():
+                hard.append("")
+    lines = [f"# {c.delivery}: friction", "", "Written by the supervisor once the work was done. Write what was hard, "
+             "and why, under \"What was hard\", run compound-learning on this note, and record its decision with "
+             f"{flow_command()} lead-compound. The other sections are rewritten on each pass until the close-out "
+             "archives the note.", "", HARD, "", *hard, "## Shown, never holding", ""]
     lines += [f"- {text}" for text in shown] or ["- (none)"]
     lines += ["", *gaps.friction_section(list(found))]
-    lines += ["## What the close-out left to you", ""]
-    lines += [f"- {text}" for text in said if text.startswith("left ")]
-    lines += [f"- Remove the lead's checkout {c.lane_checkout(c.delivery)} once you no longer need it.",
-              "- Archive the lane sessions with your host's own tools.", ""]
-    note.write_text("\n".join(lines))
+    stub.parent.mkdir(parents=True, exist_ok=True)
+    staging = stub.with_name(f".{stub.name}.{os.getpid()}")
+    staging.write_text("\n".join(lines))
+    os.replace(staging, stub)
+    return stub
+
+
+def archived_stub(c, archive: Path, said: list[str]) -> Path:
+    """The friction stub's archived copy, with "What the close-out left to you" written after the archive, once."""
+    note = archive / c.flow_log.name / friction_stub_path(c).name
+    text = note.read_text() if note.exists() else ""
+    if LEFT not in text.splitlines():
+        lines = [LEFT, ""]
+        lines += [f"- {line}" for line in said if line.startswith("left ")]
+        lines += [f"- Remove the lead's checkout {c.lane_checkout(c.delivery)} once you no longer need it.",
+                  "- Archive the lane sessions with your host's own tools.", ""]
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text(text + ("" if not text or text.endswith("\n") else "\n") + "\n".join(lines))
     return note
 
 
@@ -11600,22 +11725,31 @@ def close_out(c, flapping: tuple[str, ...] = (), wait: bool = False) -> tuple[li
         said.append(line)
         if not ok:
             return said, False
-    closed = latest_close(load_state()["journal"])
+    doc = load_state()
+    closed = latest_close(doc["journal"])
+    if kept_close(c, closed) is None:
+        if decision_owed(c, doc):
+            # A delivery.closed journalled by hand: the archive waits for the decision, as lead-close does.
+            said.append(f"held before the archive: {DECISION_HOLD} is not recorded; record it with "
+                        f"{flow_command()} lead-compound")
+            return said, False
+        # The stub as known now, written first when no pass wrote it, so every supervised close archives one.
+        # Read once the steps above ran, so a filing the publisher refused for good during them is listed.
+        shown = [item["text"] for item in needs_you(c, doc, flapping, closing=True) if not item["holding"]]
+        write_friction_stub(c, shown, gaps.gaps(doc["journal"], REOPENING))
     archive, archived = archive_step(c, closed)
     said += archived
     said += finish_close(c, closed, archive)
-    # Read once the steps above ran, so a filing the publisher refused for good during them is listed.
     doc = load_state()
-    shown = [item["text"] for item in needs_you(c, doc, flapping, closing=True) if not item["holding"]]
     found = gaps.gaps(doc["journal"], REOPENING)
     report = workflow_gaps_step(c, archive, found)
-    note = friction_step(c, archive, archived, shown, found)
+    note = archived_stub(c, archive, archived)
     marker = lead_file(c, "closed.json")
     marker.write_text(json.dumps({**load_json(marker), "friction": str(note),
                                   **({"workflowGaps": str(report)} if report else {})}, indent=2) + "\n")
     if report:
         said.append(f"wrote the workflow gaps {report}: sending it on is your call")
-    said.append(f"wrote the friction note stub {note}: write it up, and archive the lane sessions")
+    said.append(f"archived the friction note {note}; archive the lane sessions")
     return said, True
 
 
@@ -11897,6 +12031,13 @@ class Supervisor:
                 entry["cleanupBeforeClose"] = cleanup()
                 holds = close_holds(c, load_state(), needs)
             entry["needsYou"], entry["closeHeldBy"] = needs, holds
+            # The friction stub, first written once only the decision holds the close, then kept current until the
+            # close-out archives it.
+            if holds == [DECISION_HOLD] or (holds and friction_stub_path(c).exists()
+                                            and kept_close(c, latest_close(doc["journal"])) is None):
+                fresh = load_state()
+                entry["friction"] = str(write_friction_stub(
+                    c, [item["text"] for item in needs if not item["holding"]], gaps.gaps(fresh["journal"], REOPENING)))
             if not holds:
                 entry["closeOut"], closed = close_out(c, self.flapping(), self.once)
                 render_views(c)
@@ -12217,6 +12358,24 @@ def lead_decide(args) -> None:
     text, why = worded(args.text, "--text"), worded(args.why, "--why")
     done = state_tool("journal", "--kind", "decision.recorded", "--text", text, "--why", why, *causes(args.because), *(["--subject", args.subject] if args.subject else []))
     print(f"recorded decision {journal_id(done)}")
+
+
+def lead_compound(args) -> None:
+    """Record the delivery's compound-learning decision, which its close waits on: a learning preserved, with where it
+    is, or none needed, with why. Refused, with nothing journalled, for a missing or empty reference or reason, and
+    while work stands open, read as the close condition reads it, so the decision follows the work."""
+    c = cfg()
+    if args.required:
+        data = {"outcome": "required", "reference": worded(args.ref, "--ref").strip()}
+    else:
+        data = {"outcome": "not-required", "why": worded(args.why, "--why")}
+    doc = load_state()
+    standing = open_work(c, doc)
+    if standing:
+        raise Stop(f"work is still open ({'; '.join(standing)}): record {DECISION_HOLD} once it is done, with every "
+                   "gap noted")
+    done = state_tool("journal", "--kind", COMPOUNDING_KIND, "--data", json.dumps(data))
+    print(f"recorded {DECISION_HOLD}, {data['outcome']} (journal entry {journal_id(done)})")
 
 
 def lead_block(args) -> None:
@@ -13712,7 +13871,17 @@ def main(argv: list[str] | None = None) -> None:
     q.set_defaults(fn=lead_plan)
     q = command(plan_commands, "why", help="give a recorded change its reason")
     q.add_argument("change"); q.add_argument("--why", required=True); q.set_defaults(fn=lead_plan)
-    p = command(sub, "lead-close"); p.set_defaults(fn=lead_close)
+    p = command(sub, "lead-compound", help="record the compound-learning decision the close waits on")
+    decided = p.add_mutually_exclusive_group(required=True)
+    decided.add_argument("--required", action="store_true", help="a learning was preserved: give --ref")
+    decided.add_argument("--not-required", action="store_true", help="no new learning: give --why")
+    p.add_argument("--ref", help="with --required: where the learning is, such as a solution note's path")
+    p.add_argument("--why", help="with --not-required: why no learning needs preserving")
+    p.set_defaults(fn=lead_compound)
+    p = command(sub, "lead-close", help="close the delivery by hand, once delivery.closed is journalled")
+    p.add_argument("--without-compounding", metavar="WHY",
+                   help="close with the compound-learning decision recorded as skipped, for this reason")
+    p.set_defaults(fn=lead_close)
     p = command(sub, "view", help="serve the record's live view, or an archived copy's, without a checkout")
     p.add_argument("--archive", type=Path, help="a copy of the record, such as the supervisor's latest")
     p.add_argument("--port", type=int, default=0, help="the port; 0 picks a free one")
