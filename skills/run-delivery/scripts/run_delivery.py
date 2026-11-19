@@ -7554,10 +7554,15 @@ def no_summary(key: str) -> str:
 
 
 def story_readiness(c, key: str) -> tuple[str, str | None]:
-    """Whether a story's tracker item offers the first start move, from the tracker snapshot: ("ready", None),
-    ("not-ready", why), or ("not-checked", why) when the snapshot can't say. Nothing to check with no start move, or
-    for an item already under way. It reads; it never moves anything."""
-    moves = tracker_conf(c)["transitions"].get("start") or []
+    """Whether a story's tracker item offers the first start move not yet made, from the tracker snapshot: ("ready",
+    None), ("not-ready", why), or ("not-checked", why) when the snapshot can't say. It walks the start moves as the
+    publisher's move does: a move whose `targets` entry is the item's status is made, and a backlog item with every
+    move made is ready. An item with a status and no offered moves is on a tracker that restricts no move, so its next
+    move reads as offered. Nothing to check with no start move, or for an item already under way. It reads; it never
+    moves anything."""
+    transitions = tracker_conf(c)["transitions"]
+    moves = transitions.get("start") or []
+    targets = transitions.get("targets") or {}
     if not moves:
         return "ready", None
     items = tracker_snapshot_items(c)
@@ -7568,13 +7573,15 @@ def story_readiness(c, key: str) -> tuple[str, str | None]:
         return "not-checked", f"{key}: readiness wasn't checked: the tracker snapshot doesn't list it"
     if item.get("state") != "backlog":
         return "ready", None
+    status = item.get("status")
     offered = item.get("offeredTransitions")
-    if not isinstance(offered, list):
+    if not isinstance(offered, list) and not status:
         return "not-checked", f"{key}: readiness wasn't checked: the tracker snapshot doesn't list its offered moves"
-    if moves[0] in offered:
+    following = next((move for move in moves if not status or targets.get(move) != status), None)
+    if following is None or not isinstance(offered, list) or following in offered:
         return "ready", None
-    return "not-ready", (f"{key} is in {item.get('status') or 'a status the snapshot does not name'}: "
-                         f"\"{moves[0]}\" isn't offered; refine it first")
+    return "not-ready", (f"{key} is in {status or 'a status the snapshot does not name'}: "
+                         f"\"{following}\" isn't offered; refine it first")
 
 
 def is_lead_checkout(c, branch: str) -> bool:

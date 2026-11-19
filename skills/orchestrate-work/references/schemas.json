@@ -3679,7 +3679,7 @@
               "minLength": 1
             },
             "offeredTransitions": {
-              "description": "Tracker snapshots only, optional: the names of the moves the tracker offers from that status, each once. Readiness before assignment reads whether the first configured start move is among them; without this field it isn't checked.",
+              "description": "Tracker snapshots only, optional: the names of the moves the tracker offers from that status, each once. Readiness before assignment walks the configured start moves, counting a move whose configured target is the status as made, and reads whether the first move not yet made is among them. An item with a status and without this field is on a tracker that restricts no move, so that move reads as offered; with neither, readiness isn't checked.",
               "type": "array",
               "items": {
                 "type": "string",
