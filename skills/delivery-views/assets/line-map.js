@@ -221,9 +221,22 @@
   }
   var needsBlock = document.getElementById("delivery-needs");
   var NEEDS = needsBlock ? readNeeds(needsBlock.textContent) : null;
+  // What each lane has pushed, as the supervisor's branch read wrote it beside the record: { at, lanes, files, more },
+  // or { unreadable }. With no block no pass has read the branches yet.
+  var filesBlock = document.getElementById("delivery-files");
+  var FILES = filesBlock ? readNeeds(filesBlock.textContent) : null;
   // What a closed delivery left open, as the renderer derived it from the record and said it from the table.
   var leftBlock = document.getElementById("delivery-left-open");
   var LEFT_OPEN = leftBlock ? readNeeds(leftBlock.textContent) : null;
+  // How far the integration's target moved, as the renderer counted it from its own repository: { drift: { moved, behind } }.
+  var integrationBlock = document.getElementById("delivery-integration");
+  var DRIFT = integrationBlock ? readDrift(integrationBlock.textContent) : null;
+  function readDrift(textContent) {
+    try { var block = JSON.parse(textContent); } catch (error) { return null; }
+    var drift = isObject(block) && isObject(block.drift) ? block.drift : null;
+    var count = function (value) { return typeof value === "number" && value >= 0 && Math.floor(value) === value; };
+    return drift && count(drift.moved) && count(drift.behind) ? drift : null;
+  }
   function changeLink(changeRequest) {
     var target = changeTarget(changeRequest);
     if (!target) { return el("span", "pr-num", text(changeRequest)); }
@@ -690,6 +703,62 @@
     return list(doc.journal).filter(function (entry) { return isObject(entry) && entry.subject === subject && (!kinds || kinds[entry.kind]); });
   }
 
+  /*
+   * The integration step: a delivery whose record names an integration rejoins its target after its pieces land. Its
+   * facts are the target merged in, the suite, the integration review's rounds under the delivery's own key and the
+   * change request, each at a head; the newest head any of them names is the integration's current head. A suite, a
+   * round or a request at another head is superseded; a merge only by a later merge. The landing ends it.
+   */
+  var INTEGRATION_FACTS = table({ "integration.merged": "merged", "integration.suite": "suite", "integration.requested": "requested" });
+  var INTEGRATION_STOPS = ["merged", "suite", "round", "requested"];
+  function integrationOf(doc) {
+    var meta = isObject(doc.state.meta) ? doc.state.meta : {};
+    var named = meta.integration;
+    if (!isObject(named) || !text(named.target)) { return null; }
+    var key = text(meta.trackerParent);
+    var step = { base: text(named.base), target: text(named.target), head: text(meta.baseHead) || null, merges: [],
+      latest: { merged: null, suite: null, round: null, requested: null }, landed: null };
+    list(doc.journal).forEach(function (entry) {
+      if (!isObject(entry) || !isObject(entry.data)) { return; }
+      if (entry.kind === "integration.landed") { step.landed = step.landed || entry; return; }
+      var name = INTEGRATION_FACTS[entry.kind] || (entry.kind === "review.round" && key && entry.subject === key ? "round" : null);
+      if (!name || step.landed) { return; }
+      step.latest[name] = entry;
+      if (name === "merged") { step.merges.push(entry); }
+      if (text(entry.data.head)) { step.head = entry.data.head; }
+    });
+    return step;
+  }
+  // Whether a fact still stands: a merge until a later one, anything else while its head is the current head.
+  function standing(step, name) {
+    var entry = step.latest[name];
+    if (!entry) { return false; }
+    return name === "merged" || text(entry.data.head) === step.head;
+  }
+  function suitePasses(entry) { return Boolean(entry) && (entry.data.result === "passed" || entry.data.result === "over-budget"); }
+  function roundApproves(entry) {
+    var verdicts = entry && isObject(entry.data.verdicts) ? entry.data.verdicts : {};
+    var lenses = Object.keys(verdicts);
+    return lenses.length > 0 && lenses.every(function (lens) { return verdicts[lens] === "approve"; });
+  }
+  // Each stop's state: "filled" when its standing fact passed, "danger" or "warning" when it stands and did not, "next"
+  // for the first of the rest, and "hollow" otherwise. After the landing every stop is filled.
+  function integrationStops(step) {
+    var states = INTEGRATION_STOPS.map(function (name) {
+      if (step.landed) { return "filled"; }
+      if (!standing(step, name)) { return "hollow"; }
+      var entry = step.latest[name];
+      if (name === "suite") { return suitePasses(entry) ? "filled" : "danger"; }
+      if (name === "round") { return roundApproves(entry) ? "filled" : "warning"; }
+      return "filled";
+    });
+    var next = states.indexOf("hollow");
+    if (next >= 0) { states[next] = "next"; }
+    return states;
+  }
+  function integrationFilled(step) { return integrationStops(step).filter(function (state) { return state === "filled"; }).length; }
+  function plural(count, one, many) { return count + " " + (count === 1 ? one : many || one + "s"); }
+
   /* 1. Now */
   function drawNow(doc, all) {
     // A redraw can remove what the card describes without a mouseleave; such a card hides.
@@ -698,6 +767,7 @@
     var meta = isObject(doc.state.meta) ? doc.state.meta : {};
     var landed = all.filter(isLanded).length;
     var closed = closedEntry(doc);
+    var step = closed ? null : integrationOf(doc);
     var tally = closed ? closedTally(all) : null;
     // How far the delivery has come, said once and first on the line under the name. Every own piece has landed while a
     // sibling delivery's part is open or unread: the state tool's sentences, in place of a done count. The first says
@@ -714,6 +784,12 @@
     else if (closed && tally.landed === tally.total) { done("Every piece landed"); }
     else if (closed) { add(count, "Closed with ", figures(el("span"), "now", tally.landed + " of " + tally.total), " pieces landed"); }
     else if (!all.length) { add(count, "Nothing on the line yet"); }
+    else if (landed === all.length && step && step.landed) { done("Every piece landed"); }
+    // Every piece is in and the delivery still rejoins its target: the count in two beats, the second muted.
+    else if (landed === all.length && step) {
+      add(count, figures(el("span"), "now", plural(landed, "piece")), " landed beside " + step.target, " · ",
+        el("span", "title-beat", "Now it rejoins"));
+    }
     else if (landed === all.length) { done("Every piece has landed"); }
     else { add(count, figures(el("span"), "now", landed + " of " + all.length), " pieces have landed"); }
     var outcome = plan && isObject(plan.outcome) ? text(plan.outcome.summary) : "";
@@ -761,6 +837,8 @@
     if (behind) { nodes.push(el("p", "say say-across", behind)); }
     var status = sayLine(doc, all);
     if (status) { nodes.push(el("p", "say", status)); }
+    var rejoining = step && !step.landed && landed === all.length && all.length ? driftLine(step) : "";
+    if (rejoining) { nodes.push(figures(el("p", "say say-drift"), "drift", rejoining)); }
     // What the lead waits on in another delivery sharing the base, and what waits on the lead, as the state tool says.
     waitLines(doc, "lead", "p", "say say-wait").forEach(function (line) { nodes.push(line); });
     var panel = closed ? null : checkingPanel(doc, all);
@@ -785,6 +863,14 @@
    * The sentence under the headline. A lead's override is shown whole; the derived status repeats what the
    * panels below already say, so the page says what landed last instead.
    */
+  // How far the target moved while the work went on and how often the lead caught up: the counts only when the renderer
+  // could read them.
+  function driftLine(step) {
+    var caught = "caught up " + plural(step.merges.length, "time");
+    if (!DRIFT) { return "The lead has " + caught + "."; }
+    return step.target + " moved " + plural(DRIFT.moved, "commit") + " while this worked. The lead has " + caught +
+      ", and the gap is " + DRIFT.behind + ".";
+  }
   function sayLine(doc, all) {
     var status = isObject(doc.status) ? doc.status : {};
     if (status.source === "override" && text(status.text)) { return text(status.text); }
@@ -1548,8 +1634,11 @@
     var finish = list(doc.state.finish).filter(isObject);
     var met = finish.filter(function (line) { return line.met === true; }).length;
     var meant = closedEntry(doc) ? closedTally(all).total : all.length;
-    var total = meant + finish.length;
-    var progress = total ? (landed + met) / total : 0;
+    // An integration's four stops are the journey's last: the bar is full only once the work is on the target.
+    var step = closedEntry(doc) ? null : integrationOf(doc);
+    var stopsMeant = step ? INTEGRATION_STOPS.length : 0;
+    var total = meant + finish.length + stopsMeant;
+    var progress = total ? (landed + met + (step ? integrationFilled(step) : 0)) / total : 0;
     var box = el("div", "journey");
     box.setAttribute("aria-hidden", "true");
     add(box, el("div", "track"));
@@ -1565,7 +1654,10 @@
     }
     prev.progress = progress;
     // Without finish lines the pieces landing is the end of the journey, so it takes the end's place.
-    var stops = finish.length
+    var stops = step
+      ? [["Start", 0, "start"], ["Pieces landed", meant / total, "pieces"]].concat(
+        finish.length ? [["Finish line met", (meant + finish.length) / total, "pieces"]] : [], [["Rejoined " + step.target, 1, "end"]])
+      : finish.length
       ? [["Start", 0, "start"], ["Pieces landed", total ? meant / total : 1, "pieces"], ["Finish line met", 1, "end"]]
       : [["Start", 0, "start"], ["Pieces landed", 1, "end"]];
     stops.forEach(function (stop) {
@@ -1619,6 +1711,9 @@
   /* 2. The line */
   // The lanes' row geometry, matched by the stylesheet: each row's stops centre this far below its top, rows this far apart.
   var LINE_STOP_Y = 23, LINE_PITCH = 84, MERGE_WIDTH = 176;
+  // With an integration step the main line runs on past the join through its four stops and bends into the target,
+  // drawn this far beneath it.
+  var REJOIN_PITCH = 72, REJOIN_WIDTH = 100 + 4 * REJOIN_PITCH + 90, TARGET_DROP = 34;
   // With sibling repositories drawn, the merge widens to hold the epic's post: this repository's post keeps its x, and
   // the epic's line runs on to a join where the siblings turn in and a post of its own. The stylesheet reads both widths
   // and the room above the line from the variables the drawing sets on the track.
@@ -1683,14 +1778,17 @@
    * Beside the lanes, each lane's line turns into one main line that runs to the finish line. A lane's turn is solid
    * once it has landed everything; the main line is solid once every piece is in. Drawn to the rows' fixed geometry.
    * With siblings of the epic, the main line runs on past the finish line to the epic's post, where the drawn siblings
-   * turn in from their rows below; its words stack above it, since the siblings come in from below.
+   * turn in from their rows below; its words stack above it, since the siblings come in from below. A delivery rejoining
+   * its target draws that step instead, and the caller passes no epic while it does.
    */
   function mergeDrawing(doc, all, ends, epic, track) {
+    var step = closedEntry(doc) ? null : integrationOf(doc);
     var rows = ends.length + (epic ? epic.drawn.length : 0);
-    var width = epic ? EPIC_WIDTH : MERGE_WIDTH;
-    var height = (rows - 1) * LINE_PITCH + LINE_STOP_Y * 2;
+    var width = step ? REJOIN_WIDTH : epic ? EPIC_WIDTH : MERGE_WIDTH;
+    var height = (rows - 1) * LINE_PITCH + LINE_STOP_Y * 2 + (step ? TARGET_DROP + 24 : 0);
     var trunkY = LINE_STOP_Y + (ends.length - 1) * LINE_PITCH / 2;
-    var joinX = 100, finishX = FINISH_X;
+    var joinX = 100, finishX = step ? width - 14 : FINISH_X;
+    var postY = step ? trunkY + TARGET_DROP : trunkY;
     var svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("class", "line-merge");
     svg.setAttribute("viewBox", "0 0 " + width + " " + height);
@@ -1703,10 +1801,29 @@
     svg.setAttribute("role", "img");
     svg.setAttribute("aria-label", "Every lane merges into one main line: " + landed + " of " + all.length + " pieces landed" +
       (finish.length ? ", " + met + " of " + finish.length + " finish lines met" : "") +
+      (step ? ", then rejoins " + step.target + ": " + integrationFilled(step) + " of 4 steps done" : "") +
       (epic ? "; the epic: " + epic.landed + " of " + epic.total + " pieces landed across " + epic.repositories + " repositories" +
         (unreadNames.length ? ", " + spokenList(unreadNames) + " can't be read" : "") +
         (epic.folded.length ? ", " + epic.folded.length + " more not drawn" : "") : ""));
-    shape(svg, "path", { class: "mg-trunk" + (landed === all.length ? "" : " open"), d: "M" + joinX + " " + trunkY + "H" + finishX });
+    if (step) {
+      // The target, beneath the main line from the join to the end, where the main line bends into it.
+      var bendX = joinX + 4 * REJOIN_PITCH + 24;
+      shape(svg, "path", { class: "mg-target", d: "M" + joinX + " " + postY + "H" + finishX });
+      shape(svg, "text", { class: "mg-label mg-target-label", x: joinX, y: postY + 16 }, step.target);
+      shape(svg, "path", { class: "mg-trunk" + (landed === all.length ? "" : " open"), d: "M" + joinX + " " + trunkY + "H" + (bendX - 24) +
+        "C" + bendX + " " + trunkY + " " + (bendX - 8) + " " + postY + " " + (bendX + 16) + " " + postY });
+      shape(svg, "path", { class: "mg-trunk" + (landed === all.length ? "" : " open"), d: "M" + (joinX - 100) + " " + trunkY + "H" + joinX });
+      var names = [step.target + " in", "suite", "review", "change request"];
+      integrationStops(step).forEach(function (state, i) {
+        var x = joinX + (i + 1) * REJOIN_PITCH - 24;
+        var stop = shape(svg, "circle", { class: "mg-step " + state, cx: x, cy: trunkY, r: 6, "data-step": INTEGRATION_STOPS[i] });
+        stop.setAttribute("data-state", state);
+        shape(svg, "text", { class: "mg-step-label", x: x, y: trunkY - 14, "text-anchor": "middle" }, names[i]);
+      });
+      if (step.base) { shape(svg, "text", { class: "mg-label mg-base", x: joinX, y: trunkY - 30, "text-anchor": "middle" }, step.base); }
+    } else {
+      shape(svg, "path", { class: "mg-trunk" + (landed === all.length ? "" : " open"), d: "M" + joinX + " " + trunkY + "H" + finishX });
+    }
     if (epic) { shape(svg, "path", { class: "mg-epic" + (epic.state ? " " + epic.state : ""), d: "M" + finishX + " " + trunkY + "H" + EPIC_POST_X }); }
     ends.forEach(function (end, i) {
       var y = LINE_STOP_Y + i * LINE_PITCH;
@@ -1722,11 +1839,11 @@
     });
     shape(svg, "circle", { class: "mg-join", cx: joinX, cy: trunkY, r: 4 });
     if (epic) { shape(svg, "circle", { class: "mg-epic-join", cx: EPIC_JOIN_X, cy: trunkY, r: 4 }); }
-    shape(svg, "path", { class: "mg-post", d: "M" + finishX + " " + (trunkY - 20) + "V" + (trunkY + 20) });
-    shape(svg, "text", { class: "mg-label", x: finishX + 3, y: trunkY - 30, "text-anchor": "end" }, "Finish line");
+    shape(svg, "path", { class: "mg-post", d: "M" + finishX + " " + (postY - 20) + "V" + (postY + 20) });
+    shape(svg, "text", { class: "mg-label", x: finishX + 3, y: postY - 30, "text-anchor": "end" }, "Finish line");
     // The totals stack under the post, short enough to stay clear of the lanes turning in.
-    figureText(svg, "merge-landed", { class: "mg-count", x: finishX + 3, y: trunkY + 38, "text-anchor": "end" }, landed + "/" + all.length + " landed");
-    if (finish.length) { figureText(svg, "merge-met", { class: "mg-count", x: finishX + 3, y: trunkY + 52, "text-anchor": "end" }, met + "/" + finish.length + " met"); }
+    figureText(svg, "merge-landed", { class: "mg-count", x: finishX + 3, y: postY + 38, "text-anchor": "end" }, landed + "/" + all.length + " landed");
+    if (finish.length) { figureText(svg, "merge-met", { class: "mg-count", x: finishX + 3, y: postY + 52, "text-anchor": "end" }, met + "/" + finish.length + " met"); }
     var top = MERGE_TOP;
     if (epic) {
       shape(svg, "path", { class: "mg-epic-post" + (epic.state ? " " + epic.state : ""), d: "M" + EPIC_POST_X + " " + (trunkY - 20) + "V" + (trunkY + 20) });
@@ -1781,7 +1898,9 @@
     if (typeof svg.animate !== "function") { svg.remove(); return; }
     var origin = track.getBoundingClientRect();
     var top = parseFloat(getComputedStyle(track).paddingTop) || 0;
-    var mergeX = width - mergeWidth, joinX = mergeX + 100, finishX = mergeX + FINISH_X;
+    var rejoining = track.classList.contains("rejoining");
+    var mergeX = width - mergeWidth, joinX = mergeX + 100;
+    var finishX = rejoining ? joinX + REJOIN_PITCH - 32 : mergeX + FINISH_X;
     var trunkY = top + LINE_STOP_Y + (laneCount - 1) * LINE_PITCH / 2;
     // One unbroken stream: a swell of light runs down it at an even pace, with no gap anywhere along it. More running
     // checks bring the swells closer, never faster. Each swell builds slowly and ends at a bright head, so the eye reads
@@ -1822,6 +1941,76 @@
       var dots = shape(svg, "path", { class: "flow-approach", d: "M" + from + " " + y + "H" + to });
       dots.style.setProperty("--c", flow.colour);
     });
+  }
+  /**
+   * Before it rejoins: one row each for catching up with the target, the suite, the review and the rejoin, each saying
+   * what its latest fact shows at the head it names, struck through once a later fact moved the integration on.
+   */
+  function rejoinHead(step, head, superseded) {
+    var node = el(superseded ? "s" : "code", "rj-head" + (superseded ? " struck" : ""), short(head));
+    if (superseded) { node.setAttribute("aria-label", short(head) + ", since moved on"); }
+    return node;
+  }
+  function rejoinRow(name, label, said) {
+    var row = add(el("li", "rj-row rj-" + name), el("span", "rj-name", label));
+    row.setAttribute("data-row", name);
+    return add(row, add.apply(null, [el("span", "rj-said")].concat(said)));
+  }
+  function suiteWords(entry) {
+    var data = entry.data;
+    var took = typeof data.seconds === "number" ? spokenDuration(data.seconds) : "";
+    var against = typeof data.budgetSeconds === "number" ? " against a budget of " + spokenDuration(data.budgetSeconds) : "";
+    var words = { passed: "passed", "over-budget": "over-budget", failed: "failed", unreadable: "unreadable" }[data.result] || "failed";
+    return words + (took ? " in " + took : "") + against;
+  }
+  function rejoinLedger(doc) {
+    var step = integrationOf(doc);
+    if (!step || step.landed) { return null; }
+    var rows = [];
+    // Caught up: every merge of the target, the last one standing.
+    var merges = step.merges;
+    rows.push(rejoinRow("caught", "Caught up", merges.length ? [plural(merges.length, "time") + ", at "].concat(
+      merges.reduce(function (heads, entry, i) {
+        return heads.concat(i ? [", "] : [], [rejoinHead(step, entry.data.head, i < merges.length - 1)]);
+      }, []), list(merges[merges.length - 1].data.conflicts).length
+        ? [", resolving " + plural(list(merges[merges.length - 1].data.conflicts).length, "conflict") + " by hand"] : [])
+      : ["Not yet: the lead merges " + step.target + " in and records it."]));
+    var suite = step.latest.suite;
+    rows.push(rejoinRow("suite", "Suite", suite ? [suiteWords(suite) + " at ", rejoinHead(step, suite.data.head, !standing(step, "suite"))]
+      : ["Not yet: the lead runs the full suite at the integration's head."]));
+    var round = step.latest.round;
+    if (round) {
+      var verdicts = isObject(round.data.verdicts) ? round.data.verdicts : {};
+      var lenses = Object.keys(verdicts);
+      var asking = lenses.filter(function (lens) { return verdicts[lens] === "changes"; });
+      var marks = el("span", "rj-dots");
+      lenses.forEach(function (lens) {
+        var dot = el("i", "rj-dot " + (verdicts[lens] === "approve" ? "approve" : "changes"));
+        dot.setAttribute("title", lens + ": " + verdicts[lens]);
+        marks.appendChild(dot);
+      });
+      rows.push(rejoinRow("review", "Review", ["round " + round.data.round + " ", marks,
+        asking.length ? asking.join(" and ") + (asking.length === 1 ? " asks" : " ask") + " for changes, at " : "every lens approves, at ",
+        rejoinHead(step, round.data.head, !standing(step, "round"))]));
+    } else {
+      rows.push(rejoinRow("review", "Review", ["Not yet: the integration review records its first round."]));
+    }
+    // Rejoin: ready only when a passing suite and an approving round stand at the current head.
+    var suiteOk = standing(step, "suite") && suitePasses(suite), roundOk = standing(step, "round") && roundApproves(round);
+    var said;
+    if (suiteOk && roundOk) {
+      var request = standing(step, "requested") ? step.latest.requested : null;
+      said = ["Ready. "].concat(request ? ["The change request ", changeLink(request.data.changeRequest), " is open at ",
+        rejoinHead(step, request.data.head, false), ". "] : ["A change request into " + step.target + " can open. "],
+        ["The merge is the operator's."]);
+    } else if (suitePasses(suite) && roundApproves(round) && text(suite.data.head) !== text(round.data.head)) {
+      said = ["Needs a passing suite and an approving round at one head."];
+    } else {
+      var missing = [suiteOk ? "" : "a passing suite at the current head", roundOk ? "" : (suiteOk ? "an approving round at the current head" : "an approving round at it")].filter(Boolean);
+      said = ["Needs " + missing.join(" and ") + "."];
+    }
+    rows.push(rejoinRow("rejoin", "Rejoin", said));
+    return add(el("div", "rejoin"), el("h3", "rejoin-title", "Before it rejoins"), add.apply(null, [el("ul", "rejoin-rows")].concat(rows)));
   }
   function drawLine(doc, all) {
     var inner = parts.line;
@@ -1902,8 +2091,12 @@
       add(row, stops);
       track.appendChild(row);
     });
+    // A delivery rejoining its target draws that step past the join instead of the epic's post; the post comes back once
+    // the delivery closes and the step leaves the line.
+    var rejoins = !closedEntry(doc) && Boolean(integrationOf(doc));
+    if (rejoins) { track.classList.add("rejoining"); }
     // The epic's drawn siblings have rows under this repository's lanes, on the same pitch.
-    var epic = epicOf(doc, all);
+    var epic = rejoins ? null : epicOf(doc, all);
     (epic ? epic.drawn : []).forEach(function (one) { track.appendChild(siblingRow(one)); });
     var merge = mergeDrawing(doc, all, ends, epic, track);
     track.insertBefore(merge, track.querySelector(".more-chip"));
@@ -1915,7 +2108,10 @@
       : [["f", "Landed"], ["n", "Being checked"], ["r", "Ready to check"], ["a", "In progress"], ["d", "Not started"], ["p", "Waiting for the lead to accept"], ["h", "Stopped"], ["link", "Both landed"]]).forEach(function (entry) {
       legend.appendChild(add(el("span"), el("i", entry[0]), entry[1]));
     });
-    nodes.push(box, detail, legend);
+    var rejoin = closedEntry(doc) ? null : rejoinLedger(doc);
+    nodes.push(box);
+    if (rejoin) { nodes.push(rejoin); }
+    nodes.push(detail, legend);
     inner.replaceChildren.apply(inner, nodes);
     // Where the line scrolls sideways, as on a phone, it opens at its end, where the lanes merge and the newest work is,
     // and keeps the reader's own place on later redraws.
@@ -1929,7 +2125,7 @@
       var layFlow = function () {
         flows.forEach(function (flow) { flow.left = flow.stops.getBoundingClientRect().left; });
         drawFlow(track, flows, lanes.length, current ? list(current.steps).filter(function (step) { return isObject(step) && step.state === "running"; }).length : 0,
-          epic ? EPIC_WIDTH : MERGE_WIDTH);
+          rejoins ? REJOIN_WIDTH : epic ? EPIC_WIDTH : MERGE_WIDTH);
       };
       layFlow();
       if (typeof ResizeObserver === "function") { prev.flowWatch = new ResizeObserver(layFlow); prev.flowWatch.observe(track); }
@@ -2296,8 +2492,12 @@
         if (reviews) { nativeReviews = JSON.parse(reviews[1]); }
         var listed = /<script type="application\/json" id="delivery-needs">([^<]*)<\/script>/.exec(page);
         NEEDS = listed ? readNeeds(listed[1]) : null;
+        var pushed = /<script type="application\/json" id="delivery-files">([^<]*)<\/script>/.exec(page);
+        FILES = pushed ? readNeeds(pushed[1]) : null;
         var opened = /<script type="application\/json" id="delivery-left-open">([^<]*)<\/script>/.exec(page);
         LEFT_OPEN = opened ? readNeeds(opened[1]) : null;
+        var drifted = /<script type="application\/json" id="delivery-integration">([^<]*)<\/script>/.exec(page);
+        DRIFT = drifted ? readDrift(drifted[1]) : null;
         if (isObject(next)) { runs = next; safely(lastGood || shown); }
       }).catch(function () { /* the runs already shown stay */ });
     }, 3000);
@@ -2370,7 +2570,140 @@
     var old = delta > ROW_OLD_SECONDS && lane.state !== "idle" && lane.state !== "done";
     return el("p", "said" + (old ? " old" : ""), (delta < 45 ? "Updated just now" : "Updated " + duration(delta) + " ago") + (old ? "; may be out of date" : ""));
   }
+  /*
+   * Who holds which files, when lanes share files by lines: the claimed files by area, the folder under the root they
+   * sit in, each solid where its lane has changed it and hollow where it hasn't, and each shared file split by its
+   * lanes' stretches. A shared file opens its reading: a ruler of the file with each lane's stretches and changes, and
+   * per lane the functions it changed with their sizes. A lane whose branch can't be read is said so, and nothing of
+   * its is drawn as changed.
+   */
+  var fileReading = null;
+  var whoDrawn = null;
+  function filesView(doc, colours) {
+    var box = el("details", "files-fold");
+    var body = el("div", "files-body");
+    add(box, el("summary", null, "Who holds which files"), body);
+    var fold = runFold(box, { key: "files" });
+    if (!FILES) { body.appendChild(el("p", "say", "No pass has read the lanes' branches yet.")); return fold; }
+    if (FILES.unreadable) { body.appendChild(el("p", "say", "The lanes' changes can't be read.")); return fold; }
+    var reads = isObject(FILES.lanes) ? FILES.lanes : {};
+    var names = Object.create(null);
+    list(doc.state.lanes).filter(isObject).forEach(function (lane) { names[text(lane.id)] = text(lane.title) || text(lane.id); });
+    var named = function (lane) { return names[lane] || lane; };
+    Object.keys(reads).forEach(function (lane) {
+      var read = reads[lane];
+      if (isObject(read) && typeof read.unreadable === "string") {
+        body.appendChild(el("p", "files-unread", named(lane) + "'s branch " + text(read.branch) + " can't be read, so none of its changes are shown: " + read.unreadable));
+      }
+    });
+    // A lane's read of a path, when its branch could be read and changed it.
+    var changed = function (lane, path) {
+      var read = reads[lane];
+      if (!isObject(read) || typeof read.unreadable === "string") { return null; }
+      return list(read.files).filter(function (file) { return isObject(file) && file.path === path; })[0] || null;
+    };
+    var unread = function (lane) { return isObject(reads[lane]) && typeof reads[lane].unreadable === "string"; };
+    var areas = Object.create(null);
+    var order = [];
+    list(FILES.files).filter(function (file) { return isObject(file) && typeof file.path === "string"; }).forEach(function (file) {
+      var area = file.path.indexOf("/") > 0 ? file.path.slice(0, file.path.indexOf("/")) : "";
+      if (!areas[area]) { areas[area] = []; order.push(area); }
+      areas[area].push(file);
+    });
+    var reading = null;
+    order.forEach(function (area) {
+      var shelf = el("div", "files-shelf");
+      areas[area].forEach(function (file) {
+        var base = file.path.slice(area ? area.length + 1 : 0);
+        if (Array.isArray(file.spans)) {
+          var lines = Math.max(1, file.lines || 0);
+          var button = el("button", "file shared" + (fileReading === file.path ? " open" : ""));
+          button.setAttribute("type", "button");
+          button.setAttribute("data-path", file.path);
+          button.setAttribute("aria-expanded", fileReading === file.path ? "true" : "false");
+          var bar = el("span", "file-split");
+          file.spans.filter(isObject).forEach(function (span) {
+            var touched = changed(span.lane, file.path);
+            var stretch = el("span", "stretch " + (unread(span.lane) ? "unread" : touched ? "solid" : "hollow") + (span.regrant ? " regrant" : ""));
+            stretch.style.setProperty("--c", colours[span.lane] || "var(--soft)");
+            stretch.style.left = (100 * (span.start - 1) / lines) + "%";
+            stretch.style.width = (100 * (span.end - span.start) / lines) + "%";
+            stretch.setAttribute("data-lane", span.lane);
+            stretch.setAttribute("title", named(span.lane) + ": lines " + span.start + "-" + (span.end - 1) + (span.regrant ? ", needs a regrant" : ""));
+            bar.appendChild(stretch);
+          });
+          add(button, el("span", "file-name", base), bar);
+          button.addEventListener("click", function () {
+            fileReading = fileReading === file.path ? null : file.path;
+            if (whoDrawn) { drawWho(whoDrawn[0], whoDrawn[1]); }
+          });
+          shelf.appendChild(button);
+          if (fileReading === file.path) { reading = file; }
+        } else {
+          var owner = list(file.lanes)[0] || "";
+          var mark = unread(owner) ? "unread" : changed(owner, file.path) ? "solid" : "hollow";
+          var chip = el("span", "file whole " + mark, base);
+          chip.style.setProperty("--c", colours[owner] || "var(--soft)");
+          chip.setAttribute("data-path", file.path);
+          chip.setAttribute("data-lane", owner);
+          chip.setAttribute("title", file.path + " · " + list(file.lanes).map(named).join(", "));
+          shelf.appendChild(chip);
+        }
+      });
+      body.appendChild(add(el("div", "files-area"), el("h4", null, area ? area + "/" : "Top level"), shelf));
+    });
+    if (FILES.more) { body.appendChild(el("p", "say", FILES.more + " more claimed " + (FILES.more === 1 ? "file isn't" : "files aren't") + " shown.")); }
+    if (reading) { body.appendChild(fileRead(reading, colours, changed, unread, named)); }
+    return fold;
+  }
+  /** A shared file's reading: its ruler, with each lane's stretches and changes, and per lane what it changed. */
+  function fileRead(file, colours, changed, unread, named) {
+    var lines = Math.max(1, file.lines || 0);
+    var box = add(el("div", "file-reading"), el("h4", null, file.path));
+    box.setAttribute("data-path", file.path);
+    var ruler = el("div", "ruler");
+    var lanes = [];
+    file.spans.filter(isObject).forEach(function (span) {
+      if (lanes.indexOf(span.lane) < 0) { lanes.push(span.lane); }
+      var stretch = el("span", "stretch" + (span.regrant ? " regrant" : ""));
+      stretch.style.setProperty("--c", colours[span.lane] || "var(--soft)");
+      stretch.style.top = (100 * (span.start - 1) / lines) + "%";
+      stretch.style.height = (100 * (span.end - span.start) / lines) + "%";
+      stretch.setAttribute("data-lane", span.lane);
+      ruler.appendChild(stretch);
+    });
+    var rows = el("ul", "file-lanes");
+    lanes.forEach(function (lane) {
+      var row = add(el("li"), el("b", null, named(lane)));
+      row.style.setProperty("--c", colours[lane] || "var(--soft)");
+      row.setAttribute("data-lane", lane);
+      if (unread(lane)) { rows.appendChild(add(row, " · its branch can't be read")); return; }
+      var read = changed(lane, file.path);
+      var changes = read ? list(read.changes).filter(isObject) : [];
+      changes.forEach(function (change) {
+        var tick = el("span", "tick" + (change.inside ? "" : " out"));
+        tick.style.setProperty("--c", colours[lane] || "var(--soft)");
+        tick.style.top = (100 * (change.start - 1) / lines) + "%";
+        tick.style.height = Math.max(0.5, 100 * Math.max(change.added, 1) / lines) + "%";
+        tick.setAttribute("data-lane", lane);
+        ruler.appendChild(tick);
+      });
+      if (!changes.length) { rows.appendChild(add(row, " · no changes")); return; }
+      var sizes = Object.create(null);
+      var order = [];
+      changes.forEach(function (change) {
+        var name = typeof change.name === "string" && change.name ? change.name : "outside any function";
+        if (!sizes[name]) { sizes[name] = { added: 0, removed: 0 }; order.push(name); }
+        sizes[name].added += change.added;
+        sizes[name].removed += change.removed;
+      });
+      var said = order.map(function (name) { return name + " +" + sizes[name].added + " \u2212" + sizes[name].removed; });
+      rows.appendChild(add(row, " · " + said.join(", ")));
+    });
+    return add(box, ruler, rows);
+  }
   function drawWho(doc, all) {
+    whoDrawn = [doc, all];
     var inner = parts.who;
     var lanes = list(doc.state.lanes).filter(isObject);
     var colours = laneColours(doc, all);
@@ -2407,6 +2740,7 @@
       nodes.push(people);
       prev.lanes = seen;
     }
+    if (list(doc.state.laneRegions).filter(isObject).length) { nodes.push(filesView(doc, colours)); }
     var leases = list(doc.state.leases).filter(isObject);
     if (leases.length && !closed) {
       var held = el("div", "leases");

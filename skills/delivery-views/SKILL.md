@@ -105,6 +105,20 @@ the commit, in full or cut short, and the change request its sentence names are
 links, and they lead to the evidence. Only a run of bookkeeping folds, listing its
 entries.
 
+When the record has region claims, so lanes share files by lines, "Who's doing
+what" offers "Who holds which files", closed by default. It reads
+`lane-changes.json`, which each supervisor pass writes beside the record from
+every lane's pushed branch, as run-delivery's configuration reference describes.
+It shows the delivery's claimed files grouped by area, the folder under the
+repository root they sit in, each in its lane's colour, solid where its lane has
+changed it and hollow where it hasn't, and each shared file split by its lanes'
+line stretches. Clicking a shared file opens its reading: a ruler of the file with
+each lane's stretches and changes, a change outside its lane's span marked, and
+per lane the functions it changed with their sizes. A lane whose branch can't be
+read is said so, and none of its files is drawn as changed. Before any pass has
+read the branches, or with a file that can't be read, the view says so. With no
+region claims the page has no such view, and a published cut carries none.
+
 A piece whose queue or planned element names a `runId` shows that run in its
 detail: its review rounds as a track, and a card for the picked round. With
 `runs` configured, the renderer appends these arguments to its argv and reads

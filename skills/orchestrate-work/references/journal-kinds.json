@@ -424,6 +424,39 @@
         }
       }
     },
+    "regionClaims": {
+      "description": "Region claims on one path: each lane, its anchor, its half-open lines and any story.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "lane",
+          "baseHead",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "lane": {
+            "$ref": "#/$defs/name"
+          },
+          "baseHead": {
+            "$ref": "#/$defs/commit"
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "story": {
+            "$ref": "#/$defs/name"
+          }
+        }
+      }
+    },
     "recovery": {
       "description": "A recovered merge's source identity.",
       "type": "object",
@@ -508,6 +541,15 @@
     },
     "exitCode": {
       "type": "integer"
+    },
+    "suiteResult": {
+      "description": "What one run of the lead's suite found: every test passed; every test passed and the run went over its budget; a test failed or the run stopped; or the run never started, its checkout or a prepare step failing first.",
+      "enum": [
+        "passed",
+        "over-budget",
+        "failed",
+        "unreadable"
+      ]
     }
   },
   "kinds": {
@@ -601,6 +643,10 @@
         "round": {
           "type": "round"
         },
+        "head": {
+          "type": "commit",
+          "optional": true
+        },
         "startedAt": {
           "type": "instant"
         },
@@ -630,7 +676,7 @@
       ],
       "opensThread": false,
       "words": {
-        "head": "Review round {round} on {subject}",
+        "head": "Review round {round} on {subject}[ at {head:commit}]",
         "line": "Findings: {findings.P0} P0, {findings.P1} P1, {findings.P2} P2 and {findings.P3} P3[, after {refused:count:refused result}][, restarted {restarts:count:time}]"
       },
       "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
@@ -1624,6 +1670,127 @@
       },
       "instruction": "On the epic, record the previous and published base heads and the default branch commit."
     },
+    "integration.merged": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Target merged in",
+      "data": {
+        "target": {
+          "type": "name"
+        },
+        "targetHead": {
+          "type": "commit"
+        },
+        "head": {
+          "type": "commit"
+        },
+        "conflicts": {
+          "type": "paths"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "The lead merged {target} into the integration",
+        "line": "{target} at {targetHead:commit}, merged at {head:commit}[, resolving {conflicts:list} by hand]"
+      },
+      "explain": "The lead brought the target's newer work into the integration, so it rejoins the target from its current head.",
+      "tracker": null,
+      "instruction": "None: the integration step shows in the record and the live view."
+    },
+    "integration.suite": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Integration suite",
+      "data": {
+        "head": {
+          "type": "commit"
+        },
+        "result": {
+          "type": "suiteResult"
+        },
+        "seconds": {
+          "type": "seconds"
+        },
+        "budgetSeconds": {
+          "type": "seconds",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": {
+          "by": "result",
+          "cases": {
+            "passed": "The integration suite passed",
+            "over-budget": "The integration suite passed over its budget",
+            "unreadable": "The integration suite could not start"
+          },
+          "otherwise": "The integration suite failed"
+        },
+        "line": "At {head:commit}, in {seconds:duration}[ against a budget of {budgetSeconds:duration}]"
+      },
+      "explain": "The lead ran the full suite on the integration at one head.",
+      "tracker": null,
+      "instruction": "None: the integration step shows in the record and the live view."
+    },
+    "integration.requested": {
+      "altitude": "story",
+      "tone": "ready",
+      "label": "Change request opened",
+      "data": {
+        "changeRequest": {
+          "type": "changeRequest"
+        },
+        "head": {
+          "type": "commit"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "The integration asks to rejoin its target",
+        "line": "{changeRequest} at {head:commit}"
+      },
+      "explain": "The lead opened the change request that takes the integration into its target, at one head.",
+      "tracker": null,
+      "instruction": "None: the integration step shows in the record and the live view."
+    },
+    "integration.landed": {
+      "altitude": "story",
+      "tone": "landed",
+      "label": "Rejoined the target",
+      "data": {
+        "target": {
+          "type": "name"
+        },
+        "head": {
+          "type": "commit"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "The integration rejoined {target}",
+        "line": "{target} is now at {head:commit}"
+      },
+      "explain": "The change request into the target merged, so the delivery's work is on the target.",
+      "tracker": null,
+      "instruction": "None: the integration step shows in the record and the live view."
+    },
     "base.published": {
       "altitude": "bookkeeping",
       "tone": "note",
@@ -1754,6 +1921,110 @@
       "explain": "The lead changed which lane may edit a file.",
       "tracker": null,
       "instruction": "None: which lane may edit a file shows in the record and the views."
+    },
+    "ownership.released": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Lines released",
+      "data": {
+        "path": {
+          "type": "path"
+        },
+        "span": {
+          "type": "span"
+        },
+        "base": {
+          "type": "base"
+        },
+        "merge": {
+          "type": "commit"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{path} was released from {lane:lane}",
+        "line": "From line {span.first} up to {span.after} at {base.head:commit}, when {subject:ticket} landed at {merge:commit}"
+      },
+      "explain": "A story landed, so the lines claimed for it went back to no lane.",
+      "tracker": null,
+      "instruction": "None: which lane may edit which lines shows in the record and the views."
+    },
+    "ownership.carried": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Lines carried",
+      "data": {
+        "path": {
+          "type": "path"
+        },
+        "from": {
+          "type": "span"
+        },
+        "to": {
+          "type": "span"
+        },
+        "was": {
+          "type": "commit"
+        },
+        "base": {
+          "type": "base"
+        },
+        "story": {
+          "type": "name",
+          "optional": true
+        },
+        "inFlight": {
+          "type": "names",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{path} was carried for {lane:lane}",
+        "line": "From line {from.first} up to {from.after} at {was:commit} to line {to.first} up to {to.after} at {base.head:commit}[, for {story:ticket}][; {inFlight:list:ticket} must merge the base to use it]"
+      },
+      "explain": "A story of the lane landed inside a claim of the lane, so the claim moved to the merge with those lines in it.",
+      "tracker": null,
+      "instruction": "None: which lane may edit which lines shows in the record and the views."
+    },
+    "ownership.carved": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Lines carved",
+      "data": {
+        "path": {
+          "type": "path"
+        },
+        "base": {
+          "type": "base"
+        },
+        "removed": {
+          "type": "regionClaims"
+        },
+        "added": {
+          "type": "regionClaims"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{path} was carved at {base.head:commit}",
+        "line": "{added:count:claim} written[, replacing {removed:count:claim}]"
+      },
+      "explain": "The lead split a file's lines between lanes in one step.",
+      "tracker": null,
+      "instruction": "None: which lane may edit which lines shows in the record and the views."
     },
     "ownership.claimed": {
       "altitude": "bookkeeping",

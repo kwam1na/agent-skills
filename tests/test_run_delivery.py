@@ -12772,5 +12772,271 @@ class StoryLensSelectionTests(unittest.TestCase):
                 self.assertIn(said, out)
 
 
+@unittest.skipIf(os.name == "nt", "the suite fixture's interpreter stub is a POSIX shell script")
+class IntegrationStepTests(unittest.TestCase):
+    """A delivery that rejoins a target: lead-init records the integration, lead-suite journals each run's result, and
+    lead-integrate journals the merge of the target, the integration review's rounds, the change request and its
+    merge, each under the delivery's own key."""
+
+    run_quietly = True
+    BUDGET = {"schemaVersion": "suite-budget/1", "workers": 4, "wallSeconds": 1260, "serialSeconds": 60,
+              "unitSeconds": 300}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def fixture(self) -> Fixture:
+        """Built once for the class and put back for each case: see `kept_fixture`."""
+        return kept_fixture(self, self.build_fixture)
+
+    def build_fixture(self) -> Fixture:
+        from tests.test_run_delivery_supervisor import PREP, SUITE, supervised
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        path = supervised(fx)
+        m = fx.main
+        (m / "tools/suite.py").write_text(SUITE)
+        (m / "tools/prep.py").write_text(PREP)
+        (m / "budget.json").write_text(json.dumps(self.BUDGET, indent=2) + "\n")
+        (m / "other-budget.json").write_text(json.dumps({**self.BUDGET, "schemaVersion": "suite-budget/0"}) + "\n")
+        bound = m / ".agents/orchestration.json"
+        binding = json.loads(bound.read_text())
+        binding["fullHealth"] = ["gen/python", "-B", "tools/suite.py"]
+        bound.write_text(json.dumps(binding, indent=2))
+        conf_path = m / ".agents/run-delivery.json"
+        conf = json.loads(conf_path.read_text())
+        conf.setdefault("review", {})["prepare"] = [[sys.executable, "-B", "tools/prep.py"]]
+        conf_path.write_text(json.dumps(conf, indent=2))
+        delivery = json.loads(path.read_text())
+        delivery.update(baseBranch="feature/FX-1", integrationTarget="main")
+        path.write_text(json.dumps(delivery, indent=2))
+        commit(m, "FX-1: the lead's suite, its budgets and the integration target")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", "--no-supervisor", cwd=m)
+        self.assertEqual(code, 0, out)
+        fx.env.update(FX_SUITE_LOG=str(fx.tmp / "suite-runs.jsonl"), FX_SUITE_MODE=str(fx.tmp / "suite-mode"),
+                      FX_SUITE_GATE=str(fx.tmp / "suite-gate"), FX_PREP_MODE=str(fx.tmp / "prep-mode"))
+        return fx
+
+    def record(self, fx: Fixture) -> dict:
+        return json.loads(sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py",
+                             "--dir", fx.tmp / "record", "show").stdout)
+
+    def journal(self, fx: Fixture, *kinds: str) -> list[dict]:
+        return [entry for entry in self.record(fx)["journal"] if entry["kind"] in kinds]
+
+    def lines(self, fx: Fixture) -> list[dict]:
+        log = fx.tmp / "flow-log/FX-1.suite.jsonl"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def suite(self, fx: Fixture, mode: str, *argv: str) -> tuple[int, str]:
+        (fx.tmp / "suite-mode").write_text(mode)
+        return fx.flow("lead-suite", *argv, cwd=fx.main)
+
+    def without_integration(self, fx: Fixture) -> None:
+        """The record as one without an integration step: its meta has no integration."""
+        state = json.loads((fx.tmp / "record/state.json").read_text())
+        del state["meta"]["integration"]
+        (fx.tmp / "record/state.json").write_text(json.dumps(state, indent=2) + "\n")
+
+    def validates(self, fx: Fixture, entry: dict) -> None:
+        """The entry's data fits its kind in the release's registry, by the state tool's own check."""
+        spec = importlib.util.spec_from_file_location("integration_state_tool", fx.release / "skills/orchestrate-work/scripts/delivery_state.py")
+        tool = importlib.util.module_from_spec(spec)
+        previous, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+        try:
+            spec.loader.exec_module(tool)
+        finally:
+            sys.dont_write_bytecode = previous
+        described = tool.journal_words.load_registry()
+        self.assertEqual(tool._errors(entry["data"], tool.data_schema(described["kinds"][entry["kind"]]),
+                                      {"$defs": described["types"]}, ()), [], entry)
+
+    def test_lead_init_records_the_integration_only_for_a_delivery_with_a_target(self) -> None:
+        fx = self.fixture()
+        self.assertEqual(self.record(fx)["state"]["meta"]["integration"],
+                         {"base": "feature/FX-1", "target": "main", "remote": "origin"})
+        path = fx.main / ".agents/deliveries/FX-1.json"
+        delivery = json.loads(path.read_text())
+        del delivery["integrationTarget"]
+        path.write_text(json.dumps(delivery, indent=2))
+        commit(fx.main, "FX-1: no integration target")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-init", "--replace", "--no-supervisor", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("integration", self.record(fx)["state"]["meta"])
+
+    def test_lead_suite_journals_each_result_and_the_flow_log_line_carries_it(self) -> None:
+        fx = self.fixture()
+        at = sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=fx.main).stdout.split()[0]
+        # The lead's own budget file differs from the run's: the run's is the one read.
+        (fx.main / "budget.json").write_text(json.dumps({**self.BUDGET, "wallSeconds": 999}) + "\n")
+        runs = [("pass", (), 0, "passed", None), ("budget", ("--", "--budget", "budget.json"), 3, "over-budget", 1260),
+                ("budget", (), 3, "failed", None), ("budget", ("--", "--budget", "other-budget.json"), 3, "failed", None),
+                ("budget", ("--", "--budget=missing.json"), 3, "failed", None),
+                ("budget", ("--", "--budget=budget.json"), 3, "over-budget", 1260), ("fail", (), 1, "failed", None),
+                ("pass", ("--", "--budget", "budget.json"), 0, "passed", 1260), ("slow", (), 0, "passed", None)]
+        for mode, argv, exit_code, result, budget in runs:
+            with self.subTest(mode=mode, argv=argv):
+                code, out = self.suite(fx, mode, *argv)
+                self.assertEqual(code, exit_code, out)
+                entry = self.journal(fx, "integration.suite")[-1]
+                self.assertEqual((entry["subject"], entry["lane"]), ("FX-1", None), entry)
+                self.assertEqual(entry["data"], {"head": at, "result": result, "seconds": entry["data"]["seconds"],
+                                                 **({"budgetSeconds": budget} if budget is not None else {})})
+                # Rounded to a tenth of a second, a fixture's suite on a fast host reads 0.0, so only the shape is pinned.
+                self.assertIsInstance(entry["data"]["seconds"], (int, float))
+                self.assertGreaterEqual(entry["data"]["seconds"], 0)
+                line = self.lines(fx)[-1]
+                # The journal carries the value the run measured, which the flow-log line carries too.
+                self.assertEqual(entry["data"]["seconds"], line["seconds"], (entry, line))
+                if mode == "slow":
+                    self.assertGreaterEqual(entry["data"]["seconds"], 0.2, entry)
+                self.assertEqual((line["commit"], line["result"], line["exit"]), (at, result, exit_code), line)
+                self.assertNotIn("budgetSeconds", line)
+                self.validates(fx, entry)
+        # A prepare step that fails: the suite never started.
+        (fx.tmp / "prep-mode").write_text("fail")
+        code, out = self.suite(fx, "pass")
+        self.assertEqual(code, 1, out)
+        entry = self.journal(fx, "integration.suite")[-1]
+        self.assertEqual((entry["data"]["result"], self.lines(fx)[-1]["result"]), ("unreadable", "unreadable"))
+        self.assertNotIn("budgetSeconds", entry["data"])
+        self.validates(fx, entry)
+        self.assertEqual(len(self.journal(fx, "integration.suite")), len(runs) + 1)
+        (fx.tmp / "prep-mode").unlink()
+        # Without an integration step the run journals nothing, and its line keeps every field it had.
+        self.without_integration(fx)
+        before = self.record(fx)["journal"]
+        code, out = self.suite(fx, "budget", "--", "--budget", "budget.json")
+        self.assertEqual(code, 3, out)
+        self.assertEqual(self.record(fx)["journal"], before)
+        line = self.lines(fx)[-1]
+        self.assertEqual(sorted(line), sorted(["commit", "result", "exit", "argv", "seconds", "output", "platform",
+                                               "interpreter", "at"]))
+        self.assertEqual(line["result"], "over-budget")
+
+    def stops(self, document: dict) -> list[list[str]]:
+        """The integration stops the live page draws for a record, rendered by this source's line_map_data and opened
+        in the page lane's own harness."""
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("the round trip opens the page under Node, which this machine lacks")
+        support = (ROOT / "tests/delivery_views_page/support.mjs").as_uri()
+        script = (f"import {{ openPage, pageWithRuns }} from {json.dumps(support)};\n"
+                  "const page = pageWithRuns(JSON.parse(process.argv[1]), {}, { config: { spec: 'delivery-views-config/1' } });\n"
+                  "const [shown] = await openPage(page, { store: false });\n"
+                  "console.log(JSON.stringify([...shown.app.querySelectorAll('#line .mg-step')].map("
+                  "(stop) => [stop.getAttribute('data-step'), stop.getAttribute('data-state')])));\n")
+        done = subprocess.run([node, "--input-type=module", "-e", script, json.dumps(document)], cwd=ROOT,
+                              capture_output=True, text=True, timeout=120, env={**os.environ, "PYTHON": sys.executable})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout.strip().splitlines()[-1])
+
+    def merge_of_target(self, fx: Fixture) -> tuple[str, str]:
+        """A merge of the target into the integration in the lead checkout, and the target's head it took in."""
+        m = fx.main
+        target_checkout = fx.tmp / "target"
+        sh("git", "worktree", "add", "-q", "--detach", target_checkout, "origin/main", cwd=m)
+        (target_checkout / "src/target.txt").write_text("the target moved\n")
+        commit(target_checkout, "Work on the target")
+        sh("git", "push", "-q", "origin", "HEAD:main", cwd=target_checkout)
+        sh("git", "fetch", "-q", "origin", "main", cwd=m)
+        target = sh("git", "rev-parse", "origin/main", cwd=m).stdout.strip()
+        sh("git", "merge", "-q", "--no-ff", "-m", "FX-1: merge main", "origin/main", cwd=m)
+        return sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip(), target
+
+    def test_lead_integrate_journals_each_fact_under_the_delivery_s_key(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        merge, target = self.merge_of_target(fx)
+        code, out = fx.flow("lead-integrate", "merged", "--head", merge, "--conflict", "a.py", "--conflict", "b.py", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-integrate", "round", "--round", "1", "--head", merge[:10], "--verdict", "lens.a=approve",
+                            "--verdict", "lens.b=changes", "--findings", "0,1,2,3", "--started", "2026-11-18T10:00:00Z",
+                            "--finished", "2026-11-18T10:20:00Z", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-integrate", "round", "--round", "2", "--head", merge, "--verdict", "lens.a=approve",
+                            "--findings", "0,0,0,0", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-integrate", "requested", "--change-request", "https://forge.test/pull/7", "--head", merge,
+                            cwd=m)
+        self.assertEqual(code, 0, out)
+        # Round trip: the record these commands wrote, read through line_map_data into the page, draws the stops the
+        # page's own rows expect: the target in, no suite yet so it is next, round 2's approval and the request at M.
+        self.assertEqual(self.stops(self.record(fx)), [["merged", "filled"], ["suite", "next"], ["round", "filled"],
+                                                       ["requested", "filled"]])
+        # The target's new head is on the remote only, never fetched here: lead-integrate fetches it before it reads it.
+        elsewhere = fx.tmp / "elsewhere"
+        sh("git", "clone", "-q", "--branch", "main", fx.origin, elsewhere)
+        quieten(elsewhere)
+        sh("git", "config", "user.name", "Fixture", cwd=elsewhere)
+        sh("git", "config", "user.email", "fixture@example.test", cwd=elsewhere)
+        (elsewhere / "src/landed.txt").write_text("the integration landed\n")
+        commit(elsewhere, "Merge the integration")
+        sh("git", "push", "-q", "origin", "HEAD:main", cwd=elsewhere)
+        rejoined = sh("git", "rev-parse", "HEAD", cwd=elsewhere).stdout.strip()
+        self.assertNotEqual(sh("git", "cat-file", "-t", rejoined, cwd=m, check=False).returncode, 0)
+        code, out = fx.flow("lead-integrate", "landed", "--head", rejoined, cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(sh("git", "rev-parse", "origin/main", cwd=m).stdout.strip(), rejoined)
+        entries = self.journal(fx, "integration.merged", "review.round", "integration.requested", "integration.landed")
+        self.assertEqual([(e["kind"], e["subject"], e["lane"]) for e in entries],
+                         [("integration.merged", "FX-1", None), ("review.round", "FX-1", None),
+                          ("review.round", "FX-1", None), ("integration.requested", "FX-1", None),
+                          ("integration.landed", "FX-1", None)])
+        merged, first, second, requested, landed = (e["data"] for e in entries)
+        self.assertEqual(merged, {"target": "main", "targetHead": target, "head": merge, "conflicts": ["a.py", "b.py"]})
+        self.assertEqual(first, {"round": 1, "head": merge, "verdicts": {"lens.a": "approve", "lens.b": "changes"},
+                                 "findings": {"P0": 0, "P1": 1, "P2": 2, "P3": 3}, "startedAt": "2026-11-18T10:00:00Z",
+                                 "finishedAt": "2026-11-18T10:20:00Z"})
+        # The times default to the command's own.
+        self.assertEqual(second["startedAt"], second["finishedAt"])
+        self.assertLessEqual(entries[1]["at"][:19], second["startedAt"][:19])
+        self.assertEqual({k: v for k, v in second.items() if not k.endswith("At")},
+                         {"round": 2, "head": merge, "verdicts": {"lens.a": "approve"},
+                          "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}})
+        self.assertEqual(requested, {"changeRequest": "https://forge.test/pull/7", "head": merge})
+        self.assertEqual(landed, {"target": "main", "head": rejoined})
+        for entry in entries:
+            self.validates(fx, entry)
+        # A merge with no conflicts says so with an empty list.
+        code, out = fx.flow("lead-integrate", "merged", "--head", merge, cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.journal(fx, "integration.merged")[-1]["data"]["conflicts"], [])
+
+    def test_lead_integrate_refuses_what_it_cannot_record_and_journals_nothing(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        merge, _ = self.merge_of_target(fx)
+        single = sh("git", "rev-parse", "HEAD^1", cwd=m).stdout.strip()
+        before = self.record(fx)["journal"]
+        nowhere = "f" * 40
+        argvs = {"merged": ["merged"], "round": ["round", "--round", "1", "--verdict", "lens.a=approve",
+                                                 "--findings", "0,0,0,0"],
+                 "requested": ["requested", "--change-request", "https://forge.test/pull/7"], "landed": ["landed"]}
+        refused = [(["merged", "--head", single], "has 1 parents, and a merge has two"),
+                   ([*argvs["round"][:3], "--head", merge, "--verdict", "lens.b=reject", *argvs["round"][5:]],
+                    "--verdict lens.b=reject is not LENS=approve or LENS=changes"),
+                   ([*argvs["round"][:3], "--head", merge, "--verdict", "lens.a=approve", "--findings", "0,0,1"],
+                    "--findings 0,0,1 is not four counts")]
+        refused += [([*argv, "--head", nowhere], f"{nowhere} is no commit") for argv in argvs.values()]
+        for argv, said in refused:
+            with self.subTest(argv=argv):
+                code, out = fx.flow("lead-integrate", *argv, cwd=m)
+                self.assertEqual(code, 2, out)
+                self.assertIn(said, out)
+        self.without_integration(fx)
+        for argv in argvs.values():
+            with self.subTest(without=argv[0]):
+                code, out = fx.flow("lead-integrate", *argv, "--head", merge, cwd=m)
+                self.assertEqual(code, 2, out)
+                self.assertIn("the record has no integration step", out)
+        self.assertEqual(self.record(fx)["journal"], before)
+
+
 if __name__ == "__main__":
     unittest.main()

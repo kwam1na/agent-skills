@@ -237,10 +237,17 @@ the lead and the lanes make them instead, as the commands print them.
 | `base.verified` | None: the post-merge `fullHealth` passed at the base head the named merge reached, and the result shows in the record and the views. | nowhere | - |
 | `base.flaky` | None: the post-merge `fullHealth` failed and its failing tests passed when re-run alone, so the base isn't broken; the flaky tests show in the record, the views and "Needs you". | nowhere | - |
 | `base.moved` | On the epic, record the previous and published base heads and the default branch commit. | the epic | Delivery base updated |
+| `integration.merged` | None: the integration step shows in the record and the live view. | nowhere | - |
+| `integration.suite` | None: the integration step shows in the record and the live view. | nowhere | - |
+| `integration.requested` | None: the integration step shows in the record and the live view. | nowhere | - |
+| `integration.landed` | None: the integration step shows in the record and the live view. | nowhere | - |
 | `base.published` | None: the push shows in the record and the views; a base move posts with `base.moved`. | nowhere | - |
 | `base.merge.authorized` | None: the lane runs the merge the lead authorized, and its hand-off posts with `candidate.handed`. | nowhere | - |
 | `ownership.granted` | None: which lane may edit a file shows in the record and the views. | nowhere | - |
 | `ownership.revoked` | None: which lane may edit a file shows in the record and the views. | nowhere | - |
+| `ownership.released` | None: which lane may edit which lines shows in the record and the views. | nowhere | - |
+| `ownership.carried` | None: which lane may edit which lines shows in the record and the views. | nowhere | - |
+| `ownership.carved` | None: which lane may edit which lines shows in the record and the views. | nowhere | - |
 | `ownership.claimed` | None: the delivery's claim on a path of the shared base shows in the record and the views, and a peer delivery's lead is warned of it. | nowhere | - |
 | `plan.updated` | None: the plan chapter shows the rebuilt plan. | nowhere | - |
 | `cleanup.done` | None: a landed piece's branch and checkout are gone, and its merge already posted with `candidate.merged`. | nowhere | - |
@@ -733,7 +740,14 @@ three steps, with the supervisor or without it:
    prepare steps, in a detached checkout of that commit under the binding's
    work folder, so nothing done in the lead's checkout while it runs reaches
    it, and appends its result to the flow log's `<delivery>.suite.jsonl`. Cite
-   that line when marking the finish line that asks for the suite.
+   that line when marking the finish line that asks for the suite. On a
+   delivery with an `integrationTarget`, whose record `lead-init` gives an
+   integration step, it also journals the run as `integration.suite` at that
+   commit: `passed`, `over-budget` when every test passed and a run held to
+   the suite's own budget file with `--budget` went over it, `failed`, or
+   `unreadable` when its checkout or a prepare step failed first. Record each merge of the target
+   into the integration with `lead-integrate merged --head <merge>`, adding
+   `--conflict <path>` for each path whose conflict you resolved by hand.
 2. **Review the integration.** Run `$review-work` with the delivery's lenses and
    round bound on the lead's own changes since the last unit merged: removing
    the delivery-only files, any merge of the default branch with its conflict
@@ -742,7 +756,14 @@ three steps, with the supervisor or without it:
    nothing beyond removing the delivery-only files still runs it, on that
    removal. Findings are triaged as a lane's are, and each round is journaled
    under the delivery as `review.round`, with the delivery's key as its subject.
-3. **Merge to the default branch** only once that review is aligned.
+   Journal each with `lead-integrate round --round <n> --head <candidate>
+   --verdict <lens>=approve|changes ... --findings <P0,P1,P2,P3>`, naming the
+   head the round read.
+3. **Merge to the default branch** only once that review is aligned. Record
+   the change request into the target with `lead-integrate requested
+   --change-request <address> --head <head>` when it opens, and again each time
+   a fix moves its head, then its merge with `lead-integrate landed --head
+   <the target's new head>`.
 
 Where the lead closes by hand, take these steps before journaling
 `delivery.closed`, so the review's rounds reach the archived record. Under the
@@ -774,7 +795,12 @@ Then run the integration review above against the exact candidate, including
 the merge and any resolutions. Note gaps as they happen. When the last story lands, write up the friction
 stub, run `$compound-learning` and record its decision; a note it preserves
 rides the integration change request and is reviewed with it. Then the close. Open the reviewed change request into the target
-and let the repository's merge process land it. If the target moves before
+and let the repository's merge process land it. Record the merge of the target
+with `lead-integrate merged`, the suite with `lead-suite --at <commit>`, each
+round with `lead-integrate round`, the change request with `lead-integrate
+requested` and its merge with `lead-integrate landed`, as the steps above say:
+each `lead-integrate` fetches the target first and journals under the
+delivery's own key, and the live view draws the integration step from them. If the target moves before
 landing, incorporate it and repeat the affected review and gates.
 
 ## Lane brief template
