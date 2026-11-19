@@ -10729,6 +10729,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           f"refuses drafts: {', '.join(drafts)}. Mark each ready, then lead-accept --requeue it if it "
                           "stopped", "clears": "marking each ready, then lead-accept --requeue for one that stopped",
                           "kind": "drafts", "who": "operator", "fields": {"subjects": drafts}})
+    items += lane_change_needs(c, doc["state"])
     items += record_needs(doc, items)
     return say_needs(c, doc, items + waits_needing(c, doc, items))
 
@@ -10966,6 +10967,283 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
                       "subject": free["subject"], **({"lane": free["lane"]} if free.get("lane") else {}),
                       **({"waiting": len(waiting)} if waiting else {})})
     return added
+
+
+# What each lane has pushed. A pass reads every assigned lane's story branch on the remote, as a diff from its merge
+# base with the delivery base, and writes what it changed beside the record: "Needs you" names a change outside the
+# lane's ground from it, and the line map's files view draws it. It refuses nothing; acceptance still decides.
+LANE_CHANGES_FILE = "lane-changes.json"
+LANE_CHANGES_SPEC = "delivery-lane-changes/1"
+# The diff a branch read takes: the one region_ownership.hunks takes, so a change's old lines are the hunks it checks.
+LANE_DIFF = ("diff", "--text", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--no-indent-heuristic",
+             "--inter-hunk-context=0", "--unified=0", "--diff-algorithm=myers")
+LANE_HUNK = re.compile(r"^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@", re.M)
+# The line that names where a change sits, on the new side: the nearest `def` or `class` in Python, `function` or
+# `const NAME =` in JavaScript, and a heading in Markdown.
+ENCLOSING_NAMES = {
+    "python": re.compile(r"^\s*(?:async\s+)?(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)"),
+    "javascript": re.compile(r"^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)"
+                             r"|^\s*(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*="),
+    "markdown": re.compile(r"^#{1,6}\s+(.*?)\s*#*\s*$"),
+}
+ENCLOSING_KINDS = {".py": "python", ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+                   ".jsx": "javascript", ".ts": "javascript", ".tsx": "javascript", ".md": "markdown"}
+# The files view's own bound: past it the claimed files are cut, and the cut is said.
+LANE_FILES_LIMIT = 400
+
+
+def enclosing_name(path: str, lines: list[str], line: int) -> str | None:
+    """The name of the block line `line` (one-based) sits in, on the new side: the line itself when it names one, else
+    the nearest one above it. In Python and JavaScript, the nearest one indented less than the code it holds, so a
+    sibling's nested function above is passed over; in Markdown, the nearest heading."""
+    kind = ENCLOSING_KINDS.get(os.path.splitext(path)[1].lower())
+    if kind is None or not lines:
+        return None
+    pattern = ENCLOSING_NAMES[kind]
+
+    def named(text: str) -> str | None:
+        found = pattern.match(text)
+        return next((group for group in found.groups() if group), None) if found else None
+
+    index = min(max(line, 1), len(lines)) - 1
+    if named(lines[index]):
+        return named(lines[index])
+    if kind == "markdown":
+        return next((named(text) for text in reversed(lines[:index]) if named(text)), None)
+    indent = lambda text: len(text) - len(text.lstrip())
+    below = indent(lines[index]) if lines[index].strip() else None
+    for text in reversed(lines[:index]):
+        if not text.strip():
+            continue
+        if below is None or indent(text) < below:
+            if named(text):
+                return named(text)
+            below = indent(text)
+    return None
+
+
+def read_lane_branch(c, story: str, base: str) -> dict | None:
+    """One lane's story branch as the remote holds it, read as a diff from its merge base with `base`: its head, that
+    merge base, and per changed file each change's old first line and size, new first line and size, and enclosing
+    name. None when the branch isn't pushed. A branch that can't be read says why, with no files."""
+    branch = c.branch(story)
+    said = {"story": story, "branch": branch}
+    listed = run(["git", "ls-remote", c.remote, f"refs/heads/{branch}"], cwd=c.root, check=False)
+    if listed.returncode != 0:
+        return {**said, "unreadable": f"git ls-remote failed: {(listed.stderr or listed.stdout).strip()[-300:]}"}
+    if not listed.stdout.strip():
+        return None
+    head = listed.stdout.split()[0]
+    said.update(head=head, base=base)
+    try:
+        run(["git", "fetch", "-q", "--no-write-fetch-head", c.remote, f"+refs/heads/{branch}:refs/remotes/{c.remote}/{branch}"],
+            cwd=c.root)
+        merge_base = git("merge-base", base, head, cwd=c.root)
+        paths = list(filter(None, run(["git", "diff", "--name-only", "--no-renames", "-z", merge_base, head],
+                                      cwd=c.root).stdout.split("\0")))
+        files = []
+        for path in paths:
+            # Not strictly decoded: a binary or non-UTF-8 file is still a change the read reports, by its hunks.
+            patch = run(["git", *LANE_DIFF, merge_base, head, "--", path], cwd=c.root, errors="replace").stdout
+            shown = run(["git", "show", f"{head}:{path}"], cwd=c.root, check=False, errors="replace")
+            text = shown.stdout.splitlines() if shown.returncode == 0 and "\0" not in shown.stdout else []
+            changes = []
+            for match in LANE_HUNK.finditer(patch):
+                first, removed, start, added = (int(n) if n is not None else 1 for n in match.groups())
+                changes.append({"old": first if removed else first + 1, "removed": removed,
+                                "start": start if added else start + 1, "added": added,
+                                "name": enclosing_name(path, text, start if added else start)})
+            files.append({"path": path, "changes": changes})
+    except (Stop, UnicodeError) as error:
+        return {**said, "unreadable": str(error)[-300:]}
+    return {**said, "mergeBase": merge_base, "readAt": now(), "files": files}
+
+
+def lane_holdings(c, lane: str, read: dict, state: dict) -> dict:
+    """The read with what the lane holds of each file, by the ownership acceptance uses: `holds` is "file", "span",
+    "shared" or "none", and each change is `inside` the lane's ground or not. On a file the lane holds by span, a change
+    outside its spans is outside, with the file still "span"; a file it can't change by span at all is "none"."""
+    if "files" not in read:
+        return read
+    helper = _region_ownership()
+    _, outside = candidate_ownership(c, lane, read["mergeBase"], read["head"], state)
+    regions = state.get("laneRegions", [])
+    shared = shared_outputs(c) if "laneOwnership" in state else set()
+    files = []
+    for entry in read["files"]:
+        path = entry["path"]
+        refused = path in outside or any(item.startswith(f"{path}: ") for item in outside)
+        changes = [dict(change, inside=not refused) for change in entry["changes"]]
+        holds = "shared" if path in shared else "span" if any(claim["path"] == path for claim in regions) else "file"
+        if refused and holds == "span" and not any(claim["path"] == path and claim["lane"] == lane for claim in regions):
+            holds = "none"  # other lanes share it by span, and this lane holds none of it
+            changes = [dict(change, inside=False) for change in changes]
+        elif refused and holds == "span":
+            spans = []
+            for claim in regions:
+                if claim["path"] == path and claim["lane"] == lane:
+                    with contextlib.suppress(helper.RegionError):
+                        spans.append(helper.mapped(c.root, claim, read["mergeBase"]))
+            try:
+                # What no span can hold, as acceptance's check refuses it: a creation, a deletion, a type, mode or
+                # binary change.
+                old_mode, _ = helper.entry(c.root, read["mergeBase"], path)
+                new_mode, _ = helper.entry(c.root, read["head"], path)
+                helper.require_text(c.root, read["head"], path)
+                whole = old_mode != new_mode
+            except helper.RegionError:
+                whole = True
+            for change in changes:
+                first, removed = change["old"], change["removed"]
+                change["inside"] = any(start <= first and first + removed <= end if removed else start < first < end
+                                       for start, end in spans)
+            # Refused for the file itself, or with no span that maps (a claim needing a regrant), or with every
+            # change inside: the lane can't change this file by span, so it is held as no file is.
+            if whole or not spans or not changes or all(change["inside"] for change in changes):
+                holds = "none"
+                changes = [dict(change, inside=False) for change in changes]
+        elif refused:
+            holds = "none"
+        files.append({"path": path, "holds": holds, "changes": changes})
+    return {**read, "files": files}
+
+
+def claimed_files(c, state: dict, base: str) -> dict:
+    """The delivery's claimed files at `base`, for the files view: each tracked file a lane's whole-file claim names,
+    and each file region claims share, with every claim's span mapped to `base` and the file's length there. A span
+    that no longer maps keeps its granted lines and says it needs a regrant."""
+    helper = _region_ownership()
+    ownership = c.effective_ownership(state)
+    regions = state.get("laneRegions", [])
+    tracked = git("ls-tree", "-r", "--name-only", base, cwd=c.root, check=False).splitlines()
+    regional = sorted({claim["path"] for claim in regions})
+    whole = [path for path in tracked if path not in regional and owners_of(ownership, path)]
+    files = []
+    for path in regional + whole:
+        if len(files) >= LANE_FILES_LIMIT:
+            break
+        shown = run(["git", "show", f"{base}:{path}"], cwd=c.root, check=False)
+        length = len(shown.stdout.splitlines()) if shown.returncode == 0 else 0
+        if path in regional:
+            spans = []
+            for claim in regions:
+                if claim["path"] != path:
+                    continue
+                try:
+                    start, end = helper.mapped(c.root, claim, base)
+                    spans.append({"lane": claim["lane"], "start": start, "end": end})
+                except helper.RegionError:
+                    spans.append({"lane": claim["lane"], "start": claim["start"], "end": claim["end"], "regrant": True})
+            files.append({"path": path, "lines": length, "spans": sorted(spans, key=lambda span: span["start"])})
+        else:
+            files.append({"path": path, "lines": length, "lanes": owners_of(ownership, path)})
+    return {"files": files, **({"more": len(regional) + len(whole) - len(files)}
+                               if len(regional) + len(whole) > len(files) else {})}
+
+
+def read_lane_changes(folder: Path) -> dict | None:
+    """The last pass's lane-changes.json, or None when there is none or it can't be read."""
+    try:
+        written = json.loads((folder / LANE_CHANGES_FILE).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return written if isinstance(written, dict) and written.get("spec") == LANE_CHANGES_SPEC else None
+
+
+def write_lane_changes(c) -> str:
+    """Read every assigned lane's pushed story branch and write lane-changes.json beside the record. A branch at the
+    same base and head as the last pass's read is not read again: its read, with its read time, is kept, and only
+    what the lane holds is judged afresh, so a grant shows at once."""
+    doc = load_state()
+    state = doc["state"]
+    base = git("rev-parse", "--verify", f"{c.base_ref}^{{commit}}", cwd=c.root)
+    last = (read_lane_changes(c.state) or {}).get("lanes") or {}
+    lanes = {}
+    for lane in state["lanes"]:
+        story = lane_story(state, lane["id"])
+        if story is None:
+            continue
+        earlier = last.get(lane["id"]) if isinstance(last.get(lane["id"]), dict) else {}
+        read = None
+        if earlier.get("story") == story["subject"] and earlier.get("base") == base and "files" in earlier:
+            listed = run(["git", "ls-remote", c.remote, f"refs/heads/{earlier['branch']}"], cwd=c.root, check=False)
+            if listed.returncode == 0 and listed.stdout.split()[:1] == [earlier.get("head")]:
+                with contextlib.suppress(KeyError, TypeError):  # a read this release can't take is read again
+                    kept = {name: earlier[name] for name in ("story", "branch", "head", "base", "mergeBase", "readAt")}
+                    kept["files"] = [{"path": f["path"], "changes": [{name: change[name] for name in
+                                                                      ("old", "removed", "start", "added", "name")}
+                                                                     for change in f["changes"]]} for f in earlier["files"]]
+                    read = kept
+        if read is None:
+            read = read_lane_branch(c, story["subject"], base)
+        if read is None:
+            continue
+        try:
+            lanes[lane["id"]] = lane_holdings(c, lane["id"], read, state)
+        except Stop as error:
+            lanes[lane["id"]] = {name: read[name] for name in ("story", "branch", "head", "base") if name in read} | {
+                "unreadable": str(error)[-300:]}
+    written = {"spec": LANE_CHANGES_SPEC, "at": now(), "base": base, "lanes": lanes,
+               **(claimed_files(c, state, base) if state.get("laneRegions") else {})}
+    path = c.state / LANE_CHANGES_FILE
+    staging = path.with_name(f".{LANE_CHANGES_FILE}.{os.getpid()}")
+    staging.write_text(json.dumps(written, indent=2) + "\n")
+    with open(c.state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            os.replace(staging, path)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+    return f"{len(lanes)} branch(es)"
+
+
+def lines_said(first: int, count: int) -> str:
+    return f"line {first}" if count <= 1 else f"lines {first}-{first + count - 1}"
+
+
+def lane_change_needs(c, state: dict) -> list[dict]:
+    """The "Needs you" items the last branch read raises, none of them holding the close: a changed file its lane
+    doesn't hold, each change outside the spans of a file it holds by span, naming the lines, and a branch that can't
+    be read, in place of that lane's items. A declared shared output, and a change inside a span, raise nothing."""
+    written = read_lane_changes(c.state)
+    if written is None:
+        return []
+    assigned = {lane["id"] for lane in state["lanes"]}
+    items = []
+    for lane, read in sorted((written.get("lanes") or {}).items()):
+        if lane not in assigned or not isinstance(read, dict):
+            continue
+        named = lane_named(lane)
+        named = named[:1].upper() + named[1:]
+        facts = {"holding": False, "who": "lead", "lane": lane, "subject": read.get("story")}
+        if "unreadable" in read:
+            items.append({**facts, "source": f"{lane}'s branch {read.get('branch')}", "kind": "laneUnreadable",
+                          "text": f"{named}'s branch `{read.get('branch')}` can't be read: {str(read['unreadable'])[:300]}",
+                          "clears": "a pass that reads the branch",
+                          "fields": {"branch": read.get("branch"), "detail": str(read["unreadable"])[:300]}})
+            continue
+        for entry in read.get("files") or []:
+            path, changes = entry["path"], entry.get("changes") or []
+            source = f"{lane}'s branch {read.get('branch')} at {str(read.get('head'))[:10]}"
+            if entry.get("holds") == "none":
+                items.append({**facts, "source": source, "kind": "laneOutside",
+                              "text": f"{named} changed `{path}`, which it doesn't hold.",
+                              "clears": "the branch no longer changing it, or the lead granting the file",
+                              "fields": {"path": path, "detail": "It doesn't hold the file."}})
+                continue
+            for change in changes:
+                if change.get("inside", True):
+                    continue
+                # Named by the merge base's lines, which the span check judged and a grant names.
+                lines = (lines_said(change["old"], change["removed"]) if change["removed"]
+                         else f"before line {change['old']}")
+                said = (f"changed {lines}" if change["removed"]
+                        else f"added {change['added']} line{'s' if change['added'] != 1 else ''} {lines}")
+                items.append({**facts, "source": source, "kind": "laneOutside",
+                              "text": f"{named} {said} of `{path}`, outside its span.",
+                              "clears": "the branch no longer changing those lines, or the lead granting them",
+                              "fields": {"path": path, "lines": lines, "detail": f"It {said}, outside its span."}})
+    return items
 
 
 NEEDS_FILE = "needs-you.json"
@@ -12116,7 +12394,8 @@ class Supervisor:
                  ("lenses", lambda: journal_lens_returns(c)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
-                 ("peerWaits", lambda: write_peer_waits(c)), ("publish", lambda: render_views(c, only="publishers")),
+                 ("peerWaits", lambda: write_peer_waits(c)), ("laneChanges", lambda: write_lane_changes(c)),
+                 ("publish", lambda: render_views(c, only="publishers")),
                  ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:

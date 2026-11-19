@@ -443,6 +443,32 @@ a.issue-link { color: inherit; cursor: pointer; }
 .chip.blocked { background: var(--held-wash); color: var(--held); }
 .person .on { font: 400 12px/16px var(--mono); color: var(--faint); max-width: 100%; overflow-wrap: anywhere; text-align: right; }
 .person .on.waiting { color: var(--wait); }
+/* Who holds which files: a fold under the lanes, each claimed file in its lane's colour, solid where changed. */
+.files-fold { margin-top: 16px; border-top: 1px solid var(--hair); padding: 12px 0 0; }
+.files-fold > summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--soft); }
+.files-fold > summary::-webkit-details-marker { display: none; }
+.files-body { display: grid; gap: 14px; padding-top: 12px; }
+.files-area h4, .file-reading h4 { margin: 0 0 6px; font: 500 12px/16px var(--mono); color: var(--faint); overflow-wrap: anywhere; }
+.files-shelf { display: flex; flex-wrap: wrap; gap: 6px; }
+.file { display: inline-flex; align-items: center; gap: 8px; min-height: 26px; max-width: 100%; padding: 0 10px; border-radius: 6px;
+  font: 400 12px/16px var(--mono); overflow-wrap: anywhere; border: 1.5px solid var(--c); background: transparent; color: var(--ink); }
+.file.whole.solid { background: var(--c); color: var(--on-ink); }
+.file.unread { border-style: dashed; color: var(--faint); }
+.file.shared { cursor: pointer; padding: 4px 10px; flex-direction: column; align-items: stretch; border-color: var(--hair); }
+.file.shared.open { border-color: var(--ink); }
+.file-split { position: relative; display: block; height: 8px; min-width: 120px; border-radius: 3px; background: var(--well); }
+.file-split .stretch { position: absolute; top: 0; bottom: 0; border: 1.5px solid var(--c); border-radius: 3px; box-sizing: border-box; }
+.file-split .stretch.solid { background: var(--c); }
+.file-split .stretch.unread, .ruler .stretch.regrant, .file-split .stretch.regrant { border-style: dashed; }
+.files-unread { margin: 0; font-size: 13px; color: var(--wait); overflow-wrap: anywhere; }
+.file-reading { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 4px 16px; }
+.file-reading h4 { grid-column: 1 / -1; }
+.ruler { position: relative; min-height: 160px; border-radius: 4px; background: var(--well); }
+.ruler .stretch { position: absolute; left: 0; width: 10px; border: 1.5px solid var(--c); border-radius: 3px; box-sizing: border-box; }
+.ruler .tick { position: absolute; left: 14px; width: 12px; min-height: 2px; background: var(--c); border-radius: 1px; }
+.ruler .tick.out { background: var(--held); }
+.file-lanes { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; align-content: start; font-size: 13px; color: var(--soft); }
+.file-lanes b { color: var(--c); font-weight: 600; }
 .leases { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 14px; color: var(--soft); }
 .leases span b { color: var(--ink); font-weight: 600; font-family: var(--mono); font-size: 13px; }
 
