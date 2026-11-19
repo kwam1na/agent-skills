@@ -52,8 +52,9 @@ prepare, which is why their `.venv/bin/python` never fails this way.
 ## Prevention
 
 - After any lead edit to gates, the binding or `prepare`, run `tests.test_own_deliveries` and
-  `scripts/validate-registry.py` before `lead-push`. `lead-push` publishes without running a check, and no `fullHealth`
-  runs after a lead's own commit.
+  `scripts/validate-registry.py` before `lead-push`. `lead-push` publishes without running a check, and `fullHealth`,
+  the only later check, runs only once a story has merged and never under the `focused` posture this repository
+  declares.
 
 ## Related Issues
 

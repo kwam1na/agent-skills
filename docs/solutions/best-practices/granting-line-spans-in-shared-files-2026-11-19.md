@@ -28,8 +28,8 @@ their stories could hand off, and each request cost a round-trip to the lead. Th
 
 When granting a span:
 
-- End it one line past the last line the lane will touch, so an insertion after that line is inside. Start it one
-  line before the first, when the lane inserts there.
+- Pass `--end` two past the last line the lane will touch, so the span holds the line after it and an insertion after
+  that line is inside. Pass `--start` one before the first, when the lane inserts before it.
 - For an entry the lane adds next to an existing one, grant the whole neighbouring entry plus the line after it.
 - Once only one lane is still working in a file, grant the whole file instead of a span.
 - After a base edit crosses a span, `review-prepare` refuses it ("a base edit intersects the span"). Revoke it and
