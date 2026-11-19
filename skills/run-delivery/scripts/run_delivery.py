@@ -7603,17 +7603,17 @@ def story_readiness(c, key: str) -> tuple[str, str | None]:
     offered = item.get("offeredTransitions")
     if not isinstance(offered, list) and not status:
         return "not-checked", f"{key}: readiness wasn't checked: the tracker snapshot doesn't list its offered moves"
-    # Under refine, the plan's approval makes the refine moves: an item that offers its first one not yet made is ready,
-    # and one that offers none of them is refused, naming that move. A refined item goes on to its start moves.
+    # Under refine, an item is also ready when it offers its first refine move not yet made, since the plan's approval
+    # makes it; one that offers neither that nor its next start move is refused, naming the refine move.
     refining = next_move(transitions.get("refine") or [], status, targets)
-    if refining is not None:
-        if not isinstance(offered, list) or refining in offered:
-            return "ready", None
-        return "not-ready", (f"{key} is in {status or 'a status the snapshot does not name'}: "
-                             f"\"{refining}\" isn't offered; refine it first")
+    if refining is not None and (not isinstance(offered, list) or refining in offered):
+        return "ready", None
     following = next_move(moves, status, targets)
     if following is None or not isinstance(offered, list) or following in offered:
         return "ready", None
+    if refining is not None:
+        return "not-ready", (f"{key} is in {status or 'a status the snapshot does not name'}: "
+                             f"\"{refining}\" isn't offered; refine it first")
     return "not-ready", (f"{key} is in {status or 'a status the snapshot does not name'}: "
                          f"\"{following}\" isn't offered; refine it first")
 
