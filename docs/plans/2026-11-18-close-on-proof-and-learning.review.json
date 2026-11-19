@@ -1,0 +1,118 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-18-close-on-proof-and-learning.md",
+  "planSha256": "da17a2ba2e35e2cf35021ada91286c693822902ae5ee45fd1f69059356362378",
+  "planCommit": "6d21cd8c555c1d2b1cb9b11124ac82c439ff90a0",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "f5db85df4e0bbd115cc8125803086a6babafdecb",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-19T00:12:08.384856Z",
+      "finishedAt": "2026-11-19T00:16:59.129754Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "cc5eb20eccaf8db27ef3edea749ab1936b3b5da3",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-19T00:18:33.206982Z",
+      "finishedAt": "2026-11-19T00:19:59.610367Z",
+      "open": [
+        "outcome-correctness-r2-1",
+        "outcome-correctness-r2-2"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "6d21cd8c555c1d2b1cb9b11124ac82c439ff90a0",
+      "outcome": "aligned",
+      "startedAt": "2026-11-19T00:20:21.000120Z",
+      "finishedAt": "2026-11-19T00:21:00.191979Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "close-on-proof-and-learning.plan",
+        "candidateRef": "6d21cd8c555c1d2b1cb9b11124ac82c439ff90a0",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "outcome-correctness-r2-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. In Decision 5, a lane's `note-gap` subject now defaults to the lane's current story, and the lead's still defaults to the delivery's key. That satisfies append_journal's story-ownership check for a lane writer. The gaps scenario now runs a lane's `note-gap` with no `--subject` and expects it journalled under the lane writer, on the lane's story, with `by` set to the lane's id."
+          },
+          {
+            "id": "outcome-correctness-r2-2",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 11's refusal now reads open work exactly as close_holds does: planned stories not settled and queued stories not merged, each leaving out removed_subjects. A compounding scenario now covers a removed story stopped in the queue with every other story merged: `lead-compound` journals and the next pass releases the close."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA e3829f09e7e3dc6e2c719a2b1bead10c1fc5dcc0 at HEAD 6d21cd8c555c1d2b1cb9b11124ac82c439ff90a0. Start check: HEAD^{tree} matched and `git status --porcelain` was empty. End check: both matched again. No probes or mutants were made.",
+          "Model class: Opus-class (claude-opus-5-5). Realization basis: host-convention. Host: native subagent; no progress or permission signals are exposed to the lens. Run ID: none.",
+          "Delta: `git diff cc5eb20eccaf8db27ef3edea749ab1936b3b5da3..6d21cd8c555c1d2b1cb9b11124ac82c439ff90a0`, which touches only docs/plans/2026-11-18-close-on-proof-and-learning.md: Decision 5's default subject, Decision 11's open-work refusal, two scenarios, and the `delivery_state.py` region anchors. Checks: none were run (a plan review has none). I checked the delta against delivery_state.py (append_journal's lane-writer ownership check, _assign, main's parser and dispatch) and run_delivery.py (removed_subjects, close_holds).",
+          "Re-check of carried findings: outcome-correctness-r2-1 and outcome-correctness-r2-2 were both adopted as their approval conditions say; see resolvedFindings. outcome-correctness-r1-1 and outcome-correctness-r1-2 were closed earlier, and nothing in the delta reopens them.",
+          "Round 2 P2, now addressed: lane 1's `delivery_state.py` region names `_assign`, where the refusal is raised, and main's parser registration through its dispatch, so the refusal and the new command both sit inside lane 1's claim. That claim stays apart from lane 2's append_journal allowlist.",
+          "P3 (not filed): the combined operation's top-level function can't go inside main's parser-to-dispatch span. The lane can put it inside its `_assign` region instead, which sits next to apply_patch. The region set allows this, so it is not a defect.",
+          "P3 (not filed): a lane with no current story has no default subject. The state tool would refuse its `note-gap` until it names `--subject` for a story it had, which append_journal also accepts for merged rows. This is marginal: lanes note friction while working a story.",
+          "No new P0 or P1 in the delta. Late findings: none.",
+          "Approval conditions: no findings were raised this round, so none apply."
+        ]
+      },
+      "resultSha256": "535358efe66d3a9f198ff97349aa49a7b7f779ea32e8903368bf3252a3fdc650"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "close-on-proof-and-learning.plan",
+        "candidateRef": "6d21cd8c555c1d2b1cb9b11124ac82c439ff90a0",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree e3829f09e7e3dc6e2c719a2b1bead10c1fc5dcc0 at HEAD 6d21cd8c555c1d2b1cb9b11124ac82c439ff90a0. Start check passed: HEAD^{tree} matched and git status --porcelain was empty. End check passed the same way. No probes were planted, so nothing needed reverting.",
+          "Verification round 3. I derived the delta myself with git diff cc5eb20eccaf8db27ef3edea749ab1936b3b5da3..6d21cd8c555c1d2b1cb9b11124ac82c439ff90a0, which touches only docs/plans/2026-11-18-close-on-proof-and-learning.md. No findings of this lens are still open. adversarial-testing-r1-1 to r1-5 were closed in round 2 and are not listed again. I re-read their rows at this candidate: the delta weakens none of them. Model class: Opus 5.5 (claude-opus-5-5), running as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals to this lens. Run ID: none (the repository declares no run-event command). activityId review-close-on-proof-and-learning.plan, attemptId 1, roundId close-on-proof-and-learning.plan-r3.",
+          "No checks were run, as the brief directs for a plan review. Mutations were judged against the planned Scenarios, and kept to the lines the delta changes and the code that calls them.",
+          "Delta review, Decision 5's subject default: a lane now defaults to its current story and the lead to the delivery's key. The lane row at plan :237-238 now asserts the lane's story when no --subject is given. The close-out row asserts the delivery's key as the repo follow-up's story, which pins the lead's default. A mutation that always defaults to the delivery's key fails the lane row. A mutation that always defaults to the lane's story fails the close-out row.",
+          "Delta review, Decision 11's open-work refusal: it now reads open work exactly as close_holds does, leaving out subjects a plan change removed. The new allow-side row at :259-260 has a removed story stopped in the queue, and lead-compound journals and releases the close. A mutation that leaves out the removed-subject filter fails it, and the unmerged-refusal row pins the deny side. The decision-first epic-acceptance row records lead-compound while a lead-held line is unmet. So a mutation that reuses close_holds wholesale, unmet finish lines included, also fails a row.",
+          "Delta review, delivery_state.py regions: lane 1 now holds _assign and main's parser registration through dispatch, and lane 2 holds the allowlist in append_journal. This only re-anchors regions and changes no evidence. The rows for the --set refusal and the combined write (tests/test_orchestration_state.py) are unchanged.",
+          "Declined (P3), carried forward from round 2 unchanged: the planned-story-not-settled branch of lead-compound's refusal still has no row of its own. Mutation: drop the planned check, and the suite stays green. It is marginal: the close itself still holds on planned stories, and Decision 11 now ties the check to close_holds' own reading.",
+          "Approval conditions: this round raises no findings, so there are no conditions to state."
+        ]
+      },
+      "resultSha256": "0dc3d54461756ddaead96edc0632f60f67646ed77be14dc3b05a445fc633da24"
+    }
+  ],
+  "residualRisks": [
+    "3 review rounds; findings open after each round: 7, 2, 0."
+  ]
+}
