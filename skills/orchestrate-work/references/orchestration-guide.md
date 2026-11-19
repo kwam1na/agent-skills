@@ -541,8 +541,14 @@ marks it met, and it holds the close until the lead marks it. A line with no
 
 - For each finish line, run the observable check the plan names, against the
   merged base, not against a lane's checkout.
-- Set the line's `met` to true only on that evidence, and journal
-  `finish.met`.
+- Mark the line met only on that evidence, with run-delivery's
+  `lead-finish LINE --evidence TEXT|@FILE`. It sets the line's `met` and
+  journals `finish.met` with the evidence and `by: lead` in one write, and
+  refuses a line the record proves, a line already met and empty evidence. The
+  supervisor's own marks carry `by: supervisor`. Without run-delivery, the
+  state tool's `journal --kind finish.met --data '{"finish": "LINE",
+  "evidence": "...", "by": "lead"}' --element 'finish[id=LINE]' --patch
+  '{"met": true}' --version N` makes the same single write.
 
 ### 7. Release with approval
 
