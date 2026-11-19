@@ -681,7 +681,14 @@ three steps, with the supervisor or without it:
    prepare steps, in a detached checkout of that commit under the binding's
    work folder, so nothing done in the lead's checkout while it runs reaches
    it, and appends its result to the flow log's `<delivery>.suite.jsonl`. Cite
-   that line when marking the finish line that asks for the suite.
+   that line when marking the finish line that asks for the suite. On a
+   delivery with an `integrationTarget`, whose record `lead-init` gives an
+   integration step, it also journals the run as `integration.suite` at that
+   commit: `passed`, `over-budget` when every test passed and a run held to a
+   `suite-budget/1` file went over it, `failed`, or `unreadable` when its
+   checkout or a prepare step failed first. Record each merge of the target
+   into the integration with `lead-integrate merged --head <merge>`, adding
+   `--conflict <path>` for each path whose conflict you resolved by hand.
 2. **Review the integration.** Run `$review-work` with the delivery's lenses and
    round bound on the lead's own changes since the last unit merged: removing
    the delivery-only files, any merge of the default branch with its conflict
@@ -690,7 +697,14 @@ three steps, with the supervisor or without it:
    nothing beyond removing the delivery-only files still runs it, on that
    removal. Findings are triaged as a lane's are, and each round is journaled
    under the delivery as `review.round`, with the delivery's key as its subject.
-3. **Merge to the default branch** only once that review is aligned.
+   Journal each with `lead-integrate round --round <n> --head <candidate>
+   --verdict <lens>=approve|changes ... --findings <P0,P1,P2,P3>`, naming the
+   head the round read.
+3. **Merge to the default branch** only once that review is aligned. Record
+   the change request into the target with `lead-integrate requested
+   --change-request <address> --head <head>` when it opens, and again each time
+   a fix moves its head, then its merge with `lead-integrate landed --head
+   <the target's new head>`.
 
 Where the lead closes by hand, take these steps before journaling
 `delivery.closed`, so the review's rounds reach the archived record. Under the
@@ -720,7 +734,12 @@ target. Confirm the standing binding and the target's exact archive digest in
 the receipt. Run the repository's integration gates in that restored tree.
 Then run the integration review above against the exact candidate, including
 the merge and any resolutions. Open the reviewed change request into the target
-and let the repository's merge process land it. If the target moves before
+and let the repository's merge process land it. Record the merge of the target
+with `lead-integrate merged`, the suite with `lead-suite --at <commit>`, each
+round with `lead-integrate round`, the change request with `lead-integrate
+requested` and its merge with `lead-integrate landed`, as the steps above say:
+each `lead-integrate` fetches the target first and journals under the
+delivery's own key, and the live view draws the integration step from them. If the target moves before
 landing, incorporate it and repeat the affected review and gates.
 
 ## Lane brief template

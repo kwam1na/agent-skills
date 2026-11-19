@@ -12836,9 +12836,14 @@ class IntegrationStepTests(unittest.TestCase):
     def merge_of_target(self, fx: Fixture) -> tuple[str, str]:
         """A merge of the target into the integration in the lead checkout, and the target's head it took in."""
         m = fx.main
+        target_checkout = fx.tmp / "target"
+        sh("git", "worktree", "add", "-q", "--detach", target_checkout, "origin/main", cwd=m)
+        (target_checkout / "src/target.txt").write_text("the target moved\n")
+        commit(target_checkout, "Work on the target")
+        sh("git", "push", "-q", "origin", "HEAD:main", cwd=target_checkout)
         sh("git", "fetch", "-q", "origin", "main", cwd=m)
         target = sh("git", "rev-parse", "origin/main", cwd=m).stdout.strip()
-        sh("git", "merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", "FX-1: merge main", "origin/main", cwd=m)
+        sh("git", "merge", "-q", "--no-ff", "-m", "FX-1: merge main", "origin/main", cwd=m)
         return sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip(), target
 
     def test_lead_integrate_journals_each_fact_under_the_delivery_s_key(self) -> None:

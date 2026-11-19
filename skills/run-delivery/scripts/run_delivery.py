@@ -12475,8 +12475,8 @@ def lead_integrate(args) -> None:
         parents = git("rev-list", "--parents", "-n", "1", head).split()[1:]
         if len(parents) != 2:
             raise Stop(f"{args.head} is no merge of {target}: it has {len(parents)} parents, and a merge has two")
-        kind, data = "integration.merged", {"target": target, "targetHead": parents[1], "head": head,
-                                            "conflicts": list(args.conflict or [])}
+        done = state_tool("journal", "--kind", "integration.merged", "--subject", c.delivery, "--data", json.dumps(
+            {"target": target, "targetHead": parents[1], "head": head, "conflicts": list(args.conflict or [])}))
     elif args.fact == "round":
         verdicts = {}
         for said in args.verdict:
@@ -12488,15 +12488,17 @@ def lead_integrate(args) -> None:
         if len(counts) != 4 or not all(n.isdigit() for n in counts):
             raise Stop(f"--findings {args.findings} is not four counts, P0,P1,P2,P3")
         moment = now()
-        kind, data = "review.round", {"round": args.round, "head": head, "verdicts": verdicts,
-                                      "findings": dict(zip(("P0", "P1", "P2", "P3"), map(int, counts))),
-                                      "startedAt": args.started or moment, "finishedAt": args.finished or moment}
+        done = state_tool("journal", "--kind", "review.round", "--subject", c.delivery, "--data", json.dumps(
+            {"round": args.round, "head": head, "verdicts": verdicts,
+             "findings": dict(zip(("P0", "P1", "P2", "P3"), map(int, counts))),
+             "startedAt": args.started or moment, "finishedAt": args.finished or moment}))
     elif args.fact == "requested":
-        kind, data = "integration.requested", {"changeRequest": args.change_request, "head": head}
+        done = state_tool("journal", "--kind", "integration.requested", "--subject", c.delivery, "--data", json.dumps(
+            {"changeRequest": args.change_request, "head": head}))
     else:
-        kind, data = "integration.landed", {"target": target, "head": head}
-    done = state_tool("journal", "--kind", kind, "--subject", c.delivery, "--data", json.dumps(data))
-    print(f"recorded {kind} {journal_id(done)} at {head[:10]}")
+        done = state_tool("journal", "--kind", "integration.landed", "--subject", c.delivery, "--data", json.dumps(
+            {"target": target, "head": head}))
+    print(f"recorded {args.fact} as entry {journal_id(done)} at {head[:10]}")
 
 
 def moved_head_stands(c, doc: dict, head: str, last: dict | None) -> str:

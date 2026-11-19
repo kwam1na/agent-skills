@@ -518,7 +518,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "313a18e21dee1f63f51005cbeebd3b101500583af3f451f1b8ae2eee18f854ec"
+          "sha256": "294a72d679a80d8c426ca443b241464e8f436061dd2565eae4975564c33cb9cd"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -1123,7 +1123,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "75918787941543aafba5b9759c68f6f872bef4cdaad2aeed621dadddcf3756c6"
+          "sha256": "551c98cdf1fbb25dcfc14f2601e3b7dd221ed417b2a32bb0a5cce33ec6ee6d08"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
