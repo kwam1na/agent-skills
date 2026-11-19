@@ -24,6 +24,9 @@
       "owns": [
         "skills/run-delivery/scripts/tracker_publisher.py",
         "skills/delivery-views/scripts/snapshot.py",
+        "tests/test_delivery_views_adopter.py",
+        "tests/test_delivery_views_snapshots.py",
+        "skills/orchestrate-work/references/schemas.json",
         "skills/orchestrate-work/references/journal-kinds.json",
         "tests/fixtures/journal-kinds/vectors.json",
         "tests/test_journal_kinds.py",

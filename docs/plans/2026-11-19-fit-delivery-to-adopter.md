@@ -63,7 +63,8 @@ Checked against `main` at `aeeeafce` on 2026-11-19:
      passed their authors' hooks. The config reference says so in its "Host hooks" neighbourhood, by name.
    - A corpus test fails when `run_delivery.py` builds a commit outside `tool_commit`, in any spelling: `git("commit"`,
      `git("merge"`, and `run(["git", "commit"` or `run(["git", "merge"`. A `git merge` that only prints a command for a
-     person to run is not building one.
+     person to run is not building one, and neither is a `--ff-only` merge, such as the operator checkout's
+     fast-forward at close, which keeps the operator's own hooks.
    - Nothing is journalled for it. The ticket asked for a journal record, but the skip is unconditional, so a field
      would always say the same thing, and the commits it covers have no journal entry of their own to carry it.
 2. **Readiness agrees with the publisher** (V26-3655). `story_readiness` walks `start` as `move` does. A leading move
@@ -71,12 +72,16 @@ Checked against `main` at `aeeeafce` on 2026-11-19:
    is ready when the item offers the first move not yet made. A `backlog` item with every move made is ready. The
    refusal names the item's status and that first move: `"<key> is in <status>: \"<move>\" isn't offered; refine it
    first"`. A non-`backlog` item is ready, as today. Without `targets`, nothing changes.
-   - The walk reads `status` first and needs `offeredTransitions` only to judge the first move not yet made. An item
-     whose `status` is the target of every leading move is ready even with no `offeredTransitions`. An item that still
-     needs a move and has no `offeredTransitions` reads as not checked, as today.
+   - The walk reads `status` first and needs `offeredTransitions` only to judge the first move not yet made.
    - The Linear snapshot (`skills/delivery-views/scripts/snapshot.py`) writes each item's `status` as its state's
      name, by selecting `name` beside `type` in `LINEAR_QUERY`'s state. Today only the Jira reader writes `status`.
      Linear writes no `offeredTransitions`, since its workflow doesn't restrict moves.
+   - An item with a `status` and no `offeredTransitions` list is on a tracker that doesn't restrict moves: its first
+     move not yet made reads as offered, so it is ready. The Jira reader writes `status` only together with
+     `offeredTransitions`, so a Jira item never reads this way.
+   - An item with neither, as a Jira item read without its transitions, reads as not checked, as today.
+   - The snapshot schema's description of `offeredTransitions` in `skills/orchestrate-work/references/schemas.json`
+     says readiness walks the start moves, not only the first.
 3. **`transitions.refine`** (V26-3653). An optional list of the adopter's move names, in `tracker.transitions`.
    `tracker_conf` validates it as it validates `start`, and requires a `targets` entry for its last move, so a move
    already made reads as made on a tracker that lists only the moves out of a status. The tooling assumes no names,
@@ -118,8 +123,14 @@ Checked against `main` at `aeeeafce` on 2026-11-19:
    change, and a recorded `--kind lenses` change doesn't.
 9. **A brief lens can't be dropped** (V26-3651). A round 1 `--lenses` that leaves out a lens the story's entry names
    is refused, naming the lens and that the story's brief asks for it, as a missing mandated lens is. A brief lens
-   added after a story's round 1 is held the same way at the end: `handoff` and `lead-accept` refuse a story whose
-   set lacks a lens its entry now names, naming it and `review-prepare <key> --round 1 --restart`.
+   added after a story's round 1 joins at the next round:
+   - The next round's `review-prepare` adds to the story's set every lens its entry names that the set lacks. That
+     round's meta records the widened set, with `requested` set to `brief` for each added lens, and its
+     `review.started` carries the widened `lenses`. A later round's `--lenses` may name the widened set; any other
+     different set is still refused.
+   - `handoff` and `lead-accept` read the story's latest set, the last prepared round's, not round 1's.
+   - Until a round carries the lens, `handoff` and `lead-accept` refuse the story, naming the lens and
+     `review-prepare <key> --round <next>`.
 10. **Where a lens came from** (V26-3651). Round 1's meta gains `requested`: each on-request lens in the set, mapped to
     `lane` or `brief`. A lens both the brief and `--lenses` name is `brief`. `handoff`'s message, `lead-accept`'s
     lens line and `lead-brief`'s lens list show it. `review.started` is unchanged: its `lenses` already holds the
@@ -179,7 +190,7 @@ its budget makes other tests in the same change cheaper; no budget number moves.
   the repository's configuration.
 - The corpus guard: a fixture source per spelling, `git("commit"`, `git("merge"`, `run(["git", "commit"` and
   `run(["git", "merge"`, each outside `tool_commit`, fails it. A fixture that only prints a `git merge` command
-  passes it.
+  passes it, and so does a `run(["git", "merge", "--ff-only"` fixture.
 - The same three commits skip the hooks under the binding's `hooks` set to `bypass` and with it unset.
 
 `tests/test_run_delivery_tracker.py`:
@@ -187,8 +198,9 @@ its budget makes other tests in the same change cheaper; no budget number moves.
   "Groomed"}`:
   - a Jira-shaped snapshot item in `Groomed`, offering only `Begin`: ready;
   - a Linear item in `Groomed`, built by `snapshot.py`'s Linear reader from a faked GraphQL answer, with `status`
-    `Groomed` and no `offeredTransitions`, under `start: ["Groom"]`: ready; under `start: ["Groom", "Begin"]`: not
-    checked, since `Begin` still needs offered moves;
+    `Groomed` and no `offeredTransitions`: ready under `start: ["Groom"]` and under `start: ["Groom", "Begin"]`;
+  - a Linear item in `Backlog`, built the same way: ready, since Linear doesn't restrict moves;
+  - a Jira item read without its transitions, so with neither `status` nor `offeredTransitions`: not checked;
   - an item in `Backlog` offering `Groom`: ready, as today;
   - an item in `Backlog` offering only `Begin`: refused, naming `Backlog` and `Groom`;
   - an item in `Backlog` offering neither: refused, naming `Backlog` and `Groom`;
@@ -225,8 +237,10 @@ its budget makes other tests in the same change cheaper; no budget number moves.
 - A story whose entry names `lens.data` gets it with no `--lenses`, with `requested: {"lens.data": "brief"}`.
 - That story's `--lenses` leaving out `lens.data` is refused, naming it and the brief.
 - That story's `--lenses` including `lens.data` is accepted, with `requested: {"lens.data": "brief"}`.
-- A brief lens added with `lead-plan change --kind lenses` after the story's round 1: `handoff` and `lead-accept`
-  refuse it, naming the lens and the restart.
+- A brief lens added with `lead-plan change --kind lenses` after the story's round 1 is reduced: `handoff` and
+  `lead-accept` refuse the story, naming the lens and `review-prepare <key> --round 2`. Round 2 then carries the
+  lens, its meta records `requested: {"lens.data": "brief"}`, its `review.started` names it, and once round 2 is
+  reduced and aligned, `handoff` and `lead-accept` pass.
 - The same through `review.default` for a `harness.config.ts` lens.
 - Conflicts: `default: false` on a mandated lens, on a plan-only lens and on an undeclared one, and `review.lenses`
   and `review.default` disagreeing, are each reported by `doctor`. `default: true` runs the lens by default, as
@@ -251,7 +265,7 @@ its budget makes other tests in the same change cheaper; no budget number moves.
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3654, V26-3655, V26-3653 | `skills/run-delivery/scripts/tracker_publisher.py`, `skills/delivery-views/scripts/snapshot.py`, `skills/orchestrate-work/references/journal-kinds.json`, `tests/fixtures/journal-kinds/vectors.json`, `tests/test_journal_kinds.py`, `tests/test_journal_shape.py`, `tests/test_run_delivery_tool_commits.py`, `tests/test_run_delivery_tracker.py` |
+| 1 | 1 | V26-3654, V26-3655, V26-3653 | `skills/run-delivery/scripts/tracker_publisher.py`, `skills/delivery-views/scripts/snapshot.py`, `skills/orchestrate-work/references/schemas.json`, `tests/test_delivery_views_snapshots.py`, `tests/test_delivery_views_adopter.py`, `skills/orchestrate-work/references/journal-kinds.json`, `tests/fixtures/journal-kinds/vectors.json`, `tests/test_journal_kinds.py`, `tests/test_journal_shape.py`, `tests/test_run_delivery_tool_commits.py`, `tests/test_run_delivery_tracker.py` |
 | 1 | 2 | V26-3651 | `tests/test_run_delivery_lens_request.py` |
 
 V26-3655 and V26-3653 both change `story_readiness`, so they share a lane, V26-3655 first. V26-3654 goes first in
@@ -298,7 +312,9 @@ Implement Decision 1.
 ### V26-3655. Read a story as ready when its status is already a start move's target
 
 Lane 1, tier 1, after V26-3654. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
-`skills/delivery-views/scripts/snapshot.py` and `tests/test_run_delivery_tracker.py`.
+`skills/delivery-views/scripts/snapshot.py`, `skills/orchestrate-work/references/schemas.json`,
+`tests/test_delivery_views_snapshots.py`, `tests/test_delivery_views_adopter.py` and
+`tests/test_run_delivery_tracker.py`.
 
 Implement Decision 2.
 
