@@ -12,6 +12,7 @@ import contextlib
 import io
 import json
 import re
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -110,7 +111,8 @@ class CompoundingCloseTests(unittest.TestCase):
         text = self.stub(fx).read_text()
         self.assertIn("## What was hard", text)
         self.assertIn("## Gaps noted", text)
-        written = "- The queue's sync merge refused the push.\n- Region claims needed a line of slack.\n"
+        written = ("- The queue's sync merge refused the push.\n- Region claims needed a line of slack.\n\n"
+                   "## Root cause\n\n- Two writers shared one branch.\n")
         self.stub(fx).write_text(text.replace("- (yours: what was hard, and why)\n", written))
         self.flow(fx, "note-gap", "--class", "repo", "--text", "The catalogue order is manual",
                   "--why", "a lane had to place its entry by hand")
@@ -156,6 +158,23 @@ class CompoundingCloseTests(unittest.TestCase):
         closed = json.loads((fx.tmp / "flow-log/FX-1.closed.json").read_text())
         self.assertTrue(Path(closed["friction"]).is_file(), closed)
         self.assertEqual(Path(closed["friction"]).parent.parent, Path(closed["archive"]))
+        # Once the close is archived, a pass that finds something holding leaves the stub as it was archived.
+        before = (self.stub(fx).read_bytes(), self.stub(fx).stat().st_mtime_ns)
+        self.flow(fx, "lead-block", "--text", "a late blocker")
+        self.assertTrue(self.once(fx)["closeHeldBy"])
+        self.assertEqual((self.stub(fx).read_bytes(), self.stub(fx).stat().st_mtime_ns), before)
+
+    def test_lead_close_without_compounding_leaves_a_recorded_decision_as_it_is(self) -> None:
+        fx = self.fixture()
+        self.flow(fx, "lead-compound", "--required", "--ref", REF)
+        self.flow(fx, "lead-finish", "deploy", "--evidence", "release v3.4.0 applied")
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
+        code, out = fx.flow("lead-close", "--without-compounding", "operator closed early", cwd=fx.main)
+        self.assertIn(code, (0, 1), out)  # 1 for what it leaves to the operator
+        self.assertIn("FX-1: closed out", out)
+        self.assertNotIn("as skipped", out)
+        self.assertEqual([e["data"] for e in kinds(fx, "compounding.recorded")],
+                         [{"outcome": "required", "reference": REF}])
 
     def test_each_refusal_journals_no_decision(self) -> None:
         fx = self.fixture()
@@ -194,6 +213,8 @@ class CompoundingCloseTests(unittest.TestCase):
         out = self.flow(fx, "lead-close", code=2)
         self.assertIn(f"{DECISION} is not recorded", out)
         self.assertNotIn("closed out", out)
+        # A reason that is empty or only spaces is no reason.
+        self.assertIn("--without-compounding is required", self.flow(fx, "lead-close", "--without-compounding", " ", code=2))
         self.assertEqual(kinds(fx, "compounding.recorded"), [])
         self.assertFalse((fx.tmp / "flow-log/FX-1.closed.json").exists())
         out = self.flow(fx, "lead-close", "--without-compounding", "operator closed early")
@@ -271,6 +292,47 @@ class DecisionReadsTests(unittest.TestCase):
         self.assertEqual(said.getvalue(), f"recorded {DECISION}, not-required (journal entry 9)\n")
         self.assertEqual(journalled, [("journal", "--kind", "compounding.recorded", "--data",
                                        json.dumps({"outcome": "not-required", "why": "nothing new"}))])
+
+    def test_the_archived_stub_gains_what_the_close_out_left_once(self) -> None:
+        archive = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        c = types.SimpleNamespace(flow_log=archive / "flow-log", delivery="FX-1",
+                                  lane_checkout=lambda key: archive / "lanes" / key)
+        note = archive / "flow-log/FX-1.friction.md"
+        note.parent.mkdir()
+        note.write_text("# FX-1: friction\n")
+        said = ["left /main where it is: it has uncommitted changes"]
+        for _ in range(2):
+            self.assertEqual(self.tool.archived_stub(c, archive, said), note)
+        text = note.read_text()
+        self.assertEqual(text.count("## What the close-out left to you"), 1, text)
+        self.assertIn("- left /main where it is: it has uncommitted changes", text)
+
+    def test_lead_close_journals_a_skipped_decision_only_once_the_supervisor_has_stopped(self) -> None:
+        """A pass still running would otherwise close out on the decision lead-close just freed, beside lead-close."""
+        calls: list[str] = []
+
+        class Stopped(Exception):
+            pass
+
+        def ask(c, meanwhile, why):
+            calls.append("stop")
+            raise Stopped
+        doc = {"journal": [{"id": 1, "kind": "delivery.closed", "data": {}}],
+               "state": {"queue": [], "meta": {}}}
+        c = types.SimpleNamespace(root=Path("/repo"), binding_path=Path("/repo/.agents/orchestration.json"))
+        for name, value in (("cfg", lambda: c), ("git", lambda *argv, **_: ""), ("load_state", lambda: doc),
+                            ("decision_owed", lambda c, doc: True), ("ask_supervisor_to_stop", ask),
+                            ("state_tool", lambda *argv, **_: calls.append(" ".join(map(str, argv))))):
+            self.enterContext(mock.patch.object(self.tool, name, value))
+        with self.assertRaises(Stopped):
+            self.tool.lead_close(types.SimpleNamespace(without_compounding="operator closed early"))
+        self.assertEqual(calls, ["stop"], "the skipped decision was journalled before the supervisor stopped")
+        # And without a reason, it refuses before it asks anything to stop.
+        calls.clear()
+        with self.assertRaises(self.tool.Stop) as refused:
+            self.tool.lead_close(types.SimpleNamespace(without_compounding=None))
+        self.assertIn(f"{DECISION} is not recorded", str(refused.exception))
+        self.assertEqual(calls, [])
 
 
 ORDER = ("Note gaps as they happen. When the last story lands, write up the friction stub, run `$compound-learning` "

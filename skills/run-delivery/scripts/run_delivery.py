@@ -8922,9 +8922,7 @@ def lead_close(args) -> None:
             raise Stop(f"{DECISION_HOLD} is not recorded since the delivery last reopened: record it with "
                        f"{flow_command()} lead-compound --required --ref REF, or --not-required --why TEXT, or close "
                        "without it with lead-close --without-compounding WHY")
-        why = worded(args.without_compounding, "--without-compounding")
-        skipped = journal_id(state_tool("journal", "--kind", COMPOUNDING_KIND, "--data",
-                                        json.dumps({"outcome": "skipped", "why": why})))
+        skipped = worded(args.without_compounding, "--without-compounding")
     # The run is stopped while the supervisor finishes its pass, which under --once waits on it, and again once the
     # supervisor has stopped, in case that pass started one.
     runs: list[str | None] = []
@@ -8935,7 +8933,10 @@ def lead_close(args) -> None:
     lead = c.lane_checkout(c.delivery)
     done, left = [], []
     if skipped is not None:
-        done.append(f"recorded {DECISION_HOLD} as skipped (journal entry {skipped}): {args.without_compounding.strip()}")
+        # Journalled once the supervisor runs no pass, so none closes out beside this close on the decision it frees.
+        entry = journal_id(state_tool("journal", "--kind", COMPOUNDING_KIND, "--data",
+                                      json.dumps({"outcome": "skipped", "why": skipped})))
+        done.append(f"recorded {DECISION_HOLD} as skipped (journal entry {entry}): {skipped.strip()}")
     # Holds nothing: before the final render and the archive, so both carry it.
     try:
         posture = delivery_posture(c)
@@ -11662,6 +11663,8 @@ def workflow_gaps_step(c, archive: Path, found: list[dict]) -> Path | None:
 
 HARD = "## What was hard"
 LEFT = "## What the close-out left to you"
+# The stub's sections the supervisor writes, which end what the lead wrote under HARD.
+GENERATED = ("## Shown, never holding", "## Gaps noted", LEFT)
 
 
 def friction_stub_path(c) -> Path:
@@ -11679,7 +11682,8 @@ def write_friction_stub(c, shown: list[str], found: list[dict]) -> Path:
         lines = stub.read_text().splitlines()
         if HARD in lines:
             body = lines[lines.index(HARD) + 1:]
-            end = next((n for n, line in enumerate(body) if line.startswith("## ")), len(body))
+            # The lead's text runs to the first generated section, its own "## " sections included.
+            end = next((n for n, line in enumerate(body) if line in GENERATED), len(body))
             kept = body[:end]
             while kept and not kept[0].strip():
                 kept = kept[1:]
