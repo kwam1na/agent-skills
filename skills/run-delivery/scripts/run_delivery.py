@@ -7265,6 +7265,9 @@ def lead_init(args) -> None:
             rebuild_plan(c)
     print(f"initialized {c.state} with {len(planned)} planned stories across {len(c.lanes)} lanes"
           + (f"; wrote {c.state / PLAN_FILE}" if (c.state / PLAN_FILE).exists() else ""))
+    for item in planned:
+        if (outcome := refine_outcome(c, item["subject"])) is not None:
+            print(f"  refine: {outcome}")
     start_hosted(c)
     if (line:=hosted_line(c)):print(line)
     if args.no_supervisor or supervisor_off():
@@ -7579,8 +7582,9 @@ def story_readiness(c, key: str) -> tuple[str, str | None]:
     """Whether a story's tracker item offers the first start move not yet made, from the tracker snapshot: ("ready",
     None), ("not-ready", why), or ("not-checked", why) when the snapshot can't say. It walks the start moves as the
     publisher's move does: a move whose `targets` entry is the item's status is made, the whole start is made when the
-    last move's is, and a backlog item with every move made is ready. An item with a status and no offered moves is on a tracker that restricts no move, so its next
-    move reads as offered. Nothing to check with no start move, or for an item already under way. It reads; it never
+    last move's is, and a backlog item with every move made is ready. Under `refine`, an item offering its first refine
+    move not yet made is ready too, since the plan's approval makes it. An item with a status and no offered moves is on
+    a tracker that restricts no move, so its next move reads as offered. Nothing to check with no start move, or for an item already under way. It reads; it never
     moves anything."""
     transitions = tracker_conf(c)["transitions"]
     moves = transitions.get("start") or []
@@ -7599,14 +7603,47 @@ def story_readiness(c, key: str) -> tuple[str, str | None]:
     offered = item.get("offeredTransitions")
     if not isinstance(offered, list) and not status:
         return "not-checked", f"{key}: readiness wasn't checked: the tracker snapshot doesn't list its offered moves"
-    # As the publisher's move: an item at the last move's target has had the whole start made, and otherwise the next
-    # move is the first whose own target isn't the item's status.
-    done = bool(status) and targets.get(moves[-1]) == status
-    following = None if done else next((move for move in moves if not status or targets.get(move) != status), None)
+    # Under refine, the plan's approval makes the refine moves: an item that offers its first one not yet made is ready,
+    # and one that offers none of them is refused, naming that move. A refined item goes on to its start moves.
+    refining = next_move(transitions.get("refine") or [], status, targets)
+    if refining is not None:
+        if not isinstance(offered, list) or refining in offered:
+            return "ready", None
+        return "not-ready", (f"{key} is in {status or 'a status the snapshot does not name'}: "
+                             f"\"{refining}\" isn't offered; refine it first")
+    following = next_move(moves, status, targets)
     if following is None or not isinstance(offered, list) or following in offered:
         return "ready", None
     return "not-ready", (f"{key} is in {status or 'a status the snapshot does not name'}: "
                          f"\"{following}\" isn't offered; refine it first")
+
+
+def next_move(moves: list[str], status: str | None, targets: dict) -> str | None:
+    """The first of `moves` not yet made, as the publisher's move reads them, or None when every move is made: an item
+    at the last move's target has had them all made, and otherwise a move is made when its own target is the status."""
+    if not moves or (status and targets.get(moves[-1]) == status):
+        return None
+    return next((move for move in moves if not status or targets.get(move) != status), None)
+
+
+def refine_outcome(c, key: str) -> str | None:
+    """What the plan's approval will do to a story's tracker item, from the tracker snapshot, as one line: refine it,
+    find it refined already, or find it can't be moved; None when the tracker refines nothing."""
+    transitions = tracker_conf(c)["transitions"]
+    moves = transitions.get("refine") or []
+    if not moves:
+        return None
+    item = (tracker_snapshot_items(c) or {}).get(key)
+    status = (item or {}).get("status")
+    offered = (item or {}).get("offeredTransitions")
+    if not status and not isinstance(offered, list):
+        return f"{key}: whether the plan's approval refines it wasn't checked: the tracker snapshot doesn't say"
+    move = next_move(moves, status, transitions.get("targets") or {})
+    if move is None:
+        return f"{key}: refined already ({status})"
+    if not isinstance(offered, list) or move in offered:
+        return f"{key}: the plan's approval will refine it (\"{move}\" from {status or 'its status'})"
+    return f"{key}: the plan's approval can't refine it: \"{move}\" isn't offered from {status or 'its status'}"
 
 
 def is_lead_checkout(c, branch: str) -> bool:
@@ -14736,7 +14773,10 @@ class Doctor:
     def story_readiness(self):
         d = self.delivery
         if not tracker_conf(d)["transitions"].get("start"):
-            return "ok", "lanes make no start move, so there is no readiness to check"
+            refining = [] if (d.state / "state.json").exists() else [
+                line for key in d.stories if (line := refine_outcome(d, key)) is not None]
+            return "ok", ("lanes make no start move, so there is no readiness to check"
+                          + (f"; at the plan's approval: {'; '.join(refining)}" if refining else ""))
         if (d.state / "state.json").exists():
             doc = shown_record(d.release, d.state)
             waiting = [e["subject"] for e in doc["state"].get("planned", []) if e.get("stage") == "planned"]
@@ -14745,13 +14785,18 @@ class Doctor:
         found = {key: story_readiness(d, key) for key in waiting if key in d.stories}
         unready = [line for state, line in found.values() if state == "not-ready"]
         unchecked = [line for state, line in found.values() if state == "not-checked"]
+        # Before lead-init, what its plan's approval will do to each story, as lead-init says it.
+        refining = [] if (d.state / "state.json").exists() else [
+            line for key in waiting if key in d.stories and (line := refine_outcome(d, key)) is not None]
+        said = f"; at the plan's approval: {'; '.join(refining)}" if refining else ""
         if unready:
             # A warning: lead-assign refuses these, and --force overrides it.
-            return "warn", "; ".join(unready + unchecked) + "; fix: have each item made ready before its lane starts"
+            return "warn", ("; ".join(unready + unchecked) + "; fix: have each item made ready before its lane starts"
+                            + said)
         if unchecked:
-            return self.not_applicable("; ".join(unchecked))
+            return self.not_applicable("; ".join(unchecked) + said)
         return "ok", (f"each of the {len(found)} stories still planned is ready for its next start move"
-                      if found else "no story is still waiting to start")
+                      if found else "no story is still waiting to start") + said
 
     def story_summaries(self):
         d = self.delivery

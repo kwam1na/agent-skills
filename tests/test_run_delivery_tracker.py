@@ -3292,6 +3292,32 @@ class PlanApprovalJournalTests(unittest.TestCase):
         approvals = [e for e in self.journal(fx) if e["kind"] == "story.approved"]
         self.assertEqual([e["data"]["title"] for e in approvals[2:]], ["Thing four", "Thing FX-5"])
 
+    def test_lead_init_and_doctor_before_it_say_what_the_approval_will_do_to_each_story(self) -> None:
+        fx, path = self.fixture(["Groom"])
+        h, m = self.harness, fx.main
+        snapshot = fx.tmp / "record/snapshots/tracker.json"
+        snapshot.parent.mkdir(parents=True)
+        snapshot.write_text(json.dumps({"schemaVersion": "work-snapshot/1", "source": "tracker",
+                                        "takenAt": "2026-11-19T10:00:00Z", "items": [
+            {"subject": "FX-2", "state": "backlog", "status": "To Groom", "offeredTransitions": ["Groom"]},
+            {"subject": "FX-3", "state": "backlog", "status": "Groomed", "offeredTransitions": ["Begin"]}]}))
+        said = ['FX-2: the plan\'s approval will refine it ("Groom" from To Groom)', "FX-3: refined already (Groomed)"]
+        bound = h.doctor_binding()
+        bound["state"]["publishers"] = []
+        (m / ".agents/orchestration.json").write_text(json.dumps(bound, indent=2))
+        conf = json.loads((m / ".agents/run-delivery.json").read_text())
+        del conf["gates"]  # The binding's fallback checks are the gates.
+        conf["tracker"]["updates"] = "manual"  # bound to Jira's snapshot, with no publisher
+        (m / ".agents/run-delivery.json").write_text(json.dumps(conf, indent=2))
+        h.commit(m, "FX-1: bind the repository")
+        h.sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=m)
+        _, row = h.doctor_lines(out)["story readiness"]
+        self.assertIn(f"at the plan's approval: {'; '.join(said)}", row)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn("".join(f"  refine: {line}\n" for line in said), out)
+
     def test_without_refine_nothing_journals_a_plan_approval(self) -> None:
         fx, path = self.fixture(None)
         code, out = fx.flow("lead-init", cwd=fx.main)
@@ -3325,13 +3351,55 @@ class ReadinessWalkTests(unittest.TestCase):
         finally:
             sys.dont_write_bytecode = previous
 
-    def readiness(self, item: dict | None, start: list[str], targets: dict | None = None) -> tuple[str, str | None]:
-        transitions = {"start": start, **({"targets": targets} if targets is not None else {})}
+    def readiness(self, item: dict | None, start: list[str], targets: dict | None = None,
+                  refine: list[str] | None = None, read=None) -> tuple[str, str | None]:
+        transitions = {"start": start, **({"targets": targets} if targets is not None else {}),
+                       **({"refine": refine} if refine is not None else {})}
         items = None if item is None else {"FX-3": {"subject": "FX-3", "title": "Three", **item}}
         rd = self.run_delivery
         with mock.patch.object(rd, "tracker_conf", lambda c: {"transitions": transitions}), \
                 mock.patch.object(rd, "tracker_snapshot_items", lambda c: items):
-            return rd.story_readiness(object(), "FX-3")
+            return (read or rd.story_readiness)(object(), "FX-3")
+
+    def refine_outcome(self, item: dict | None, refine: list[str], targets: dict) -> str | None:
+        return self.readiness(item, ["Begin"], targets, refine, read=self.run_delivery.refine_outcome)
+
+    def test_under_one_refine_move_an_item_the_approval_can_refine_or_already_refined_is_ready(self) -> None:
+        refine, targets = ["Groom"], {"Groom": "Groomed"}
+        ready = lambda item: self.assertEqual(self.readiness(item, ["Begin"], targets, refine), ("ready", None))
+        ready({"state": "backlog", "status": "Backlog", "offeredTransitions": ["Groom"]})
+        ready({"state": "backlog", "status": "Groomed", "offeredTransitions": ["Begin"]})
+        ready({"state": "backlog", "status": "Backlog"})  # a tracker that restricts no move
+        self.refused(self.readiness({"state": "backlog", "status": "Backlog", "offeredTransitions": []},
+                                    ["Begin"], targets, refine), "Backlog", "Groom")
+        # Refined, the item goes on to its start moves.
+        self.refused(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": []},
+                                    ["Begin"], targets, refine), "Groomed", "Begin")
+
+    def test_under_two_refine_moves_the_first_not_yet_made_must_be_offered(self) -> None:
+        refine, targets = ["Triage", "Groom"], {"Triage": "Triaged", "Groom": "Groomed"}
+        self.assertEqual(self.readiness({"state": "backlog", "status": "Triaged", "offeredTransitions": ["Groom"]},
+                                        ["Begin"], targets, refine), ("ready", None))
+        self.refused(self.readiness({"state": "backlog", "status": "Backlog", "offeredTransitions": ["Groom"]},
+                                    ["Begin"], targets, refine), "Backlog", "Triage")
+
+    def test_the_refine_outcome_says_what_the_plans_approval_will_do(self) -> None:
+        refine, targets = ["Triage", "Groom"], {"Triage": "Triaged", "Groom": "Groomed"}
+        said = lambda item: self.refine_outcome(item, refine, targets)
+        self.assertEqual(said({"state": "backlog", "status": "New", "offeredTransitions": ["Triage"]}),
+                         'FX-3: the plan\'s approval will refine it ("Triage" from New)')
+        self.assertEqual(said({"state": "backlog", "status": "Triaged", "offeredTransitions": []}),
+                         'FX-3: the plan\'s approval can\'t refine it: "Groom" isn\'t offered from Triaged')
+        self.assertEqual(said({"state": "backlog", "status": "Groomed", "offeredTransitions": []}),
+                         "FX-3: refined already (Groomed)")
+        self.assertEqual(said({"state": "started", "status": "In Progress", "offeredTransitions": ["Stop"]}),
+                         'FX-3: the plan\'s approval can\'t refine it: "Triage" isn\'t offered from In Progress')
+        self.assertEqual(said({"state": "backlog", "status": "Todo"}),
+                         'FX-3: the plan\'s approval will refine it ("Triage" from Todo)')
+        for item in (None, {"state": "backlog"}):
+            self.assertEqual(said(item), "FX-3: whether the plan's approval refines it wasn't checked: the tracker "
+                                         "snapshot doesn't say")
+        self.assertIsNone(self.refine_outcome({"state": "backlog", "status": "New"}, [], targets))
 
     def linear_item(self, state_type: str, name: str) -> dict:
         """The item `snapshot.py`'s Linear reader builds from a faked GraphQL answer for one child."""
