@@ -2089,12 +2089,16 @@
     if (queued && key === "pending") { words = "Waiting for the lead to accept"; tone = "waiting"; }
     else if (queued && (key === "queued" || IN_CHECKS[key])) { words = "Being checked before it lands"; tone = "checked"; }
     else if (!queued && (key === "building" || key === "review")) {
-      var entries = journalFor(doc, subject, { "review.started": true, "review.round": true });
+      var entries = journalFor(doc, subject, { "review.started": true, "review.round": true, "candidate.handed": true, "lane.assigned": true });
       var start = entries.filter(function (entry) { return entry.kind === "review.started"; }).slice(-1)[0];
       var rounds = entries.filter(function (entry) { return entry.kind === "review.round" && isObject(entry.data); });
       var last = rounds.slice(-1)[0];
-      var answered = start && rounds.some(function (entry) {
-        return (entry.id || 0) > (start.id || 0) && (list(entry.answers).indexOf(start.id) >= 0
+      // A round ends when a round answers it or names it, or, as the run card reads it, when the story is handed off
+      // or assigned again.
+      var answered = start && entries.some(function (entry) {
+        if ((entry.id || 0) <= (start.id || 0)) { return false; }
+        if (entry.kind === "candidate.handed" || entry.kind === "lane.assigned") { return true; }
+        return entry.kind === "review.round" && isObject(entry.data) && (list(entry.answers).indexOf(start.id) >= 0
           || (isObject(start.data) && entry.data.round === start.data.round));
       });
       if (start && !answered && isObject(start.data) && typeof start.data.round === "number") {
@@ -2134,16 +2138,28 @@
     var number = typeof last.data.round === "number" ? last.data.round : rounds.length;
     var head = number === 1 ? "Approved on the first round" : "Approved on round " + number;
     var native = Object.prototype.hasOwnProperty.call(nativeReviews, subject) ? nativeReviews[subject] : null;
-    var detail = isObject(native) && native.unavailable !== true ? list(native.roundDetail).filter(isObject) : [];
-    var raised = [];
-    detail.forEach(function (round) { list(round.raised).filter(isObject).forEach(function (note) { raised.push(note); }); });
+    // The reports are read only while they are of the story's latest recorded round, as the run card reads them.
+    var boundary = journalFor(doc, subject, { "review.round": true, "review.recorded": true })
+      .reduce(function (most, entry) { return Math.max(most, entry.id || 0); }, 0);
+    var current = isObject(native) && native.unavailable !== true && native.journalId === boundary;
+    var detail = current ? list(native.roundDetail).filter(isObject) : [];
+    var raised = [], fixed = Object.create(null);
+    detail.forEach(function (round) {
+      list(round.raised).filter(isObject).forEach(function (note) { raised.push(note); });
+      list(round.settled).filter(isObject).forEach(function (closure) { if (closure.state === "fixed") { fixed[closure.id] = true; } });
+    });
     var notes = function (count) { return count + (count === 1 ? " note" : " notes"); };
     if (detail.length) {
       var deferred = raised.filter(function (note) { return note.state === "deferred"; }).length;
       var open = raised.filter(function (note) { return note.state === "unresolved"; }).length;
+      // A note its lens withdrew is settled, not fixed.
+      var mended = raised.filter(function (note) { return note.state === "resolved" && fixed[note.id]; }).length;
+      var dropped = raised.length - deferred - open - mended;
       if (deferred) { return head + " · " + notes(deferred) + " deferred to a follow-up"; }
       if (open) { return head + " · " + notes(open) + " still open"; }
-      return head + " · " + (!raised.length ? "nothing raised" : raised.length === 1 ? "its 1 note fixed" : "all " + raised.length + " notes fixed");
+      if (!raised.length) { return head + " · nothing raised"; }
+      if (dropped) { return head + " · " + notes(mended) + " fixed, " + dropped + " dropped"; }
+      return head + " · " + (raised.length === 1 ? "its 1 note fixed" : "all " + raised.length + " notes fixed");
     }
     var total = 0;
     rounds.forEach(function (round) {

@@ -8,6 +8,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { ROOT, expect, openPage, pageWithRuns } from "./support.mjs";
+import { planFor, unit } from "./plan-fixtures.mjs";
 
 const B = "b".repeat(40);
 const LENSES = ["lens.outcome-correctness", "lens.adversarial-testing"];
@@ -74,6 +75,29 @@ test("the lane's words show only while the lane is on that story, and the review
                                                              data: { title: "Next" } }]);
   moved.state.planned.push({ subject: "WORK-2", title: "Next", lane: "lane-1", stage: "building" });
   expect((await stateOf(moved)).lines).toEqual(["Reviewed, getting ready to hand off", "Approved on the first round · nothing raised"]);
+  // A round started and then ended by the story being assigned again, with no round reduced, isn't in review.
+  expect((await stateOf(record([started(1), { at: "2026-11-17T10:03:00Z", kind: "lane.assigned", data: { title: "Work" } }]))).lines[0])
+    .toBe("Being built");
+  expect((await stateOf(record([started(1), reduced(1, "changes", { P1: 1 }), started(2),
+                                { at: "2026-11-17T10:06:00Z", kind: "lane.assigned", data: { title: "Work" } }]))).lines[0])
+    .toBe("Fixing review findings");
+  // Words set under 45 seconds ago say "just now".
+  expect((await stateOf(record([], { focusAt: "2026-11-17T10:11:40Z" }))).lines[1]).toBe("Writing the tests · just now");
+  // A round recorded with no verdicts at all hasn't been approved.
+  const silent = reduced(1, "approve");
+  silent.data.verdicts = {};
+  expect((await stateOf(record([started(1), silent]))).lines[0]).toBe("Fixing review findings");
+  // A round restarted under the same number after it was reduced is in review again; a round that answers a start by
+  // its id ends it, whatever number it carries.
+  expect((await stateOf(record([started(1), reduced(1, "changes", { P1: 1 }), started(1)]))).lines[0]).toBe("In review, round 1");
+  const answering = reduced(9, "approve");
+  answering.answers = [2];
+  expect((await stateOf(record([started(1), answering]))).lines[0]).toBe("Reviewed, getting ready to hand off");
+  // The journal's counts, when no report can be read, count every severity.
+  expect((await stateOf(record([started(1), reduced(1, "approve", { P0: 1, P1: 1, P2: 1, P3: 1 })]))).lines[1])
+    .toBe("Approved on the first round · 4 notes raised");
+  // A story still building when the delivery closed isn't in any state any more.
+  expect(await stateOf(record([{ at: "2026-11-17T10:10:00Z", kind: "delivery.closed", subject: undefined, lane: undefined, data: {} }]))).toBeNull();
   // No words at all: just the state line.
   expect((await stateOf(record([], { focus: null }))).lines).toEqual(["Being built"]);
   // Handed off: the review line is gone; the lane's words stay while the lane is on it.
@@ -82,13 +106,14 @@ test("the lane's words show only while the lane is on that story, and the review
 });
 
 test("the review line reads the recorded reports: every note fixed, deferred to a follow-up, or still open", async () => {
-  const doc = (findings) => {
+  const doc = (findings, outcome = "aligned") => {
     const made = record([started(1), reduced(1, "approve", { P2: findings.length }),
                          { at: "2026-11-17T10:05:30Z", kind: "review.recorded", data: { digest: "d".repeat(64), candidateRef: B } }]);
     made.reviewEvidence = { "WORK-1": { candidateRef: B, digest: "d".repeat(64), outcomes: [{ round: 1, outcome: "aligned", entries: [{
       lens: LENSES[0], state: "obtained", binding: { subjectRef: "WORK-1", candidateRef: B, round: 1 }, result: {
         schemaVersion: "review-lens-result/1", lensId: LENSES[0], subjectRef: "WORK-1", candidateRef: B, round: 1, evidence: { observed: true },
-        outcome: "aligned", findings }}] }] } };
+        outcome: outcome === "aligned" ? "aligned" : "changes-requested", findings }}] }] } };
+    made.reviewEvidence["WORK-1"].outcomes[0].outcome = outcome;
     return made;
   };
   const note = (id, state) => ({ id, severity: "P2", summary: "A note.", state, ...(state === "deferred" ? { deferredIssue: "Later." } : {}) });
@@ -96,6 +121,8 @@ test("the review line reads the recorded reports: every note fixed, deferred to 
     .toBe("Approved on the first round · 2 notes deferred to a follow-up");
   expect((await stateOf(doc([note("F1", "deferred")]))).lines[1]).toBe("Approved on the first round · 1 note deferred to a follow-up");
   expect((await stateOf(doc([]))).lines[1]).toBe("Approved on the first round · nothing raised");
+  // Every lens approved with a note still open: the line says so, never that every note was fixed.
+  expect((await stateOf(doc([note("F1", "open")], "unresolved"))).lines[1]).toBe("Approved on the first round · 1 note still open");
   // Two notes raised in round 1 and fixed by round 2, which approved.
   const A = "a".repeat(40);
   const entry = (round, candidate, result) => ({ lens: LENSES[0], state: "obtained", binding: { subjectRef: "WORK-1", candidateRef: candidate, round },
@@ -107,6 +134,27 @@ test("the review line reads the recorded reports: every note fixed, deferred to 
     { round: 2, outcome: "aligned", entries: [entry(2, B, { outcome: "aligned", findings: [], resolvedFindings: [
       { id: "F1", state: "fixed", fixCommit: B, resolution: "Fixed." }, { id: "F2", state: "fixed", fixCommit: B, resolution: "Fixed." }] })] }] } };
   expect((await stateOf(fixed)).lines[1]).toBe("Approved on round 2 · all 2 notes fixed");
+  const one = structuredClone(fixed);
+  one.reviewEvidence["WORK-1"].outcomes[0].entries[0].result.findings.pop();
+  one.reviewEvidence["WORK-1"].outcomes[1].entries[0].result.resolvedFindings.pop();
+  expect((await stateOf(one)).lines[1]).toBe("Approved on round 2 · its 1 note fixed");
+  // A note its lens withdrew is settled, not fixed.
+  const withdrawn = structuredClone(fixed);
+  withdrawn.reviewEvidence["WORK-1"].outcomes[1].entries[0].result.resolvedFindings[1] = { id: "F2", state: "withdrawn", resolution: "Not a problem." };
+  expect((await stateOf(withdrawn)).lines[1]).toBe("Approved on round 2 · 1 note fixed, 1 dropped");
+  // A live push that records a later round before the page has re-read its reports: the reports it has are of an
+  // earlier round, so the line says only what the journal counts.
+  const newer = structuredClone(fixed);
+  newer.journal.push({ id: newer.journal.length + 1, at: "2026-11-17T10:08:00Z", kind: "review.started", lane: "lane-1", subject: "WORK-1",
+                       data: { round: 3, head: B, lenses: LENSES, restart: false } },
+                     { id: newer.journal.length + 2, at: "2026-11-17T10:09:00Z", kind: "review.round", lane: "lane-1", subject: "WORK-1",
+                       data: { round: 3, startedAt: "2026-11-17T10:08:00Z", finishedAt: "2026-11-17T10:09:00Z",
+                               verdicts: { [LENSES[0]]: "approve", [LENSES[1]]: "approve" }, findings: { P0: 0, P1: 0, P2: 1, P3: 0 } } },
+                     { id: newer.journal.length + 3, at: "2026-11-17T10:09:30Z", kind: "review.recorded", lane: "lane-1", subject: "WORK-1",
+                       data: { digest: "f".repeat(64), candidateRef: B } });
+  const [, , pushed] = await openPage(pageWithRuns(fixed), { now: NOW, store: { read: "pending" }, steps: [pick, { push: newer }] });
+  expect([...pushed.app.querySelector("#detail .d-state").children].map((line) => line.textContent)[1])
+    .toBe("Approved on round 3 · 3 notes raised");
 });
 
 test("the card drops proofs left, \"hasn't been handed off\" and the summary's count, and keeps the rest", async () => {
@@ -130,4 +178,13 @@ test("the skill's page says the card's state block", () => {
     + "merge queue checks it.");
   expect(skill).toContain("The panel leaves a unit's proofs to the plan chapter, and the review's count of notes raised to the "
     + "recorded reports.");
+});
+
+test("a card with a state line keeps a removed or proven unit's standing in its plan row", async () => {
+  for (const [units, standing] of [[[unit("WORK-1", { removed: true })], "Removed from the plan"]]) {
+    const plan = planFor(units);
+    const [, shown] = await openPage(pageWithRuns(record(), {}, { plan }), { now: NOW, steps: [pick] });
+    expect(shown.app.querySelector("#detail .d-state")).not.toBeNull();
+    expect(shown.app.querySelector("#detail .d-plan-row .pu-standing")?.textContent).toBe(standing);
+  }
 });
