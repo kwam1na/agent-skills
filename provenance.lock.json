@@ -1111,11 +1111,11 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "ad7fe7a71847e50bec6157699c680595d2a1b364afea98ef628bfeac9aea84a6"
+          "sha256": "6890391cad926f7ab2014e18dccc9c335b1445cf8667d802a4669dec6cc5b435"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "405c49df2b73eaf3e19e225ecd93bf3428c9d81974cdc73e4796780c0c86c8fd"
+          "sha256": "cad11b65ddeb50dcbfbcf81925af3eb36a40795acea1b43e202837d6acb7d635"
         },
         {
           "path": "skills/run-delivery/scripts/gaps.py",
