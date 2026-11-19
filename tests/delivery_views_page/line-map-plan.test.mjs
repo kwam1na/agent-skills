@@ -939,8 +939,10 @@ test("each stop on the line opens its unit in the chapter, in the open list or i
   let snaps = await open(page, { steps: [{ click: '.stop-btn[data-subject="CART-105"]' }, { click: "#detail .d-plan" }] });
   expect(snaps[1].app.querySelector("#detail .d-plan").textContent).toBe("See in the plan");
   expect(snaps[1].app.querySelector("#detail .d-plan-row").className).toBe("d-plan-row");
-  expect(snaps[1].app.querySelector("#detail .d-plan-row .pu-standing").textContent).toBe("2 proofs left");
-  expect(snaps[1].app.querySelector("#detail .d-plan-next").textContent).toBe("It still has to merge.");
+  // The card says where the story is in its state line, so the proofs left and the next proof stay in the plan.
+  expect(snaps[1].app.querySelector("#detail .d-state")).not.toBeNull();
+  expect(snaps[1].app.querySelector("#detail .d-plan-row .pu-standing")).toBeNull();
+  expect(snaps[1].app.querySelector("#detail .d-plan-next")).toBeNull();
   expect(snaps[2].focused).toBe("li");
   expect(snaps[2].app.querySelector('.plan-fold[data-fold="units"]').open).toBe(false);
   snaps = await open(page, { steps: [{ click: '.stop-btn[data-subject="CART-101"]' }, { click: "#detail .d-plan" }] });

@@ -636,7 +636,9 @@ test("shows a stop's run in its detail: rounds, verdicts, findings, waits and ti
   const run = app.querySelector("#detail .d-run");
   expect(run).not.toBeNull();
   const text = run.textContent;
-  expect(run.querySelector(".run-story")?.textContent).toBe("Approved on round 2 · 1 serious note, 2 moderate notes, 1 minor note raised");
+  // The card's state line says where the story is, so the summary's count of notes raised is left to the reports.
+  expect(app.querySelector("#detail .d-state .d-now")?.textContent).toBe("Being checked before it lands");
+  expect(run.querySelector(".run-story")).toBeNull();
   const beads = [...run.querySelectorAll(".run-track .run-bead")];
   expect(beads.map((bead) => [bead.className, bead.querySelector(".run-dot")?.textContent, bead.querySelector(".run-badge")?.textContent ?? null])).toEqual([
     ["run-bead is-changes", "1", "3"],
@@ -681,7 +683,8 @@ test("takes a live page's runs from the view the server renders after a push", a
   // The push redraws at once, with the runs the page already has...
   expect(pushed.app.querySelector("#detail .d-run")).toBeNull();
   // ...and the runs follow from the re-rendered view.
-  expect(refreshed.app.querySelector("#detail .d-run .run-story")?.textContent).toBe("Approved on round 2 · 1 serious note, 2 moderate notes, 1 minor note raised");
+  expect(refreshed.app.querySelector("#detail .d-run .run-track")).not.toBeNull();
+  expect(refreshed.app.querySelector("#detail .d-run .run-story")).toBeNull();
 });
 
 test("says quietly that a run is unavailable when it could not be read, and still draws the page", async () => {
@@ -875,8 +878,18 @@ test("tells each round's time from the round before it, and colours each badge b
   };
   const [{ app }] = await open(fixtureDocument(), {}, render(fixtureDocument(), { "run-7": summary }));
   const run = app.querySelector("#detail .d-run");
-  // The story counts by the rounds' own numbers, not by how many rounds the summary kept.
-  expect(run.querySelector(".run-story")?.textContent).toBe("Approved on round 9 · 1 critical note, 3 moderate notes, 3 minor notes raised");
+  // The card leaves the count of notes raised to the reports; the rounds keep their own numbers.
+  expect(run.querySelector(".run-story")).toBeNull();
+  expect([...run.querySelectorAll(".run-bead .run-dot")].map((dot) => dot.textContent)).toEqual(["5", "6", "7", "8", "9"]);
+  // A landed story's card has no state line, so the summary's own sentence still counts by the rounds' own numbers.
+  const landedCard = async (runs) => {
+    const landed = fixtureDocument();
+    landed.state.queue.find((entry) => entry.subject === "PAY-2361").stage = "merged";
+    const [, shown] = await open(landed, { steps: [{ click: '.stop-btn[data-subject="PAY-2361"]' }] }, render(landed, { "run-7": runs }));
+    expect(shown.app.querySelector("#detail .d-state")).toBeNull();
+    return shown.app.querySelector("#detail .d-run .run-story")?.textContent;
+  };
+  expect(await landedCard(summary)).toBe("Approved on round 9 · 1 critical note, 3 moderate notes, 3 minor notes raised");
   const beads = [...run.querySelectorAll(".run-bead")];
   expect(beads.map((bead) => bead.querySelector(".run-badge")?.className ?? null)).toEqual(
     ["run-badge is-p0", "run-badge is-p2", "run-badge is-p3", null, null]);
@@ -890,7 +903,12 @@ test("tells each round's time from the round before it, and colours each badge b
     { round: 1, at: at(0), outcome: null, findings: { P0: 0, P1: 0, P2: 0, P3: 0 } },
     { round: 2, at: at(5), outcome: "notes-open", findings: { P0: 0, P1: 0, P2: 0, P3: 5 }, verdicts: { "lens.outcome-correctness": "approve", "lens.adversarial-testing": "approve" } }] } }));
   const toldRun = told[0].app.querySelector("#detail .d-run");
-  expect(toldRun.querySelector(".run-story")?.textContent).toBe("Round 2 approved, notes open · 5 minor notes raised");
+  // The card leaves the summary's sentence to the reports; the beads, picks and round card still say notes are open.
+  expect(toldRun.querySelector(".run-story")).toBeNull();
+  expect(await landedCard({ ...summary, rounds: 2, roundDetail: [
+    { round: 1, at: at(0), outcome: null, findings: { P0: 0, P1: 0, P2: 0, P3: 0 } },
+    { round: 2, at: at(5), outcome: "notes-open", findings: { P0: 0, P1: 0, P2: 0, P3: 5 }, verdicts: { "lens.outcome-correctness": "approve", "lens.adversarial-testing": "approve" } }] }))
+    .toBe("Round 2 approved, notes open · 5 minor notes raised");
   expect([...toldRun.querySelectorAll(".run-bead")].map((bead) => bead.className)).toEqual(["run-bead is-unknown", "run-bead is-notes-open"]);
   expect([...toldRun.querySelectorAll(".run-pick")].map((pick) => pick.getAttribute("aria-label"))).toEqual(
     ["Round 1, outcome not reported, nothing raised", "Round 2, approved, notes open, 5 minor notes"]);

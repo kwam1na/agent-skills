@@ -86,6 +86,19 @@ page follows every record write; opened as a file, it shows the record as it
 was rendered. A history renderer declared in the same binding (`render.py
 history`) is linked from its footer.
 
+A piece's detail panel says where the story is before it lands, in one state
+line with a dot: "Being built", "In review, round N", "Fixing review
+findings", "Reviewed, getting ready to hand off", "Waiting for the lead to
+accept" or "Being checked before it lands", worked out from the record and its
+journal. The dot is green while the story's lane moves it, amber while it waits
+on something and grey while the merge queue checks it. Before hand-off the
+panel says how the review ended, from the recorded reports: the round it was
+approved on, and its notes fixed, deferred to a follow-up or still open. While
+the story's lane is on it, the lane's own words follow, with how long ago they
+were set. A landed or stopped piece shows none of these. The panel leaves a
+unit's proofs to the plan chapter, and the review's count of notes raised to the
+recorded reports.
+
 What happened tells the delivery's story at three depths, one row for each beat: its
 time, its mark, its sentence and its tone's word. A row opens to nothing; the ticket,
 the commit, in full or cut short, and the change request its sentence names are
