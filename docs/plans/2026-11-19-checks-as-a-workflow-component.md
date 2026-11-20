@@ -145,7 +145,7 @@ The paired TypeScript harness has no queue, carry or reuse code. A search of `pr
      the `why`, and `doctor` reports an unknown id.
    - `reusableChecks` is removed. A binding that sets it is refused with `binding_invalid`, and the fix line names
      `reuse.exclude`.
-   - The release that carries CHK-2 is a major version.
+   - The release that carries V26-3661 is a major version.
 
    This repository sets no `reuse.exclude`. A prerequisite such as `hosted.install` is never reused in a run where
    another selected check needs it.
@@ -189,7 +189,7 @@ The paired TypeScript harness has no queue, carry or reuse code. A search of `pr
      such as `.venv/bin/python`, is reported as made by `prepare` rather than lost, so a fresh clone still passes
      `doctor`.
 10. **No new journal kinds.** Reuse uses `check.reused` and `check.carried` as they are, and overrides use
-    `decision.recorded`. The hand-off facts gain optional fields (CHK-1), and the existing five-field vectors in
+    `decision.recorded`. The hand-off facts gain optional fields (V26-3660), and the existing five-field vectors in
     `tests/fixtures/journal-kinds/vectors.json` stay valid unchanged.
 11. **Plan review has no round bound.** It runs until its lenses align, or until the operator ends it.
 12. **A reusable run is one the queue would reproduce.** `merge_queue.py run-checks --repo <checkout> --head
@@ -248,22 +248,22 @@ None yet.
 ## Approval Handoffs
 
 - The operator approves this plan once its review aligns.
-- After approval, the five stories are filed under V26-3645, and their tracker keys replace `CHK-1` to `CHK-5` in
-  this file before `lead-setup`.
+- Approved by the operator on 2026-11-19, after round 4 aligned at e805cf59. The five stories are filed under
+  V26-3645 as V26-3660 to V26-3664, and their keys replaced the plan's placeholder keys.
 - The operator chooses the delivery base, `main` or an integration branch, at `lead-setup`.
 
 ## Execution posture and sensors
 
-The plan's posture is test-first. CHK-2 is characterization-first, because it moves `reusable` and `carry_plan`
+The plan's posture is test-first. V26-3661 is characterization-first, because it moves `reusable` and `carry_plan`
 behind one function and has to show that their current outcomes hold before it widens `reusable`.
 
 Sensors, run through `.venv/bin/python scripts/run-tests.py -p <module>` for each story's own modules:
 
-- CHK-1, CHK-2 and CHK-5: `tests/test_merge_queue.py`. CHK-1 and CHK-2 also run `tests/test_orchestration_state.py`.
-- CHK-3: `tests/test_run_delivery.py`.
-- CHK-4: `tests/test_run_delivery.py`, `tests/test_own_deliveries.py` and `tests/test_linear_qualification.py`.
+- V26-3660, V26-3661 and V26-3663: `tests/test_merge_queue.py`. V26-3660 and V26-3661 also run `tests/test_orchestration_state.py`.
+- V26-3662: `tests/test_run_delivery.py`.
+- V26-3664: `tests/test_run_delivery.py`, `tests/test_own_deliveries.py` and `tests/test_linear_qualification.py`.
 - Every story: `scripts/validate-registry.py` and `scripts/update-provenance.py --check`.
-- CHK-1's declared environment is also exercised by every later story's own queue run in this delivery.
+- V26-3660's declared environment is also exercised by every later story's own queue run in this delivery.
 - At the finish line: the full suite on macOS with Python 3.11, `--workers 4 --budget tests/suite-budget.json`.
 
 New cases go into existing test modules and reuse fixtures those classes already build, so no catalogue entry is
@@ -275,40 +275,40 @@ A conflict in that file alone is resolved as `AGENTS.md` says.
 1. **Runner record.** `run-checks` at a head writes one record per id with `where: runner`, the definition digest,
    the environment names and digest, and the host facts. A failure is recorded with its log, and the command exits
    non-zero. A variable planted with a sentinel value is absent from the record and from any failure output
-   (CHK-1).
+   (V26-3660).
 2. **Declared environment.** A variable outside the baseline and `inherit` doesn't reach a check, in the queue or in
    `run-checks`. A check that fails without it has the dropped names in its failure output, and listing the name in
    `inherit` makes it pass. A baseline name, `LC_ALL`, reaches the check. The queue's own fetch and merge still get
-   the inherited environment, so a variable only the runner's git needs isn't dropped from it (CHK-1).
+   the inherited environment, so a variable only the runner's git needs isn't dropped from it (V26-3660).
 3. **Same facts across checkouts.** `run-checks` from a second worktree of the same repository, in a child process
    whose `TMPDIR` and `PATH` values differ from the queue's, produces the same environment digest and host facts as
    the queue does from the main checkout. `PATH` differs there only in entries that resolve no named tool differently
-   (CHK-1).
+   (V26-3660).
 4. **Beside a serving queue.** `run-checks` runs from the queue's own `--repo`. A test seam holds a queue command
    just after `Runner.start` has cleared `workRoot/checkouts`, while `run-checks` is live, so the overlap is certain
-   rather than timed. Both finish, and neither removes the other's worktree (CHK-1).
+   rather than timed. Both finish, and neither removes the other's worktree (V26-3660).
 5. **Widened hand-off evidence.** `handoff --evidence` accepts a record with `where`, `environment`, `host`,
    `seconds` and `at`, keeps them through `handoff.recorded` and replay, and still accepts the five-field shape
-   (CHK-1).
+   (V26-3660).
 6. **Characterization.** Every existing `reusable` and `carry_plan` outcome in `tests/test_merge_queue.py` holds after
    both call `applies`. A queue row written before this change, with no `environment` or `host`, still carries
-   (CHK-2).
-7. **Lane record, identical tree.** The record applies, and the queue journals `check.reused` (CHK-2).
+   (V26-3661).
+7. **Lane record, identical tree.** The record applies, and the queue journals `check.reused` (V26-3661).
 8. **Missing facts.** A lane record with no `environment`, or with no `host`, runs, and the note says the facts are
-   missing (CHK-2).
+   missing (V26-3661).
 9. **Lane record across an unread base move.** The base merge changes only paths matching `selection.unread`, and the
-   record applies (CHK-2).
+   record applies (V26-3661).
 10. **Lane record across a move outside the read set.** The check has a complete read set and the move touches none
-    of it, so the record applies (CHK-2).
+    of it, so the record applies (V26-3661).
 11. **A move inside the read set, or an unknown read set with differing trees.** The check runs. The note names the
-    path, or says the read set is unknown (CHK-2).
+    path, or says the read set is unknown (V26-3661).
 12. **Facts differ.** One record differs from the queue's facts in an environment value, one in two variables
     swapping values, one in a tool digest, one in the platform, and one has `where: checkout`. Each runs, and the note names the differing variable names, the tool
-    names, the platform or the checkout. It never prints a value (CHK-2).
+    names, the platform or the checkout. It never prints a value (V26-3661).
 13. **Other reasons.** A changed definition, a failed record, a prerequisite of another selected check, a binding
     file change, an excluded check (with its `why` quoted) and a `{baseHead}` placeholder each run with their own
-    reason. A binding that still sets `reusableChecks` is refused, naming `reuse.exclude` (CHK-2).
-14. **Grant.** Each case is one row (CHK-2 for the queue side, CHK-4 for `lead-accept`):
+    reason. A binding that still sets `reusableChecks` is refused, naming `reuse.exclude` (V26-3661).
+14. **Grant.** Each case is one row (V26-3661 for the queue side, V26-3664 for `lead-accept`):
     - the V26-3614 shape: the record's head is the lane head before a lane-side base merge, the handed head is that
       merge commit, the merge brought in only paths outside the candidate's diff against the base, and the read set is
       unknown. With `--reuse` and `--why` the record applies, and `check.reused`'s `because` names the
@@ -320,31 +320,31 @@ A conflict in that file alone is resolved as `AGENTS.md` says.
     - a grant recorded at an earlier handed head doesn't apply after a new hand-off;
     - a granted record with `where: checkout`, different facts, a changed definition or a failed result still runs.
 15. **A lane runs checks by id.** `check <key> <ids>` calls `run-checks` at HEAD and keeps the records in the story's
-    review folder (CHK-3).
+    review folder (V26-3662).
 16. **End to end, lane to queue.** In a child process whose `TMPDIR` and `PATH` differ from the queue's, a lane runs
     `run_delivery.py check` in its worktree and hands off. A queue run from the main checkout at the same tree then
-    reuses the record and journals `check.reused` (CHK-3).
+    reuses the record and journals `check.reused` (V26-3662).
 17. **Hand-off evidence.** For each reusable check, `handoff` attaches the latest record, whatever its result, at the
     handed head or its nearest ancestor, so a later failure replaces an earlier pass. It shows each `--checks` id as
-    recorded, with its head and result, or as named only, and refuses neither (CHK-3).
+    recorded, with its head and result, or as named only, and refuses neither (V26-3662).
 18. **Gate by id.** A `gates` entry `"validate-registry"` runs through `run-checks` and leaves a record, and an inline
     gate leaves a `where: checkout` record. `doctor` reports an unknown id, and a fresh clone with no `.venv` passes
-    `doctor` (CHK-3).
+    `doctor` (V26-3662).
 19. **Guards at gate.** A diff that `tests.test_linear_qualification` rejects fails `gate`, naming the guard, before
     the repository's gates run. At the same tree, a second `gate` reuses the guard pass. `--skip-guards --why`
     records the skip and its reason under `guards`, the hand-off shows them, and `gates_summary` still passes.
-    `--skip-guards` without `--why` is a usage error (CHK-4).
-20. **`lead-push`.** Each case is one row (CHK-4):
+    `--skip-guards` without `--why` is a usage error (V26-3664).
+20. **`lead-push`.** Each case is one row (V26-3664):
     - with guards configured and passing at the commit it publishes, `lead-push` publishes with no `--skip-guards`
       and journals no `decision.recorded`;
     - with a lead HEAD that is a merge whose result a guard rejects, though each parent passes, `lead-push` refuses,
       and nothing is published;
     - with `--skip-guards --why` it publishes, and `decision.recorded` is journaled.
 21. **What the lead sees.** `lead-accept`'s proposal shows, for each selected check, applies or why not, plus its
-    measured median (CHK-4).
+    measured median (V26-3664).
 22. **Order.** In a queue run, guards start first, then the rest longest first by median, with checks that have no
     history after those that do. A failing guard ends the run before any other check starts. A passing run records
-    the same results as before (CHK-5).
+    the same results as before (V26-3663).
 23. **Nothing new set.** Settings with no `reuse.exclude`, no `inherit`, no guards and no id gates gate and carry as
     before. The only changes are Decisions 4 and 13 (every story).
 
@@ -352,18 +352,18 @@ A conflict in that file alone is resolved as `AGENTS.md` says.
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | CHK-1, CHK-2, CHK-5 | `skills/orchestrate-work/scripts/merge_queue.py`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/orchestrate-work/SKILL.md`, `tests/test_merge_queue.py` and `tests/test_orchestration_state.py` |
-| 1 | 2 | CHK-3 | `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/references/config.md`, `skills/run-delivery/SKILL.md` and `tests/test_run_delivery.py` |
-| 2 | 2 | CHK-4 | `.agents/run-delivery.json`, `.agents/orchestration.json` and `tests/test_own_deliveries.py` |
+| 1 | 1 | V26-3660, V26-3661, V26-3663 | `skills/orchestrate-work/scripts/merge_queue.py`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/orchestrate-work/SKILL.md`, `tests/test_merge_queue.py` and `tests/test_orchestration_state.py` |
+| 1 | 2 | V26-3662 | `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/references/config.md`, `skills/run-delivery/SKILL.md` and `tests/test_run_delivery.py` |
+| 2 | 2 | V26-3664 | `.agents/run-delivery.json`, `.agents/orchestration.json` and `tests/test_own_deliveries.py` |
 
-`provenance.lock.json` is shared, and the provenance writer resolves it. CHK-3 starts once CHK-1's `run-checks` and
-widened evidence have merged, and runs alongside CHK-2. CHK-3's end-to-end case lives in `tests/test_run_delivery.py`
-and drives the queue as a child process, so it owns no file of lane 1's. CHK-4 needs `applies` from CHK-2 and the records
-from CHK-3.
+`provenance.lock.json` is shared, and the provenance writer resolves it. V26-3662 starts once V26-3660's `run-checks` and
+widened evidence have merged, and runs alongside V26-3661. V26-3662's end-to-end case lives in `tests/test_run_delivery.py`
+and drives the queue as a child process, so it owns no file of lane 1's. V26-3664 needs `applies` from V26-3661 and the records
+from V26-3662.
 
 ## Stories
 
-### CHK-1. Run a check the way the queue does, anywhere, with the facts that make it reproducible
+### V26-3660. Run a check the way the queue does, anywhere, with the facts that make it reproducible
 
 Lane 1, tier 1, not blocked. Test-first. Files: `skills/orchestrate-work/scripts/merge_queue.py`,
 `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/references/schemas.json`,
@@ -383,9 +383,9 @@ Lane 1, tier 1, not blocked. Test-first. Files: `skills/orchestrate-work/scripts
   shape. `delivery_state.py`'s mention of `evidence` names `run-checks`.
 - No fixed rule replaces the agent's judgement. The facts are recorded, and nothing is refused on them here.
 
-### CHK-2. Answer whether a recorded pass applies, and reuse a lane's pass by default
+### V26-3661. Answer whether a recorded pass applies, and reuse a lane's pass by default
 
-Lane 1, tier 1, after CHK-1. Characterization-first. Files: `skills/orchestrate-work/scripts/merge_queue.py`,
+Lane 1, tier 1, after V26-3660. Characterization-first. Files: `skills/orchestrate-work/scripts/merge_queue.py`,
 `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/references/schemas.json`,
 `skills/orchestrate-work/references/orchestration-guide.md`, `skills/orchestrate-work/SKILL.md`,
 `tests/test_merge_queue.py` and `tests/test_orchestration_state.py`.
@@ -400,22 +400,22 @@ Lane 1, tier 1, after CHK-1. Characterization-first. Files: `skills/orchestrate-
 - No fixed rule replaces the agent's judgement. The queue's default is reuse when `applies` says so, and the grant is
   the recorded override.
 
-### CHK-3. Record a lane's check runs, and hand off with them
+### V26-3662. Record a lane's check runs, and hand off with them
 
-Lane 2, tier 1, after CHK-1. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+Lane 2, tier 1, after V26-3660. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
 `skills/run-delivery/references/config.md`, `skills/run-delivery/SKILL.md` and `tests/test_run_delivery.py`.
 
 - `check <key> <ids>` calls `run-checks` at HEAD and keeps the records in the story's review folder. It prints each
   check's median and the prepare time.
 - `gate` keeps a record for each gate inside `gates.json` `results`: `runner` for a gate named by id, `checkout` for
   an inline one (Decision 9). `doctor` resolves gates named by id.
-- `handoff` attaches records as Scenario 17 describes, in the widened evidence shape from CHK-1.
+- `handoff` attaches records as Scenario 17 describes, in the widened evidence shape from V26-3660.
 - Scenario 16's end-to-end case, in `tests/test_run_delivery.py`, running the queue as a child process.
 - No fixed rule replaces the agent's judgement. Nothing is refused for a missing record.
 
-### CHK-4. Run guards where a change is checked, and show the lead what still applies
+### V26-3664. Run guards where a change is checked, and show the lead what still applies
 
-Lane 2, tier 2, after CHK-2 and CHK-3. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+Lane 2, tier 2, after V26-3661 and V26-3662. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
 `skills/run-delivery/references/config.md`, `skills/run-delivery/SKILL.md`, `tests/test_run_delivery.py`,
 `.agents/run-delivery.json`, `.agents/orchestration.json` and `tests/test_own_deliveries.py`.
 
@@ -434,9 +434,9 @@ Lane 2, tier 2, after CHK-2 and CHK-3. Test-first. Files: `skills/run-delivery/s
 - No fixed rule replaces the agent's judgement. Every default here has a `--why` override, and only `lead-push`
   refuses.
 
-### CHK-5. Start guards first and the longest checks next
+### V26-3663. Start guards first and the longest checks next
 
-Lane 1, tier 1, after CHK-2. Test-first. Files: `skills/orchestrate-work/scripts/merge_queue.py`,
+Lane 1, tier 1, after V26-3661. Test-first. Files: `skills/orchestrate-work/scripts/merge_queue.py`,
 `skills/orchestrate-work/references/orchestration-guide.md` and `tests/test_merge_queue.py`.
 
 - `run_checks` orders guards first, then the rest longest first by `meta.checkHistory` median. Prerequisites still
