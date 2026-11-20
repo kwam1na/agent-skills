@@ -1319,14 +1319,37 @@ def _stamp_wait_rows(before: dict, after: dict) -> None:
             entry["freed"] = dict(previous["freed"])
 
 
-def _return_waiting(rows: list[dict], subject: str, lanes: set[str] | None = None) -> list[str]:
+def _merged_while_waiting(state: dict, row: dict) -> bool:
+    """Whether the row's own story merged while it waited and the lane hasn't spoken since: its words are still the
+    queue's "<story> merged" for a merged story of its lane. A lane's own word after the merge ends this."""
+    if row.get("focusBy") != "runner":
+        return False
+    return any(item.get("lane") == row["id"] and item.get("stage") == "merged" and row.get("focus") == f"{item['subject']} merged"
+               for item in state.get("queue", []))
+
+
+def _resting_state(state: dict, lane: str, subject: str) -> str:
+    """The state a lane rests in once its own story has landed: assigned with other work open, idle with none."""
+    work = [*state.get("queue", []), *state.get("planned", [])]
+    open_work = any(item.get("lane") == lane and item["subject"] != subject and item.get("stage") != "merged"
+                    for item in work)
+    return "assigned" if open_work else "idle"
+
+
+def _return_waiting(rows: list[dict], subject: str, lanes: set[str] | None = None,
+                    state: dict | None = None) -> list[str]:
     """Return each row ``waiting`` on ``subject`` (of ``lanes`` when given) to the state it waited from, its waitingOn
-    cleared and waitingFrom removed, marked as freed by ``subject``. Returns the lanes it freed."""
+    cleared and waitingFrom removed, marked as freed by ``subject``. Returns the lanes it freed.
+
+    Given the record's ``state``, a row whose own story merged while it waited, with no word from the lane since, rests
+    as a lane does when its story lands rather than returning to building or handing off a story that has merged."""
     freed = []
     for row in rows:
         if row.get("state") != "waiting" or row.get("waitingOn") != subject or (lanes is not None and row["id"] not in lanes):
             continue
         back = (row.get("waitingFrom") or {}).get("state") or "idle"
+        if state is not None and _merged_while_waiting(state, row):
+            back = _resting_state(state, row["id"], row["focus"].removesuffix(" merged"))
         row.update(state=back, waitingOn=None, since=now(), freed={"by": subject, "at": now()})
         row.pop("waitingFrom", None)
         freed.append(row["id"])
@@ -1360,7 +1383,7 @@ def lane_rows_after(directory: Path, state: dict, subject: str, *, stopped: str 
     if stopped is None:
         # A landing first returns every lane waiting on it, whatever its focus names, and ends the wait an acceptance
         # left on an idle row. For the subject's own lane the return takes the place of the rest.
-        freed = _return_waiting(rows, subject)
+        freed = _return_waiting(rows, subject, state=state)
         for entry in rows:
             if entry.get("state") != "waiting" and entry.get("waitingOn") == subject:
                 entry["waitingOn"] = None
@@ -1368,10 +1391,7 @@ def lane_rows_after(directory: Path, state: dict, subject: str, *, stopped: str 
             # A lane that waited from handing this story off has nothing of it left to hand: it rests as one does when
             # its story lands, idle with nothing else open and assigned otherwise.
             if row["state"] == "handed":
-                work = [*state["queue"], *state.get("planned", [])]
-                open_work = any(item.get("lane") == lane and item["subject"] != subject and item.get("stage") != "merged"
-                                for item in work)
-                row.update(focus=f"{subject} merged", state="assigned" if open_work else "idle")
+                row.update(focus=f"{subject} merged", state=_resting_state(state, lane, subject))
             return rows
     elif row is not None and row.get("state") == "waiting":
         # A stop returns only the subject's own lane to the state it waited from, and the stop's words and its wait on
@@ -1846,7 +1866,7 @@ def no_change_handoff(directory: Path, *, lane: str, subject: str, base_head: st
         if not state["meta"].get("handoffsNeedAcceptance"):
             planned["stage"] = "settled"
             planned["noChange"]["settledAt"] = planned["noChange"]["handedAt"]
-            _return_waiting(state["lanes"], subject)
+            _return_waiting(state["lanes"], subject, state=state)
             _rest_if_free(state, lane)
         for entry in state["lanes"]:
             if entry["id"] == lane:
@@ -1924,7 +1944,7 @@ def accept_handoff(directory: Path, subject: str, authorization: dict | None = N
             # Settled, not removed: it stays in the record, counted as done, and never enters the queue.
             waiting["stage"] = "settled"
             waiting["noChange"]["settledAt"] = now()
-            _return_waiting(state["lanes"], subject)
+            _return_waiting(state["lanes"], subject, state=state)
             _rest_if_free(state, waiting["lane"])
             for row in state["lanes"]:
                 if row["id"] == waiting["lane"] and row.get("waitingOn") in ("lead", subject):
