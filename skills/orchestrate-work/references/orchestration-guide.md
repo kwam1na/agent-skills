@@ -1003,11 +1003,11 @@ Everything else is dropped, and a failed run's output names what was dropped:
 a check that needs one passes once `inherit` lists it. The queue's own steps
 keep its whole environment. Queue rows carry the same `environment` and `host`.
 
-Add a record to your hand-off with `--evidence`, once for each check, less its
-`log`. The queue reuses a passing run of a check the binding lists in
-`reusableChecks` when the tree it would check is the one you checked. A
-refusal pasted into `--evidence` is refused as `run-checks`'s. Nothing is
-refused on the facts a record carries.
+Add each record to your hand-off with `--evidence`, once for each check, less
+its `log`. The queue reuses a passing run of any check whose record applies
+where it checks: see "Reused checks". A refusal pasted into `--evidence` is
+refused as `run-checks`'s. Nothing is refused on the facts a record carries;
+the queue reads them, and its note says why a record didn't stand.
 
 The hand-off queues your planned work at its reviewed head; the runner takes
 it from there. To hand off a stopped candidate again, run the same command
@@ -1426,11 +1426,10 @@ it is not a freshness proof or permission to skip any admission check.
 | `flakes` | Optional. Known flakes, each `{check, tests?, ref}`: the check's id, the regular expressions its flaky failure ids match in full (leave `tests` out when the whole check is flaky), and the reference that tracks the flake. See "Flakes and retries". |
 | `parallelChecks` | Optional. How many checks marked `parallelSafe` may run at once; 1 when absent. A check without `parallelSafe` always runs alone. |
 | `selection` | Optional. `{lead, refusalStops?, catalogue?, guards?, readers?, unread?}`: `lead: true` lets the lead choose a candidate's checks with the state tool's `select` command, in place of the provider's answer and `fallback`. `refusalStops: true`, which needs `lead: true`, makes a provider that exits non-zero stop the candidate with `provider_refused` instead of widening to `fallback`. `catalogue` names checks the lead selects by id, `guards` lists catalogue ids added to every lead selection, `readers` maps paths to the catalogue checks that read them, and `unread` names paths no check reads. Each is off when absent, so every candidate is checked as before. See "Lead-selected checks" and "The check catalogue". |
-| `reusableChecks` | Optional. Ids of the binding's own checks (`alwaysRun` or `fallback`) the runner may reuse from a lane's hand-off evidence instead of running them again. Each may use no placeholder but `{treeSha}`, and no binding check may name it as a prerequisite. None when absent, so nothing is reused until you opt in. See "Reused checks". |
 | `batch` | Optional. `{culpritSearch}`: how `batch` finds the member that failed a batch's checks, `bisect` (the default, fewest check runs) or `serial` (each prefix in order). |
 | `environment` | Variables set for every argv the runner runs. It must not set `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS`, which would change the paths the workRoot checks match; these names are matched without case. The runner drops an inherited setting of them before running git or any declared argv; a profile's environment may still set them for its checks. |
 | `inherit` | Optional. Names a check and a `prepare` step inherit from the runner's environment beyond the baseline: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` and every `LC_*` name. Everything else is dropped from them, and a failed run's output names what was. A listed name's value is in the run's environment digest. It must not name a variable that moves git (`GIT_DIR` and the like) or changes how it reads a pathspec. The runner's own steps keep its whole environment. None when absent. |
-| `reuse` | Optional. `tools`: programs every check may call, beyond its own and each `prepare` step's, that a run record names by the sha256 of the file each resolves to on the check's `PATH`. |
+| `reuse` | Optional. `tools`: programs every check may call, beyond its own and each `prepare` step's, that a run record names by the sha256 of the file each resolves to on the check's `PATH`. `exclude`: `[{check, why}]`, checks whose recorded run is never reused or carried, with why, which the queue's note quotes; without a provider each must be one of the binding's checks. Every other check whose definition the tree determines is reusable: see "Reused checks". A binding that still sets the older `reusableChecks` is refused, naming `reuse.exclude`. |
 | `ready` | An argv run before merging; a non-zero exit stops with `ready_refused`. |
 | `merge` | An argv that must use `{expectedHead}`. A binding whose `merge` lacks it is invalid. |
 | `release` | Ordered targets, each with an `id`, `argv`, `stopsOnFailure` and `requiresApproval`, and an optional `timeoutSeconds`. |
@@ -1594,6 +1593,16 @@ It is off unless the binding sets `selection: {"lead": true}`.
   `leadSelection`: a patch that changes it, yours or the runner's, is
   refused. `select --subject <s> --clear` drops it. Under a binding with a
   catalogue, `--checks` also takes catalogue ids; see "The check catalogue".
+- **Reuse grant.** Add `--reuse <ids> --why "<why>"` to a selection to let the
+  runner reuse the hand-off's records of those checks across paths the
+  candidate didn't touch: a path that differs between the record's tree and
+  the one checked, outside what the candidate changes against the base at the
+  record's head and at the handed head, counts as unread. Use it when the lane
+  merged the base after its run and you can see the merge brought in nothing
+  the check reads. It is kept on `leadSelection.reuse` and journaled as a
+  `decision.recorded` entry, which a reuse it allows names as its cause. It
+  may name only checks the hand-off carries a record of, needs `--why`, and is
+  void with the selection at any other head. Every other condition still holds.
 - **Use.** While the binding allows it and the selection names the
   candidate's reviewed head, the runner checks the candidate with the lead's
   checks plus `alwaysRun`; no provider runs and `fallback` is not added. A
@@ -1682,9 +1691,11 @@ or a selection that leaves it out.
   patterns, under the binding's own rule; the binding file never matches one.
 - **Carried over a base move.** When the base moves after a candidate's checks
   passed, a selected check is carried to the new base, with no run again, when
-  no file the move changed is in the candidate's diff and either every such
-  file matches `selection.unread` or the check's read set is known and no such
-  file is in it. The move's files are listed without rename detection, so a
+  no file the move changed is in the candidate's diff and its passed run
+  applies across the move, as "Reused checks" says: every such file matches
+  `selection.unread`, or the check's read set is known and no such file is in
+  it, and its definition and its run's facts are the queue's now. A row written
+  before runs recorded facts is given the queue's own. The move's files are listed without rename detection, so a
   rename is a path removed and a path added, and the binding file counts as
   read by every check. Every other check runs again, and so does every
   `alwaysRun` check unless every changed file is unread. When one check or more
@@ -1923,39 +1934,41 @@ on the base re-run: a flake failing there is retried once there, journaled as
 
 ### Reused checks
 
-A long check the lane already ran need not run again on the very tree it
-passed on. A lane names such a run in its hand-off with `--evidence`, which
-`merge_queue.py evidence` prints: the check, the head it ran on, that head's
-tree, a digest of the check's definition (its argv before placeholders are
-filled in, cwd, prerequisites, timeout, its profile's and the binding's
-environment, and the binding's `prepare` steps and `hooks`, as the binding in that head's
-own tree has them), and the result. After syncing, the runner reuses the run,
-and does not run the check, only when all of these hold:
+A check the lane already ran need not run again. A lane runs it with
+`run-checks`, as the queue runs it, and hands the record off with
+`--evidence`. After syncing, the runner reuses the run, and does not run the
+check, when the record applies: `merge_queue.py`'s `applies` answers with
+nothing, or with every reason it doesn't, and the result's notes give those
+reasons, naming variables, tools and paths, never a value. A record applies
+when:
 
-- the binding lists the check in `reusableChecks`;
-- the evidence is this candidate's own, from its hand-off;
-- no check selected for this run names it as a prerequisite, so nothing runs
-  without its output;
-- it is for the same check and the same definition digest as the binding on
-  the base now;
-- its result is `passed`;
-- the synced tree is the evidence's tree, and the runner's own repository
-  reads that tree at the evidence's head.
+- its result is `passed`, and it ran by the runner (`where: runner`), not in
+  the lane's own checkout;
+- its definition digest (the check's argv before placeholders are filled in,
+  cwd, prerequisites, timeout, its profile's and the binding's environment,
+  and the binding's `prepare` steps and `hooks`, as the binding in that
+  head's own tree has them) is the check's under the base's binding now;
+- its environment and host facts equal those the queue's own run of the check
+  would have; a record without them doesn't apply;
+- the runner's own repository has its head, with the record's tree;
+- the paths that differ between the record's tree and the one checked are
+  none, all match `selection.unread`, or none is in the check's known read
+  set. The binding file always counts as read.
 
-Any difference runs the check as usual: the base moved, the lane pushed after
-it ran the check, the binding changed the check, or the run failed or is
-missing. When there was evidence for the check but it was not reused, the
-result's notes say why. A reusable check may use no placeholder but
-`{treeSha}`, in its argv or its profile's environment, and no other binding
-check may name it as a prerequisite; with any reusable check, the `prepare`
-steps may use no placeholder but `{treeSha}` either. The binding is refused otherwise, since
-only the tree may differ between the lane's run and the one it stands for. The record shows a reused check as `reused`, with the head of the
-lane's run, in the result (`reusedFrom`), the queue row, the checking panel,
-the journal (`check.reused`) and both views. A reused check adds nothing to the
-check history, and a run that reused one is not counted as a whole run, so it
-does not shorten the queue estimates. The merge is pinned to the synced head as always, so nothing
-lands that was not checked by tree. In a batch, a member's evidence counts only
-when the batch's combined tree is that member's checked tree.
+Every check whose definition the tree determines is reusable: one whose argv,
+profile or `prepare` steps use a placeholder other than `{treeSha}` is not,
+and the note names the placeholder. `reuse.exclude` keeps a check running
+with its reason. The candidate's own hand-off is the only one read, and no
+check is reused that another selected check names as a prerequisite, so
+nothing runs without its output. A lead's grant (see "Reuse grant") counts a
+path the candidate doesn't change as unread, and the reuse names its
+decision. The record shows a reused check as `reused`, with the head of the
+lane's run, in the result (`reusedFrom`, with that head's tree), the queue
+row, the checking panel, the journal (`check.reused`) and both views. A
+reused check adds nothing to the check history, and a run that reused one is
+not counted as a whole run, so it does not shorten the queue estimates. The
+merge is pinned to the synced head as always. In a batch, a member's record
+counts only when the batch's combined tree is that member's checked tree.
 
 ### What a batch proves
 

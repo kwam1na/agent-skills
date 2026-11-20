@@ -2329,14 +2329,30 @@ def base_rerun_notices(state: dict, check_ids: list[str], base_head: str | None)
 @writer_operation
 def select_checks(directory: Path, subject: str, *, binding: dict, head: str | None = None,
                   checks: object = None, reason: str | None = None, repo: Path | None = None,
-                  base_head: str | None = None) -> dict:
+                  base_head: str | None = None, reuse: list[str] | None = None, why: str | None = None) -> dict:
     """The lead records the checks a candidate runs at its reviewed head, or clears them with no head.
 
     The runner uses a selection only while the binding's ``selection.lead`` is
     true and the candidate is still at the head the selection names; a
     hand-off at a new head drops it. alwaysRun runs beside it.
+
+    ``reuse`` grants reuse of the hand-off's records of those checks, and
+    ``why`` says why: the runner counts a path the candidate doesn't change
+    against the base, at the record's head or the handed head, as unread for
+    them. The grant is journaled as a decision.recorded entry, whose id the
+    selection keeps, and is void with the selection at any other head. It
+    may name only checks the hand-off carries a record of.
     """
     clearing = head is None
+    if reuse is not None:
+        if clearing:
+            raise StateError("select_invalid", "a reuse grant is part of a selection: give --head, --checks and --reason")
+        if not reuse or len(set(reuse)) != len(reuse):
+            raise StateError("select_invalid", "--reuse names each granted check once")
+        if not why or not why.strip():
+            raise StateError("select_invalid", "say why the reuse is safe with --why")
+    elif why is not None:
+        raise StateError("select_invalid", "--why goes with --reuse")
     if not clearing:
         if not (isinstance(binding.get("selection"), dict) and binding["selection"].get("lead") is True):
             raise StateError("select_invalid", "the binding does not enable lead selection: set selection.lead to true")
@@ -2356,6 +2372,34 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
         if problems:
             raise StateError("select_invalid", "; ".join(problems))
 
+    def grant_problems(state: dict, journal: list[dict]) -> str | None:
+        """Why the reuse grant can't be recorded for the subject's hand-off at ``head``, if it can't."""
+        item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
+        if item is None:
+            return f"{subject} is not queued"
+        if item["stage"] in ("merging", "merged"):
+            return f"{subject} is {item['stage']}"
+        handed = handed_item(state, journal, subject)
+        if handed is None or handed["head"] != head:
+            return f"{subject}'s reviewed head is {None if handed is None else handed['head']}, not {head}"
+        recorded = {entry["check"] for entry in handed.get("evidence", [])}
+        unrecorded = [name for name in reuse or [] if name not in recorded]
+        if unrecorded:
+            return f"{subject}'s hand-off at {head} carries no record of {', '.join(unrecorded)}, so there is nothing to reuse"
+        return None
+
+    decision = None
+    if reuse is not None:
+        current = read_state(directory)
+        problem = grant_problems(current, read_journal(directory))
+        if problem:
+            raise StateError("select_invalid", problem)
+        lane = next((entry.get("lane") for entry in current["queue"] if entry["subject"] == subject), None)
+        # Journaled first, so the selection can name the entry the grant is.
+        decision = append_journal(directory, kind="decision.recorded", subject=subject, lane=lane, data={
+            "text": f"Reuse the lane's records of {', '.join(reuse)} for {subject} at {head}, counting what it "
+                    "doesn't change as unread", "why": why})["id"]
+
     def change(state: dict) -> dict:
         item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
         if item is None:
@@ -2368,10 +2412,16 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
         if item["stage"] in ("merging", "merged"):
             raise StateError("select_invalid", f"{subject} is {item['stage']}")
         # A hand-off waiting to end a failed run is reviewed at its own head, which the row takes once it is accepted.
-        reviewed = handed_item(state, read_journal(directory), subject)["head"]  # type: ignore[index]
+        journal = read_journal(directory)
+        reviewed = handed_item(state, journal, subject)["head"]  # type: ignore[index]
         if head != reviewed:
             raise StateError("select_invalid", f"{subject}'s reviewed head is {reviewed}, not {head}")
         item["leadSelection"] = {"head": head, "checks": copy.deepcopy(checks), "reason": reason, "recordedAt": now()}
+        if decision is not None:
+            problem = grant_problems(state, journal)
+            if problem:
+                raise StateError("select_invalid", problem)
+            item["leadSelection"]["reuse"] = {"checks": list(reuse), "why": why, "decision": decision}  # type: ignore[arg-type]
         return copy.deepcopy(item)
 
     _, item = _tool_write(directory, change)
@@ -6085,7 +6135,7 @@ def _handoff_command(args: argparse.Namespace) -> dict:
 
 def _select_command(args: argparse.Namespace) -> dict:
     if args.clear:
-        if args.head or args.checks or args.reason:
+        if args.head or args.checks or args.reason or args.reuse or args.why:
             raise StateError("select_invalid", "--clear takes only --subject")
         return {"ok": True, "item": select_checks(args.dir, args.subject, binding={})}
     missing = [name for name in ("binding", "head", "checks", "reason") if not getattr(args, name)]
@@ -6100,8 +6150,9 @@ def _select_command(args: argparse.Namespace) -> dict:
     checks = _checks_argument(args.checks)
     repo = args.repo if args.repo is not None else Path.cwd()
     base_head = args.base_head or current_base_head(repo, binding)
+    reuse = None if args.reuse is None else [name.strip() for name in args.reuse.split(",") if name.strip()]
     item = select_checks(args.dir, args.subject, binding=binding, head=args.head, checks=checks, reason=args.reason,
-                         repo=repo, base_head=base_head)
+                         repo=repo, base_head=base_head, reuse=reuse, why=args.why)
     state = read_state(args.dir)
     selected = [check["id"] for check in item["leadSelection"]["checks"]]
     warnings, notes = base_rerun_notices(state, selected, base_head)
@@ -6447,7 +6498,7 @@ def main(argv: list[str] | None = None) -> int:
     hand.add_argument("--run", help="the id of the run that built the work; kept from before when left out")
     hand.add_argument("--checks", help="the checks the lane ran, by catalogue id, comma-separated")
     hand.add_argument("--evidence", action="append",
-                      help="the lane's evidence of a reusable check's run, as merge_queue.py evidence prints it; once a check")
+                      help="a record of the lane's run of a check, as merge_queue.py run-checks prints it; once a check")
     hand.add_argument("--no-change", action="store_true",
                       help="the work needs no change: its criteria already hold on the base; it never enters the queue")
     hand.add_argument("--base-head", help="with --no-change: the base commit the evidence ran at")
@@ -6460,6 +6511,9 @@ def main(argv: list[str] | None = None) -> int:
                                          "binding's alwaysRun entries, in which a string is a catalogue id; - for stdin")
     chosen.add_argument("--reason", help="why these checks cover the candidate's diff")
     chosen.add_argument("--clear", action="store_true", help="drop the selection, so the provider selects again")
+    chosen.add_argument("--reuse", help="check ids, comma-separated, whose records in the hand-off the runner may reuse "
+                                        "counting a path the candidate doesn't change as unread; needs --why")
+    chosen.add_argument("--why", help="why that reuse is safe, journaled as the grant's decision.recorded entry")
     chosen.add_argument("--repo", type=Path, help="the checkout whose remote-tracking base and objects select reads, "
                                                "for the readers of the candidate's changes and the base head; the "
                                                "current directory when left out")

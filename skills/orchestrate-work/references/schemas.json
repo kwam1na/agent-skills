@@ -1000,7 +1000,7 @@
               "const": true
             },
             "evidence": {
-              "description": "Written only by a lane's hand-off: the lane's own runs of checks, each with the head and tree it ran on and its definition's digest, and, from a run-checks record, where it ran, how long it took, when, and its environment and host facts. The runner reuses a passing run only on that tree.",
+              "description": "Written only by a lane's hand-off: the lane's own runs of checks, each with the head and tree it ran on and its definition's digest, and, from a run-checks record, where it ran, how long it took, when, and its environment and host facts. The runner reuses a passing run when its record applies to the tree it checks.",
               "type": "array",
               "items": {
                 "type": "object",
@@ -1085,6 +1085,32 @@
                 },
                 "recordedAt": {
                   "$ref": "#/$defs/timestamp"
+                },
+                "reuse": {
+                  "description": "Optional, written by select --reuse: the lead's grant to reuse the hand-off's records of these checks at this head, counting a path the candidate doesn't change as unread, why, and the decision.recorded entry that journals it.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "checks",
+                    "why",
+                    "decision"
+                  ],
+                  "properties": {
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/name"
+                      }
+                    },
+                    "why": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "decision": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
                 }
               }
             },
@@ -2530,7 +2556,7 @@
               }
             },
             "reusedFrom": {
-              "description": "For a reused check: the candidate whose lane ran it, the head it ran on, and the tree, which is the one checked here.",
+              "description": "For a reused check: the candidate whose lane ran it, the head it ran on, and that head's tree.",
               "type": "object",
               "additionalProperties": false,
               "required": [
@@ -3470,15 +3496,8 @@
           }
         }
       },
-      "reusableChecks": {
-        "description": "Optional. Ids of the binding's own checks (alwaysRun or fallback) the runner may reuse from a lane's hand-off evidence when the tree it would check is exactly the tree the lane's passing run checked, under the same definition. None when absent.",
-        "type": "array",
-        "items": {
-          "$ref": "#/$defs/name"
-        }
-      },
       "reuse": {
-        "description": "Optional. What a run record says about the host beyond each check's and prepare step's own program: tools names programs every check may call, each recorded by the sha256 of the file it resolves to on the check's PATH.",
+        "description": "Optional. How a lane's recorded runs are reused. Every check whose definition the tree determines is reusable by default. tools names programs every check may call, each recorded by the sha256 of the file it resolves to on the check's PATH. exclude names a check whose recorded run is never reused or carried, with why, which the queue's note quotes; without a provider each id must be one of the binding's checks.",
         "type": "object",
         "additionalProperties": false,
         "properties": {
@@ -3486,6 +3505,26 @@
             "type": "array",
             "items": {
               "$ref": "#/$defs/name"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "check",
+                "why"
+              ],
+              "properties": {
+                "check": {
+                  "$ref": "#/$defs/name"
+                },
+                "why": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
             }
           }
         }
