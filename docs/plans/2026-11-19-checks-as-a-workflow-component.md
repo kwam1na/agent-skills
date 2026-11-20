@@ -154,13 +154,14 @@ The paired TypeScript harness has no queue, carry or reuse code. A search of `pr
    - The grant lives in `leadSelection`, so it is void at any other handed head, as a lead selection already is. A new
      hand-off needs a new grant.
    - A grant may name only a check the hand-off carries a record for. `select` rejects any other id as invalid input.
-   - For a granted id, `applies` compares paths as usual, minus one exemption. The candidate's own diff is what it
-     changes against the base it was handed on, the notion `carry_plan` already uses: `git diff --name-only
-     --no-renames $(git merge-base <base head> <handed head>) <handed head>`. A path that differs between the
-     record's tree and the handed tree, and is outside that diff, came from the base (through the lane's own base
-     merge or the queue's sync), and is treated as unread. A differing path inside that diff is one the candidate
-     changed after the record, and counts as usual. So with an unknown read set, any lane change after the record to a
-     path the candidate changes makes the check run, while a base merge alone doesn't.
+   - For a granted id, `applies` compares paths as usual, minus one exemption. The candidate's own paths are what it
+     changes against the base, the notion `carry_plan` already uses, taken at both ends and joined: `git diff
+     --name-only --no-renames $(git merge-base <base head> <record head>) <record head>` and `git diff --name-only
+     --no-renames $(git merge-base <base head> <handed head>) <handed head>`. A path that differs between the record's
+     tree and the handed tree, and is outside both, came from the base (through the lane's own base merge or the
+     queue's sync), and is treated as unread. A differing path inside either one is one the candidate touched, and
+     counts as usual. So with an unknown read set, any lane change after the record to a path the candidate changes,
+     including a revert of one it had changed, makes the check run, while a base merge alone doesn't.
    - Every other condition in Decision 3 still holds. A granted record made in the lane's own checkout, under another
      definition, environment or host, with missing facts, or that failed, still runs.
    - When the queue reuses a granted record, `check.reused`'s `because` names the decision.
@@ -314,6 +315,8 @@ A conflict in that file alone is resolved as `AGENTS.md` says.
       `decision.recorded` entry;
     - the same shape, plus a lane commit after the record that touches a path inside the candidate's diff against the
       base: the granted check runs, and the note names that path;
+    - the same shape, plus a lane commit after the record that reverts a path the candidate had changed to the base's
+      content: the granted check runs, and the note names that path;
     - a grant recorded at an earlier handed head doesn't apply after a new hand-off;
     - a granted record with `where: checkout`, different facts, a changed definition or a failed result still runs.
 15. **A lane runs checks by id.** `check <key> <ids>` calls `run-checks` at HEAD and keeps the records in the story's
