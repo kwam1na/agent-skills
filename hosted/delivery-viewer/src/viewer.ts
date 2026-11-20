@@ -10,9 +10,10 @@ const app = document.getElementById("app");
 const entry = document.querySelector<HTMLScriptElement>(
   "script[data-renderer]",
 );
-// A publication that is current, or a completed one saved and retained, shows only as the hero's live line. Every other
-// state is said there in words too, without interaction.
-const QUIET = new Set<ViewStatus["kind"]>(["current", "retained"]);
+// A publication that is current, or a completed one saved and retained while its connection holds, shows only as the
+// hero's live line. Every other state is said there in words too, without interaction.
+const quiet = (value: ViewStatus) =>
+  value.kind === "current" || (value.kind === "retained" && !value.problem);
 /** The receipt's times, as the hero's live line offers them on hover or focus. */
 function hostingTimes(value: ViewStatus): string {
   const r = value.receipt;
@@ -25,19 +26,20 @@ if (match && statusNode && app && entry) {
   let started = false;
   let assetFailed = false;
   let current: ViewStatus = store.status();
-  // The hero's live line the renderer drew last; the renderer redraws it, and hands each new one to the hook below.
-  let line: Element | null = null;
+  // The hero's live line as drawn on the page. The renderer redraws it and hands each new one to the hook below before
+  // it is placed, so a status change looks it up afresh rather than trusting a line that may never have been placed.
+  const drawn = () => app!.querySelector(".fact.since");
   function words(value: ViewStatus) {
     return assetFailed
-      ? { kind: "unavailable", detail: "Viewer assets unavailable · reload to retry" }
-      : { kind: value.kind, detail: value.detail };
+      ? { kind: "unavailable", detail: "Viewer assets unavailable · reload to retry", quiet: false }
+      : { kind: value.kind, detail: value.detail, quiet: quiet(value) };
   }
   /** Puts the hosting status into a live line the renderer drew: the times on its label, the words when not quiet. */
   function paint(fact: Element) {
     const label = fact.querySelector(".fact-label");
     const handle = label?.firstElementChild as HTMLElement | null | undefined;
     if (!label || !handle) return;
-    const { kind, detail } = words(current);
+    const { kind, detail, quiet: hushed } = words(current);
     const times = hostingTimes(current);
     label.querySelector(".hosted-times")?.remove();
     label.querySelector(".hosted-words")?.remove();
@@ -58,7 +60,7 @@ if (match && statusNode && app && entry) {
       handle.removeAttribute("data-tab");
       handle.removeAttribute("aria-describedby");
     }
-    if (!QUIET.has(kind as ViewStatus["kind"])) {
+    if (!hushed) {
       // The live region below announces the words; this copy is what a sighted reader sees.
       const said = document.createElement("span");
       said.className = "hosted-words";
@@ -69,9 +71,8 @@ if (match && statusNode && app && entry) {
   }
   Object.assign(globalThis, {
     deliveryHostedLine(fact: Element) {
-      line = fact;
       paint(fact);
-      place();
+      queueMicrotask(place);
     },
   });
   function showStatus(value: ViewStatus) {
@@ -79,7 +80,7 @@ if (match && statusNode && app && entry) {
     const { kind, detail } = words(value);
     if (statusNode!.textContent !== detail) statusNode!.textContent = detail;
     statusNode!.dataset.state = kind;
-    if (line && !line.isConnected) line = null;
+    const line = drawn();
     if (line) paint(line);
     place();
   }
@@ -88,7 +89,7 @@ if (match && statusNode && app && entry) {
    * the page's own words already say the same: its loading line, or its note that the viewer assets failed.
    */
   function place() {
-    const said = !!line || assetFailed || current.kind === "loading";
+    const said = !!drawn() || assetFailed || current.kind === "loading";
     statusNode!.classList.toggle("hosted-announce", said);
   }
   function seed(body: PublicProjection) {

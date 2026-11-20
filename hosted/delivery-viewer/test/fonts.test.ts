@@ -68,22 +68,54 @@ describe("the hosted page's fonts", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
-  it("fails the build when a font file's bytes change from its recorded digest", async () => {
+  it.each([
+    ["font", "geist/geist-latin-wght-normal.woff2"],
+    ["licence", "newsreader/OFL.txt"],
+  ])("fails the build when a %s file's bytes change from its recorded digest", async (kind, path) => {
     const { dir, url } = await copy();
     try {
-      await writeFile(join(dir, "geist/geist-latin-wght-normal.woff2"), "not the font");
-      await expect(build(url)).rejects.toThrow("hosted.font_digest: font geist/geist-latin-wght-normal.woff2");
+      await writeFile(join(dir, path), "not the file");
+      await expect(build(url)).rejects.toThrow(`hosted.font_digest: ${kind} ${path} does not match its recorded digest`);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+  it("fails the build when sources.json lists a file that is not woff2", async () => {
+    const { dir, url } = await copy();
+    try {
+      const sources = JSON.parse(await readFile(join(dir, "sources.json"), "utf8"));
+      sources.families[1].files[0].path = "geist/geist-latin-wght-normal.ttf";
+      await writeFile(join(dir, "sources.json"), JSON.stringify(sources));
+      await expect(build(url)).rejects.toThrow("hosted.font_type: geist/geist-latin-wght-normal.ttf is not a woff2 file");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  it("reads a family with no axes as its regular face, and refuses a link it cannot read face by face", () => {
+    expect(requestedFaces("https://fonts.googleapis.com/css2?family=Inter&display=swap")).toEqual([
+      { family: "Inter", style: "normal", weight: 400 },
+    ]);
+    expect(requestedFaces("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@500")).toEqual([
+      { family: "Geist Mono", style: "normal", weight: 500 },
+    ]);
+    for (const [link, error] of [
+      ["fonts.googleapis.com/css2?family=Geist", "hosted.font_url_drift: the local FONTS link is not a URL"],
+      ["https://fonts.googleapis.com/css2?display=swap", "hosted.font_url_drift: the local FONTS link names no family"],
+      ["https://fonts.googleapis.com/css2?family=Geist:wght@100..900", "hosted.font_url_drift: Geist has a ranged weight 100..900"],
+      ["https://fonts.googleapis.com/css2?family=Geist:ital", "hosted.font_url_drift: Geist names no weights"],
+    ])
+      expect(() => requestedFaces(link), link).toThrow(error);
   });
   it("fails the build when the stylesheet or the local view names a family or style it does not serve", async () => {
     await expect(
       build(fonts, { stylesheet: STYLESHEET.replace('--mono: "Geist Mono"', '--mono: "Fira Code"') }),
     ).rejects.toThrow("hosted.font_unserved: the stylesheet names Fira Code");
-    await expect(
-      build(fonts, { fontsUrl: FONTS.replace("family=Geist:wght@", "family=Geist:ital,wght@1,") }),
-    ).rejects.toThrow(/hosted\.font_url_drift|hosted\.font_unserved: the local view requests Geist italic/);
+    const italic = FONTS.replace("family=Geist:wght@400;500;600", "family=Geist:ital,wght@0,400;1,400");
+    expect(italic).not.toBe(FONTS);
+    expect(requestedFaces(italic)).toContainEqual({ family: "Geist", style: "italic", weight: 400 });
+    await expect(build(fonts, { fontsUrl: italic })).rejects.toThrow(
+      "hosted.font_unserved: the local view requests Geist italic, which sources.json does not serve",
+    );
     await expect(
       build(fonts, { fontsUrl: FONTS + "&family=Inter:wght@400" }),
     ).rejects.toThrow("hosted.font_unserved: the local view requests Inter");

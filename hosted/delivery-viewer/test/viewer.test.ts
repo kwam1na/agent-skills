@@ -1245,7 +1245,7 @@ describe("the hosting status in the hero's live line", () => {
       close(dom);
     }
   });
-  it("keeps a completed delivery's saved and retained publication quiet in its closed line", async () => {
+  it("keeps a completed delivery's saved and retained publication quiet in its closed line until its connection fails", async () => {
     const body = auxiliaryProjection("old");
     body.document.journal.push({
       id: body.document.journal.length + 1,
@@ -1264,6 +1264,16 @@ describe("the hosting status in the hero's live line", () => {
       expect(line(document).querySelector(".hosted-words")).toBeNull();
       expect(document.getElementById("hosting-times")!.textContent).toContain("Revision 1.1");
       expect(status(document).textContent).toBe("Completed delivery · saved and retained");
+      // A lost connection is said in the line, though the saved delivery stays readable.
+      served.now = Error("offline");
+      await store.poll();
+      expect(store.status().kind).toBe("retained");
+      await vi.waitFor(() =>
+        expect(line(document).querySelector(".hosted-words")?.textContent).toBe(
+          "Saved completed delivery · connection unavailable",
+        ),
+      );
+      expect(status(document).textContent).toBe("Saved completed delivery · connection unavailable");
     } finally {
       close(dom);
     }
@@ -1272,6 +1282,9 @@ describe("the hosting status in the hero's live line", () => {
     const served = { now: Error("offline") as Served };
     const { dom, store, document } = await hostedPage(served, false);
     try {
+      // While loading, the page's own loading words say it; the region only announces.
+      expect(status(document).textContent).toBe("Loading hosted progress…");
+      expect(status(document).classList.contains("hosted-announce")).toBe(true);
       expect(store).toBeUndefined();
       await vi.waitFor(() =>
         expect(status(document).textContent).toBe("Hosted progress unavailable"),

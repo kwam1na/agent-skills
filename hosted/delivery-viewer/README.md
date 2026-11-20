@@ -189,7 +189,7 @@ files carry the Latin and Latin Extended ranges; other scripts fall back to the
 stylesheet's next family.
 
 The hosting status draws no strip. A current publication, or a completed one
-saved and retained, shows only as the hero's live line, whose label offers the
+saved and retained while its connection holds, shows only as the hero's live line, whose label offers the
 source-confirmed, published and revision times on hover or focus. A loading,
 stale, unavailable or incompatible publication is also said in that line, in
 words, without interaction. A fixed `role="status"` region outside the

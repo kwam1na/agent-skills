@@ -513,6 +513,10 @@ test("retains readable progress on pointer loss, incompatibility and publisher d
   await expect(page.locator("#hosting-status")).toContainText(
     "Saved completed delivery",
   );
+  await expect(page.locator(".fact.since .hosted-words")).toBeVisible();
+  await expect(page.locator(".fact.since .hosted-words")).toHaveText(
+    "Saved completed delivery · connection unavailable",
+  );
   await expect(page.locator("#app")).toContainText("closed");
 });
 
@@ -529,10 +533,16 @@ test("asset failure stays explicit across later successful data polls", async ({
   await expect(page.locator("#hosting-status")).toContainText(
     "Viewer assets unavailable",
   );
+  // The page's own words say it; the region announces without repeating it on screen.
+  await expect(page.locator("#app")).toHaveText(
+    "Viewer assets unavailable. Reload this page to retry.",
+  );
+  await expect(page.locator("#hosting-status")).toHaveClass(/hosted-announce/);
   await page.waitForTimeout(5500);
   await expect(page.locator("#hosting-status")).toContainText(
     "Viewer assets unavailable",
   );
+  await expect(page.locator("#hosting-status")).toHaveClass(/hosted-announce/);
   await page.unroute(`**${built.paths.rendererPath}`);
   await page.reload();
   await expect(page.locator("#app")).toContainText("Delivery");
