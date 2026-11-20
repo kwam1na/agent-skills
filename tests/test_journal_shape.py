@@ -104,6 +104,7 @@ INVENTORY = {
         _key("_register_stories", {"story.added"}): 1,
         _key("_register_stories", {"story.approved"}): 1,
         _key("lead_push", {"base.published"}): 1,
+        _key("lead_push", {"decision.recorded"}): 1,
         _key("lead_flake", {"flake.declared"}): 1,
         _key("change_regions", {"ownership.granted", "ownership.revoked"}): 1,
         _key("change_carve", {"ownership.carved"}): 1,
