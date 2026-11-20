@@ -7115,6 +7115,59 @@ class LeadSelectionTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(self.refused(lambda: self.select(checks)), "select_invalid")
 
+    def handed(self) -> None:
+        """A candidate handed off with the lane's record of its full run, ready for the lead's selection."""
+        state = state_tool.read_state(self.directory)
+        state_tool.patch(self.directory, writer="lead", version=state["version"], changes={
+            "planned": [{"subject": "work-h", "title": "H", "lane": "lane-1", "stage": "review"}]})
+        record = {"check": "full", "definition": "sha256:" + "d" * 64, "head": HEAD_A, "tree": "e" * 40,
+                  "result": "passed", "where": "runner"}
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-h", head=HEAD_A, change_request="cr",
+                           evidence=[record])
+
+    def grant(self, **changes: object) -> dict:
+        arguments = {"binding": self.BINDING, "head": HEAD_A, "checks": [selected_check("parser")],
+                     "reason": "only the parser changed", "reuse": ["full"], "why": "the base merge brought in only docs"}
+        arguments.update(changes)
+        return state_tool.select_checks(self.directory, "work-h", **arguments)
+
+    def test_a_reuse_grant_is_kept_in_the_selection_and_journaled_as_its_decision(self) -> None:
+        self.handed()
+        before = len(state_tool.read_journal(self.directory))
+        item = self.grant()
+        reuse = item["leadSelection"]["reuse"]
+        self.assertEqual(reuse, {"checks": ["full"], "why": "the base merge brought in only docs", "decision": before + 1})
+        decision, selected = state_tool.read_journal(self.directory)[before:]
+        self.assertEqual((decision["id"], decision["kind"], decision["subject"], decision["lane"]),
+                         (reuse["decision"], "decision.recorded", "work-h", "lane-1"))
+        self.assertEqual(decision["data"]["why"], "the base merge brought in only docs")
+        self.assertIn("full", decision["data"]["text"])
+        self.assertEqual((selected["kind"], selected["data"]["checks"]), ("check.selected", ["parser"]))
+        # A selection without a grant keeps none.
+        self.assertNotIn("reuse", self.grant(reuse=None, why=None)["leadSelection"])
+
+    def test_a_grant_names_only_checks_the_hand_off_has_a_record_of_and_says_why(self) -> None:
+        self.handed()
+        journal = (self.directory / state_tool.JOURNAL_FILE).read_bytes()
+        for name, changes in (("no record of it", {"reuse": ["full", "lint"]}), ("no why", {"why": " "}),
+                              ("a why alone", {"reuse": None}), ("an empty grant", {"reuse": []}),
+                              ("a check twice", {"reuse": ["full", "full"]})):
+            with self.subTest(name):
+                self.assertEqual(self.refused(lambda: self.grant(**changes)), "select_invalid")
+                self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), journal)
+        with self.assertRaises(state_tool.StateError) as caught:
+            self.grant(reuse=["full", "lint"])
+        self.assertIn("no record of lint", str(caught.exception))
+        binding = Path(self.directory.parent) / "orchestration.json"
+        binding.write_text(json.dumps(self.BINDING), encoding="utf-8")
+        code, result = run_tool(self.directory, "select", "--subject", "work-h", "--clear", "--reuse", "full")
+        self.assertEqual((code, result["code"]), (1, "select_invalid"))
+        code, result = run_tool(self.directory, "select", "--subject", "work-h", "--binding", str(binding),
+                                "--head", HEAD_A, "--checks", "-", "--reason", "parser only", "--reuse", "full",
+                                "--why", "only docs came in", stdin=json.dumps([selected_check("parser")]))
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["item"]["leadSelection"]["reuse"]["checks"], ["full"])
+
     def test_only_the_select_command_writes_a_selection(self) -> None:
         self.select()
         state = state_tool.read_state(self.directory)

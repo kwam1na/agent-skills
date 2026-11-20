@@ -2329,14 +2329,30 @@ def base_rerun_notices(state: dict, check_ids: list[str], base_head: str | None)
 @writer_operation
 def select_checks(directory: Path, subject: str, *, binding: dict, head: str | None = None,
                   checks: object = None, reason: str | None = None, repo: Path | None = None,
-                  base_head: str | None = None) -> dict:
+                  base_head: str | None = None, reuse: list[str] | None = None, why: str | None = None) -> dict:
     """The lead records the checks a candidate runs at its reviewed head, or clears them with no head.
 
     The runner uses a selection only while the binding's ``selection.lead`` is
     true and the candidate is still at the head the selection names; a
     hand-off at a new head drops it. alwaysRun runs beside it.
+
+    ``reuse`` grants reuse of the hand-off's records of those checks, and
+    ``why`` says why: the runner counts a path the candidate doesn't change
+    against the base, at the record's head or the handed head, as unread for
+    them. The grant is journaled as a decision.recorded entry, whose id the
+    selection keeps, and is void with the selection at any other head. It
+    may name only checks the hand-off carries a record of.
     """
     clearing = head is None
+    if reuse is not None:
+        if clearing:
+            raise StateError("select_invalid", "a reuse grant is part of a selection: give --head, --checks and --reason")
+        if not reuse or len(set(reuse)) != len(reuse):
+            raise StateError("select_invalid", "--reuse names each granted check once")
+        if not why or not why.strip():
+            raise StateError("select_invalid", "say why the reuse is safe with --why")
+    elif why is not None:
+        raise StateError("select_invalid", "--why goes with --reuse")
     if not clearing:
         if not (isinstance(binding.get("selection"), dict) and binding["selection"].get("lead") is True):
             raise StateError("select_invalid", "the binding does not enable lead selection: set selection.lead to true")
@@ -2356,7 +2372,7 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
         if problems:
             raise StateError("select_invalid", "; ".join(problems))
 
-    def change(state: dict) -> dict:
+    def change(state: dict, journal: list[dict]) -> tuple[dict, list[dict]]:
         item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
         if item is None:
             raise StateError("subject_unknown", f"{subject} is not queued")
@@ -2364,22 +2380,34 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
             if "leadSelection" not in item:
                 raise StateError("select_invalid", f"{subject} has no lead selection to clear")
             item.pop("leadSelection")
-            return copy.deepcopy(item)
+            return copy.deepcopy(item), [{"kind": "check.selection.cleared", "subject": subject,
+                                          "lane": item.get("lane"), "data": {}}]
         if item["stage"] in ("merging", "merged"):
             raise StateError("select_invalid", f"{subject} is {item['stage']}")
         # A hand-off waiting to end a failed run is reviewed at its own head, which the row takes once it is accepted.
-        reviewed = handed_item(state, read_journal(directory), subject)["head"]  # type: ignore[index]
+        handed = handed_item(state, journal, subject)
+        reviewed = handed["head"]  # type: ignore[index]
         if head != reviewed:
             raise StateError("select_invalid", f"{subject}'s reviewed head is {reviewed}, not {head}")
         item["leadSelection"] = {"head": head, "checks": copy.deepcopy(checks), "reason": reason, "recordedAt": now()}
-        return copy.deepcopy(item)
+        entries = []
+        if reuse is not None:
+            recorded = {entry["check"] for entry in handed.get("evidence", [])}  # type: ignore[union-attr]
+            unrecorded = [name for name in reuse if name not in recorded]
+            if unrecorded:
+                raise StateError("select_invalid", f"{subject}'s hand-off at {head} carries no record of "
+                                                   f"{', '.join(unrecorded)}, so there is nothing to reuse")
+            # The decision is the entry this write appends first, so the selection can name it.
+            item["leadSelection"]["reuse"] = {"checks": list(reuse), "why": why, "decision": len(journal) + 1}
+            entries.append({"kind": "decision.recorded", "subject": subject, "lane": item.get("lane"), "data": {
+                "text": f"Reuse the lane's records of {', '.join(reuse)} for {subject} at {head}, counting what it "
+                        "doesn't change as unread", "why": why}})
+        entries.append({"kind": "check.selected", "subject": subject, "lane": item.get("lane"), "data": {
+            "head": head, "checks": [check["id"] for check in checks], "why": reason,  # type: ignore[union-attr]
+            "added": [{"id": entry["id"], "why": entry["why"]} for entry in added or []]}})
+        return copy.deepcopy(item), entries
 
-    _, item = _tool_write(directory, change)
-    facts = {} if clearing else {
-        "head": head, "checks": [check["id"] for check in checks], "why": reason,  # type: ignore[union-attr]
-        "added": [{"id": entry["id"], "why": entry["why"]} for entry in added or []]}
-    append_journal(directory, kind="check.selection.cleared" if clearing else "check.selected", subject=subject,
-                   lane=item.get("lane"), data=facts)  # type: ignore[union-attr]
+    _, item, _ = _locked_write(directory, change)
     return item  # type: ignore[return-value]
 
 
@@ -6085,7 +6113,7 @@ def _handoff_command(args: argparse.Namespace) -> dict:
 
 def _select_command(args: argparse.Namespace) -> dict:
     if args.clear:
-        if args.head or args.checks or args.reason:
+        if args.head or args.checks or args.reason or args.reuse or args.why:
             raise StateError("select_invalid", "--clear takes only --subject")
         return {"ok": True, "item": select_checks(args.dir, args.subject, binding={})}
     missing = [name for name in ("binding", "head", "checks", "reason") if not getattr(args, name)]
@@ -6100,8 +6128,9 @@ def _select_command(args: argparse.Namespace) -> dict:
     checks = _checks_argument(args.checks)
     repo = args.repo if args.repo is not None else Path.cwd()
     base_head = args.base_head or current_base_head(repo, binding)
+    reuse = None if args.reuse is None else [name.strip() for name in args.reuse.split(",") if name.strip()]
     item = select_checks(args.dir, args.subject, binding=binding, head=args.head, checks=checks, reason=args.reason,
-                         repo=repo, base_head=base_head)
+                         repo=repo, base_head=base_head, reuse=reuse, why=args.why)
     state = read_state(args.dir)
     selected = [check["id"] for check in item["leadSelection"]["checks"]]
     warnings, notes = base_rerun_notices(state, selected, base_head)
@@ -6460,6 +6489,9 @@ def main(argv: list[str] | None = None) -> int:
                                          "binding's alwaysRun entries, in which a string is a catalogue id; - for stdin")
     chosen.add_argument("--reason", help="why these checks cover the candidate's diff")
     chosen.add_argument("--clear", action="store_true", help="drop the selection, so the provider selects again")
+    chosen.add_argument("--reuse", help="check ids, comma-separated, whose records in the hand-off the runner may reuse "
+                                        "counting a path the candidate doesn't change as unread; needs --why")
+    chosen.add_argument("--why", help="why that reuse is safe, journaled as the grant's decision.recorded entry")
     chosen.add_argument("--repo", type=Path, help="the checkout whose remote-tracking base and objects select reads, "
                                                "for the readers of the candidate's changes and the base head; the "
                                                "current directory when left out")

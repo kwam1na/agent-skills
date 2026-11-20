@@ -77,6 +77,14 @@ class PlanFixtureTests(unittest.TestCase):
                 with self.subTest(record=name):
                     fresh = (out / f"{name}.json").read_text(encoding="utf-8")
                     committed = (RECORDS / f"{name}.json").read_text(encoding="utf-8")
+                    # The capture itself keeps the machine out, so no regeneration commits this host's facts.
+                    host = importlib.import_module("platform").uname().system
+                    self.assertNotIn(host, fresh)
+                    for item in json.loads(fresh)["state"]["queue"]:
+                        for check in item["checks"]:
+                            self.assertEqual(check.get("host", {"platform": "<platform>", "tools": {"<tool>": "<digest>"}}),
+                                             {"platform": "<platform>", "tools": {"<tool>": "<digest>"}})
+                            self.assertEqual(check.get("environment", {"names": ["<names>"]})["names"], ["<names>"])
                     self.assertEqual(shape(committed), shape(fresh))
 
     def test_a_shape_holds_no_duration_however_long_a_check_took(self) -> None:

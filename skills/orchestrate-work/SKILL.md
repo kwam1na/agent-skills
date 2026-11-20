@@ -321,11 +321,13 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   candidate back to `queued`, once for each pair of candidate and base heads;
   a second stop at the same pair stops it as `base_rerun_stopped`. A failure made only of the binding's
   declared flakes is retried once and journaled as `check.retried`; any other
-  failure is never retried. A check the binding lists in `reusableChecks` is
-  not run again when the synced tree is exactly the tree the lane's hand-off
-  evidence shows it passing, under the same definition: it is recorded as
-  reused, with the head of the lane's run, and journaled as `check.reused`.
-  Every other check still runs, and the merge stays pinned to the synced head.
+  failure is never retried. A lane's recorded pass of a check is
+  not run again when `applies` says it stands for the queue's own run: same
+  definition and facts, its head here, and only unread paths, or none the
+  check reads, differing. It is recorded as reused, with the head of the
+  lane's run, and journaled as `check.reused`; `reuse.exclude` keeps a check
+  running, and the lead's `select --reuse --why` grant counts what the
+  candidate didn't change as unread. Every other check still runs, and the merge stays pinned to the synced head.
   A check and a `prepare` step run in a declared environment: a fixed
   baseline (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG`,
   `LC_*`), the binding's `inherit` names, its `environment` and the check's

@@ -378,7 +378,12 @@ def served_bases(binding: dict) -> str:
 
 
 def binding_errors(binding: object) -> list[str]:
-    errors = validate(binding, load_schema("orchestration-binding/1"))
+    errors = []
+    if isinstance(binding, dict) and "reusableChecks" in binding:
+        # Said first, since the schema refuses it too; this says what replaces it.
+        errors.append("/reusableChecks: a lane's recorded run of any check is reusable now; fix: remove reusableChecks, "
+                      "and list a check that must always run again in reuse.exclude with why")
+    errors += validate(binding, load_schema("orchestration-binding/1"))
     state = binding.get("state") if isinstance(binding, dict) else None
     publishers = state.get("publishers") if isinstance(state, dict) else None
     for index, entry in enumerate(publishers if isinstance(publishers, list) else []):
@@ -498,34 +503,14 @@ def binding_errors(binding: object) -> list[str]:
         else:
             if "id" not in pattern.groupindex:
                 errors.append("/checkOutput/failurePattern: needs a named group id")
-    own = {check["id"] for check in [*binding["alwaysRun"], *binding["fallback"]]}
-    reusable = binding.get("reusableChecks", [])
-    if len(set(reusable)) != len(reusable):
-        errors.append("/reusableChecks: ids must be unique")
-    checks = {check["id"]: check for check in [*binding["alwaysRun"], *binding["fallback"]]}
-    if reusable:
-        # The prepare steps set up every check's checkout, a reused one's included.
-        varying = sorted({element for argv in binding["prepare"] for element in argv
-                          if PLACEHOLDER.match(element) and PLACEHOLDER.match(element)[1] != "treeSha"})
-        if varying:
-            errors.append(f"/reusableChecks: the prepare steps use {', '.join(varying)}, which the tree does not "
-                          "determine; with reusable checks they may use only {treeSha}")
-    for name in reusable:
-        if name not in own:
-            errors.append(f"/reusableChecks: {name} is not one of the binding's own checks (alwaysRun or fallback)")
-            continue
-        check = checks[name]
-        # Only the tree may vary between the lane's run and the one it stands for.
-        profile = binding["profiles"].get(check.get("environmentProfile", ""), {"environment": {}})
-        varying = [element for element in [*check["argv"], *profile["environment"].values()]
-                   if PLACEHOLDER.match(element) and PLACEHOLDER.match(element)[1] != "treeSha"]
-        if varying:
-            errors.append(f"/reusableChecks: {name} uses {', '.join(sorted(set(varying)))}, which the tree does not "
-                          "determine; a reusable check may use only {treeSha}")
-        dependants = sorted(other for other, entry in checks.items() if name in entry["prerequisites"])
-        if dependants:
-            errors.append(f"/reusableChecks: {name} is a prerequisite of {', '.join(dependants)}, which would run "
-                          "without its output")
+    # Every check whose definition the tree determines is reusable, so a binding names only what isn't.
+    excluded = [entry["check"] for entry in binding.get("reuse", {}).get("exclude", [])]
+    if len(set(excluded)) != len(excluded):
+        errors.append("/reuse/exclude: a check is excluded once")
+    if binding["provider"] is None:
+        # A provider's checks are known only once it answers, so only a binding without one can name every id.
+        known = {check["id"] for check in [*catalogue, *binding["alwaysRun"], *binding["fallback"]]}
+        errors.extend(f"/reuse/exclude: {name} is not one of the binding's checks" for name in excluded if name not in known)
     for index, flake in enumerate(binding.get("flakes", [])):
         if "tests" in flake and not flake["tests"]:
             errors.append(f"/flakes/{index}/tests: name at least one pattern, or leave tests out for the whole check")
@@ -584,6 +569,68 @@ def check_title(check: dict) -> dict:
 
 # How a check runs, as one digest; the state tool's select compares selections by it too.
 check_definition = delivery_state.check_definition
+# The names the runner sets on every check itself, whose values say who runs it: never in an environment digest.
+RUNNER_OWNED = frozenset({
+    "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_TERMINAL_PROMPT",
+    "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
+})
+
+
+def undetermined(check: dict, binding: dict) -> list[str]:
+    """The placeholders other than {treeSha} in a check's argv, its profile's environment and the binding's prepare
+    steps: what the tree does not determine, so a recorded run of the check stands for no other."""
+    profile = binding["profiles"].get(check.get("environmentProfile", ""), {"environment": {}})["environment"]
+    elements = [*check["argv"], *profile.values(), *(element for argv in binding["prepare"] for element in argv)]
+    return sorted({element for element in elements
+                   if PLACEHOLDER.match(element) and PLACEHOLDER.match(element)[1] != "treeSha"})
+
+
+def fact_differences(record: dict, facts: dict) -> list[str]:
+    """How a record's environment and host differ from the queue's own run's, by name, never by value."""
+    reasons = []
+    theirs, ours = record["environment"], facts["environment"]
+    if theirs != ours:
+        unset = sorted(set(theirs["names"]) - set(ours["names"]))
+        extra = sorted(set(ours["names"]) - set(theirs["names"]))
+        if unset or extra:
+            reasons.append("its environment had other names: "
+                           + "; ".join([*([f"{', '.join(unset)} the queue's run doesn't get"] if unset else []),
+                                        *([f"{', '.join(extra)} the lane's run didn't get"] if extra else [])]))
+        else:
+            digested = sorted(name for name in ours["names"]
+                              if environment_name(name) not in UNDIGESTED and name not in RUNNER_OWNED)
+            reasons.append("its environment differs in the value of one of " + (", ".join(digested) or "its names"))
+    if record["host"]["platform"] != facts["host"]["platform"]:
+        reasons.append(f"it ran on {record['host']['platform']}, and the queue runs on {facts['host']['platform']}")
+    tools = record["host"]["tools"]
+    differing = sorted(name for name in {*tools, *facts["host"]["tools"]}
+                       if tools.get(name, "absent") != facts["host"]["tools"].get(name, "absent"))
+    if differing:
+        reasons.append(f"its tools differ: {', '.join(differing)}")
+    return reasons
+
+
+def path_reasons(check: dict, paths: list[str], binding: dict, own: set[str] | None) -> list[str]:
+    """Why the paths that differ between a recorded run's tree and the one checked now keep it from standing, if they
+    do: none differ, all match selection.unread, or none is in the check's known read set. The binding file is always
+    read. ``own`` is a grant's: a path outside it, other than the binding file, counts as unread."""
+    if own is not None:
+        paths = [path for path in paths if path == BINDING_PATH or path in own]
+    if not paths:
+        return []
+    selection = binding.get("selection") or {}
+    if all(path != BINDING_PATH and matches_any(path, selection.get("unread") or []) for path in paths):
+        return []
+    if BINDING_PATH in paths:
+        return ["the binding file changed"]
+    shown = ", ".join(paths[:STOP_FAILURES]) + (f" and {len(paths) - STOP_FAILURES} more" if len(paths) > STOP_FAILURES else "")
+    if own is not None:
+        return [f"the candidate changes {shown} since the lane's run"]
+    entries = [entry for entry in selection.get("readers") or [] if check["id"] in entry["checks"]]
+    if entries and all(entry.get("complete") is True for entry in entries):
+        read = [path for path in paths if matches_any(path, [pattern for entry in entries for pattern in entry["paths"]])]
+        return [f"it reads {', '.join(read[:STOP_FAILURES])}, which changed since the lane's run"] if read else []
+    return [f"the tree is not the one the lane's run checked, and its read set is unknown: {shown} differ"]
 
 
 def selection_errors(checks: list[dict], binding: dict, check_cwd: Path | None) -> list[str]:
@@ -1718,51 +1765,118 @@ class Runner:
             self.git("worktree", "remove", "--force", str(checkout), check=False)
             shutil.rmtree(directory, ignore_errors=True)
 
-    def tree_of(self, head: str) -> str | None:
-        """The tree of a commit this repository has, or None."""
-        found = self.git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}", check=False)
-        return found.stdout.strip() if found.returncode == 0 else None
+    def reusable(self, members: list[tuple[str, dict]], checks: list[dict], tree: str, checkout: Path,
+                 context: Context, exact: bool = False) -> dict[str, dict]:
+        """The checks to reuse rather than run on ``tree``, each with the lane's run it is reused from.
 
-    def reusable(self, members: list[tuple[str, dict]], checks: list[dict], tree: str) -> dict[str, dict]:
-        """The checks to reuse rather than run on ``tree``, each with the run it is reused from.
-
-        A check is reused only when the binding marks it reusable and one of
-        the candidates being checked handed off evidence of a passing run of
-        that check, under the same definition, at a head whose tree, read here,
-        is ``tree``. Evidence is read from each candidate's own hand-off, so it
-        is never reused for another candidate.
+        A check is reused when one of the candidates being checked handed off a record of a run of it that
+        ``applies`` says stands for the run the queue would make here, with the facts the queue's own run would have.
+        Records are read from each candidate's own hand-off, so one is never reused for another candidate. A check
+        another selected check builds on runs, so its output is there. A lead's grant for a candidate's handed head
+        lets a path the candidate doesn't change count as unread, and the reuse names the grant. ``exact`` keeps a
+        batch's rule: a member's record counts only at the very tree it checked.
         """
-        declared = set(self.binding.get("reusableChecks", []))
-        # A check another selected check builds on runs, so its output is there.
         needed = {name for check in checks for name in check["prerequisites"]}
+        base_head = context.values.get("baseHead")
         found: dict[str, dict] = {}
         for check in checks:
-            if check["id"] not in declared:
-                continue
-            definition = check_definition(check, self.binding)
+            facts: dict | None = None
             why: list[str] = []
             for subject, item in members:
+                grant = self.grant(item)
+                granted = grant is not None and check["id"] in grant["checks"]
                 for entry in item.get("evidence", []):
                     if entry["check"] != check["id"]:
                         continue
-                    reason = (
-                        "another check needs its output" if check["id"] in needed
-                        else "its definition changed since the lane's run" if entry["definition"] != definition
-                        else f"the lane's run {entry['result']}" if entry["result"] != "passed"
-                        else "the tree is not the one the lane's run checked" if entry["tree"] != tree
-                        else "the head of the lane's run is not here, or has another tree"
-                        if self.tree_of(entry["head"]) != tree else None
-                    )
-                    if reason is None:
-                        found[check["id"]] = {"subject": subject, "head": entry["head"], "tree": tree}
+                    if check["id"] in needed:
+                        reasons = ["another check needs its output"]
+                    elif exact and entry["tree"] != tree:
+                        reasons = ["the tree is not the one the lane's run checked"]
+                    else:
+                        facts = facts or self.run_facts(check, checkout, context)
+                        own = (self.own_paths(base_head, [entry["head"], item["head"]])
+                               if granted and base_head and self.tree_of(entry["head"]) is not None else None)
+                        reasons = self.applies(entry, check, tree, self.binding, facts, own=own)
+                    if not reasons:
+                        found[check["id"]] = {"subject": subject, "head": entry["head"], "tree": entry["tree"],
+                                              **({"decision": grant["decision"]} if granted else {})}
                         break
-                    why.append(f"{subject} at {entry['head']}: {reason}")
+                    why.append(f"{subject} at {entry['head']}{' (granted)' if granted else ''}: {'; '.join(reasons)}")
                 if check["id"] in found:
                     break
             note = f"{check['id']} was run, not reused: " + "; ".join(why)
             if check["id"] not in found and why and note not in self.notes:
                 self.notes.append(note)
         return found
+
+    def grant(self, item: dict) -> dict | None:
+        """The lead's reuse grant for a candidate, while its selection is for the candidate's handed head."""
+        selection = item.get("leadSelection")
+        if not selection or selection.get("head") != item.get("head"):
+            return None
+        return selection.get("reuse")
+
+    def own_paths(self, base_head: str, heads: list[str]) -> set[str]:
+        """What a candidate changes against the base at each of ``heads``, joined: the paths it touched."""
+        paths: set[str] = set()
+        for head in heads:
+            fork = self.git("merge-base", base_head, head, check=False).stdout.strip()
+            if fork:
+                paths |= {path for path in self.git("diff", "--name-only", "--no-renames", "-z", fork, head)
+                          .stdout.split("\0") if path}
+        return paths
+
+    def run_facts(self, check: dict, checkout: Path, context: Context) -> dict:
+        """The environment and host facts the queue's own run of ``check`` in ``checkout`` would have."""
+        return {"environment": self.check_environment(self.profile_environment(check), context)[1],
+                "host": self.host_facts(check, checkout, context)}
+
+    def applies(self, record: dict, check: dict, tree: str | None, binding: dict, facts: dict | None, *,
+                changed: list[str] | None = None, own: set[str] | None = None) -> list[str]:
+        """Whether a recorded pass of ``check`` stands for the queue's own run at ``tree``: nothing, or every reason
+        it doesn't.
+
+        It stands when the run passed, by the runner rather than in a lane's own checkout, under the definition
+        ``binding`` gives the check, with environment and host facts equal to ``facts`` (the queue's own run's),
+        at a head this repository has with the record's tree, and the paths that differ between that tree and
+        ``tree`` are none, all unread, or none in the check's known read set. The binding file always counts as
+        read. A check whose definition the tree does not determine, or that the binding excludes, never stands.
+        ``facts`` None leaves the facts to the caller; ``changed`` gives the differing paths instead of ``tree``;
+        ``own`` is a grant's: a differing path outside it, other than the binding file, counts as unread.
+        """
+        reasons = []
+        if record.get("result") != "passed":
+            reasons.append(f"the lane's run {record.get('result')}")
+        if record.get("where") == "checkout":
+            reasons.append("it ran in the lane's own checkout, not the way the queue runs it")
+        excluded = next((entry for entry in binding.get("reuse", {}).get("exclude", [])
+                         if entry["check"] == check["id"]), None)
+        if excluded is not None:
+            reasons.append(f"the binding excludes it from reuse: {excluded['why']}")
+        varying = undetermined(check, binding)
+        if varying:
+            reasons.append(f"it uses {', '.join(varying)}, which the tree does not determine")
+        if record.get("definition") != check_definition(check, binding):
+            reasons.append("its definition changed since the lane's run")
+        if facts is not None:
+            missing = [name for name in ("where", "environment", "host") if name not in record]
+            if missing:
+                reasons.append(f"the record is missing its {', '.join(missing)} facts")
+            else:
+                reasons.extend(fact_differences(record, facts))
+        if self.tree_of(record["head"]) != record["tree"]:
+            reasons.append("the head of the lane's run is not here, or has another tree")
+        else:
+            paths = changed if changed is not None else sorted(
+                path for path in self.git("diff", "--name-only", "--no-renames", "-z", record["tree"], tree)
+                .stdout.split("\0") if path)
+            reasons.extend(path_reasons(check, paths, binding, own))
+        return reasons
+
+    def tree_of(self, head: str) -> str | None:
+        """The tree of a commit this repository has, or None."""
+        found = self.git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}", check=False)
+        return found.stdout.strip() if found.returncode == 0 else None
 
     def load(self) -> str:
         """Fetch the base, read the binding from it, and set up workRoot."""
@@ -2292,12 +2406,14 @@ class Runner:
             if changes:
                 raise Stop("no_checks", "nothing would check this candidate's changes")
             result.notes.append("the candidate changes nothing, so no check was selected")
+        checked = context.with_values(treeSha=self.tree(synced))
         # A plan made for another base head says nothing of the commits after it: then every check runs again.
-        carry = self.carry(subject, checks, carried if carried and carried["to"] == base_head else None, result)
+        carry = self.carry(subject, checks, carried if carried and carried["to"] == base_head else None, result,
+                           checkout, checked)
         self.write_progress([subject], [{"id": check["id"], "state": "pending", **check_title(check)} for check in checks])
-        reused = self.reusable([(subject, item)], checks, self.tree(synced))
-        outcomes = self.run_checks([subject], checks, checkout, context.with_values(treeSha=self.tree(synced)), result,
-                                   reused=reused, carried=carry)
+        reused = self.reusable([(subject, item)], [check for check in checks if check["id"] not in carry],
+                               self.tree(synced), checkout, checked)
+        outcomes = self.run_checks([subject], checks, checkout, checked, result, reused=reused, carried=carry)
         if self.ending(subject) is not None:
             raise self.superseded_stop(subject)
         self.assert_clean(checkout, "the checkout after the checks")
@@ -2310,13 +2426,34 @@ class Runner:
                      because=[self.started.get(subject)])
         result.outcome = "checked"
 
-    def carry(self, subject: str, checks: list[dict], carried: dict | None, result: Result) -> dict[str, dict]:
+    def carry(self, subject: str, checks: list[dict], carried: dict | None, result: Result, checkout: Path,
+              context: Context) -> dict[str, dict]:
         """Of the checks selected now, those the base move carries, journaled once; a check that runs again needs its
-        prerequisites' output, so they run again too."""
+        prerequisites' output, so they run again too.
+
+        Each one the plan names carries only when ``applies`` says its passed run before the move stands for this
+        one: the plan judged the moved paths, and here the definition and the facts are judged, against those the
+        queue's run would have now. A row written before runs recorded facts is given those, so it carries as it did.
+        """
         self.carried_now = []
         if not carried:
             return {}
-        carry = {check["id"]: carried["checks"][check["id"]] for check in checks if check["id"] in carried["checks"]}
+        carry = {}
+        for check in checks:
+            row = carried["checks"].get(check["id"])
+            if row is None:
+                continue
+            facts = self.run_facts(check, checkout, context)
+            record = {"check": check["id"], "definition": check_definition(check, self.binding), "head": carried["from"],
+                      "tree": carried["fromTree"], "result": "passed", "where": "runner",
+                      "environment": row.get("environment", facts["environment"]), "host": row.get("host", facts["host"])}
+            reasons = self.applies(record, check, None, self.binding, facts, changed=carried["paths"])
+            if reasons:
+                note = f"{check['id']} was run again, not carried: {'; '.join(reasons)}"
+                if note not in self.notes:
+                    self.notes.append(note)
+                continue
+            carry[check["id"]] = row
         dropped = True
         while dropped:
             dropped = False
@@ -2351,12 +2488,11 @@ class Runner:
         detection, so a rename is a path removed and a path added. Nothing carries when one of them is in the
         candidate's own diff. Otherwise every passed check carries when every file matches ``selection.unread``;
         failing that, a check carries when its read set is known, every readers entry naming it being complete, and no
-        file is in it. The binding file is read by every check and matches no unread pattern. An alwaysRun check
-        carries only on a move wholly unread.
+        file is in it, as ``path_reasons`` judges for ``applies``. The binding file is read by every check and matches
+        no unread pattern. An alwaysRun check carries only on a move wholly unread. The plan names the paths and the
+        head the rows were checked at, so the check step can judge the rest of ``applies``.
         """
-        selection = self.binding.get("selection") or {}
-        readers = selection.get("readers") or []
-        unread = selection.get("unread") or []
+        unread = (self.binding.get("selection") or {}).get("unread") or []
         item = self.item(subject)
         synced = item["syncedHead"]
         if synced is None:
@@ -2378,16 +2514,16 @@ class Runner:
         for row in item["checks"]:
             if row["state"] not in ("passed", "reused"):
                 continue
-            entries = [entry for entry in readers if row["id"] in entry["checks"]]
-            known = bool(entries) and all(entry.get("complete") is True for entry in entries)
-            read = [pattern for entry in entries for pattern in entry["paths"]]
-            if unread_only or (row["id"] not in always and known and BINDING_PATH not in moved
-                               and not any(matches_any(path, read) for path in moved)):
+            # The moved paths are judged here as applies judges them; the check step judges the rest (see carry).
+            if row["id"] in always and not unread_only:
+                continue
+            if not path_reasons({"id": row["id"]}, moved, self.binding, None):
                 carried[row["id"]] = row
         if not carried:
             return None
         commits = self.git("rev-list", "--reverse", f"{checked_on}..{moved_to}").stdout.split()
-        return {"checks": carried, "to": moved_to, "commits": commits}
+        return {"checks": carried, "to": moved_to, "commits": commits, "paths": moved, "from": synced,
+                "fromTree": self.tree(synced)}
 
     def changes(self, base_head: str, head: str) -> list[dict]:
         listed = self.git("diff", "--name-status", "-z", "-M", "-C", base_head, head).stdout.split("\0")
@@ -2811,11 +2947,13 @@ class Runner:
                         records[check["id"]].pop("expectedSeconds", None)
                         records[check["id"]].update(state="reused", reusedFrom=source["head"])
                         result.checks.append({"id": check["id"], "state": "reused", "exitCode": None, "seconds": 0,
-                                              "reusedFrom": dict(source)})
+                                              "reusedFrom": {key: source[key] for key in ("subject", "head", "tree")}})
                         for subject in subjects:
+                            # A reuse the lead's grant allowed names the grant's decision as its cause.
                             self.journal("check.reused",
                                          subject,
-                                         data={"check": check["id"], "head": source["head"], "from": source["subject"]})
+                                         data={"check": check["id"], "head": source["head"], "from": source["subject"]},
+                                         because=[source.get("decision")])
                         show()
                         continue
                     alone = not check.get("parallelSafe") or limit == 1
@@ -3312,7 +3450,8 @@ class Runner:
             raise Stop("no_checks", "nothing would check this batch's changes")
         self.write_progress(subjects, [{"id": check["id"], "state": "pending", **check_title(check)} for check in checks])
         # A member's evidence counts only when the combined tree is the tree it checked.
-        reused = self.reusable([(member.subject, member.item) for member in members], checks, members[-1].tree)
+        reused = self.reusable([(member.subject, member.item) for member in members], checks, members[-1].tree,
+                               checkout, context, exact=True)
         outcomes = self.run_checks(subjects, checks, checkout, context, result, whole_run=whole_run, reused=reused)
         self.assert_clean(checkout, "the checkout after the batch's checks")
         failed = [check for check in checks if outcomes[check["id"]] in ("failed", "timed_out")]
