@@ -135,6 +135,18 @@ the commit, in full or cut short, and the change request its sentence names are
 links, and they lead to the evidence. Only a run of bookkeeping folds, listing its
 entries.
 
+Each setback is told once, in a Setbacks ledger above the chapters, from the story's
+`ledger`: one row per story and reason. The rows still standing come first, tinted in
+the stop colour, saying since when and who they wait on; the ended ones follow,
+muted, saying what ended them, when, and what they cost. A row of several stops says
+how many in its own words and gives the span from the first to the last. Under each
+chapter, one line names each row that opened or ended in it, linked to the row, and
+nothing still standing from an earlier chapter is repeated. The line under the title
+reads the ledger: "Nothing is stopped now" or how many stand now, then how many are
+over and what they cost, then the lead's decisions. The Setbacks filter shows the
+ledger and the chapters' setback lines; the others show neither. A story told before
+the ledger keeps its own summary and standing lines.
+
 When the record has region claims, so lanes share files by lines, "Who's doing
 what" offers "Who holds which files", closed by default. It reads
 `lane-changes.json`, which each supervisor pass writes beside the record from
