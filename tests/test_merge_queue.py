@@ -8547,3 +8547,103 @@ class ProviderRefusalTests(MergeQueueTestCase):
         self.assertEqual(queue.binding_errors({**binding, "selection": {"lead": False, "refusalStops": True}}),
                          ["/selection/refusalStops: needs selection.lead, since only the lead's selection releases a "
                           "candidate the provider refused"])
+
+
+class OwnLaneWaitingOnAnotherStoryTests(MergeQueueTestCase):
+    """A candidate's own lane can wait on another story while the candidate is queued: after handing it off, its next
+    story waits for a third to land. Recording that candidate's merge or stop must leave a row the record accepts, by
+    the queue's own write and by a reconcile, so neither is refused and the queue doesn't journal the same stop again on
+    every pass."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.record = self.adopter()
+
+    def own_lane_waits(self) -> str:
+        """lane-1 hands off `feature`, then waits on `other`, lane-2's planned story, for its own planned `next`."""
+        self.record.lead_write(lambda state: state_tool.patch(
+            self.record.state, writer="lead", version=state["version"], changes={
+                "lanes": [{"id": "lane-1", "title": "lane-1", "focus": "feature: building", "state": "working",
+                           "waitingOn": None, "since": "2026-11-03T00:00:00Z"},
+                          {"id": "lane-2", "title": "lane-2", "focus": "other: building", "state": "working",
+                           "waitingOn": None, "since": "2026-11-03T00:00:00Z"}],
+                "planned": [{"subject": "next", "title": "Next", "lane": "lane-1", "stage": "planned"},
+                            {"subject": "other", "title": "Other", "lane": "lane-2", "stage": "planned"}]}))
+        head = self.candidate(self.record)
+        state_tool.set_focus(self.record.state, "lane-1", "feature queued; next waits for other", state="waiting",
+                             waiting_on="other")
+        row = self.row()
+        self.assertEqual((row["state"], row["waitingOn"]), ("waiting", "other"))
+        return head
+
+    def row(self, lane: str = "lane-1") -> dict:
+        return next(entry for entry in state_tool.read_state(self.record.state)["lanes"] if entry["id"] == lane)
+
+    def assertStillWaits(self, focus: str) -> None:
+        row = self.row()
+        self.assertEqual((row["focus"], row["state"], row["waitingOn"]), (focus, "waiting", "other"))
+        self.assertIn("waitingFrom", row)
+        self.assertEqual(state_tool.state_errors(state_tool.read_state(self.record.state)), [])
+
+    def test_the_queue_records_the_merge_and_the_lane_still_waits(self) -> None:
+        self.own_lane_waits()
+        results = self.run_queue(self.record, "feature")
+        self.assertEqual(results[-1].outcome, "merged")
+        self.assertEqual(self.record.item("feature")["stage"], "merged")
+        self.assertStillWaits("feature merged")
+
+    def test_the_wait_still_ends_when_the_story_it_waits_on_lands(self) -> None:
+        self.own_lane_waits()
+        self.run_queue(self.record, "feature")
+        self.record.lead_write(lambda state: state_tool.patch(
+            self.record.state, writer="lead", version=state["version"],
+            changes={"planned": [entry for entry in state["planned"] if entry["subject"] != "other"]}))
+        self.candidate(self.record, {"src/lib.txt": "lib two\n"}, name="other")
+        self.record.lead_write(lambda state: state_tool.patch(
+            self.record.state, writer="lead", version=state["version"], selector="queue[subject=other]",
+            assignments={"/lane": "lane-2"}))
+        self.run_queue(self.record, "other")
+        row = self.row()
+        self.assertNotEqual(row["state"], "waiting")
+        self.assertIsNone(row["waitingOn"])
+
+    def test_a_reconcile_records_the_merge_and_the_lane_still_waits(self) -> None:
+        head = self.own_lane_waits()
+        snapshot = self.directory / "forge.json"
+        snapshot.write_text(json.dumps({"takenAt": state_tool.now(), "source": "forge",
+                                        "items": [{"subject": "feature", "state": "merged",
+                                                   "changeRequest": "change 7", "head": head}]}))
+        state_tool.reconcile(self.record.state, [snapshot])
+        self.assertEqual(self.record.item("feature")["stage"], "merged")
+        self.assertStillWaits("feature merged")
+
+    def test_a_stop_returns_the_lane_to_the_lead(self) -> None:
+        self.own_lane_waits()
+        self.candidate(self.record, {"tests/test_new.txt": "FAIL\n"}, name="broken")
+        self.record.lead_write(lambda state: state_tool.patch(
+            self.record.state, writer="lead", version=state["version"],
+            changes={"queue": [entry for entry in state["queue"] if entry["subject"] != "feature"]}))
+        self.assertStopped(self.run_queue(self.record, "broken"), "check_failed")
+        row = self.row()
+        self.assertEqual((row["focus"], row["waitingOn"]), ("broken stopped: check_failed", "lead"))
+        self.assertNotEqual(row["state"], "waiting")
+        self.assertEqual(state_tool.state_errors(state_tool.read_state(self.record.state)), [])
+
+    def test_an_interrupted_merge_is_journalled_once_and_recorded_by_the_reconcile(self) -> None:
+        head = self.own_lane_waits()
+        self.record.lead_write(lambda state: state_tool.patch(
+            self.record.state, writer="runner", version=state["version"], selector="queue[subject=feature]",
+            assignments={"/stage": "merging"}))
+        self.record.runner().recover()
+        self.record.runner().recover()
+        stops = [entry for entry in state_tool.read_journal(self.record.state)
+                 if entry["kind"] == "candidate.stopped" and entry.get("subject") == "feature"]
+        self.assertEqual([entry["data"]["reason"] for entry in stops], ["interrupted"])
+        self.assertEqual(self.record.item("feature")["stage"], "stopped")
+        snapshot = self.directory / "forge.json"
+        snapshot.write_text(json.dumps({"takenAt": state_tool.now(), "source": "forge",
+                                        "items": [{"subject": "feature", "state": "merged",
+                                                   "changeRequest": "change 7", "head": head}]}))
+        state_tool.reconcile(self.record.state, [snapshot])
+        self.assertEqual(self.record.item("feature")["stage"], "merged")
+        self.assertEqual(state_tool.state_errors(state_tool.read_state(self.record.state)), [])
