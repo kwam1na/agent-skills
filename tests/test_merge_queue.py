@@ -8634,6 +8634,27 @@ class OwnLaneWaitingOnAnotherStoryTests(MergeQueueTestCase):
                 self.assertEqual((row["focus"], row["state"], row["waitingOn"]), ("feature merged", rests, None))
                 self.assertEqual(state_tool.state_errors(state_tool.read_state(self.record.state)), [])
 
+    def test_a_settlement_of_the_story_it_waits_on_rests_it_too(self) -> None:
+        # The story the lane waits on settles with no change, directly or through the lead's acceptance: the lane
+        # rests as when that story lands.
+        for accepted in (False, True):
+            with self.subTest(accepted=accepted):
+                self.fresh()
+                self.record = self.adopter()
+                self.own_lane_waits()
+                self.run_queue(self.record, "feature")
+                self.record.lead_write(lambda state: state_tool.patch(
+                    self.record.state, writer="lead", version=state["version"],
+                    assignments={"/meta/handoffsNeedAcceptance": accepted}))
+                state_tool.no_change_handoff(self.record.state, lane="lane-2", subject="other", base_head="a" * 40,
+                                             evidence="its criteria already hold on the base")
+                if accepted:
+                    self.assertStillWaits("feature merged")
+                    state_tool.accept_handoff(self.record.state, "other")
+                row = self.row()
+                self.assertEqual((row["focus"], row["state"], row["waitingOn"]), ("feature merged", "assigned", None))
+                self.assertEqual(state_tool.state_errors(state_tool.read_state(self.record.state)), [])
+
     def test_a_lane_that_spoke_after_its_story_merged_returns_to_the_state_it_waited_from(self) -> None:
         # Its own word after the merge says what it is doing, so the landing returns it there as any other wait ends.
         self.own_lane_waits(other_queued=True)
@@ -8644,6 +8665,16 @@ class OwnLaneWaitingOnAnotherStoryTests(MergeQueueTestCase):
         row = self.row()
         self.assertEqual((row["focus"], row["state"], row["waitingOn"]),
                          ("next: building while other lands", "working", None))
+
+    def test_a_lane_saying_the_queues_exact_words_itself_returns_to_the_state_it_waited_from(self) -> None:
+        # The same words from the lane are the lane's word, not the queue's: it returns as any other wait ends.
+        self.own_lane_waits(other_queued=True)
+        self.run_queue(self.record, "feature")
+        state_tool.set_focus(self.record.state, "lane-1", "feature merged", state="waiting", waiting_on="other")
+        self.assertNotEqual(self.row().get("focusBy"), "runner")
+        self.run_queue(self.record, "other")
+        row = self.row()
+        self.assertEqual((row["focus"], row["state"], row["waitingOn"]), ("feature merged", "working", None))
 
     def test_a_reconcile_records_the_merge_and_the_lane_still_waits(self) -> None:
         head = self.own_lane_waits()
