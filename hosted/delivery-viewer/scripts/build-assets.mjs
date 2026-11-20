@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { build } from "esbuild";
+import { buildFonts } from "./fonts.mjs";
 const root = new URL("../../../", import.meta.url);
 const corpus = (name) =>
   readFile(new URL(`skills/delivery-views/assets/${name}`, root), "utf8");
@@ -12,9 +13,15 @@ function patch(before, after) {
 // Small host adapter; every chapter/detail renderer still comes from the corpus.
 // The hosted snapshot carries no story and no entry's facts, by its schema. The page says what is not published rather
 // than that nothing was recorded, and leaves out the steps and notes it would draw without words.
+// The hero's live line goes to the host as it is drawn, so the hosting status sits in it rather than in a strip above
+// the page; the renderer's own focus marks then carry keyboard focus across redraws.
+patch(
+  "since(doc, meta, closed)));",
+  "hostedLine(since(doc, meta, closed))));",
+);
 patch(
   "  function runFor(doc, item) {",
-  'function hostedCut(doc) { return !!(globalThis.deliveryStateStore && typeof globalThis.deliveryStateStore.projection === "function") && !isObject(doc.story); }\n  var UNPUBLISHED = "Its reason is not published on the hosted page.";\n  function runFor(doc, item) {',
+  'function hostedLine(node) { var hook = globalThis.deliveryHostedLine; if (typeof hook === "function") { try { hook(node); } catch (error) { /* the line stands as drawn */ } } return node; }\n  function hostedCut(doc) { return !!(globalThis.deliveryStateStore && typeof globalThis.deliveryStateStore.projection === "function") && !isObject(doc.story); }\n  var UNPUBLISHED = "Its reason is not published on the hosted page.";\n  function runFor(doc, item) {',
 );
 patch(
   'el("h2", "title", "The story could not be told from this record.")',
@@ -102,34 +109,48 @@ const viewer = (
     write: false,
   })
 ).outputFiles[0].text;
-const css =
+const assets = {};
+// Text is kept as it is; bytes (fonts) are kept as base64 and decoded once by the worker.
+function asset(body, extension, type) {
+  const hash = createHash("sha256").update(body).digest("hex");
+  const path = `/assets/${hash}.${extension}`;
+  assets[path] =
+    typeof body === "string"
+      ? { body, type }
+      : { body: Buffer.from(body).toString("base64"), type, encoding: "base64" };
+  return path;
+}
+const source = await readFile(
+  new URL("skills/delivery-views/scripts/render.py", root),
+  "utf8",
+);
+const pageCss =
   (await corpus("line-map.css")) +
   "\n" +
   (await corpus("run-summary.css")) +
   "\n" +
   (await readFile(new URL("../src/viewer.css", import.meta.url), "utf8"));
-const assets = {};
-function asset(text, extension, type) {
-  const hash = createHash("sha256").update(text).digest("hex");
-  const path = `/assets/${hash}.${extension}`;
-  assets[path] = { body: text, type };
-  return path;
-}
+// The local view loads its fonts from this link; the hosted page serves the same faces from its own origin.
+const fontsUrl = JSON.parse(source.match(/^FONTS = ("[^"]*")$/m)?.[1] ?? "null");
+if (typeof fontsUrl !== "string") throw Error("hosted.font_url_drift: render.py no longer sets FONTS");
+const fonts = await buildFonts({
+  fontsDir: new URL("../fonts/", import.meta.url),
+  fontsUrl,
+  stylesheet: pageCss,
+  asset,
+});
+const css = fonts + pageCss;
 const rendererPath = asset(renderer, "js", "text/javascript; charset=utf-8");
 const viewerPath = asset(viewer, "js", "text/javascript; charset=utf-8");
 const cssPath = asset(css, "css", "text/css; charset=utf-8");
-const source = await readFile(
-  new URL("skills/delivery-views/scripts/render.py", root),
-  "utf8",
-);
 const theme = JSON.parse(
   source.match(/^THEME_SWITCH = \((".*")\)$/m)?.[1] ?? "null",
 );
 if (typeof theme !== "string") throw Error("hosted.theme_hook_drift");
-const shell = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="referrer" content="no-referrer"><meta name="robots" content="noindex,nofollow,noarchive"><title>Hosted delivery</title><link rel="stylesheet" href="${cssPath}"><script defer src="${viewerPath}" data-renderer="${rendererPath}"></script></head><body><a href="#app" class="hosted-skip">Skip to delivery</a>${theme}<aside class="hosting-strip" aria-label="Hosting status"><p id="hosting-status" role="status" aria-live="polite">Loading hosted progress…</p><p class="hosting-times" id="hosting-times"></p></aside><main id="app" tabindex="-1" aria-busy="true"><p class="hosted-loading">Loading hosted progress…</p></main><noscript>This read-only delivery view requires JavaScript.</noscript></body></html>`;
+const shell = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="referrer" content="no-referrer"><meta name="robots" content="noindex,nofollow,noarchive"><title>Hosted delivery</title><link rel="stylesheet" href="${cssPath}"><script defer src="${viewerPath}" data-renderer="${rendererPath}"></script></head><body><a href="#app" class="hosted-skip">Skip to delivery</a>${theme}<p id="hosting-status" class="hosting-status hosted-announce" role="status" aria-live="polite">Loading hosted progress…</p><main id="app" tabindex="-1" aria-busy="true"><p class="hosted-loading">Loading hosted progress…</p></main><noscript>This read-only delivery view requires JavaScript.</noscript></body></html>`;
 await writeFile(
   new URL("../src/generated-assets.ts", import.meta.url),
-  `// Generated from trusted corpus assets; do not edit.\nexport const assets: Record<string,{body:string;type:string}> = ${JSON.stringify(assets)};\nexport const shell = ${JSON.stringify(shell)};\n`,
+  `// Generated from trusted corpus assets; do not edit.\nexport const assets: Record<string,{body:string;type:string;encoding?:"base64"}> = ${JSON.stringify(assets)};\nexport const shell = ${JSON.stringify(shell)};\n`,
 );
 await writeFile(
   new URL("../test/assets.generated.json", import.meta.url),
@@ -140,6 +161,9 @@ await writeFile(
       css,
       shell,
       paths: { rendererPath, viewerPath, cssPath },
+      fonts: Object.entries(assets)
+        .filter(([, value]) => value.type === "font/woff2")
+        .map(([path]) => path),
     },
     null,
     2,
