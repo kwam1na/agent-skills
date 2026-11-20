@@ -47,11 +47,7 @@
         "skills/orchestrate-work/references/orchestration-guide.md",
         "docs/own-deliveries.md",
         "tests/test_lead_wait.py",
-        "tests/test_orchestration_render.py"
-      ]
-    },
-    "lane-4": {
-      "owns": [
+        "tests/test_orchestration_render.py",
         "skills/delivery-views/*",
         "hosted/delivery-viewer/*",
         "tests/test_delivery_views_hosted.py",
@@ -176,7 +172,7 @@
     },
     "V26-3693": {
       "title": "Make the hosted page look like the local live view",
-      "lane": "lane-4",
+      "lane": "lane-3",
       "why": "The operator added it on 2026-11-20: the hosted page falls back to Georgia and the system sans because its policy and asset build carry none of the local view's fonts.",
       "criteria": [
         {
@@ -191,7 +187,7 @@
     },
     "V26-3692": {
       "title": "Publish the local live view's record in full on the hosted page",
-      "lane": "lane-4",
+      "lane": "lane-3",
       "why": "The operator added it on 2026-11-20 after finding this delivery's own hosted page omits its integrate/shared-machine-capacity base: the hosted snapshot schema drops meta.integration and the integration facts.",
       "criteria": [
         {
