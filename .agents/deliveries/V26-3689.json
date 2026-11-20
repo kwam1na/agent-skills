@@ -49,6 +49,15 @@
         "tests/test_lead_wait.py",
         "tests/test_orchestration_render.py"
       ]
+    },
+    "lane-4": {
+      "owns": [
+        "skills/delivery-views/*",
+        "hosted/delivery-viewer/*",
+        "tests/test_delivery_views_hosted.py",
+        "tests/test_delivery_views_page.py",
+        "docs/hosted-deliveries.md"
+      ]
     }
   },
   "stories": {
