@@ -566,10 +566,10 @@ Criteria:
 - existing render snapshots are unchanged when the machine directory is empty;
 - no fixed rule replaces the agent's judgement.
 
-### V26-3693. Serve the hosted page in the same fonts as the local live view
+### V26-3693. Make the hosted page look like the local live view
 
 Lane 4, tier 1, not blocked. Added mid-delivery: The operator added it on 2026-11-20: the hosted page falls back to Georgia and the system sans because its policy and asset build carry none of the local view's fonts.
-Files: `hosted/delivery-viewer/`. The ticket, [V26-3693](https://linear.app/v26-technologies/issue/V26-3693), holds its scope, criteria, scenarios and sensors.
+It also replaces the hosted page's full-width hosting strip with an unobtrusive indicator in the hero's live line, as the operator asked. Files: `hosted/delivery-viewer/`. The ticket, [V26-3693](https://linear.app/v26-technologies/issue/V26-3693), holds its scope, criteria, scenarios and sensors.
 
 ### V26-3692. Publish the local live view's record in full on the hosted page
 

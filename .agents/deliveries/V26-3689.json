@@ -175,7 +175,7 @@
       ]
     },
     "V26-3693": {
-      "title": "Serve the hosted page in the same fonts as the local live view",
+      "title": "Make the hosted page look like the local live view",
       "lane": "lane-4",
       "why": "The operator added it on 2026-11-20: the hosted page falls back to Georgia and the system sans because its policy and asset build carry none of the local view's fonts.",
       "criteria": [
