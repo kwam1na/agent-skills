@@ -174,8 +174,27 @@ block removal, so a delayed first renderer cannot combine revisions. No
 corpus asset is modified or copied into an independently maintained renderer.
 Plan presence changes update its chapter; native subject selection, review/plan
 folds, focus and horizontal line position remain with the existing UI. The host
-preserves the viewport across a pushed revision. System font fallbacks need no
-external request.
+preserves the viewport across a pushed revision.
+
+The page renders in the local view's type. The build reads the faces the local
+view's `FONTS` link asks Google Fonts for in `render.py` and serves each from
+this origin instead: Newsreader, Geist and Geist Mono, from the woff2 files under
+`fonts/`, one `@font-face` per requested weight and style, as content-addressed,
+immutable-cached assets. `fonts/sources.json` records each file's npm package,
+version and integrity and its own sha256, and each family's SIL Open Font
+License 1.1 sits beside its files and is served too. The build stops with a
+named `hosted.font_*` error when a listed file is missing or changed, or when the
+local link or the stylesheet's type variables name a face it does not serve. The
+files carry the Latin and Latin Extended ranges; other scripts fall back to the
+stylesheet's next family.
+
+The hosting status draws no strip. A current publication, or a completed one
+saved and retained, shows only as the hero's live line, whose label offers the
+source-confirmed, published and revision times on hover or focus. A loading,
+stale, unavailable or incompatible publication is also said in that line, in
+words, without interaction. A fixed `role="status"` region outside the
+renderer's DOM announces every change, and is seen on its own only before the
+live line is drawn.
 
 The store polls every five seconds, with one request in flight and a ten-second
 request deadline. It checks schema, body bounds, exact digest, fingerprint,
@@ -191,8 +210,8 @@ observer when restored from the back/forward cache.
 All untrusted text enters JSON data blocks through DOM textContent and the
 trusted renderer's text nodes. The shell has no inline executable script or
 style, arbitrary uploaded asset or raw review artifact. CSP permits only fixed
-same-origin scripts, styles and data connections, with no eval/inline script,
-frames, forms or external resource loads. Native external links retain
+same-origin scripts, styles, fonts and data connections, with no eval/inline
+script, frames, forms or external resource loads. Native external links retain
 noopener/noreferrer; presentation removes addresses containing this capability,
 including percent-encoded forms. Public asset routes match only exact build
 hashes and use immutable caching; shell/current/data/errors retain no-store.
@@ -205,7 +224,9 @@ actual Worker and starts a local Miniflare5 Worker/SQLite DO/R2 runtime on a fre
 loopback port with synthetic repository credentials. The harness disables request
 logging and telemetry and disposes only its own runtime. Desktop and mobile
 Chromium tests assert signed-out access, hostile text remaining text, browser
-CSP/MIME rejection, external request Referer absence and null opener, live update
+CSP/MIME rejection, the local view's fonts loaded from this origin with no
+request leaving it, the hosting status in the live line, external request
+Referer absence and null opener, live update
 state preservation, pointer/fetch/compatibility failure retention, stale/terminal
 truthfulness and explicit asset failure. External navigation and fault responses
 are intercepted in the browser for deterministic assertions; no remote account

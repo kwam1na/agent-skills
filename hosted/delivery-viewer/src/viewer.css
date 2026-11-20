@@ -1,24 +1,73 @@
-.hosting-strip {
-  padding: 18px max(24px, calc((100vw - 980px) / 2));
-  padding-right: 120px;
-  border-bottom: 1px solid var(--hair);
-  background: var(--well);
+/* The hosting status lives in the hero's live line. On its own it is a quiet line in the page's column, seen only
+   before that line is drawn; once the line is drawn it stays as the page's live region, for assistive technology. */
+.hosting-status {
+  max-width: 980px;
+  margin: 24px auto 0;
+  padding: 0 24px;
+  box-sizing: border-box;
   color: var(--soft);
   font: 13px/1.5 var(--text);
   overflow-wrap: anywhere;
 }
-.hosting-strip p {
-  margin: 0;
-}
-.hosting-strip [data-state="stale"],
-.hosting-strip [data-state="unavailable"],
-.hosting-strip [data-state="incompatible"] {
+.hosting-status[data-state="stale"],
+.hosting-status[data-state="unavailable"],
+.hosting-status[data-state="incompatible"] {
   color: var(--held);
 }
-.hosting-times {
-  margin-top: 4px !important;
-  font-size: 12px;
-  color: var(--faint);
+.hosted-announce {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.fact[data-hosting] .fact-label {
+  position: relative;
+}
+.fact[data-hosting] [data-tab="hosting"] {
+  cursor: default;
+  border-radius: 4px;
+}
+.fact[data-hosting] [data-tab="hosting"]:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+.hosted-words {
+  display: block;
+  margin-top: 4px;
+  color: var(--held);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.fact[data-hosting="loading"] .hosted-words {
+  color: var(--soft);
+}
+.hosted-times {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  z-index: 20;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 48px));
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--lift);
+  box-shadow: var(--shadow-sheet);
+  color: var(--soft);
+  font: 400 12px/16px var(--text);
+  letter-spacing: 0;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+.fact[data-hosting] [data-tab="hosting"]:hover ~ .hosted-times,
+.fact[data-hosting] [data-tab="hosting"]:focus ~ .hosted-times {
+  visibility: visible;
+  opacity: 1;
 }
 .hosted-loading {
   padding: 48px 24px;
@@ -41,8 +90,9 @@
   display: none !important;
 }
 @media (max-width: 600px) {
-  .hosting-strip {
-    padding: 58px 20px 16px;
+  .hosting-status {
+    padding: 0 20px;
+    margin-top: 58px;
   }
   .theme-switch {
     top: 12px;
