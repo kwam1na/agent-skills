@@ -8600,6 +8600,14 @@ class OwnLaneWaitingOnAnotherStoryTests(MergeQueueTestCase):
         self.assertEqual(self.record.item("feature")["stage"], "merged")
         self.assertStillWaits("feature merged")
 
+    def test_a_merge_keeps_the_lanes_own_waiting_words_about_other_work(self) -> None:
+        # The lane's own word wins over the queue's when it names other work: the merge leaves it as it is.
+        self.own_lane_waits()
+        state_tool.set_focus(self.record.state, "lane-1", "next waits for other", state="waiting", waiting_on="other")
+        self.run_queue(self.record, "feature")
+        self.assertEqual(self.record.item("feature")["stage"], "merged")
+        self.assertStillWaits("next waits for other")
+
     def test_the_wait_still_ends_when_the_story_it_waits_on_lands(self) -> None:
         self.own_lane_waits(other_queued=True)
         self.run_queue(self.record, "feature")
