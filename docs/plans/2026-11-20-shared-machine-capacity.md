@@ -7,10 +7,11 @@ context: A delivery's heavy runs share one machine, but no agent can see what th
 
 # Shared-machine capacity: claims, costs and capacity
 
-The ticket is [V26-3638](https://linear.app/v26-technologies/issue/V26-3638). This plan is its outcome. Its four
-stories are filed under V26-3638 as V26-3680 to V26-3683. The follow-ups are V26-3684 (Athena claims through the
-ledger) and V26-3685 (the line map), each related to V26-3638 rather than filed as a child, so a delivery of
-V26-3638's children doesn't take them in as its own stories.
+The design ticket is [V26-3638](https://linear.app/v26-technologies/issue/V26-3638), and this plan is its outcome.
+The epic that delivers it is [V26-3689](https://linear.app/v26-technologies/issue/V26-3689), and its four stories are
+V26-3680 to V26-3683. The follow-ups are V26-3684 (Athena claims through the ledger) and V26-3685 (the line map).
+Each is related to the epic rather than filed as its child, so a delivery of the epic's children doesn't take them in
+as its own stories.
 
 ## The problem, as the code and the machine have it
 
@@ -351,8 +352,9 @@ documentation only.
 - **Decision 2 was confirmed by the operator on 2026-11-20:** the ledger is per machine, not beside the git common
   directory.
 - Approved by the operator on 2026-11-20, after round 5 aligned at 23c67ccc. The four stories are filed under
-  V26-3638 as V26-3680 to V26-3683, and their keys replaced the plan's placeholder keys. The follow-ups are filed as
-  V26-3684 and V26-3685, each related to V26-3638 and blocked by the story it builds on.
+  V26-3638 as V26-3680 to V26-3683, and their keys replaced the plan's placeholder keys. Later that day they moved
+  under the epic V26-3689, and V26-3638 closed as Done. The follow-ups are filed as
+  V26-3684 and V26-3685, each related to V26-3638 and to the epic, and blocked by the story it builds on.
 - The operator chooses the delivery base, `main` or an integration branch, at `lead-setup`.
 - V26-3573 (In Progress) changes the lead-wait fixture tests. V26-3683 starts on a base that has V26-3573 merged.
 
