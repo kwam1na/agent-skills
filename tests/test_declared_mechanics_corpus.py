@@ -68,12 +68,12 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "On Windows, which is not validated (see the README), directory links use",
     ),
     "docs/hosted-deliveries.md": (
-        "the release workflow reads no CI result, and the local suite before a tag does not attest service CI",
+        "the publish command reads no CI result, and the local suite before a tag does not attest service CI",
     ),
     "docs/product-generation.md": (
         "Tag a commit merged to `main`; a merge commit is the usual one",
-        "The workflow reads no CI result and runs no suite",
-        "it does not block a release, because the release workflow does not read it",
+        "The publish command reads no CI result and runs no suite",
+        "it does not block a release, because the publish command does not read it",
         "A run that passes every test and goes over the suite's time budget does not hold the release",
     ),
     "skills/review-work/SKILL.md": (
@@ -117,7 +117,7 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " `docs/solutions/<category>/<slug>-<YYYY-MM-DD>.md`",
         "On Windows, which is not validated (see above), use `.venv\\Scripts\\python.exe`",
         "on a commit merged to the default branch, usually a merge commit",
-        "CI does not block a release either: the release workflow reads no CI result",
+        "CI does not block a release either: the publish command reads no CI result",
         "CI runs only `cut-release`, on every change request and on each push to the default branch",
         "Stop only processes you started, by the pid you recorded, and never by"
         " pattern with `pkill` or `killall`",
@@ -255,7 +255,6 @@ WITHDRAWN_RELEASE_GATE_FILES = (
     "docs/own-deliveries.md",
     "docs/hosted-deliveries.md",
     "docs/linear-connector-check.md",
-    ".github/workflows/release.yml",
     ".github/workflows/ci.yml",
     "scripts/release_channel.py",
 )

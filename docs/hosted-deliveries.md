@@ -61,7 +61,7 @@ and shared fixtures. The binding selects `hosted.install`, `hosted.typecheck`,
 those readers. A local merge runner needs supported Node on PATH and Chromium's
 OS prerequisites; CI installs those with Playwright. No Python suite implicitly
 installs the service package. The lead verifies this separate service job at the
-exact main-push commit before release/deploy; the release workflow reads no CI
+exact main-push commit before release/deploy; the publish command reads no CI
 result, and the local suite before a tag does not attest service CI.
 
 ## Versions move together

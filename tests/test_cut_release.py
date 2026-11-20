@@ -387,7 +387,7 @@ class SetTests(unittest.TestCase):
 
 
 class RealRunTests(unittest.TestCase):
-    """One real run: the five products and every real qualifier, as the release workflow calls it."""
+    """One real run: the five products and every real qualifier, as the publish command calls it."""
 
     @classmethod
     def setUpClass(cls) -> None:
