@@ -350,7 +350,7 @@
       }
     },
     "suiteEvidence": {
-      "description": "The suite evidence a hand-off carries: each check run at a head and tree, with its result.",
+      "description": "The suite evidence a hand-off carries: each check run at a head and tree, with its result, and, from a run-checks record, where it ran, its environment and host facts, how long it took and when.",
       "type": "array",
       "items": {
         "type": "object",
@@ -381,6 +381,68 @@
               "passed",
               "failed"
             ]
+          },
+          "where": {
+            "enum": [
+              "runner",
+              "checkout"
+            ]
+          },
+          "environment": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "names",
+              "digest"
+            ],
+            "properties": {
+              "names": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            }
+          },
+          "host": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "platform",
+              "tools"
+            ],
+            "properties": {
+              "platform": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tools": {
+                "type": "object",
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^sha256:[0-9a-f]{64}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "at": {
+            "$ref": "#/$defs/instant"
           }
         }
       }
@@ -605,6 +667,38 @@
         "heading": "Story added"
       },
       "instruction": "On the epic: the piece the lead added to the plan, its title, and why."
+    },
+    "story.approved": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Plan approved",
+      "data": {
+        "title": {
+          "type": "prose"
+        },
+        "plan": {
+          "type": "path"
+        },
+        "review": {
+          "type": "path",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "The plan with {subject} was approved for delivery",
+        "line": "{title}. The plan is {plan}[; its review record is {review}]"
+      },
+      "explain": "The lead started the delivery of an approved plan that holds this piece, so the tracker can refine it.",
+      "tracker": {
+        "posts": "ticket",
+        "heading": "Plan approved"
+      },
+      "instruction": "On the ticket: the plan this story is in was approved for delivery, naming the plan and its review record; the refine moves are made with it."
     },
     "lane.assigned": {
       "altitude": "story",
