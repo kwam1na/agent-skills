@@ -30,6 +30,7 @@ sys.dont_write_bytecode = True
 import argparse
 import contextlib
 import datetime
+import hashlib
 import json
 import math
 import os
@@ -837,9 +838,10 @@ def _run(ledger: Ledger, arguments: argparse.Namespace) -> int:
     if not argv:
         raise SystemExit("machine.py run: give the command after --")
     label = arguments.label or Path(argv[0]).name
-    # An unlabelled run is measured as its whole command line, so two commands that share an interpreter never
-    # share one cost entry.
-    subject = arguments.subject or arguments.label or shlex.join(argv)
+    # An unlabelled run is measured by a digest of its whole command line, so two commands that share an interpreter
+    # never share one cost entry, and no argument, a secret included, reaches the shared ledger.
+    subject = arguments.subject or arguments.label or (
+        f"{Path(argv[0]).name} {hashlib.sha256(shlex.join(argv).encode('utf-8')).hexdigest()[:16]}")
     repository = arguments.repository or repository_identity()
     try:
         claim = ledger.acquire(arguments.kind, subject, label=label, slots=arguments.slots,

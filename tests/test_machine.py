@@ -178,7 +178,8 @@ class AdmissionTests(LedgerCase):
         self.assertEqual(stopped.exception.code, 2)
         self.assertIn("--now needs --why", said.getvalue())
         with contextlib.redirect_stderr(io.StringIO()) as said, self.assertRaises(SystemExit) as stopped:
-            machine.main(["run", "--why", "w", "--", "true"], ledger=self.ledger)
+            # Capped, so a mutant that accepts --why alone ends this row instead of waiting on the full machine.
+            machine.main(["run", "--why", "w", "--wait-seconds", "1", "--", "true"], ledger=self.ledger)
         self.assertEqual(stopped.exception.code, 2)
         self.assertIn("--why goes with --now", said.getvalue())
 
@@ -437,14 +438,23 @@ class EstimateTests(LedgerCase):
         self.assertEqual(machine.estimate_from([{"seconds": 10, "cpuSeconds": 0.0}], 3, 4)["slots"], 1)
 
     def test_unlabelled_runs_with_one_interpreter_keep_separate_costs(self) -> None:
-        first = [sys.executable, "-c", "pass"]
-        second = [sys.executable, "-c", "x = 1"]
+        first = [sys.executable, "-c", "pass  # secret-one"]
+        second = [sys.executable, "-c", "x = 1  # secret-two"]
         with mock.patch.object(machine, "repository_identity", return_value=None):
             for argv in (first, second):
                 self.assertEqual(machine.main(["run", "--", *argv], ledger=self.ledger), 0)
-        subjects = sorted(entry["subject"] for entry in self.ledger.costs()["entries"])
-        self.assertEqual(subjects, sorted([shlex.join(first), shlex.join(second)]))
-        self.assertEqual(self.ledger.estimate(None, "run", shlex.join([sys.executable, "-c", "y = 2"]))["from"], "none")
+            self.assertEqual(machine.main(["run", "--subject", "s", "--label", "l", "--", sys.executable, "-c",
+                                           "pass"], ledger=self.ledger), 0)
+        subjects = [entry["subject"] for entry in self.ledger.costs()["entries"]]
+        unlabelled = subjects[:2]
+        self.assertEqual(len(set(unlabelled)), 2)
+        self.assertTrue(all(subject.startswith(Path(sys.executable).name + " ") for subject in unlabelled))
+        self.assertEqual(subjects[2], "s")
+        ledger_text = "".join((self.directory / name).read_text(encoding="utf-8")
+                              for name in ("costs.json", "history.jsonl"))
+        self.assertNotIn("secret-", ledger_text, "no argument reaches the shared ledger")
+        self.assertNotIn('"l"', (self.directory / "costs.json").read_text(encoding="utf-8"))
+        self.assertShapes()
 
     def test_measured_slots_are_clamped_to_capacity(self) -> None:
         self.set_capacity(2)
