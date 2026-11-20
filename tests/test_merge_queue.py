@@ -2782,6 +2782,8 @@ class WorkRootSafetyTests(MergeQueueTestCase):
                 env, facts, dropped = runner.check_environment()
                 self.assertNotIn("MQ_DROPPED", env)
                 self.assertIn("MQ_DROPPED", dropped)
+                # The runner sets its machine names itself, so a failure never asks for them in inherit.
+                self.assertEqual(set(dropped) & set(queue.MACHINE_NAMES), set())
                 # The record names all the check received, but for the runner-owned machine names it leaves out.
                 self.assertEqual(facts["names"], sorted(name for name in env if name not in queue.MACHINE_NAMES))
                 # Listed in inherit, it reaches the check, which passes.
@@ -9231,6 +9233,8 @@ class MachineClaimQueueTests(MergeQueueTestCase):
                 self.until(lambda: [claim["state"] for claim in self.turns()] == ["waiting"])
                 [waiting] = self.turns()
                 self.assertIsNone(waiting["admittedBy"])
+                # The claim names its delivery, so the lead's wait can tell its own queue's long wait.
+                self.assertEqual(waiting["delivery"], state_tool.read_state(adopter.state)["meta"]["headline"])
                 slot = state_tool.merge_slot_path(adopter.operator, "main")
                 self.assertIsNone(state_tool.slot_holder(slot))
                 if slot.exists():
@@ -9267,9 +9271,32 @@ class MachineClaimQueueTests(MergeQueueTestCase):
         for name, slots in (("x", 3), ("y", 1), ("z", 2), ("always", 8), ("fallback", 8)):
             self.measured(adopter, name, slots)
         claim = adopter.runner().claim_turn(["feature"])
-        self.addCleanup(claim.release)
         self.assertEqual(claim.record["slots"], 6)
         self.assertEqual(claim.record["admittedBy"], "capacity")
+        claim.release()
+        # A selection recorded for another head no longer counts: the pre-claim is alwaysRun's and fallback's.
+        adopter.lead_set("feature", head=adopter.lane_commit("feature", {"src/app.txt": "app three\n"}))
+        stale = adopter.runner().claim_turn(["feature"])
+        self.addCleanup(stale.release)
+        self.assertEqual(stale.record["slots"], 16)
+
+    def test_a_direct_check_takes_and_releases_a_turn_claim(self) -> None:
+        self.capacity(4)
+        adopter = self.adopter()
+        self.candidate(adopter)
+        adopter.runner().run_command("check", ["feature"])
+        self.assertEqual([entry["subject"] for entry in self.admissions()], ["turn"])
+        self.assertEqual(self.claim_files(), [])
+
+    def test_an_exception_escaping_a_turn_releases_its_claim_in_serve(self) -> None:
+        self.capacity(4)
+        adopter = self.adopter()
+        self.candidate(adopter)
+        with mock.patch.object(queue.Runner, "_run_command", side_effect=KeyboardInterrupt), \
+                self.assertRaises(KeyboardInterrupt):
+            queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True, poll=0)
+        self.assertEqual(len(self.admissions()), 1)
+        self.assertEqual(self.claim_files(), [])
 
     def test_without_a_lead_selection_the_turns_claim_counts_always_run_and_fallback(self) -> None:
         self.capacity(8)
@@ -9360,6 +9387,8 @@ class MachineClaimQueueTests(MergeQueueTestCase):
         [check] = [item for item in results[1].document()["checks"] if item["id"] == "claims"]
         runner = adopter.runner()
         runner.binding = adopter.binding
+        # Resolved once, as a turn's claim resolves it, before the environment is stripped below.
+        self.assertEqual(runner.ledger().directory, self.machine_directory)
         plain = {key: value for key, value in os.environ.items() if key not in queue.MACHINE_NAMES}
         with mock.patch.dict(os.environ, plain, clear=True):
             bare = runner.check_environment()[1]
@@ -9377,6 +9406,19 @@ class MachineClaimQueueTests(MergeQueueTestCase):
         self.assertEqual({name: env[name] for name in queue.MACHINE_NAMES},
                          {"AGENT_SKILLS_MACHINE_CLAIM": "0" * 32, "AGENT_SKILLS_MACHINE_DIR": str(self.machine_directory),
                           "XDG_STATE_HOME": str(self.directory / "xdg")})
+        # The runner's own steps get the claim and the ledger too.
+        own = runner.environment()
+        self.assertEqual((own["AGENT_SKILLS_MACHINE_CLAIM"], own["AGENT_SKILLS_MACHINE_DIR"]),
+                         ("0" * 32, str(self.machine_directory)))
+        # A profile that moves XDG_STATE_HOME or HOME leaves the check in the runner's ledger all the same, even when
+        # the runner found its ledger without AGENT_SKILLS_MACHINE_DIR in its own environment.
+        unset = {key: value for key, value in os.environ.items() if key not in queue.MACHINE_NAMES}
+        with mock.patch.dict(os.environ, unset, clear=True):
+            env, _, _ = runner.check_environment({"XDG_STATE_HOME": "/elsewhere", "HOME": "/elsewhere"})
+        self.assertEqual(Path(subprocess.run([PY, "-B", "-c", "import sys; sys.path.insert(0, sys.argv[1]); import "
+                                                               "machine; print(machine.machine_directory())",
+                                              str(SCRIPTS)], env=env, capture_output=True, text=True,
+                                             timeout=60).stdout.strip()), self.machine_directory)
 
     def test_every_turn_releases_its_claim_however_it_ends(self) -> None:
         self.capacity(4)
@@ -9385,6 +9427,9 @@ class MachineClaimQueueTests(MergeQueueTestCase):
         queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True, poll=0)
         self.assertEqual(adopter.item("failing")["stage"], "stopped")
         self.assertEqual((self.claim_files(), queue.machine.slot_held()), ([], False))
+        # The failed check's run is kept apart from passed runs, so it never feeds the estimate.
+        [unit] = [entry for entry in self.ledger().costs()["entries"] if entry["subject"] == "unit"]
+        self.assertEqual(([item["result"] for item in unit["failed"]], unit["passed"]), (["failed"], []))
         self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="raising")
 
         def stop(runner, subject) -> None:
@@ -9543,3 +9588,13 @@ class RunChecksClaimTests(MergeQueueTestCase):
         alone = subprocess.run([*base, "--now"], capture_output=True, text=True, timeout=120)
         self.assertEqual(alone.returncode, 2)
         self.assertIn("--now needs --why", alone.stderr)
+        reason = subprocess.run([*base, "--why", "w"], capture_output=True, text=True, timeout=120)
+        self.assertEqual(reason.returncode, 2)
+        self.assertIn("--why goes with --now", reason.stderr)
+
+    def test_a_measured_run_reads_its_output_as_text_mode_does(self) -> None:
+        done = queue.run_process([PY, "-c", "import sys; sys.stdout.buffer.write(b'a\\r\\nb\\r\\xff'); "
+                                            "sys.stderr.write('e')"],
+                                 cwd=self.directory, env=dict(os.environ), timeout=30, measure=True)
+        self.assertEqual((done.returncode, done.stdout, done.stderr, done.timed_out), (0, "a\nb\n\ufffd", "e", False))
+        self.assertIsNotNone(done.cpuSeconds)

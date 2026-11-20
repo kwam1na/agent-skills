@@ -1198,8 +1198,10 @@ class Runner:
 
     def machine_environment(self) -> dict[str, str]:
         """The runner-owned machine names every process this runner starts gets: the claim it runs under, when there
-        is one, and the ledger's location, when this runner was given one."""
-        values = {name: os.environ[name] for name in MACHINE_NAMES[1:] if os.environ.get(name)}
+        is one, and the ledger's location. The directory is always the one this runner resolved, which outranks
+        XDG_STATE_HOME and HOME, so a binding or profile that sets either still leaves its checks in this ledger."""
+        values = {name: os.environ[name] for name in MACHINE_NAMES[2:] if os.environ.get(name)}
+        values[machine.DIRECTORY_VARIABLE] = str(self.ledger().directory)
         claim = self.check_claim or self.turn_claim
         named = claim.id if claim is not None else None
         if named:
