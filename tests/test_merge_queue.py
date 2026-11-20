@@ -8559,16 +8559,18 @@ class OwnLaneWaitingOnAnotherStoryTests(MergeQueueTestCase):
         super().setUp()
         self.record = self.adopter()
 
-    def own_lane_waits(self, other_queued: bool = False) -> str:
+    def own_lane_waits(self, other_queued: bool = False, before: str = "working", next_planned: bool = True) -> str:
         """lane-1 hands off `feature`, then waits on `other`, lane-2's story, for its own planned `next`. `other` is
-        planned, or queued behind `feature` when ``other_queued``."""
+        planned, or queued behind `feature` when ``other_queued``. lane-1 waits from ``before``; with no
+        ``next_planned`` it has nothing else open."""
         self.record.lead_write(lambda state: state_tool.patch(
             self.record.state, writer="lead", version=state["version"], changes={
-                "lanes": [{"id": "lane-1", "title": "lane-1", "focus": "feature: building", "state": "working",
+                "lanes": [{"id": "lane-1", "title": "lane-1", "focus": "feature: building", "state": before,
                            "waitingOn": None, "since": "2026-11-03T00:00:00Z"},
                           {"id": "lane-2", "title": "lane-2", "focus": "other: building", "state": "working",
                            "waitingOn": None, "since": "2026-11-03T00:00:00Z"}],
-                "planned": [{"subject": "next", "title": "Next", "lane": "lane-1", "stage": "planned"}]
+                "planned": ([{"subject": "next", "title": "Next", "lane": "lane-1", "stage": "planned"}]
+                            if next_planned else [])
                 + ([] if other_queued else [{"subject": "other", "title": "Other", "lane": "lane-2", "stage": "planned"}])}))
         head = self.candidate(self.record)
         if other_queued:
@@ -8607,6 +8609,33 @@ class OwnLaneWaitingOnAnotherStoryTests(MergeQueueTestCase):
         row = self.row()
         self.assertNotEqual(row["state"], "waiting")
         self.assertIsNone(row["waitingOn"])
+
+    def test_a_lane_whose_own_story_merged_while_it_waited_rests_when_the_wait_ends(self) -> None:
+        # It rests as a lane does when its own story lands: assigned with other work open, idle with none. It never
+        # returns to building, or to handing off, a story that has merged.
+        for before, next_planned, rests in (("working", True, "assigned"), ("handed", True, "assigned"),
+                                            ("working", False, "idle"), ("handed", False, "idle")):
+            with self.subTest(before=before, next_planned=next_planned):
+                self.fresh()
+                self.record = self.adopter()
+                self.own_lane_waits(other_queued=True, before=before, next_planned=next_planned)
+                self.assertEqual(self.row()["waitingFrom"]["state"], before)
+                self.run_queue(self.record, "feature")
+                self.run_queue(self.record, "other")
+                row = self.row()
+                self.assertEqual((row["focus"], row["state"], row["waitingOn"]), ("feature merged", rests, None))
+                self.assertEqual(state_tool.state_errors(state_tool.read_state(self.record.state)), [])
+
+    def test_a_lane_that_spoke_after_its_story_merged_returns_to_the_state_it_waited_from(self) -> None:
+        # Its own word after the merge says what it is doing, so the landing returns it there as any other wait ends.
+        self.own_lane_waits(other_queued=True)
+        self.run_queue(self.record, "feature")
+        state_tool.set_focus(self.record.state, "lane-1", "next: building while other lands", state="waiting",
+                             waiting_on="other")
+        self.run_queue(self.record, "other")
+        row = self.row()
+        self.assertEqual((row["focus"], row["state"], row["waitingOn"]),
+                         ("next: building while other lands", "working", None))
 
     def test_a_reconcile_records_the_merge_and_the_lane_still_waits(self) -> None:
         head = self.own_lane_waits()
