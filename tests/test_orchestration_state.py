@@ -7151,7 +7151,7 @@ class LeadSelectionTests(unittest.TestCase):
         journal = (self.directory / state_tool.JOURNAL_FILE).read_bytes()
         for name, changes in (("no record of it", {"reuse": ["full", "lint"]}), ("no why", {"why": " "}),
                               ("a why alone", {"reuse": None}), ("an empty grant", {"reuse": []}),
-                              ("a check twice", {"reuse": ["full", "full"]})):
+                              ("a check twice", {"reuse": ["full", "full"]}), ("a wrong head", {"head": "f" * 40})):
             with self.subTest(name):
                 self.assertEqual(self.refused(lambda: self.grant(**changes)), "select_invalid")
                 self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), journal)

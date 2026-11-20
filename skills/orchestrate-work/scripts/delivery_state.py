@@ -2374,9 +2374,14 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
 
     def grant_problems(state: dict, journal: list[dict]) -> str | None:
         """Why the reuse grant can't be recorded for the subject's hand-off at ``head``, if it can't."""
+        item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
+        if item is None:
+            return f"{subject} is not queued"
+        if item["stage"] in ("merging", "merged"):
+            return f"{subject} is {item['stage']}"
         handed = handed_item(state, journal, subject)
         if handed is None or handed["head"] != head:
-            return None  # the selection itself is refused, with its own reason
+            return f"{subject}'s reviewed head is {None if handed is None else handed['head']}, not {head}"
         recorded = {entry["check"] for entry in handed.get("evidence", [])}
         unrecorded = [name for name in reuse or [] if name not in recorded]
         if unrecorded:

@@ -5485,6 +5485,19 @@ class CarriedBaseMoveTests(MergeQueueTestCase):
                     self.assertTrue([note for note in notes if note.startswith("lib was run again, not carried")
                                      and "it ran on Plan9 4 mips" in note], notes)
 
+    def test_an_excluded_check_is_never_carried(self) -> None:
+        adopter = self.carrying([self.LIB], unread=["docs/**"])
+        binding = {**adopter.binding, "reuse": {"exclude": [{"check": "lib", "why": "it reads the clock"}]}}
+        adopter.advance_base({".agents/orchestration.json": json.dumps(binding, indent=2) + "\n"})
+        adopter.binding = binding
+        self.candidate_with(adopter, ["lib", "loose"])
+        results, _ = self.moved(adopter, self.base_files(adopter, {"docs/a.txt": "a\n"}))
+        self.merged(results)
+        self.assertEqual(self.runs(adopter), {"lib": 2, "loose": 1})
+        notes = [note for result in results for note in result.document()["notes"]]
+        self.assertTrue([note for note in notes if note.startswith("lib was run again, not carried")
+                         and "the binding excludes it from reuse: it reads the clock" in note], notes)
+
     def test_a_move_in_a_file_one_complete_entry_lists_runs_that_check_and_the_always_run_ones_again(self) -> None:
         adopter = self.carrying([self.LIB, self.APP], always=True)
         self.candidate_with(adopter, ["lib", "app"])
@@ -7483,7 +7496,10 @@ class ReusedCheckTests(MergeQueueTestCase):
         self.assertEqual(reused["reusedFrom"], {"subject": "feature", "head": head,
                                                 "tree": run("rev-parse", f"{head}^{{tree}}", cwd=adopter.lane)})
         [row] = [check for check in adopter.item("feature")["checks"] if check["id"] == "full"]
-        self.assertEqual(row, {"id": "full", "state": "reused", "reusedFrom": head})
+        # The row keeps the facts of the lane's run it stands on, so a later carry compares them.
+        record = adopter.item("feature")["evidence"][0]
+        self.assertEqual(row, {"id": "full", "state": "reused", "reusedFrom": head, "environment": record["environment"],
+                               "host": record["host"]})
         [journaled] = [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "check.reused"]
         self.assertFacts(journaled, "check.reused", {"check": "full", "head": head, "from": "feature"})
         # The merge is still pinned to the synced head, whose tree is the one the lane checked.
@@ -7648,14 +7664,15 @@ class ReusedCheckTests(MergeQueueTestCase):
                 reused = sorted(entry["data"]["check"] for entry in journaled(adopter, "check.reused"))
                 self.assertEqual(reused, sorted(check for check, count in runs.items() if count == 0))
 
-    def granted_shape(self, adopter: Adopter, files: dict[str, str], later: dict[str, str] | None = None) -> tuple[dict, str]:
+    def granted_shape(self, adopter: Adopter, files: dict[str, str], later: dict[str, str] | None = None,
+                      base: dict[str, str] | None = None) -> tuple[dict, str]:
         """A record at the lane's head, then the lane's own merge of a moved base: the shape a base merge alone makes,
         with a later lane commit before the merge when ``later`` names one. Returns the record and the handed head."""
         first = adopter.lane_commit("feature", files)
         record = self.recorded(adopter, "full", first)
         if later:
             adopter.lane_commit("feature", later)
-        adopter.advance_base({"docs/base.txt": "the base moved\n"})
+        adopter.advance_base(base or {"docs/base.txt": "the base moved\n"})
         run("checkout", "--quiet", "feature", cwd=adopter.lane)
         run("merge", "--quiet", "--no-edit", "origin/main", cwd=adopter.lane)
         run("push", "--quiet", "origin", "feature:feature", cwd=adopter.lane)
@@ -7689,9 +7706,19 @@ class ReusedCheckTests(MergeQueueTestCase):
                 self.assertEqual(runner.reusable([("feature", variant)], [full], tree, adopter.operator, context), {})
                 self.assertIn(why, runner.notes[0])
                 self.assertIn("(granted)", runner.notes[0])
-        # Without the grant the base's path keeps it running; with it, the queue reuses it and names the decision.
+        # Without the grant the base's path keeps it running, and a selection for another head grants nothing.
         ungranted = {**own, "leadSelection": {key: value for key, value in own["leadSelection"].items() if key != "reuse"}}
         self.assertEqual(runner.reusable([("feature", ungranted)], [full], tree, adopter.operator, context), {})
+        runner.notes = []
+        elsewhere = {**own, "leadSelection": {**own["leadSelection"], "head": "0" * 40}}
+        self.assertEqual(runner.reusable([("feature", elsewhere)], [full], tree, adopter.operator, context), {})
+        self.assertNotIn("(granted)", runner.notes[0])
+        # A path the candidate touched is judged against a known read set as usual: unread by the check, it stands.
+        reading = {**runner.binding, "selection": {**runner.binding["selection"], "readers": [
+            {"paths": ["src/**"], "checks": ["full"], "complete": True}]}}
+        self.assertEqual(queue.path_reasons(full, ["docs/a.md"], reading, {"docs/a.md"}), [])
+        self.assertEqual(queue.path_reasons(full, ["src/a.txt"], reading, {"src/a.txt"}),
+                         ["it reads src/a.txt, which changed since the lane's run"])
         results = self.run_queue(adopter, "feature")
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
         self.assertEqual(self.runs(adopter, "full"), 0)
@@ -7706,17 +7733,27 @@ class ReusedCheckTests(MergeQueueTestCase):
              "tests/test_new.txt"),
             ("a revert to the base's content", {"tests/test_new.txt": "ok\n", "src/app.txt": "app two\n"},
              {"src/app.txt": "app one\n"}, "src/app.txt"),
+            # Only the handed head's own diff holds a path the record's head never touched.
+            ("a new path after the record", {"tests/test_new.txt": "ok\n"}, {"src/new.txt": "new\n"}, "src/new.txt"),
+            ("the base's binding", {"tests/test_new.txt": "ok\n"}, None, None),
         ):
             with self.subTest(name):
                 self.fresh()
                 adopter = self.reusing(selection={"lead": True, "catalogue": [check_entry("loose")]})
-                record, handed = self.granted_shape(adopter, files, later)
+                base = None
+                if path is None:
+                    # The binding file always counts as read, a grant or not.
+                    binding = json.loads(adopter.show("origin/main", ".agents/orchestration.json"))
+                    binding["checkTimeoutCeiling"] += 1
+                    base = {".agents/orchestration.json": json.dumps(binding, indent=2) + "\n"}
+                record, handed = self.granted_shape(adopter, files, later, base)
                 self.hand_off(adopter, "feature", handed, evidence=[record])
                 self.selected(adopter, "feature", handed, ["loose"], **grant)
                 results = self.run_queue(adopter, "feature")
                 self.assertEqual(self.runs(adopter, "full"), 1)
                 [note] = [note for note in self.check_document(results)["notes"] if note.startswith("full was run, not reused")]
-                self.assertIn(f"the candidate changes {path} since the lane's run", note)
+                self.assertIn("the binding file changed" if path is None
+                              else f"the candidate changes {path} since the lane's run", note)
         # A grant is for one handed head: a new hand-off drops it with the selection.
         self.fresh()
         adopter = self.reusing(selection={"lead": True, "catalogue": [check_entry("loose")]})
@@ -7748,8 +7785,15 @@ class ReusedCheckTests(MergeQueueTestCase):
              "it uses {baseHead}, which the tree does not determine"),
             ("a profile's {head}", {"alwaysRun": [check_entry("always"), check_entry("full", environmentProfile="default")]},
              "it uses {head}, which the tree does not determine"),
+            ("an argv {baseHead}", {"alwaysRun": [check_entry("always"), check_entry("full", "--implicit", "{baseHead}")]},
+             "it uses {baseHead}, which the tree does not determine"),
+            ("a prepare step's {baseHead}", {"prepare": [[PY, "-c", "pass", "{baseHead}"]]},
+             "it uses {baseHead}, which the tree does not determine"),
             ("an exclusion", {"reuse": {"exclude": [{"check": "full", "why": "it times the build, which varies"}]}},
              "the binding excludes it from reuse: it times the build, which varies"),
+            ("an argv {treeSha}, which the tree determines", {"alwaysRun": [check_entry("always"),
+                                                                          check_entry("full", "--implicit", "{treeSha}")]},
+             None),
         ):
             with self.subTest(name):
                 self.fresh()
@@ -7757,8 +7801,12 @@ class ReusedCheckTests(MergeQueueTestCase):
                 head = adopter.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
                 self.hand_off(adopter, "feature", head)
                 results = self.run_queue(adopter, "feature")
+                notes = [note for note in self.check_document(results)["notes"] if note.startswith("full was run, not reused")]
+                if why is None:
+                    self.assertEqual((self.runs(adopter, "full"), notes), (0, []))
+                    continue
                 self.assertEqual(self.runs(adopter, "full"), 1)
-                [note] = [note for note in self.check_document(results)["notes"] if note.startswith("full was run, not reused")]
+                [note] = notes
                 self.assertIn(why, note)
     def test_evidence_is_never_reused_across_candidates(self) -> None:
         adopter = self.reusing()
@@ -7825,7 +7873,8 @@ class ReusedCheckTests(MergeQueueTestCase):
         self.assertEqual([entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "check.reused"], [])
 
     def test_a_batch_reuses_only_when_the_combined_tree_is_a_members_checked_tree(self) -> None:
-        adopter = self.reusing()
+        # Every path the members change is unread, so only the batch's exact-tree rule keeps a record from standing.
+        adopter = self.reusing(selection={"lead": False, "unread": ["tests/**"]})
         first = adopter.lane_commit("first", {"tests/test_first.txt": "ok\n"})
         second = adopter.lane_commit("second", {"tests/test_second.txt": "ok\n"})
         self.hand_off(adopter, "first", first)

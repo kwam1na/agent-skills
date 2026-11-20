@@ -624,12 +624,13 @@ def path_reasons(check: dict, paths: list[str], binding: dict, own: set[str] | N
     if BINDING_PATH in paths:
         return ["the binding file changed"]
     shown = ", ".join(paths[:STOP_FAILURES]) + (f" and {len(paths) - STOP_FAILURES} more" if len(paths) > STOP_FAILURES else "")
-    if own is not None:
-        return [f"the candidate changes {shown} since the lane's run"]
+    # A path the candidate touched counts as usual under a grant: a known read set still says whether it is read.
     entries = [entry for entry in selection.get("readers") or [] if check["id"] in entry["checks"]]
     if entries and all(entry.get("complete") is True for entry in entries):
         read = [path for path in paths if matches_any(path, [pattern for entry in entries for pattern in entry["paths"]])]
         return [f"it reads {', '.join(read[:STOP_FAILURES])}, which changed since the lane's run"] if read else []
+    if own is not None:
+        return [f"the candidate changes {shown} since the lane's run"]
     return [f"the tree is not the one the lane's run checked, and its read set is unknown: {shown} differ"]
 
 
@@ -1799,6 +1800,7 @@ class Runner:
                         reasons = self.applies(entry, check, tree, self.binding, facts, own=own)
                     if not reasons:
                         found[check["id"]] = {"subject": subject, "head": entry["head"], "tree": entry["tree"],
+                                              "facts": {key: entry[key] for key in ("environment", "host")},
                                               **({"decision": grant["decision"]} if granted else {})}
                         break
                     why.append(f"{subject} at {entry['head']}{' (granted)' if granted else ''}: {'; '.join(reasons)}")
@@ -2945,7 +2947,8 @@ class Runner:
                         source = reused[check["id"]]
                         outcomes[check["id"]] = "reused"
                         records[check["id"]].pop("expectedSeconds", None)
-                        records[check["id"]].update(state="reused", reusedFrom=source["head"])
+                        # The row keeps the facts of the run it stands on, so a later carry compares them.
+                        records[check["id"]].update(state="reused", reusedFrom=source["head"], **source["facts"])
                         result.checks.append({"id": check["id"], "state": "reused", "exitCode": None, "seconds": 0,
                                               "reusedFrom": {key: source[key] for key in ("subject", "head", "tree")}})
                         for subject in subjects:
