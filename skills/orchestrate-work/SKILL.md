@@ -449,16 +449,51 @@ says so: in the line it prints and at the top of that page.
 - Every successful write through the state tool, by the lead, the runner or a
   lane, appends one line to `changes.jsonl` in the state directory; a write
   never fails because of it. The log keeps only its latest lines once it
-  passes 64 KiB. `live` waits on that log, pushes the record to
-  every open page, then re-renders the configured views, so a page shows each
-  change within seconds, with no reload and no publish step. It runs no
-  publisher: those run only when the lead renders.
+  passes 64 KiB. `live` waits on that log, re-renders the configured views,
+  then pushes the record to every open page as `event: document`, so a page
+  told of a change finds the views that show it, and shows each change within
+  seconds, with no reload and no publish step. It runs no publisher: those run
+  only when the lead renders.
+- With no record, `live` still starts and serves, as long as the state
+  directory exists. Each argv view is rendered from exactly
+  `{"spec": "delivery-state-absent/1"}` on stdin; a built-in view, which draws
+  only a record, is not. Once a record reads cleanly, it is served as above.
+- The binding's optional `state.liveRuns`,
+  `{"renderer": "<renderer id>", "inventory": {"argv": [...], "timeoutSeconds": N}}`,
+  names the runs page and the run store. `renderer` is a declared argv
+  renderer's HTML view, the front page while there is no record. `live` runs
+  `inventory.argv` with `list --json` once at start, within `timeoutSeconds`
+  (10 when absent), and watches the folder its `runsDir` names: the sizes and
+  times of its folders and files, never opened. On a change of the store alone
+  it re-renders the views, then sends `event: runs` with data
+  `{"generation": N}` to every open page, with or without a record, and no
+  `event: document`. Pages reach the stream only through the adapter the
+  server injects: `deliveryStateStore.onRuns(fn)` calls `fn` with that data on
+  each such event, beside `read`, `subscribe` and `onStatus`. Every view is
+  told whether the store is watched in its `DELIVERY_LIVE_RUNS` environment
+  variable, `watched` or `unwatched`: an inventory that fails or passes its
+  timeout, or a store folder that can't be read, leaves the record's watch
+  working and the views told `unwatched`. Without `liveRuns`, `live` never
+  runs the inventory or reads the store.
+- Each `live` writes its own entry, `<git common directory>/delivery-live/<pid>.json`,
+  naming its PID, host, port, state directory and whether it has `liveRuns`,
+  and removes only that entry when it stops cleanly. The git common directory
+  is the state directory's repository's, or `--repo`'s. `/health` says which
+  server it is, its PID and its repository; an entry is verified when its PID
+  runs and its address answers `/health` as a live server of this repository
+  with that PID. `live --if-absent` prints the address of a verified entry,
+  preferring one with `liveRuns`, as `{"ok":true,"live":"<address>","pid":N,"existing":true}`,
+  and exits 0, even from a worktree that has no state directory yet; with
+  none, it serves as `live` does. `live --stop` signals the
+  PID of each verified entry the given state directory started, waits for its
+  entry to go, and says which it stopped; an entry that fails verification is
+  left alone, its PID never signalled.
 - It serves the built-in static page in its live mode, with a quiet live or
   disconnected indicator, and any HTML view whose head carries
   `<meta name="delivery-state-live">`, at `/view/<output>`, the output's
   path segments percent-encoded as a browser sends them. The binding's
   `state.liveHome`, a renderer's id, makes that renderer's view the front
-  page instead of the built-in page. A record caught half-written is never
+  page instead of the built-in page while there is a record. A record caught half-written is never
   served: the last valid one stands until the next one reads cleanly.
 - It listens on this machine's loopback address only, unless `--host` names
   another; a wildcard such as `0.0.0.0` is refused, since the live view serves
