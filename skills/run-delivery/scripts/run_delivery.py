@@ -983,6 +983,10 @@ class Config:
             self.gates = take("gates", (gates, "orchestration binding (fallback checks: what the merge queue runs)"),
                               flow=flow_gates, default=[],
                               same=lambda a, b: [(g["id"], g["argv"]) for g in a] == [(g["id"], g["argv"]) for g in b])
+            if (isinstance(flow_gates, list) and any(isinstance(g, dict) and g.get("check") for g in flow_gates)
+                    and [(g["id"], g["argv"]) for g in flow_gates] == [(g["id"], g["argv"]) for g in self.gates]):
+                # The own config names the binding's fallback checks by id: those run through run-checks, as named.
+                self.gates = [ours if ours.get("check") else theirs for ours, theirs in zip(flow_gates, self.gates)]
         self.harness_settings = h
         if not self.bases:  # one base: check the harness config against it now; else against the delivery's base
             self.conflicts += self.harness_conflicts(self.binding_base, "the binding's base")

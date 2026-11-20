@@ -7171,13 +7171,45 @@ class LiveLeadChangesTests(unittest.TestCase):
                      made("check", "2026-01-01T00:00:02Z", "failed", parent),
                      made("other", "2026-01-01T00:00:01Z", "passed", head),
                      made("other", "2026-01-01T00:00:02Z", "skipped", head),
+                     made("always", "2026-01-01T00:00:01Z", "failed", head),
+                     made("always", "2026-01-01T00:00:05Z", "passed", parent),
                      made("lint", "2026-01-01T00:00:02Z", "passed", head)]
             (wt / ".orchestration/review/FX-3").mkdir(parents=True, exist_ok=True)
             (wt / ".orchestration/review/FX-3/checks.jsonl").write_text("".join(json.dumps(r) + "\n" for r in lines))
             found = fx.call("handoff_records", "FX-3", head, cwd=wt, delivery="FX-1")
             self.assertEqual({name: (r["result"], r["head"]) for name, r in found.items()},
-                             {"unit": ("failed", head), "check": ("failed", parent)})
+                             {"unit": ("failed", head), "check": ("failed", parent), "always": ("failed", head)})
             self.assertNotIn("log", found["unit"])
+        with self.subTest("a failing run: check exits 1, and gate stops on a failed id gate or inline gate"):
+            wt, review = seen["wt"], seen["wt"] / ".orchestration/review/FX-2"
+            code, said = fx.flow("check", "FX-2", "always", cwd=wt, env=lane_env)
+            self.assertEqual(code, 0, said)
+            self.assertRegex(said, r"check always passed in [\d.]+s at \w+ \(runner\); median \d+s\n")
+            sh("git", "rm", "-q", "src/app.txt", cwd=wt)
+            commit(wt, "lint fails")
+            code, said = fx.flow("gate", "FX-2", cwd=wt)
+            self.assertEqual(code, 1, said)
+            results = {r["id"]: r for r in json.loads((review / "gates.json").read_text())["results"]}
+            self.assertEqual((results["check"]["exit"], results["lint"]["exit"] != 0), (0, True), results)
+            self.assertEqual((results["lint"]["record"]["result"], results["lint"]["record"]["where"]),
+                             ("failed", "checkout"))
+            (wt / "tools/check.py").write_text("raise SystemExit(1)\n")
+            commit(wt, "the check fails")
+            failed = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+            code, said = fx.flow("check", "FX-2", "check", cwd=wt, env=lane_env)
+            self.assertEqual(code, 1, said)
+            last = json.loads((review / "checks.jsonl").read_text().splitlines()[-1])
+            self.assertEqual((last["check"], last["head"], last["result"], last["where"]),
+                             ("check", failed, "failed", "runner"))
+            self.assertIn("its output: ", said)
+            code, said = fx.flow("gate", "FX-2", cwd=wt)
+            self.assertEqual(code, 1, said)
+            results = json.loads((review / "gates.json").read_text())["results"]
+            self.assertEqual([(r["id"], r["exit"], r["record"]["result"], r["record"]["where"]) for r in results],
+                             [("check", 1, "failed", "runner")], "the gates stop at the failed id gate")
+            self.assertEqual({n: r["result"] for n, r in fx.call("handoff_records", "FX-2", failed, cwd=wt,
+                                                                delivery="FX-1").items()},
+                             {"check": "failed", "unit": "passed", "always": "passed"})
 
     def held_check(self, failures: list[str]):
         from tests.test_run_delivery_supervisor import hand_off, record, supervised
@@ -8786,6 +8818,9 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         self.assertEqual(row, ("wrong", "the gates name checks the binding doesn't define: nosuch; fix: name a "
                                         "selection.catalogue, alwaysRun or fallback id, or correct run-delivery.json gates"),
                          out)
+        code, said = fx.flow("gate", "FX-2", cwd=m)
+        self.assertEqual(code, 2, said)
+        self.assertIn("the gates name checks the binding doesn't define: nosuch", said)
         row, out = doctor_with(["lint", venv], [["true"]])
         self.assertEqual(row, ("ok", "2 gate(s): lint, venv; run through run-checks: lint; made by the prepare steps: "
                                      ".venv/bin/python"), out)
@@ -8793,6 +8828,15 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         row, out = doctor_with(["lint", venv], [])
         self.assertEqual(row, ("wrong", "these don't resolve: gate venv (.venv/bin/python); fix: install them, or "
                                         "correct the binding"), out)
+        # A binding of fallback checks only: gates that name them by id still run through run-checks.
+        binding["alwaysRun"] = []
+        row, out = doctor_with(["lint", "test"], [["true"]])
+        self.assertEqual(row, ("ok", "2 gate(s): lint, test; run through run-checks: lint, test"), out)
+        code, out = fx.flow("gate", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        results = json.loads((m / ".orchestration/review/FX-2/gates.json").read_text())["results"]
+        self.assertEqual([(r["id"], r["record"]["where"], r["record"]["result"]) for r in results],
+                         [("lint", "runner", "passed"), ("test", "runner", "passed")])
 
     def test_doctor_names_a_reasonless_added_change_until_lead_plan_why_records_one(self) -> None:
         fx = self.fixture()
