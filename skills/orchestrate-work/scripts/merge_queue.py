@@ -991,7 +991,8 @@ class Runner:
         binding's environment, the check's profile (``profile``, its placeholders filled from ``context``), the git
         identity and the hooks directory. The record holds the names the check received and a sha256 over the sorted
         name=value pairs that decide the run: the locale, the inherited names, the binding's environment and the
-        profile. Where and by whom the run happens is passed but not digested, and no value is ever recorded.
+        profile, a ``{workRoot}`` or ``{treeSha}`` value as its placeholder. Where and by whom the run happens is
+        passed but not digested, and no value is ever recorded.
         """
         context = context or Context()
         baseline = {environment_name(name) for name in (*CHECK_BASELINE, *(WINDOWS_BASELINE if WINDOWS else ()))}
@@ -1005,8 +1006,9 @@ class Runner:
         dropped = sorted(key for key in os.environ if not kept(key))
         profile = profile or {}
         resolved = {key: context.element(value) for key, value in profile.items()}
-        # A value made from workRoot says where the run happens, not what it checks: its placeholder is digested.
-        stable = {key: value if PLACEHOLDER.match(value) and PLACEHOLDER.match(value)[1] == "workRoot"
+        # A value made from workRoot says where the run happens, and one made from the tree is the tree's, which the
+        # record names already: each is digested as its placeholder, as a check's definition digests its argv.
+        stable = {key: value if PLACEHOLDER.match(value) and PLACEHOLDER.match(value)[1] in ("workRoot", "treeSha")
                   else context.element(value) for key, value in profile.items()}
         digested = {key: value for key, value in inherited.items() if environment_name(key) not in UNDIGESTED}
         digested.update(self.binding.get("environment", {}))

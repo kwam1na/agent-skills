@@ -2725,7 +2725,10 @@ class WorkRootSafetyTests(MergeQueueTestCase):
         self.assertEqual(declared["GIT_CONFIG_GLOBAL"], str(self.directory / "binding-global"))
 
     def test_a_check_gets_only_its_declared_environment_and_the_runners_own_steps_keep_theirs(self) -> None:
-        adopter = self.adopter({"postSync": [], "alwaysRun": [check_entry("envcheck", "--env", "MQ_DROPPED", "LC_ALL")]})
+        # The prepare step's program is the same interpreter named another way, so the host facts name both.
+        preparing = [os.path.realpath(PY), "tools/check.py", "prep", "--env", "MQ_DROPPED"]
+        adopter = self.adopter({"postSync": [], "alwaysRun": [check_entry("envcheck", "--env", "MQ_DROPPED", "LC_ALL")],
+                                "prepare": [preparing]})
         trace = self.directory / "trace.json"
         planted = {"MQ_DROPPED": "dropped-value-5e1d", "LC_ALL": "C", "GIT_TRACE2_EVENT": str(trace)}
         seen = Path(f"{adopter.log}.env")
@@ -2735,8 +2738,28 @@ class WorkRootSafetyTests(MergeQueueTestCase):
             runner.start()
             try:
                 context = runner.context(None, base).with_values(treeSha=runner.tree(base))
-                checkout = runner.checkout(base, "env", context=context)
+                # A prepare step gets the declared environment too: it fails without the name, and its output says so.
+                with self.assertRaises(queue.Stop) as stopped:
+                    runner.checkout(base, "unprepared", context=context)
+                self.assertEqual(stopped.exception.reason, "prepare_failed")
+                kept = adopter.state / re.search(r"(logs/\S+\.log)", stopped.exception.detail)[1]
+                self.assertIn("MQ_DROPPED", kept.read_text())
+                self.assertNotIn(planted["MQ_DROPPED"], kept.read_text() + stopped.exception.detail)
+                self.assertEqual(json.loads(seen.read_text().splitlines()[-1]), {"MQ_DROPPED": False})
+                prepared = runner.binding
+                runner.binding = {**prepared, "inherit": ["MQ_DROPPED"]}
+                checkout = runner.checkout(base, "prepared", context=context)
+                self.assertEqual(json.loads(seen.read_text().splitlines()[-1]), {"MQ_DROPPED": True})
+                runner.binding = prepared
                 [check] = runner.binding["alwaysRun"]
+                # Its host facts name the check's program and the prepare step's; a relative one is found where it runs.
+                tools = runner.host_facts(check, checkout, context)["tools"]
+                self.assertEqual(set(tools), {PY, os.path.realpath(PY)})
+                self.assertEqual(tools[PY], tools[os.path.realpath(PY)])
+                self.assertEqual(runner.tool_digest("tools/check.py", None, checkout),
+                                 "sha256:" + hashlib.sha256((checkout / "tools/check.py").read_bytes()).hexdigest())
+                self.assertIsNone(runner.tool_digest("tools/missing.py", None, checkout))
+                self.assertIsNone(runner.tool_digest("no-such-program-mq", os.environ.get("PATH"), checkout))
                 completed = runner.run_one(check, checkout, context)
                 # Outside the baseline it never reaches the check, whose failure names it; a baseline name does.
                 self.assertEqual(completed.returncode, 1)
@@ -2771,7 +2794,8 @@ class WorkRootSafetyTests(MergeQueueTestCase):
                         self.assertEqual(runner.check_environment()[1]["digest"], listed)
                 with mock.patch.dict(os.environ, {"MQ_UNLISTED": "1"}):
                     self.assertEqual(runner.check_environment()[1]["digest"], listed)
-                # Two names swapping their values is another environment; a workRoot value is the same one anywhere.
+                # Two names swapping their values is another environment; a workRoot or tree value is the same one
+                # anywhere and at any tree, which the record names already.
                 runner.binding = {**runner.binding, "environment": {**runner.binding["environment"], "MQ_A": "1", "MQ_B": "2"}}
                 before = runner.check_environment()[1]["digest"]
                 runner.binding = {**runner.binding, "environment": {**runner.binding["environment"], "MQ_A": "2", "MQ_B": "1"}}
@@ -2781,7 +2805,10 @@ class WorkRootSafetyTests(MergeQueueTestCase):
                 there = runner.check_environment(where, context.with_values(workRoot=str(self.directory / "other")))
                 self.assertEqual(here[1]["digest"], there[1]["digest"])
                 self.assertEqual(here[0]["MQ_WHERE"], str(runner.work_root))
-                self.assertNotEqual(runner.check_environment(where, context.with_values(treeSha="0" * 40))[1]["digest"],
+                elsewhere = runner.check_environment(where, context.with_values(treeSha="0" * 40))
+                self.assertEqual(elsewhere[1]["digest"], here[1]["digest"])
+                self.assertEqual(elsewhere[0]["MQ_TREE"], "0" * 40)
+                self.assertNotEqual(runner.check_environment({**where, "MQ_FIXED": "1"}, context)[1]["digest"],
                                     here[1]["digest"])
             finally:
                 runner.remove_checkouts()
@@ -7600,7 +7627,9 @@ class ReusedCheckTests(MergeQueueTestCase):
         sentinel = "mq-sentinel-7f3a9c"
         # always's profile gives it the head, which a run at a commit has no value for.
         adopter = self.reusing(alwaysRun=[check_entry("always", environmentProfile="default"), check_entry("full")],
-                               fallback=[check_entry("fallback", "--env", "MQ_PLANTED")], reuse={"tools": ["git"]})
+                               fallback=[check_entry("fallback", "--env", "MQ_PLANTED")], reuse={"tools": ["git"]},
+                               selection={"lead": False, "catalogue": [
+                                   check_entry("broken", "--always-fail"), check_entry("after-broken", prerequisites=["broken"])]})
         head = adopter.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
         journal = state_tool.read_journal(adopter.state)
         code, records, said = self.run_checks_command(adopter.lane, "--head", head, "--checks", "full,fallback",
@@ -7634,8 +7663,23 @@ class ReusedCheckTests(MergeQueueTestCase):
         self.assertEqual(json.loads(Path(str(adopter.log) + ".env").read_text().splitlines()[-1]), {"MQ_PLANTED": False})
         for words in (said, log.read_bytes()):
             self.assertNotIn(sentinel.encode(), words)
-        # Listed in inherit, it reaches the check, which passes: its value is digested, never recorded.
-        listing = {**binding, "inherit": ["MQ_PLANTED"]}
+        # A dependant whose prerequisite didn't pass is recorded as skipped, and never runs.
+        code, records, _ = self.run_checks_command(adopter.lane, "--head", head, "--checks", "after-broken")
+        self.assertEqual((code, [(record["check"], record["result"]) for record in records]),
+                         (1, [("broken", "failed"), ("after-broken", "skipped")]))
+        self.assertEqual(self.runs(adopter, "after-broken"), 0)
+        # A prepare step gets the declared environment too, and its refusal names what was dropped, never a value.
+        step = [PY, "tools/check.py", "prep", "--env", "MQ_PLANTED"]
+        prepping = adopter.lane_commit("prepping", {".agents/orchestration.json": json.dumps(
+            {**binding, "prepare": [step]}, indent=2) + "\n"}, start=head)
+        code, refused, said = self.run_checks_command(adopter.lane, "--head", prepping, "--checks", "full",
+                                                      env={**os.environ, "MQ_PLANTED": sentinel})
+        self.assertEqual((code, refused["reason"]), (1, "prepare_failed"), refused)
+        kept = re.search(r"logs/\S+\.log", refused["detail"])[0]
+        self.assertIn("MQ_PLANTED", (adopter.work / "runs" / kept).read_text())
+        self.assertNotIn(sentinel.encode(), said)
+        # Listed in inherit, it reaches the prepare step and the check, which pass: its value is digested, never recorded.
+        listing = {**binding, "inherit": ["MQ_PLANTED"], "prepare": [step]}
         listed = adopter.lane_commit("listing", {".agents/orchestration.json": json.dumps(listing, indent=2) + "\n"},
                                      start=head)
         code, [passing], said = self.run_checks_command(adopter.lane, "--head", listed, "--checks", "fallback",
@@ -7644,7 +7688,7 @@ class ReusedCheckTests(MergeQueueTestCase):
         self.assertIn("MQ_PLANTED", passing["environment"]["names"])
         self.assertNotEqual(passing["environment"]["digest"], fallback["environment"]["digest"])
         self.assertNotIn(sentinel.encode(), said)
-        # It removed what it made, and wrote no delivery state: only the failure's log is left.
+        # It removed what it made, and wrote no delivery state: only the failures' logs are left.
         self.assertEqual([path.name for path in (adopter.work / "runs").iterdir()], ["logs"])
         self.assertEqual(run("worktree", "list", "--porcelain", cwd=adopter.lane).count("worktree "), 1)
         self.assertEqual(state_tool.read_journal(adopter.state), journal)
@@ -7666,6 +7710,20 @@ class ReusedCheckTests(MergeQueueTestCase):
                 with self.assertRaises(state_tool.StateError) as caught:
                     self.hand_off(adopter, "other", head, evidence=[refused])
                 self.assertIn("run-checks refused", str(caught.exception))
+        # It runs only from a checkout's top level, and never through a linked workRoot/runs.
+        code, refused, _ = self.run_checks_command(adopter.lane / "tools", "--head", head, "--checks", "full")
+        self.assertEqual((code, refused["reason"]), (1, "binding_invalid"), refused)
+        self.assertIn("top level", refused["detail"])
+        target = self.directory / "elsewhere-runs"
+        target.mkdir()
+        (target / "kept.txt").write_text("kept\n")
+        shutil.rmtree(adopter.work / "runs")
+        (adopter.work / "runs").symlink_to(target, target_is_directory=True)
+        code, refused, _ = self.run_checks_command(adopter.lane, "--head", head, "--checks", "full")
+        self.assertEqual((code, refused["reason"]), (1, "binding_invalid"), refused)
+        self.assertIn("workRoot/runs", refused["detail"])
+        self.assertEqual([path.name for path in target.iterdir()], ["kept.txt"])
+        (adopter.work / "runs").unlink()
         # A git failure is reported, not raised.
         with mock.patch.object(queue.Runner, "run_records", side_effect=RuntimeError("boom")), \
              mock.patch.object(sys, "stdout", new=io.TextIOWrapper(io.BytesIO())) as captured:
@@ -7680,7 +7738,9 @@ class ReusedCheckTests(MergeQueueTestCase):
         self.assertEqual(stopped.exception.code, 2)
 
     def test_run_checks_from_another_checkout_has_the_queues_facts(self) -> None:
-        adopter = self.reusing(reuse={"tools": ["git"]})
+        profiles = {"default": {"environment": {"MQ_PROFILE_HEAD": "{head}"}}, "fixed": {"environment": {"MQ_FIXED": "1"}}}
+        adopter = self.reusing(reuse={"tools": ["git"]}, profiles=profiles, alwaysRun=[
+            check_entry("always"), check_entry("full"), check_entry("profiled", environmentProfile="fixed")])
         head = adopter.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
         adopter.enqueue("feature", head)
         results = self.run_queue(adopter, "feature")
@@ -7688,20 +7748,24 @@ class ReusedCheckTests(MergeQueueTestCase):
         # Each check the queue ran carries its run's facts, on the row and in the result alike.
         rows = {row["id"]: row for row in adopter.item("feature")["checks"]}
         entries = {entry["id"]: entry for entry in self.check_document(results)["checks"]}
-        for name in ("full", "always"):
+        for name in ("full", "always", "profiled"):
             self.assertEqual({key: rows[name][key] for key in ("environment", "host")},
                              {key: entries[name][key] for key in ("environment", "host")})
+        # A profile's values decide the run, so they are in its digest.
+        self.assertIn("MQ_FIXED", rows["profiled"]["environment"]["names"])
+        self.assertNotEqual(rows["profiled"]["environment"]["digest"], rows["full"]["environment"]["digest"])
         second = self.directory / "second"
         run("worktree", "add", "--detach", "--quiet", str(second), head, cwd=adopter.operator)
         elsewhere, empty = self.directory / "elsewhere-tmp", self.directory / "empty-bin"
         elsewhere.mkdir()
         empty.mkdir()
         moved = {**os.environ, "TMPDIR": str(elsewhere), "PATH": f"{empty}{os.pathsep}{os.environ['PATH']}"}
-        code, [record], _ = self.run_checks_command(second, "--head", head, "--checks", "full", env=moved)
-        self.assertEqual(code, 0, record)
-        self.assertEqual((record["environment"]["digest"], record["host"]),
-                         (rows["full"]["environment"]["digest"], rows["full"]["host"]))
-        self.assertIn("TMPDIR", record["environment"]["names"])
+        code, records, _ = self.run_checks_command(second, "--head", head, "--checks", "full,profiled", env=moved)
+        self.assertEqual(code, 0, records)
+        for record in records:
+            self.assertEqual((record["environment"]["digest"], record["host"]),
+                             (rows[record["check"]]["environment"]["digest"], rows[record["check"]]["host"]))
+            self.assertIn("TMPDIR", record["environment"]["names"])
 
     def test_run_checks_runs_beside_a_queue_serving_the_same_repository(self) -> None:
         adopter = self.reusing(fallback=[check_entry("fallback", "--hang-once")])
