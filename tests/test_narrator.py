@@ -1111,6 +1111,27 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(story["chapters"][3]["words"]["standing"],
                          [{"thread": b["threads"][-1], "text": "B was stopped", "until": b["endedAt"]}])
 
+    def test_a_row_whose_later_thread_opens_and_ends_in_a_later_chapter_is_told_there_once(self) -> None:
+        # B is stopped and answered before A lands, then stopped and answered again before B lands: the second stop is
+        # told in its own chapter by its own beat, and nothing is carried there as if it stood across A's landing.
+        journal = Journal()
+        journal.started()
+        start = journal.add(1, "check.started", subject="B")
+        first = journal.stopped(5, "B", [journal.failed(4, "B", start)])
+        journal.handed(8, "B", answers=[first])
+        journal.add(10, "candidate.merged", {"head": "c" * 40}, subject="A")
+        again = journal.add(12, "check.started", subject="B")
+        second = journal.stopped(15, "B", [journal.failed(14, "B", again)])
+        journal.handed(18, "B", answers=[second])
+        journal.add(20, "candidate.merged", {"head": "d" * 40}, subject="B")
+        story = journal.told()
+        self.assertValid(story)
+        [row] = story["ledger"]
+        self.assertEqual((row["count"], row["chapters"]), (2, {"opened": "c1", "ended": "c3"}))
+        self.assertEqual([chapter["standing"] for chapter in story["chapters"]], [[], [], []])
+        self.assertEqual([chapter["words"]["standing"] for chapter in story["chapters"]], [[], [], []])
+        self.assertEqual([chapter["setbacks"] for chapter in story["chapters"]], [[row["id"]], [], [row["id"]]])
+
     def test_v26_3670s_own_record_has_its_stale_stops_ended_at_their_landings(self) -> None:
         story, journal = told("v26-3670")
         self.assertValid(story)
@@ -1130,7 +1151,13 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(story["digest"]["setbacks"]["standing"], [])
         self.assertNotIn("still stand", story["digest"]["words"]["line"])
         self.assertEqual(sum(1 for row in story["ledger"] if row["state"] == "open"), 0)
-        # Each row is named by at most two chapters, the one it opened in and the one it ended in.
+        # Each row is named by at most two chapters, the one it opened in and the one it ended in, never ending before it
+        # opened: a stale stop ends, clamped to its own opening, in its own chapter rather than its landing's.
+        index = {chapter["id"]: number for number, chapter in enumerate(story["chapters"])}
         for row in story["ledger"]:
             named = [chapter["id"] for chapter in story["chapters"] if row["id"] in chapter["setbacks"]]
             self.assertEqual(sorted(named), sorted({row["chapters"]["opened"], row["chapters"]["ended"]} - {None}))
+            with self.subTest(row=row["id"]):
+                self.assertLessEqual(index[row["chapters"]["opened"]], index[row["chapters"]["ended"]])
+                ended = story["chapters"][index[row["chapters"]["ended"]]]
+                self.assertLessEqual(narrator._seconds(row["endedAt"]), narrator._seconds(ended["at"]))
