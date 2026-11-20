@@ -223,6 +223,31 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(self.publisher.identity['receipt']['sourceFingerprint'],VALID['sourceFingerprint'])
         self.assertEqual(len([call for call in self.api.calls if call[1]=='session']),1)
 
+    def test_a_refused_cut_names_the_projection_code_in_the_retried_status(self):
+        def refuse():raise hosted.public.ProjectionError('snapshot.local_path')
+        with self.assertRaisesRegex(hosted.PublishError,'^snapshot.local_path$') as caught:self.publisher.step(refuse)
+        self.assertTrue(caught.exception.transient)
+        bad=copy.deepcopy(VALID);bad['view']['title']='Open tests/test_merge_queue.py'
+        with self.assertRaisesRegex(hosted.PublishError,'^snapshot.local_path$'):self.publisher.step(lambda:bad)
+        # A code the projection does not define, and every other unavailable source, stays generic.
+        for error in (hosted.public.ProjectionError('/Users/operator/private'),OSError('x')):
+            def fail(error=error):raise error
+            with self.subTest(error=error),self.assertRaisesRegex(hosted.PublishError,'^source_unavailable$'):
+                self.publisher.step(fail)
+        args=SimpleNamespace(config='views.json',binding='binding.json',state_dir=str(self.state),key='APP-1')
+        inputs=views_common.Inputs(self.root,self.config,{},self.state)
+        for answer,code in (({'refused':'snapshot.local_path'},'^snapshot.local_path$'),
+                            ({'refused':'TOKEN-shaped words'},'^source_unavailable$'),({'refused':7},'^source_unavailable$')):
+            with self.subTest(answer=answer),mock.patch.object(hosted.views,'run_json',return_value=answer), \
+                 self.assertRaisesRegex(hosted.PublishError,code):hosted.child_collect(args,inputs)
+        hosted.atomic(self.state/hosted.STATUS,{'spec':'hosted-delivery-status/1','state':'retrying','code':'snapshot.local_path'})
+        self.assertEqual(hosted.status(self.state,self.config['hosted'],'APP-1')['code'],'snapshot.local_path')
+        # The collect child answers a refusal with the code alone.
+        with mock.patch.object(hosted,'load_inputs',return_value=SimpleNamespace(state_directory=self.state,config=self.config)), \
+             mock.patch.object(hosted,'collect',side_effect=hosted.public.ProjectionError('snapshot.local_path')),mock.patch('builtins.print') as printed:
+            self.assertEqual(hosted.main(['collect','--config','views.json','--binding','binding.json',
+                                          '--state-dir',str(self.state),'--key','APP-1']),0)
+        self.assertEqual(json.loads(printed.call_args.args[0]),{'refused':'snapshot.local_path'})
 class ConfigTests(unittest.TestCase):
     def test_explicit_origins_and_environment_names_fail_closed(self):
         self.assertIsNone(views_common.validate_config({'spec':'delivery-views-config/1'})['hosted'])

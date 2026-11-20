@@ -234,11 +234,11 @@
         },
         {
           "path": "skills/delivery-views/scripts/hosted.py",
-          "sha256": "07d1a464655465e717b77abde24c970bd9eaa61404efcc6f788c86c0391b547b"
+          "sha256": "44b7c24bc34b5741f9382f4a02b7e9706887010cd3ae8cfd39001a48777f3c73"
         },
         {
           "path": "skills/delivery-views/scripts/public_projection.py",
-          "sha256": "45f980069a4c82008ee02f2d0c17776b6c094220e3449eae8f59fdd467603365"
+          "sha256": "f3a6607ee50056bba3cd4a3297f70f6e47b355833bda0e3bdb6d4349195df66f"
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
