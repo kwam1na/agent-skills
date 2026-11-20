@@ -192,7 +192,7 @@
       "criteria": [
         {
           "id": "v26-3692-1",
-          "text": "For a record with meta.integration, the hosted page shows the integration base, the Rejoined main progress stop and the four Before it rejoins stops in the same states as the local view, each stop moves as integration facts are journalled, and a record without meta.integration publishes the same snapshot bytes as today."
+          "text": "For the same record, the hosted page shows the same chapters, story, integration step (base, Rejoined main and the four Before it rejoins stops, moving as integration facts are journalled), reasons and history as the local live view, with no 'not published on the hosted page' or '[Local reference omitted]' text."
         }
       ],
       "after": [
