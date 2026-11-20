@@ -79,12 +79,12 @@ class ReadmeLifecycleTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertNotIn(phrase, readme)
 
-    def test_the_install_section_downloads_latest_and_verifies_the_signer(self) -> None:
+    def test_the_install_section_downloads_latest_and_checks_the_digest(self) -> None:
         section = _section("Getting a release")
         self.assertRegex(section, r"gh release download --repo kwam1na/agent-skills\b")
-        self.assertIn("--signer-workflow kwam1na/agent-skills/.github/workflows/release.yml", section)
-        self.assertIn("gh attestation verify", section)
-        self.assertIn("carry no attestation", " ".join(section.split()))
+        self.assertIn("shasum -a 256 run-delivery-*.zip", section)
+        self.assertIn("Releases carry no build-provenance attestation", " ".join(section.split()))
+        self.assertNotIn("--signer-workflow", section)
 
     def test_the_posture_link_reaches_its_section_of_the_guide(self) -> None:
         self.assertIn("docs/product-generation.md#declaring-a-delivery-posture", _readme())

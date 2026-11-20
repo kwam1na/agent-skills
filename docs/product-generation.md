@@ -190,8 +190,7 @@ list of merged change requests. The release workflow:
   than every existing version tag, or whose commit does not equal or descend from the
   highest one's. Backports to an older line are unsupported;
 - stops if the release already exists, because a release is never replaced;
-- runs `scripts/cut-release.py` on the tagged tree, attests every output file, and
-  publishes them all.
+- runs `scripts/cut-release.py` on the tagged tree and publishes every output file.
 
 A final becomes latest. A candidate is a prerelease and never does.
 

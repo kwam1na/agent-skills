@@ -214,7 +214,7 @@ class StandingBinding(unittest.TestCase):
         receipt = json.loads((ROOT / ".agent-skills/active.json").read_text(encoding="utf-8"))
         self.assertIn(receipt["release"]["releaseId"], ATTESTED_ARCHIVES)
         archive_digest = ATTESTED_ARCHIVES[receipt["release"]["releaseId"]]
-        # The attested archive's own digest, which the release notes and its .release.json carry: a generation
+        # The published archive's own digest, which the release notes and its .release.json carry: a generation
         # holding the same release id but other bytes fails here. Applying a later release updates this pin with it.
         self.assertEqual(receipt["generation"], archive_digest)
         self.assertEqual(receipt["release"]["archiveSha256"], archive_digest)

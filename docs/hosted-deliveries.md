@@ -8,9 +8,8 @@ No live proof is claimed by packaging, source tests, local receivers or service 
 ## Install and configure
 
 Select `delivery-views`, `run-delivery`, `linear` or `jira`; all include the
-publisher, public projection and fixed snapshot schema. Authenticate published
-archive and metadata attestations as described in README.md, verify their exact
-bytes, and apply through the supported product lifecycle. Do not copy scripts or
+publisher, public projection and fixed snapshot schema. Check the archive's sha256
+against the release notes as described in README.md, and apply through the supported product lifecycle. Do not copy scripts or
 edit `.agent-skills/current`.
 
 ```sh
@@ -129,7 +128,7 @@ Record separate identities and results, without secret values:
   installed receipt and unchanged generation bytes in two clean repository
   bindings. Socket substitution in a fixture remains a fixture seam.
 - Published candidate: exact main-push SHA, the local macOS Python 3.11 suite's
-  pass at it and service CI, annotated candidate tag, attested archive and metadata, applied active receipt.
+  pass at it and service CI, annotated candidate tag, archive and metadata digests, applied active receipt.
 - Exact deployed bytes: reviewed source SHA, Wrangler version, dry-run Worker and
   asset digests, actual Worker version/deployment ID, domain and storage bindings.
 - Live acceptance: two repositories with matching delivery names, an unrelated
