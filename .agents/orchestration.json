@@ -881,6 +881,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_machine",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_machine.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_machine.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_measure_test_writes",
         "argv": [
           ".venv/bin/python",

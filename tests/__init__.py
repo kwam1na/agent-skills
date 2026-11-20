@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import atexit
 import importlib
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,6 +14,10 @@ sys.dont_write_bytecode = True
 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 # Empty means no template: every fixture's git init and clone would otherwise write the sample hooks.
 os.environ.setdefault("GIT_TEMPLATE_DIR", "")
+# Every test process gets its own machine ledger, overwriting any it inherited, so no test reads or writes the real
+# machine directory and a fixture's queue or command, which inherits this, uses the test's ledger too.
+MACHINE_DIRECTORY = os.environ["AGENT_SKILLS_MACHINE_DIR"] = tempfile.mkdtemp(prefix="agent-skills-machine-")
+atexit.register(shutil.rmtree, MACHINE_DIRECTORY, True)
 
 
 TESTS = Path(__file__).resolve().parent

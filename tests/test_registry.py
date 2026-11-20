@@ -228,6 +228,7 @@ def test_core_profile_is_exact_and_deterministic() -> None:
             "skills/orchestrate-work/references/wait-words.json",
             "skills/orchestrate-work/scripts/delivery_state.py",
             "skills/orchestrate-work/scripts/journal_words.py",
+            "skills/orchestrate-work/scripts/machine.py",
             "skills/orchestrate-work/scripts/merge_queue.py",
             "skills/orchestrate-work/scripts/narrator.py",
             "skills/orchestrate-work/scripts/region_ownership.py",
