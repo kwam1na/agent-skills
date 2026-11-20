@@ -613,11 +613,11 @@ EMPTY_STATE = {
 }
 PINNED_EMPTY_VIEWS = {
     "delivery.md": "b5eacc9b0d03fc036d219eca434188b86136421f6187692534f5d67f68cdc855",
-    "delivery.html": "246de950078486d16d389cf237b22661ae6b7bd9219d26fdeb998f88e9ae345b",
+    "delivery.html": "c49423aaad036dffd2ecab4960704a5b114b66d35abf7f98cc2fa2600bb5d5be",
 }
 PINNED_VIEWS = {
     "delivery.md": "2fc32135cd66da2136a144514b9ae7d9a78f93704b0350dd5df3ab0bf74ce29e",
-    "delivery.html": "941c56ba88efeee573fd2bdee62ce06ff0be61459eb19b9b981bf18ebcb7a299",
+    "delivery.html": "4519dc06c6329e040203c0db190779d756e8b3861b4379814508ea7e8a46f768",
 }
 
 
@@ -3409,13 +3409,15 @@ class StoryViewTests(unittest.TestCase):
         embedded = json.loads(re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S).group(1))
         self.assertEqual(embedded["story"], document["story"])
 
-    def test_the_markdown_view_shows_a_setback_with_its_cost_and_carries_one_that_still_stands(self) -> None:
-        for name, said in (
+    def test_the_markdown_view_shows_a_setback_with_its_cost_and_tells_one_that_still_stands_once(self) -> None:
+        # A setback still standing is told in the chapter it opened in, and no later chapter repeats it.
+        for name, said, unsaid in (
             ("break-stops-a-piece", ["- 2026-11-16T09:08:00Z **A setback: the main line broke**, cost 17m 00s: A check failed on the main line too. "
-                                     "It held up A. It ended when the main line was repaired."]),
+                                     "It held up A. It ended when the main line was repaired."], []),
             ("standing-break", ["- 2026-11-16T09:10:00Z **A setback: the main line broke**, still standing: The full run failed at d7daad0: "
                                 "The full run failed on the main line. It still stands.",
-                                "### B landed · 2026-11-16T09:50:00Z\n\n48m after it was picked up.\n\n- A setback still stands: the main line broke.\n"]),
+                                "### B landed · 2026-11-16T09:50:00Z\n\n48m after it was picked up.\n"],
+             ["A setback still stands: the main line broke."]),
         ):
             folder = ROOT / "tests" / "fixtures" / "narrator" / name
             journal = [json.loads(line) for line in (folder / "journal.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -3424,6 +3426,9 @@ class StoryViewTests(unittest.TestCase):
             for line in said:
                 with self.subTest(name=name, line=line):
                     self.assertIn(line, view[view.index("## Story"):])
+            for line in unsaid:
+                with self.subTest(name=name, absent=line):
+                    self.assertNotIn(line, view)
 
     def test_the_wrapper_tells_the_story_with_the_plan_beside_the_record(self) -> None:
         directory = Path(tempfile.mkdtemp())
