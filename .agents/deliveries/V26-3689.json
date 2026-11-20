@@ -47,7 +47,12 @@
         "skills/orchestrate-work/references/orchestration-guide.md",
         "docs/own-deliveries.md",
         "tests/test_lead_wait.py",
-        "tests/test_orchestration_render.py"
+        "tests/test_orchestration_render.py",
+        "skills/delivery-views/*",
+        "hosted/delivery-viewer/*",
+        "tests/test_delivery_views_hosted.py",
+        "tests/test_delivery_views_page.py",
+        "docs/hosted-deliveries.md"
       ]
     }
   },
@@ -163,6 +168,43 @@
           "id": "v26-3683-4",
           "text": "No fixed rule replaces the agent's judgement."
         }
+      ]
+    },
+    "V26-3693": {
+      "title": "Make the hosted page look like the local live view",
+      "lane": "lane-3",
+      "why": "The operator added it on 2026-11-20: the hosted page falls back to Georgia and the system sans because its policy and asset build carry none of the local view's fonts.",
+      "criteria": [
+        {
+          "id": "v26-3693-1",
+          "text": "On the hosted page, Newsreader, Geist and Geist Mono load from the hosted origin, headings, body and mono text compute to the same families and weights as the local view, and the page's policy differs from today's only by font-src 'self', with no third-party request."
+        },
+        {
+          "id": "v26-3693-2",
+          "text": "No full-width hosting strip is drawn: a current publication shows only in the hero's live line, with source, published and revision times on hover or focus, and a pending, retrying, failed or stale publication stays visible there without interaction and keeps its live-region announcement."
+        }
+      ]
+    },
+    "V26-3692": {
+      "title": "Publish the local live view's record in full on the hosted page",
+      "lane": "lane-3",
+      "why": "The operator added it on 2026-11-20 after finding this delivery's own hosted page omits its integrate/shared-machine-capacity base: the hosted snapshot schema drops meta.integration and the integration facts.",
+      "criteria": [
+        {
+          "id": "v26-3692-1",
+          "text": "For the same record, the hosted page shows the same chapters, story, integration step (base, Rejoined main and the four Before it rejoins stops, moving as integration facts are journalled), reasons and history as the local live view, with no 'not published on the hosted page' or '[Local reference omitted]' text."
+        },
+        {
+          "id": "v26-3692-2",
+          "text": "A configured secret's value or a value under a credential-named key never reaches the hosted snapshot; the cut is refused or the value replaced, and the status names the bounded code."
+        },
+        {
+          "id": "v26-3692-3",
+          "text": "The worker accepts the new snapshot version and refuses the old, and the docs, skill page and catalog say what a hosted link now exposes and what it never publishes."
+        }
+      ],
+      "after": [
+        "V26-3693"
       ]
     }
   },
