@@ -2161,6 +2161,16 @@
   "environment": {
     "PYTHONDONTWRITEBYTECODE": "1"
   },
+  "inherit": [
+    "PYTHONDONTWRITEBYTECODE"
+  ],
+  "reuse": {
+    "tools": [
+      "git",
+      "node",
+      "npm"
+    ]
+  },
   "ready": [
     "gh",
     "pr",

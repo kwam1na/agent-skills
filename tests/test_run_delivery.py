@@ -7091,11 +7091,13 @@ class LiveLeadChangesTests(unittest.TestCase):
         binding_path = m / ".agents/orchestration.json"
         binding = json.loads(binding_path.read_text())
         binding.update(alwaysRun=[{**entry("always"), "argv": ["true"]}],
-                       selection={"lead": True, "catalogue": [entry("unit"), entry("other")]})
+                       selection={"lead": True, "catalogue": [entry("unit"), entry("other"), entry("excluded")]},
+                       reuse={"exclude": [{"check": "excluded", "why": "the fixture's"}]})
         binding_path.write_text(json.dumps(binding, indent=2) + "\n")
         conf_path = m / ".agents/run-delivery.json"
         conf = json.loads(conf_path.read_text())
-        conf["gates"] = ["check", {"id": "lint", "argv": ["sh", "-c", "test -f src/app.txt"]}]
+        conf["gates"] = ["check", {"id": "lint", "argv": ["sh", "-c", "test -f src/app.txt"]},
+                         {"id": "unit", "argv": ["true"]}]
         conf_path.write_text(json.dumps(conf, indent=2) + "\n")
         commit(m, "FX-1: gates by id and a catalogue")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
@@ -7130,7 +7132,10 @@ class LiveLeadChangesTests(unittest.TestCase):
             self.assertRegex(seen["out"], r"prepare and checkout: \d+s of the run's \d+s")
         with self.subTest("a gate named by id leaves a runner record, an inline gate a checkout record"):
             results = {r["id"]: r for r in seen["gates"]["results"]}
-            self.assertEqual(list(results), ["check", "lint"])
+            self.assertEqual(list(results), ["check", "lint", "unit"])
+            # An inline gate with a binding check's id records that check's definition, not one of its own argv.
+            self.assertEqual((results["unit"]["record"]["where"], results["unit"]["record"]["definition"]),
+                             ("checkout", next(r for r in kept if r["check"] == "unit")["definition"]))
             self.assertEqual((results["check"]["record"]["where"], results["check"]["record"]["head"],
                               results["check"]["record"]["result"]), ("runner", head, "passed"))
             self.assertEqual(set(results["lint"]["record"]),
@@ -7172,7 +7177,8 @@ class LiveLeadChangesTests(unittest.TestCase):
                      made("other", "2026-01-01T00:00:02Z", "skipped", head),
                      made("always", "2026-01-01T00:00:01Z", "failed", head),
                      made("always", "2026-01-01T00:00:05Z", "passed", parent),
-                     made("lint", "2026-01-01T00:00:02Z", "passed", head)]
+                     made("lint", "2026-01-01T00:00:02Z", "passed", head),
+                     made("excluded", "2026-01-01T00:00:02Z", "passed", head)]
             (wt / ".orchestration/review/FX-3").mkdir(parents=True, exist_ok=True)
             (wt / ".orchestration/review/FX-3/checks.jsonl").write_text("".join(json.dumps(r) + "\n" for r in lines))
             found = fx.call("handoff_records", "FX-3", head, cwd=wt, delivery="FX-1")
@@ -7209,6 +7215,159 @@ class LiveLeadChangesTests(unittest.TestCase):
             self.assertEqual({n: r["result"] for n, r in fx.call("handoff_records", "FX-2", failed, cwd=wt,
                                                                 delivery="FX-1").items()},
                              {"check": "failed", "unit": "passed", "always": "passed"})
+
+    def test_guards_run_where_a_change_is_checked_and_the_lead_sees_what_applies(self) -> None:
+        """A guard runs first at `gate`, and a pass at the same tree is reused; a recorded skip reaches the hand-off;
+        `lead-accept` shows whether each selected check's record applies, and records a reuse grant; `lead-push` runs
+        the guards at the commit it publishes and refuses a failure unless the lead says why."""
+        from tests.test_run_delivery_supervisor import hand_off, kinds, record, supervised
+
+        fx = Fixture(self.release.generation, self.release.receipt)
+        self.addCleanup(fx.close)
+        supervised(fx)
+        m = fx.main
+        (m / "tools/guard.py").write_text(
+            "import pathlib, sys\n"
+            "two, a, b = (pathlib.Path(name) for name in ('src/two.txt', 'docs/a.txt', 'docs/b.txt'))\n"
+            "sys.exit(1 if two.exists() and two.read_text() == 'bad\\n' or a.exists() and b.exists() else 0)\n")
+        entry = lambda name, script: {"id": name, "argv": [sys.executable, "-B", f"tools/{script}"], "cwd": ".",
+                                      "reasons": ["the fixture's"], "prerequisites": []}
+        binding_path = m / ".agents/orchestration.json"
+        binding = json.loads(binding_path.read_text())
+        binding["selection"] = {"lead": True, "catalogue": [entry("guard", "guard.py"), entry("unit", "check.py")],
+                                "guards": ["guard"]}
+        binding_path.write_text(json.dumps(binding, indent=2) + "\n")
+        commit(m, "FX-1: a guard")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        self.assertEqual(fx.flow("lead-init", cwd=m)[0], 0)
+        with self.subTest("a diff the guard rejects fails gate, naming it, before the repository's gates run"):
+            self.assertEqual(fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "lane-2", cwd=m)[0], 0)
+            wt = fx.lane("FX-3")
+            review = wt / ".orchestration/review/FX-3"
+            (wt / "src/two.txt").write_text("bad\n")
+            commit(wt, "FX-3: a diff the guard rejects")
+            code, out = fx.flow("gate", "FX-3", cwd=wt)
+            self.assertEqual(code, 1, out)
+            self.assertIn("the guard(s) guard didn't pass: the repository's gates don't run", out)
+            self.assertNotIn("gate check:", out)
+            gates = json.loads((review / "gates.json").read_text())
+            self.assertEqual((gates["passed"], gates["results"], [(r["check"], r["result"], r["where"])
+                                                                   for r in gates["guards"]["records"]]),
+                             (False, [], [("guard", "failed", "runner")]))
+        with self.subTest("a second gate at the same tree reuses the guard's pass"):
+            (wt / "src/two.txt").write_text("two\n")
+            commit(wt, "FX-3: two")
+            code, out = fx.flow("gate", "FX-3", cwd=wt)
+            self.assertEqual(code, 0, out)
+            self.assertRegex(out, r"guard guard: guard passed in [\d.]+s at \w+ \(runner\); no median yet\n")
+            self.assertRegex(out, r"prepare and checkout: \d+s")
+            self.assertLess(out.index("guard guard:"), out.index("gate check:"))
+            first = json.loads((review / "gates.json").read_text())["guards"]["records"][0]
+            code, out = fx.flow("gate", "FX-3", cwd=wt)
+            self.assertEqual(code, 0, out)
+            self.assertIn(f"guard guard: reused the pass from {first['at']}", out)
+            guards = json.loads((review / "gates.json").read_text())["guards"]
+            self.assertEqual((guards["reused"], guards["records"]), (["guard"], [first]))
+            (review / "context.md").write_text("- fixture evidence\n")
+            code, out = fx.flow("review-prepare", "FX-3", "--round", "1", cwd=wt)
+            self.assertEqual(code, 0, out)
+            self.assertIn(f"guards: guard passed at {first['head'][:10]} (reused)\n", out)
+        with self.subTest("--skip-guards without --why, or --why alone, is a usage error"):
+            for argv, said in ((["--skip-guards"], "--skip-guards needs --why"), (["--why", "x"], "--why goes with")):
+                code, out = fx.flow("gate", "FX-3", *argv, cwd=wt)
+                self.assertEqual(code, 2, out)
+                self.assertIn(said, out)
+        seen: dict = {}
+
+        def before(lane: Path, url: str) -> None:
+            code, out = fx.flow("check", "FX-2", "unit,check", cwd=lane)
+            self.assertEqual(code, 0, out)
+            code, out = fx.flow("gate", "FX-2", "--skip-guards", "--why", "the guard is being fixed", cwd=lane)
+            self.assertEqual(code, 0, out)
+            self.assertIn("guards skipped: the guard is being fixed", out)
+            folder = lane / ".orchestration/review/FX-2"
+            seen.update(head=sh("git", "rev-parse", "HEAD", cwd=lane).stdout.strip(),
+                        kept={r["check"]: r for r in map(json.loads, (folder / "checks.jsonl").read_text().splitlines())},
+                        gates=json.loads((folder / "gates.json").read_text()))
+
+        out = hand_off(fx, "FX-2", "lane-1", checks="unit", before=before)
+        head = seen["head"]
+        with self.subTest("a recorded skip sits under guards, the hand-off shows it, and gates_summary still passes"):
+            self.assertEqual(seen["gates"]["guards"], {"ids": ["guard"], "skipped": True,
+                                                       "why": "the guard is being fixed"})
+            self.assertEqual([r["id"] for r in seen["gates"]["results"]], ["check"])
+            self.assertIn(f"- guards skipped at {head[:10]}: the guard is being fixed\n", out)
+            self.assertIn(f"Guards skipped at {head[:10]}: the guard is being fixed.", out)
+            self.assertIn(f"- validation: gates at {head[:10]}: check ok", out)
+        with self.subTest("an inline gate's checkout record takes the definition of the binding's check of its id"):
+            gate_record = seen["gates"]["results"][0]["record"]
+            self.assertEqual((gate_record["where"], gate_record["definition"]),
+                             ("checkout", seen["kept"]["check"]["definition"]))
+        with self.subTest("lead-accept shows whether each selected check's record applies, and its median"):
+            code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+            self.assertEqual(code, 1, out)
+            self.assertIn(f"  check unit: its record at {head[:10]} applies at the handed head, unless the queue's facts "
+                          "differ; no median yet\n", out)
+            self.assertIn(f"  guards skipped at {head[:10]}: the guard is being fixed\n", out)
+            item = next(i for i in record(fx)["state"]["queue"] if i["subject"] == "FX-2")
+            failed = {**next(e for e in item["evidence"] if e["check"] == "unit"), "result": "failed"}
+            lines = fx.call("reuse_lines", {"head": head, "evidence": [failed, *(e for e in item["evidence"]
+                                                                                if e["check"] == "check")]},
+                            ["unit", "check", "guard"], cwd=m, delivery="FX-1")
+            self.assertEqual(lines, ["check unit: runs: the lane's run failed; no median yet",
+                                     "check check: runs: it ran in the lane's own checkout, not the way the queue runs "
+                                     "it; no median yet",
+                                     "check guard: no record in the hand-off, so it runs; no median yet"])
+        with self.subTest("--reuse needs --checks and --why, and records the grant through select"):
+            for argv, said in ((["--reuse", "unit", "--why", "w"], "--reuse goes with --checks"),
+                               (["--checks", "unit", "--reuse", "unit"], "--reuse needs --why"),
+                               (["--checks", "unit", "--why", "w"], "--why goes with --reuse")):
+                code, out = fx.flow("lead-accept", "FX-2", *argv, cwd=m)
+                self.assertEqual(code, 2, out)
+                self.assertIn(said, out)
+            code, out = fx.flow("lead-accept", "FX-2", "--checks", "unit", "--reuse", "unit", "--why",
+                                "the base brought in only docs", cwd=m)
+            self.assertEqual(code, 0, out)
+            self.assertIn(f"  check unit: its record at {head[:10]} applies at the handed head under the grant, unless "
+                          "the queue's facts differ; no median yet\n", out)
+            item = next(i for i in record(fx)["state"]["queue"] if i["subject"] == "FX-2")
+            decision = kinds(fx, "decision.recorded")[-1]
+            self.assertEqual((item["leadSelection"]["reuse"]["checks"], item["leadSelection"]["reuse"]["decision"],
+                              decision["data"]["why"]), (["unit"], decision["id"], "the base brought in only docs"))
+        remote = lambda: sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=m).stdout.split()[0]
+        decided = lambda: len(kinds(fx, "decision.recorded"))
+        with self.subTest("lead-push publishes when the guards pass at the commit, with no decision"):
+            (m / "docs/a.txt").write_text("a\n")
+            commit(m, "lead: a")
+            published, decisions = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip(), decided()
+            code, out = fx.flow("lead-push", cwd=m)
+            self.assertEqual(code, 0, out)
+            self.assertIn(f"Running the guards guard at {published[:12]} before publishing.", out)
+            self.assertEqual((remote(), decided()), (published, decisions))
+        with self.subTest("lead-push refuses a merge a guard rejects though each parent passes, publishing nothing"):
+            sh("git", "checkout", "-q", "-b", "side", "HEAD~1", cwd=m)
+            (m / "docs/b.txt").write_text("b\n")
+            commit(m, "lead: b")
+            sh("git", "checkout", "-q", "feature/FX-1", cwd=m)
+            sh("git", "-c", "user.name=Lead", "-c", "user.email=lead@example.test", "merge", "-q", "--no-ff", "-m",
+               "lead: merge b", "side", cwd=m)
+            queue = [sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/merge_queue.py", "--repo", m,
+                     "--remote", "origin", "--base", "feature/FX-1", "run-checks", "--checks", "guard", "--head"]
+            for parent in ("HEAD^1", "HEAD^2"):
+                said = json.loads(sh(*queue, sh("git", "rev-parse", parent, cwd=m).stdout.strip(), cwd=m, env=fx.env).stdout)
+                self.assertEqual(said[0]["result"], "passed", parent)
+            merged = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+            code, out = fx.flow("lead-push", cwd=m)
+            self.assertEqual(code, 2, out)
+            self.assertIn(f"the guard(s) guard didn't pass at {merged[:12]}, so nothing was published", out)
+            self.assertEqual(remote(), published)
+        with self.subTest("lead-push --skip-guards --why publishes and journals the decision"):
+            code, out = fx.flow("lead-push", "--skip-guards", "--why", "the lead fixes the guard next", cwd=m)
+            self.assertEqual(code, 0, out)
+            self.assertEqual(remote(), merged)
+            decision = kinds(fx, "decision.recorded")[-1]["data"]
+            self.assertEqual(decision, {"text": f"published {merged[:12]} to feature/FX-1 without running the guards guard",
+                                        "why": "the lead fixes the guard next"})
 
     def held_check(self, failures: list[str]):
         from tests.test_run_delivery_supervisor import hand_off, record, supervised
@@ -8817,9 +8976,11 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         self.assertEqual(row, ("wrong", "the gates name checks the binding doesn't define: nosuch; fix: name a "
                                         "selection.catalogue, alwaysRun or fallback id, or correct run-delivery.json gates"),
                          out)
-        code, said = fx.flow("gate", "FX-2", cwd=m)
-        self.assertEqual(code, 2, said)
-        self.assertIn("the gates name checks the binding doesn't define: nosuch", said)
+        for argv in (("gate", "FX-2"), ("ship",)):  # each refuses before it runs or makes anything
+            code, said = fx.flow(*argv, cwd=m)
+            self.assertEqual(code, 2, said)
+            self.assertIn("the gates name checks the binding doesn't define: nosuch", said)
+        self.assertFalse((m / "lanes/ship-FX-1").exists())
         row, out = doctor_with(["lint", venv], [["true"]])
         self.assertEqual(row, ("ok", "2 gate(s): lint, venv; run through run-checks: lint; made by the prepare steps: "
                                      ".venv/bin/python"), out)

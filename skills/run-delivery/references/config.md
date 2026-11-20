@@ -145,6 +145,8 @@ checks may need no file at all.
   // runs it through merge_queue.py run-checks at HEAD, the way the queue does, so its record says where: runner.
   // An inline gate runs in the lane's checkout, and its record says where: checkout, with no environment or host.
   // `gates.json` keeps each gate's record under its result; doctor reports an id the binding doesn't define.
+  // Before them, `gate` runs the binding's `selection.guards` through run-checks, reusing a guard's pass at the same
+  // tree; `gate --skip-guards --why` skips them, and `gates.json` keeps either under `guards`.
   // A gate whose argv equals inApp.build.argv also stamps the in-app build when every gate passes.
   "cleanup": {                                // optional
     "deleteRemoteBranches": false,            // lead-cleanup deletes a merged story's remote branch only if true

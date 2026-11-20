@@ -2008,6 +2008,8 @@ def review_prepare(args) -> None:
     state_tool("focus", "--lane", lane, "--text", f"{key} review round {n}", "--state", "reviewing", check=False)
     print(f"{key} round {n}: candidate {candidate[:10]}, tree {tree[:10]}" + (f" (restart {len(restarts)})" if restarts else ""))
     print(f"lenses: {lenses_text(lenses, reason, requested)}")
+    for line in guard_lines(c, key, repo(), candidate):  # shown, never run here
+        print(line)
     print()
     if n == 1 and not restarts:
         print("Start one reviewer per lens, in parallel, each with exactly this prompt. Keep track of each reviewer: "
@@ -3137,11 +3139,7 @@ def handoff_records(key: str, head: str) -> dict[str, dict]:
     from a gate counts alike; one at a commit `head` doesn't hold is left out, and so is a latest one that was skipped,
     which no evidence entry can carry. Whether a record applies is the queue's to answer."""
     c = cfg()
-    folder = review_dir(key)
-    kept = folder / CHECK_RECORDS
-    records = [json.loads(line) for line in kept.read_text(encoding="utf-8").splitlines() if line.strip()] if kept.exists() else []
-    gates = load_json(folder / "gates.json") or {}
-    records += [r["record"] for r in gates.get("results", []) if isinstance(r.get("record"), dict)]
+    records = kept_records(review_dir(key))
     excluded = {entry.get("check") for entry in ((c.binding or {}).get("reuse") or {}).get("exclude") or []
                 if isinstance(entry, dict)}
     known = set(binding_checks(c.binding)) - excluded
@@ -3191,9 +3189,98 @@ def checkout_record(c, g: dict, head: str, tree: str, code: int, seconds: float)
             "where": "checkout"}
 
 
+def guard_ids(binding: dict | None) -> list[str]:
+    """The binding's guards: the catalogue checks every candidate runs, which a lane meets first at `gate`."""
+    guards = ((binding or {}).get("selection") or {}).get("guards") or []
+    return [name for name in guards if isinstance(name, str)]
+
+
+def kept_records(folder: Path) -> list[dict]:
+    """Every run record a story's review folder keeps: `check`'s, and the last gate run's, its guards' included."""
+    kept = folder / CHECK_RECORDS
+    records = [json.loads(line) for line in kept.read_text(encoding="utf-8").splitlines() if line.strip()] if kept.exists() else []
+    gates = load_json(folder / "gates.json") or {}
+    records += [r["record"] for r in gates.get("results", []) if isinstance(r.get("record"), dict)]
+    records += [r for r in (gates.get("guards") or {}).get("records", []) if isinstance(r, dict)]
+    return records
+
+
+@contextlib.contextmanager
+def queue_reader(c):
+    """The release's merge queue runner over this checkout, for `applies` and the binding it reads at a commit: never
+    run, only asked."""
+    merge_queue = _merge_queue()
+    runner = merge_queue.Runner(repo(), repo(), remote=c.remote, base=c.base_branch)
+    try:
+        yield runner
+    except merge_queue.Stop as error:
+        raise Stop(f"the merge queue can't answer: {error.reason}: {error.detail}") from None
+    finally:
+        shutil.rmtree(runner._bootstrap_hooks, ignore_errors=True)
+
+
+def record_reasons(runner, record: dict, name: str, tree: str, binding: dict, own: set[str] | None = None) -> list[str]:
+    """Why a record doesn't stand for a run of `name` at `tree`, as the queue's `applies` answers, or nothing. The
+    environment and host facts are the queue's to compare, at its own run."""
+    check = binding_checks(binding).get(name)
+    if check is None:
+        return [f"the binding has no check {name}"]
+    return runner.applies(record, check, tree, binding, None, own=own)
+
+
+def gate_guards(c, key: str, head: str, tree: str) -> tuple[dict, bool]:
+    """Run the binding's guards at HEAD through run-checks, before the repository's gates, reusing a guard's latest
+    record at this tree when it applies. Prints each guard's result and median, and the prepare time."""
+    ids = guard_ids(c.binding)
+    kept = kept_records(review_dir(key))
+    reused, run_ids = {}, []
+    with queue_reader(c) as runner:
+        binding = runner.read_binding(head)
+        for name in ids:
+            at_tree = [r for r in kept if r.get("check") == name and r.get("tree") == tree]
+            latest = max(at_tree, key=recorded_at) if at_tree else None
+            if latest is not None and not record_reasons(runner, latest, name, tree, binding):
+                reused[name] = latest
+            else:
+                run_ids.append(name)
+    records, seconds = check_runs(c, head, run_ids) if run_ids else ([], 0.0)
+    ran = {record["check"]: record for record in records}
+    for name in ids:
+        record = reused.get(name) or ran[name]
+        how = f"reused the pass from {record['at']}" if name in reused else record_line(record)
+        print(f"guard {name}: {how}; {check_median(c, name)}")
+    if run_ids:
+        took = sum(record.get("seconds", 0) for record in records)
+        print(f"  prepare and checkout: {max(0, round(seconds - took))}s of the run's {round(seconds)}s")
+    passed = all((reused.get(name) or ran[name])["result"] == "passed" for name in ids)
+    return {"ids": ids, "reused": sorted(reused), "records": [*reused.values(), *records]}, passed
+
+
+def guard_lines(c, key: str, root: Path, head: str) -> list[str]:
+    """Each guard's record at `head` from the lane's last gate run, or its recorded skip, as a lead or lane reads it."""
+    ids = guard_ids(c.binding)
+    if not ids:
+        return []
+    record = load_json(root / c.work / "review" / key / "gates.json") or {}
+    if record.get("head") != head:
+        return [f"guards: no gate run at {head[:10]}"]
+    guards = record.get("guards") or {}
+    if guards.get("skipped"):
+        return [f"guards skipped at {head[:10]}: {guards.get('why')}"]
+    found = {r.get("check"): r for r in guards.get("records", [])}
+    return ["guards: " + "; ".join(
+        f"{name} {found[name]['result']} at {found[name]['head'][:10]}"
+        + (" (reused)" if name in guards.get("reused", []) else "") if name in found else f"{name} not recorded"
+        for name in ids)]
+
+
 def gate(args) -> None:
     c = cfg()
     key = c.require(args.key)
+    if args.skip_guards and not (args.why or "").strip():
+        raise Stop("--skip-guards needs --why, the reason the guards don't run, which the hand-off shows")
+    if args.why and not args.skip_guards:
+        raise Stop("--why goes with --skip-guards")
     if not c.gates:
         raise Stop(f"{c.path} declares no gates")
     unknown = [g["id"] for g in c.gates if g.get("unknown")]
@@ -3204,7 +3291,16 @@ def gate(args) -> None:
     git("fetch", "-q", c.remote, c.base_branch)
     results, passed, built = [], True, False
     build_argv = (c.in_app or {}).get("build", {}).get("argv")
-    gates = list(c.gates)
+    guards = None
+    if args.skip_guards:
+        guards = {"ids": guard_ids(c.binding), "skipped": True, "why": args.why.strip()}
+        print(f"guards skipped: {guards['why']}")
+    elif guard_ids(c.binding):
+        guards, passed = gate_guards(c, key, head, tree)
+        if not passed:
+            failed = [r["check"] for r in guards["records"] if r["check"] in guards["ids"] and r["result"] != "passed"]
+            print(f"the guard(s) {', '.join(failed)} didn't pass: the repository's gates don't run")
+    gates = list(c.gates) if passed else []
     while gates and passed:
         if gates[0].get("check"):
             # Gates named by id, one after another, run in one run-checks call: one prepared checkout for them all.
@@ -3246,7 +3342,8 @@ def gate(args) -> None:
     if passed and built:  # the gate built the in-app artifact from this clean head: stamp it, saving a rebuild
         write_stamp(repo() / c.in_app["build"]["artifact"], head, tree)
     (review_dir(key) / "gates.json").write_text(json.dumps(
-        {"head": head, "at": now(), "passed": passed, "results": results}, indent=2) + "\n")
+        {"head": head, "at": now(), "passed": passed, "results": results, **({"guards": guards} if guards else {})},
+        indent=2) + "\n")
     print(f"gates {'passed' if passed else 'FAILED'} at {head[:10]}" + (" (in-app build stamped)" if passed and built else ""))
     if not passed:
         sys.exit(1)
@@ -5479,7 +5576,9 @@ def handoff(args) -> None:
     if when and when != "pipeline-green" or when == "pipeline-green" and pr_line:
         # A review move a refused call left owed is retried here, at the latest.
         review_move(c, key, when, last=True)
-    post = f"hand-off: {args.pr}, head {head[:10]}, {len(rounds)} review round(s); {validation}."
+    guarded = guard_lines(c, key, repo(), head)
+    post = f"hand-off: {args.pr}, head {head[:10]}, {len(rounds)} review round(s); {validation}." + "".join(
+        f" {line[0].upper() + line[1:]}." for line in guarded if line.startswith("guards skipped"))
     if base_merge:
         post += f" Review carried from {reviewed} across base commits {', '.join(base_merge['baseCommits'])}."
     records = handoff_records(key, head)
@@ -5495,6 +5594,7 @@ def handoff(args) -> None:
         + (f"; history: {'; '.join(histories)}" if histories else ""),
         f"- review lenses: {lenses_text(story_lenses, lenses_reason, requested)}",
         f"- validation: {validation}",
+        *(f"- {line}" for line in guarded),
         *([f"- checks run: {checks_shown(ran, added)}", f"- checks run, as recorded: {checks_recorded(ran, records)}"]
           if ran else []),
         f"- check records: {records_shown(records)}",
@@ -8433,10 +8533,17 @@ def lead_push(args) -> None:
         raise Stop("initialize the delivery record before publishing the base")
     if args.wait_seconds < 0:
         raise Stop("--wait-seconds must be zero or greater")
+    if args.skip_guards and not (args.why or "").strip():
+        raise Stop("--skip-guards needs --why, the reason the guards don't run, which is journaled")
+    if args.why and not args.skip_guards:
+        raise Stop("--why goes with --skip-guards")
     head = clean_head()
     before = remote_head(c.base_branch)
     if not before:
         raise Stop(f"{c.remote} has no base branch {c.base_branch}")
+    skipped = None
+    if before != head:
+        skipped = push_guards(c, head, args)
 
     scripts = str(c.release / "skills/orchestrate-work/scripts")
     if scripts not in sys.path:
@@ -8467,9 +8574,38 @@ def lead_push(args) -> None:
                 check_lead_plan_commits(c, current, head)
             git("push", c.remote, f"{head}:refs/heads/{c.base_branch}")
             state_tool("journal", "--kind", "base.published", "--data", json.dumps({"base": {"ref": c.base_ref, "head": head}, "from": current}))
+            if skipped:
+                state_tool("journal", "--kind", "decision.recorded", "--text",
+                           f"published {head[:12]} to {c.base_branch} without running the guards {', '.join(skipped)}",
+                           "--why", args.why.strip())
     except delivery_state.StateError as error:
         raise Stop(f"{error.code}: {error}") from None
     print(f"published {c.remote}/{c.base_branch} at {head[:12]}")
+
+
+def push_guards(c, head: str, args) -> list[str] | None:
+    """Run the guards of the binding at `head` through run-checks at the commit `lead-push` would publish, since the
+    lead's own checkout isn't assumed prepared, refusing on a failure, which protects the shared base. With
+    --skip-guards, run none and return their ids, for the decision the push journals."""
+    shown = run(["git", "show", f"{head}:.agents/orchestration.json"], cwd=repo(), check=False)
+    try:
+        ids = guard_ids(json.loads(shown.stdout)) if shown.returncode == 0 else []
+    except json.JSONDecodeError:
+        ids = []  # an unreadable binding is the queue's to refuse
+    if not ids:
+        return None
+    if args.skip_guards:
+        print(f"guards skipped: {', '.join(ids)}: {args.why.strip()}")
+        return ids
+    print(f"Running the guards {', '.join(ids)} at {head[:12]} before publishing.", flush=True)
+    records, _ = check_runs(c, head, ids)
+    for record in records:
+        print(f"  guard {record_line(record)}; {check_median(c, record['check'])}")
+    failed = [record for record in records if record["check"] in ids and record["result"] != "passed"]
+    if failed:
+        raise Stop(f"the guard(s) {', '.join(r['check'] for r in failed)} didn't pass at {head[:12]}, so nothing was "
+                   f"published; fix the base, or publish with --skip-guards --why <reason>")
+    return None
 
 
 def story_added(c, key: str, why: str | None = None) -> dict:
@@ -9291,6 +9427,31 @@ def accepted_lenses(declared: list[str], journal: list[dict], key: str, meta: di
     return list(start["data"]["lenses"])
 
 
+def reuse_lines(item: dict, ids: list[str], granted: list[str] | set[str] = ()) -> list[str]:
+    """For each selected check, whether the hand-off's record of it applies at the handed head, as the queue's `applies`
+    answers it (a granted id with the grant's own-diff bound), or every reason it doesn't, and its measured median.
+    The environment and host facts are the queue's to compare at its own run."""
+    c = cfg()
+    head, lines = item["head"], []
+    with queue_reader(c) as runner:
+        base_head = git("rev-parse", c.base_ref)
+        binding = runner.read_binding(base_head)
+        tree = runner.tree_of(head)
+        for name in ids:
+            entry = next((e for e in item.get("evidence", []) if e.get("check") == name), None)
+            median = check_median(c, name)
+            if entry is None:
+                lines.append(f"check {name}: no record in the hand-off, so it runs; {median}")
+                continue
+            own = runner.own_paths(base_head, [entry["head"], head]) if name in granted else None
+            reasons = record_reasons(runner, entry, name, tree, binding, own) if tree else ["the handed head isn't here"]
+            said = (f"its record at {entry['head'][:10]} applies at the handed head"
+                    + (" under the grant" if name in granted else "") + ", unless the queue's facts differ"
+                    if not reasons else f"runs: {'; '.join(reasons)}")
+            lines.append(f"check {name}: {said}; {median}")
+    return lines
+
+
 def lead_accept(args) -> None:
     c = cfg()
     if not (c.state / "state.json").is_file():
@@ -9312,6 +9473,12 @@ def accept_story(c, args) -> None:
     if (args.checks is not None or args.full_suite) and not lead_selects(c):
         raise Stop("the binding doesn't enable lead selection (selection.lead), so the queue selects the checks: "
                    "accept with neither --checks nor --full-suite")
+    if args.reuse is not None and args.checks is None:
+        raise Stop("--reuse goes with --checks: the grant lives in the lead's selection at the handed head")
+    if args.reuse is not None and not (args.why or "").strip():
+        raise Stop("--reuse needs --why, why that reuse is safe, which select journals as the lead's decision")
+    if args.why and args.reuse is None:
+        raise Stop("--why goes with --reuse")
     if args.full_suite and provider_selects(c):
         raise Stop("the binding names a provider, so a candidate with no lead selection runs the provider's answer, "
                    "and the fallback only when the provider can't give one: --full-suite can't promise the fallback; "
@@ -9454,7 +9621,15 @@ def accept_story(c, args) -> None:
                             "with --full-suite to run the fallback")
     lane_root = c.lane_checkout(key)
     accepted_blocked = set(args.accept_blocked or [])
+    shown = chosen if chosen is not None else proposal if proposal is not None else (
+        fallback_ids(c) if args.full_suite else [])
+    if shown and not merged:
+        granted = {name.strip() for name in (args.reuse or "").split(",") if name.strip()}
+        for line in reuse_lines(item, shown, granted):
+            print(f"  {line}")
     if lane_root.exists():
+        for line in guard_lines(c, key, lane_root, head):  # shown, never run here
+            print(f"  {line}")
         _, gate_problems = gates_summary(key, lane_root, head)
         problems += gate_problems
         review = lane_root / c.work / "review" / key
@@ -9500,7 +9675,9 @@ def accept_story(c, args) -> None:
         reason = args.reason or f"chosen at acceptance from {key}'s diff and its hand-off's checks"
         listed = [added[name] if name in added else name for name in chosen]
         done = state_tool("select", "--subject", key, "--binding", str(c.binding_path), "--head", head, "--checks",
-                          json.dumps(listed), "--reason", reason, check=False)
+                          json.dumps(listed), "--reason", reason,
+                          *(["--reuse", args.reuse, "--why", args.why.strip()] if args.reuse is not None else []),
+                          check=False)
         answer = json.loads(done.stdout or "{}") if done.stdout.strip().startswith("{") else {}
         if done.returncode != 0:
             problems.append(f"the selection was refused: {answer.get('error') or (done.stderr or done.stdout).strip()[-400:]}")
@@ -14134,6 +14311,9 @@ def ship(args) -> None:
     if not c.ship:
         raise Stop(f"{c.delivery_where} declares no `ship`")
     s = c.ship
+    unknown = [g["id"] for g in c.gates if g.get("unknown")]
+    if unknown and not args.no_gates:  # before anything is made: the ship's gates couldn't run
+        raise Stop(f"the gates name checks the binding doesn't define: {', '.join(unknown)}; run {flow_command()} doctor")
     git("fetch", "-q", c.remote)
     branch = expand(s.get("branch", "ship/{delivery}"), delivery=c.delivery)
     checkouts = Path(expand(s.get("checkout", str(Path(c.lane_pattern).parent / "{branch}")), branch=branch.replace("/", "-")))
@@ -14245,8 +14425,6 @@ def ship_gates(c, path: Path, s: dict) -> None:
             if code != 0:
                 raise Stop(f"prepare {' '.join(argv)} failed ({code}): {out.strip()[-300:]}")
         for g in c.gates:
-            if g.get("unknown"):
-                raise Stop(f"the gate {g['id']} names a check the binding doesn't define; run {flow_command()} doctor")
             # A gate named by id runs its definition here: the ship's staged change is no commit run-checks could take.
             argv = expand_argv(g["argv"], base=s["from"], key=c.delivery, delivery=c.delivery)
             started = time.time()
@@ -15400,7 +15578,10 @@ def main(argv: list[str] | None = None) -> None:
     q.add_argument("--reason", required=True); q.set_defaults(fn=plan_review_end)
     q = command(review_commands, "check", help="validate plan-review-evidence/1 records, hand-written or written by a review")
     q.add_argument("records", nargs="+", metavar="RECORD"); q.set_defaults(fn=plan_review_check)
-    p = command(sub, "gate"); p.add_argument("key"); p.set_defaults(fn=gate)
+    p = command(sub, "gate"); p.add_argument("key")
+    p.add_argument("--skip-guards", action="store_true", help="don't run the binding's guards first; needs --why")
+    p.add_argument("--why", help="with --skip-guards: why, which gates.json keeps and the hand-off shows")
+    p.set_defaults(fn=gate)
     p = command(sub, "check", help="run checks by id at HEAD the way the merge queue does, and keep each run's record")
     p.add_argument("key"); p.add_argument("ids", nargs="+", help="the check ids, comma-separated or one an argument")
     p.set_defaults(fn=check)
@@ -15504,6 +15685,9 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=lead_upgrade_writer)
     p = command(sub, "lead-push", help="publish the lead's committed work under the merge queue lock")
     p.add_argument("--wait-seconds", type=int, default=3600, metavar="SECONDS")
+    p.add_argument("--skip-guards", action="store_true", help="publish without running the binding's guards at the "
+                   "commit; needs --why, journaled as decision.recorded")
+    p.add_argument("--why", help="with --skip-guards: why the guards don't run")
     p.set_defaults(fn=lead_push)
     p = command(sub, "lead-flake", help="declare a temporary flake for a check at the current remote base")
     p.add_argument("--check", required=True)
@@ -15547,7 +15731,10 @@ def main(argv: list[str] | None = None) -> None:
                    "recorded through the state tool's select at the handed head")
     p.add_argument("--full-suite", action="store_true", help="under selection.lead: check on the binding's fallback, "
                    "journalled as the lead's decision")
-    p.add_argument("--reason", help="with --checks or --full-suite: why"); p.set_defaults(fn=lead_accept)
+    p.add_argument("--reason", help="with --checks or --full-suite: why")
+    p.add_argument("--reuse", help="with --checks: check ids whose hand-off records the queue may reuse across paths the "
+                   "candidate doesn't change, recorded through select as the lead's grant; needs --why")
+    p.add_argument("--why", help="with --reuse: why that reuse is safe"); p.set_defaults(fn=lead_accept)
     p = command(sub, "lead-base-broken", help="name the base broken before a base re-run's verdict, ending a re-run at "
                 "that head")
     p.add_argument("--head", required=True, help="the base head that is broken")
