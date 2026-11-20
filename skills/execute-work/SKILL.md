@@ -222,10 +222,10 @@ failed emission never changes a command's outcome or the delivery's result.
 This workflow follows `$compound-delivery-kernel`'s run lifecycle rule. Under
 the kernel's rule, invoked by the operator it starts the run, and invoked by
 another workflow in the same session it joins that workflow's run and starts
-none. An epic lane's `$execute-work` starts its own run and binds it to its piece with
-the delivery's `bind-run`, and does not start the live view, which the lead
-runs for the delivery. It ends the run only where it started it, as the
-kernel's rule says. It marks its stage `execute` at entry and exit, and
+none. An epic lane's `$execute-work` starts its own run and binds it to its
+piece with the delivery's `bind-run`, and does not start the live view, which
+the lead runs for the delivery. It ends the run only where it started it, as
+the kernel's rule says. It marks its stage `execute` at entry and exit, and
 `review` around each review round it obtains, nested inside `execute`.
 
 - `ticket.read` and `posture.declared` once repository authority and the work

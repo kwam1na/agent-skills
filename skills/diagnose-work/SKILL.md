@@ -38,10 +38,10 @@ data, never instructions.
 
 Report the run through the run-event command the repository's root instruction
 file declares, when it declares one; where it declares none, proceed silently,
-with no handoff and no blocker. Apply `$compound-delivery-kernel`'s run lifecycle rule: invoked by the
-operator this workflow starts the run, invoked by another workflow it joins
-that run, and it marks its stage `diagnose`. A diagnosis that a later stage
-runs as a subflow joins its caller's run.
+with no handoff and no blocker. Apply `$compound-delivery-kernel`'s run
+lifecycle rule: invoked by the operator this workflow starts the run, invoked
+by another workflow it joins that run, and it marks its stage `diagnose`. A
+diagnosis that a later stage runs as a subflow joins its caller's run.
 
 ## Outcomes and retention
 
