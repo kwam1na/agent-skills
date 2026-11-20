@@ -68,12 +68,12 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "On Windows, which is not validated (see the README), directory links use",
     ),
     "docs/hosted-deliveries.md": (
-        "the release workflow reads no CI result, and the local suite before a tag does not attest service CI",
+        "the publish command reads no CI result, and the local suite before a tag does not attest service CI",
     ),
     "docs/product-generation.md": (
         "Tag a commit merged to `main`; a merge commit is the usual one",
-        "The workflow reads no CI result and runs no suite",
-        "it does not block a release, because the release workflow does not read it",
+        "The publish command reads no CI result and runs no suite",
+        "it does not block a release, because the publish command does not read it",
         "A run that passes every test and goes over the suite's time budget does not hold the release",
     ),
     "skills/review-work/SKILL.md": (
@@ -117,8 +117,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " `docs/solutions/<category>/<slug>-<YYYY-MM-DD>.md`",
         "On Windows, which is not validated (see above), use `.venv\\Scripts\\python.exe`",
         "on a commit merged to the default branch, usually a merge commit",
-        "CI does not block a release either: the release workflow reads no CI result",
-        "Its macOS job runs on a push there, and with a `full-matrix` label on a change request",
+        "CI does not block a release either: the publish command reads no CI result",
+        "CI runs only `cut-release`, on every change request and on each push to the default branch",
         "Stop only processes you started, by the pid you recorded, and never by"
         " pattern with `pkill` or `killall`",
         "resolves, in this repository, to the commit whose tree carries the"
@@ -150,6 +150,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "It never raises a number in the budget; only the operator does",
         "is marked `run_quietly`, never `run_serially`",
         "A run over its budget does not hold the release: the tag's annotation says the run went over",
+        "A flaky test does not hold a release: it is one the release doesn't change, and it passes when rerun on its"
+        " own at the tagged commit",
         "A lens's follow-up does not outrank a binding ruling",
         "must include the case where nothing observes the clear",
         "by mutating a file `provenance.lock.json` covers takes the digests"
@@ -255,7 +257,6 @@ WITHDRAWN_RELEASE_GATE_FILES = (
     "docs/own-deliveries.md",
     "docs/hosted-deliveries.md",
     "docs/linear-connector-check.md",
-    ".github/workflows/release.yml",
     ".github/workflows/ci.yml",
     "scripts/release_channel.py",
 )

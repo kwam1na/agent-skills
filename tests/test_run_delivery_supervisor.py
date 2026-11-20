@@ -186,6 +186,8 @@ def supervised(fx: Fixture, *, grant_ready: bool = True, merge_needs_ready: bool
                    "{expectedHead}", "{baseHead}"], fullHealth=py("full_health.py"))
     binding["fallback"] = [{"id": "check", "argv": py("check.py"), "cwd": ".", "reasons": ["every candidate"],
                             "prerequisites": []}]
+    # The check reads these from the queue's environment, which a check gets only for the names inherit lists.
+    binding["inherit"] = ["FX_SIGNALS", "FX_CHECK_SECONDS"]
     binding["state"] = {"directory": ".orchestration/state", "publishers": [], "renderers": [],
                         "forgeSnapshot": {"argv": py("snapshot.py")}, "refreshSeconds": 0}
     (m / ".agents/orchestration.json").write_text(json.dumps(binding, indent=2))
@@ -2215,8 +2217,8 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         handed = kinds(fx, "candidate.handed")[-1]
         item = self.item(fx)
         assert_facts(self, handed, "candidate.handed", {
-            "head": item["head"], "changeRequest": item["changeRequest"], "rounds": 1,
-            "checks": ["tests.test_two", "tests.test_one"]})
+            "head": item["head"], "changeRequest": item["changeRequest"], "rounds": 1, "checks": ["tests.test_two", "tests.test_one"],
+            "evidence": [{**{k: v for k, v in item["evidence"][0].items() if k != "recordedAt"}, "check": "check", "where": "checkout", "head": item["head"]}]})
 
     def test_a_check_the_story_adds_is_named_at_handoff_selected_at_acceptance_and_run_by_the_queue(self) -> None:
         fx = self.fixture()

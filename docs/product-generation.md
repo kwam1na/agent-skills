@@ -181,29 +181,41 @@ git push origin v1.2.3
 ```
 
 Tag a commit merged to `main`; a merge commit is the usual one. A commit that is not
-on `main` publishes nothing.
+on `main` publishes nothing. Then publish the tag from your machine, at the repository
+root. It needs `uv`, Node and `gh` signed in with write access to the repository:
+
+```sh
+python3 scripts/release_channel.py publish --tag v1.2.3
+```
+
+`--dry-run` builds the release and renders its notes, prints the folder holding them,
+and publishes nothing.
 
 The annotation opens the release notes, ahead of the digest table and the generated
-list of merged change requests. The release workflow:
+list of merged change requests. The publish command:
 
-- refuses a tag that is not annotated, not merged to `main`, or not strictly greater
+- refuses a tag the remote does not have, or one that is not annotated, not merged to `main`, or not strictly greater
   than every existing version tag, or whose commit does not equal or descend from the
   highest one's. Backports to an older line are unsupported;
 - stops if the release already exists, because a release is never replaced;
-- runs `scripts/cut-release.py` on the tagged tree and publishes every output file.
+- runs `scripts/cut-release.py` on the tagged tree, in its own checkout and a fresh
+  Python 3.11 environment;
+- checks the tag again, since a build takes minutes, and publishes every output file.
 
 A final becomes latest. A candidate is a prerelease and never does.
 
-The workflow reads no CI result and runs no suite. A release rests on whoever tags:
+The publish command reads no CI result and runs no suite. A release rests on whoever tags:
 before tagging, they run the full suite locally on macOS with Python 3.11, as
-[`AGENTS.md`](../AGENTS.md) describes, and it must pass. The release job cannot verify
-it. A run that passes every test and goes over the suite's time budget does not hold
-the release; the tag's annotation says it went over.
+[`AGENTS.md`](../AGENTS.md) describes, and it must pass. The publish command cannot
+verify it. A run that passes every test and goes over the suite's time budget does not hold
+the release; the tag's annotation says it went over. A flaky test does not hold a release
+either: a failure in a test the release doesn't change, which passes when rerun on its own at
+the tagged commit, is named in the annotation with its passing rerun.
 
 CI on `main` informs. It does not block a merge, because `main` is unprotected, and it
-does not block a release, because the release workflow does not read it. A merge can
-land on red, and it falls to whoever merges to read the result and fix it. CI's macOS
-job runs on pushes to `main`, and on a change request with the `full-matrix` label.
+does not block a release, because the publish command does not read it. A merge can
+land on red, and it falls to whoever merges to read the result and fix it. CI runs
+only `cut-release`, and no tests.
 Windows is not validated.
 
 Never move or reuse a release tag. A version tag that never published may be deleted to
@@ -276,7 +288,7 @@ A runtime can have that protocol and still declare 0.7.7, because `runtimeVersio
 not identify runtime bytes. Compare digests, or look for the protocol in the installed
 `runtime/cli.mjs`.
 
-Make the first version tag a candidate. The release workflow cannot be proven before a
+Make the first version tag a candidate. The publish command cannot be proven before a
 real tag, and a final can then be promoted on the same commit. The first final's
 annotation has to say that a host unable to start or message sessions now stops, and
 brings that to the operator, rather than running lanes any other way.

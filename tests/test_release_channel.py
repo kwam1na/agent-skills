@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -223,7 +224,7 @@ sys.exit(reply.get("code", 0))
 
 
 class CommandLineTests(unittest.TestCase):
-    """The exit code and output are all release.yml consumes, so the commands themselves run here."""
+    """The exit code and output are what an operator and the publish command read, so the commands themselves run here."""
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -302,7 +303,7 @@ class CommandLineTests(unittest.TestCase):
         (output / "core-v1.2.3.release.json").unlink()
         self.assertEqual(self.run_command(*arguments).returncode, 1)
 
-    @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and the release job runs on Ubuntu")
+    @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and releases are published from macOS")
     def test_existing_tells_absent_from_present_and_stops_on_anything_else(self) -> None:
         arguments = ("existing", "--tag", "v1.0.0")
         done = self.run_command(*arguments, environment=self.fake_gh(view={"stdout": "title: v1.0.0\n"}))
@@ -317,7 +318,7 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(done.returncode, 2)
         self.assertIn("invalid choice: 'ci'", done.stderr)
         source = SCRIPT.read_text(encoding="utf-8")
-        for withdrawn in ("actions/workflows", "actions/runs", "workflow_runs", "gh run", '"api"', "time.sleep", "wait_for_success"):
+        for withdrawn in ("actions/workflows", "actions/runs", "workflow_runs", "gh run", "time.sleep", "wait_for_success"):
             with self.subTest(withdrawn=withdrawn):
                 self.assertNotIn(withdrawn, source)
         for name in ("decide", "wait_for_success", "Decision", "REQUIRED_JOBS", "INFORMING_JOBS", "WAIT_LIMIT_SECONDS"):
@@ -325,129 +326,182 @@ class CommandLineTests(unittest.TestCase):
                 self.assertFalse(hasattr(channel, name))
 
 
-class WorkflowWiringTests(unittest.TestCase):
-    """Text pins cover only the wiring; the decisions above run for real."""
+FAKE_PUBLISH_GH = """#!{python}
+import json, os, sys
+folder = os.environ["FAKE_GH"]
+with open(os.path.join(folder, "script.json"), encoding="utf-8") as stream:
+    script = json.load(stream)
+argv = sys.argv[1:]
+call = {{"argv": argv}}
+if "--notes-file" in argv:
+    with open(argv[argv.index("--notes-file") + 1], encoding="utf-8") as stream:
+        call["notes"] = stream.read()
+with open(os.path.join(folder, "calls.jsonl"), "a", encoding="utf-8") as stream:
+    stream.write(json.dumps(call) + "\\n")
+key = " ".join(argv[:2]) if argv[0] in ("release", "repo") else argv[0]
+reply = script.get(key, {{"stdout": {{"repo view": "owner/name\\n", "api": "## What's Changed\\n* a change\\n"}}.get(key, "")}})
+sys.stdout.write(reply.get("stdout", ""))
+sys.stderr.write(reply.get("stderr", ""))
+sys.exit(reply.get("code", 0))
+"""
+
+
+FAKE_CUT_RELEASE = """import hashlib, json, os, sys
+if os.environ.get("FAIL_CUT"):
+    sys.exit("cut-release: a qualifier failed")
+version = sys.argv[sys.argv.index("--version") + 1]
+out = sys.argv[sys.argv.index("--out") + 1]
+os.makedirs(out)
+archive = os.path.join(out, f"core-{version}.zip")
+with open(archive, "wb") as stream:
+    stream.write(b"archive")
+digest = hashlib.sha256(b"archive").hexdigest()
+with open(os.path.join(out, f"core-{version}.release.json"), "w", encoding="utf-8") as stream:
+    json.dump({"profile": "core", "releaseId": f"core-{version}", "archiveSha256": digest}, stream)
+"""
+
+
+@unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and releases are published from macOS")
+class PublishTests(unittest.TestCase):
+    """The whole publish command against a real origin, with gh and cut-release stood in for."""
 
     def setUp(self) -> None:
-        self.workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-        head, jobs = self.workflow.split("\njobs:\n", 1)
-        self.head = head
-        guard, publish = jobs.split("\n  publish:\n", 1)
-        self.guard, self.publish = guard, publish
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.origin = self.root / "origin.git"
+        git(self.root, "init", "-q", "--bare", "-b", "main", str(self.origin))
+        self.repo = self.root / "repo"
+        git(self.root, "clone", "-q", str(self.origin), str(self.repo))
+        git(self.repo, "checkout", "-q", "-b", "main")
+        (self.repo / "scripts").mkdir()
+        (self.repo / "scripts/cut-release.py").write_text(FAKE_CUT_RELEASE, encoding="utf-8")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-q", "-m", "first")
+        git(self.repo, "push", "-q", "origin", "main")
+        git(self.repo, "tag", "-a", "v1.0.0", "-m", "The annotation.")
+        git(self.repo, "push", "-q", "origin", "v1.0.0")
+        self.gh = self.root / "fake"
+        self.gh.mkdir()
+        tool = self.gh / "gh"
+        tool.write_text(FAKE_PUBLISH_GH.format(python=sys.executable), encoding="utf-8")
+        tool.chmod(0o755)
+        self.script({"release view": {"stderr": "release not found\n", "code": 1}})
 
-    def assert_line(self, job: str, line: str) -> None:
-        # A whole line, so a suffix such as `|| true` cannot neutralise a guard and leave this green.
-        self.assertRegex(job, rf"(?m)^ *{re.escape(line)}$")
+    def script(self, replies: dict) -> None:
+        (self.gh / "script.json").write_text(json.dumps(replies), encoding="utf-8")
 
-    def test_every_guard_is_a_whole_line_that_nothing_can_excuse(self) -> None:
-        same = 'test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$GITHUB_SHA"'
-        order = 'python scripts/release_channel.py order --tag "$TAG"'
-        fetch = 'git fetch --force --tags origin "refs/tags/$TAG:refs/tags/$TAG"'
-        for line in (fetch, same, order, 'test "$(git cat-file -t "refs/tags/$TAG")" = tag',
-                     'git merge-base --is-ancestor "refs/tags/$TAG^{commit}" origin/main',
-                     'run: python scripts/release_channel.py existing --tag "$TAG" >> "$GITHUB_OUTPUT"'):
-            with self.subTest(line=line):
-                self.assert_line(self.guard, line)
-        for line in (fetch, same, order, 'gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md" $flags "$OUT"/*'):
-            with self.subTest(line=line):
-                self.assert_line(self.publish, line)
-        self.assertEqual(self.guard.count("set -euo pipefail"), 1)
-        self.assertEqual(self.publish.count("set -euo pipefail"), 1)
-        self.assertNotIn("|| true", self.workflow)
+    def publish(self, tag: str, *extra: str, environment: dict | None = None) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([sys.executable, "-B", str(SCRIPT), "publish", "--tag", tag, "--python", sys.executable, *extra],
+                              cwd=self.repo, capture_output=True, text=True,
+                              env={**os.environ, "FAKE_GH": str(self.gh), "PATH": f"{self.gh}{os.pathsep}{os.environ['PATH']}",
+                                   **(environment or {})})
 
-    def test_the_conditions_that_decide_whether_a_guard_runs_are_pinned_too(self) -> None:
-        self.assert_line(self.guard, "publish: ${{ steps.existing.outputs.publish }}")
-        self.assert_line(self.publish, "if: needs.guard.outputs.publish == 'true'")
-        self.assertEqual(len(re.findall(r"(?m)^ *(?:- )?if: ", self.guard)), 0)
-        self.assertEqual(len(re.findall(r"(?m)^ *(?:- )?if: ", self.publish)), 1)
-        for forbidden in ("set +e", "exit 0", "always()", "cancelled()", "failure()"):
-            with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, self.workflow)
+    def calls(self) -> list[dict]:
+        log = self.gh / "calls.jsonl"
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
 
-    def test_only_version_tags_trigger_publish(self) -> None:
-        self.assertRegex(self.head, r'(?m)^on:\n  push:\n    tags: \["v\[0-9\]\*"\]$')
-        self.assertNotIn("branches:", self.head)
-        self.assertNotIn("workflow_dispatch", self.head)
-        self.assertNotIn("*-v", self.head)
+    def created(self) -> list[dict]:
+        return [call for call in self.calls() if call["argv"][:2] == ["release", "create"]]
 
-    def test_write_permissions_appear_only_on_the_publish_job(self) -> None:
-        self.assertRegex(self.head, r"(?m)^permissions: \{\}$")
-        self.assertRegex(self.guard, r"(?m)^    permissions:\n      contents: read\n    outputs:$")
-        self.assertNotIn("write", self.guard)
-        self.assertRegex(self.publish, r"(?m)^    permissions:\n      contents: write\n    steps:$")
-        self.assertEqual(self.workflow.count(": write"), 1)
+    def worktrees(self) -> int:
+        return git(self.repo, "worktree", "list", "--porcelain").count("worktree ")
 
-    def test_no_job_calls_the_matrix(self) -> None:
-        self.assertNotIn("uses: ./.github/workflows/ci.yml", self.workflow)
+    def test_a_tag_publishes_every_built_file_with_its_notes_and_flags(self) -> None:
+        done = self.publish("v1.0.0")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        [create] = self.created()
+        argv = create["argv"]
+        self.assertEqual(argv[:6], ["release", "create", "v1.0.0", "--verify-tag", "--title", "v1.0.0"])
+        self.assertIn("--latest", argv)
+        self.assertEqual(sorted(Path(arg).name for arg in argv if arg.startswith(str(Path(tempfile.gettempdir()).resolve())) or "core-" in arg),
+                         ["core-v1.0.0.release.json", "core-v1.0.0.zip"])
+        positions = [create["notes"].index(text) for text in ("The annotation.", hashlib.sha256(b"archive").hexdigest(), "## What's Changed")]
+        self.assertEqual(positions, sorted(positions))
+        self.assertEqual(self.worktrees(), 1)
 
-    def test_no_step_reads_ci_or_waits_for_it(self) -> None:
-        for withdrawn in ("release_channel.py ci", "actions: read", "actions/workflows", "actions/runs", "gh run", "gh workflow",
-                          "workflow_run", "check-runs", "check-suites", "commits/$GITHUB_SHA/status", "REPOSITORY/commits"):
+    def test_a_candidate_publishes_as_a_prerelease_that_is_not_latest(self) -> None:
+        git(self.repo, "tag", "-a", "v1.1.0-rc.1", "-m", "A candidate.")
+        git(self.repo, "push", "-q", "origin", "v1.1.0-rc.1")
+        self.assertEqual(self.publish("v1.1.0-rc.1").returncode, 0)
+        [create] = self.created()
+        self.assertIn("--prerelease", create["argv"])
+        self.assertIn("--latest=false", create["argv"])
+
+    def test_a_dry_run_builds_and_prints_the_folder_and_publishes_nothing(self) -> None:
+        done = self.publish("v1.0.0", "--dry-run")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        folder = Path(done.stdout.strip())
+        self.addCleanup(shutil.rmtree, folder.parent, True)
+        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["core-v1.0.0.release.json", "core-v1.0.0.zip"])
+        self.assertEqual(self.created(), [])
+
+    def test_a_lightweight_tag_is_refused_before_anything_is_built(self) -> None:
+        git(self.repo, "tag", "v1.1.0")
+        git(self.repo, "push", "-q", "origin", "v1.1.0")
+        done = self.publish("v1.1.0")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("not an annotated tag", done.stderr)
+        self.assertIn("may be deleted", done.stderr)
+        self.assertEqual(self.created(), [])
+        self.assertEqual(self.worktrees(), 1)
+
+    def test_a_tag_on_a_commit_not_merged_to_main_is_refused(self) -> None:
+        git(self.repo, "checkout", "-q", "-b", "side")
+        git(self.repo, "commit", "-q", "--allow-empty", "-m", "unmerged")
+        git(self.repo, "tag", "-a", "v1.1.0", "-m", "Unmerged.")
+        git(self.repo, "push", "-q", "origin", "v1.1.0")
+        done = self.publish("v1.1.0")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("not merged to main", done.stderr)
+        self.assertEqual(self.created(), [])
+
+    def test_a_tag_only_this_machine_has_is_refused(self) -> None:
+        git(self.repo, "tag", "-a", "v1.1.0", "-m", "Never pushed.")
+        done = self.publish("v1.1.0")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("fetching v1.1.0 failed", done.stderr)
+        self.assertEqual(self.created(), [])
+
+    def test_a_published_release_is_never_replaced(self) -> None:
+        self.script({"release view": {"stdout": "title: v1.0.0\n"}})
+        done = self.publish("v1.0.0")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("never replaced", done.stderr)
+        self.assertEqual(self.created(), [])
+
+    def test_a_failed_build_publishes_nothing_and_leaves_no_checkout(self) -> None:
+        done = self.publish("v1.0.0", environment={"FAIL_CUT": "1"})
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("cut-release failed", done.stderr)
+        self.assertEqual(self.created(), [])
+        self.assertEqual(self.worktrees(), 1)
+
+    def test_the_command_builds_in_a_fresh_environment_and_never_replaces_or_attests(self) -> None:
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('(tree / ".python-version")', source)
+        self.assertIn('"uv", "pip", "install", "--quiet", "--python", python, "-e", f"{tree}[test]"', source)
+        self.assertIn('"--verify-tag"', source)
+        for withdrawn in ("--clobber", '"upload"', "attest", '"delete"'):
             with self.subTest(withdrawn=withdrawn):
-                self.assertNotIn(withdrawn, self.workflow)
-        self.assertNotRegex(self.workflow, r"(?i)\bCI's (success|result|run)\b|\bwait(s|ing)? (for|on) CI\b|\brequires? CI\b")
-        self.assertEqual(re.findall(r"scripts/release_channel\.py (\w+)", self.workflow),
-                         ["order", "existing", "order", "previous", "notes", "flags"])
-        self.assertEqual(re.findall(r"(?m)^      - name: (.+)$", self.guard), ["Check the tag", "Stop if the release already exists"])
-        # No wait is left for the guard to outlast.
-        self.assertLessEqual(int(re.search(r"(?m)^    timeout-minutes: (\d+)$", self.guard).group(1)), 15)
+                self.assertNotIn(withdrawn, source)
 
-    def test_every_guard_precedes_publishing_and_the_publish_job_needs_the_guard(self) -> None:
-        guards = ('test "$(git cat-file -t "refs/tags/$TAG")" = tag', 'git merge-base --is-ancestor "refs/tags/$TAG^{commit}" origin/main',
-                  'scripts/release_channel.py order --tag "$TAG"', 'scripts/release_channel.py existing --tag "$TAG"')
-        for guard in guards:
-            with self.subTest(guard=guard):
-                self.assertIn(guard, self.guard)
-        self.assertRegex(self.publish, r"(?m)^    needs: guard$")
-        self.assertNotIn("gh release create", self.guard)
+    def test_no_workflow_publishes_a_release(self) -> None:
+        self.assertFalse((ROOT / ".github/workflows/release.yml").exists())
+        for workflow in (ROOT / ".github/workflows").glob("*.yml"):
+            text = workflow.read_text(encoding="utf-8")
+            with self.subTest(workflow=workflow.name):
+                self.assertNotIn("gh release create", text)
+                self.assertNotRegex(text, r"(?m)^    tags:")
 
-    def test_a_moved_tag_publishes_nothing_because_both_jobs_tie_it_to_the_commit_they_run_on(self) -> None:
-        same = 'test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$GITHUB_SHA"'
-        fetch = 'git fetch --force --tags origin "refs/tags/$TAG:refs/tags/$TAG"'
-        for job in (self.guard, self.publish):
-            self.assertIn(same, job)
-            self.assertLess(job.index(fetch), job.index(same))
-        self.assertLess(self.guard.index(same), self.guard.index('release_channel.py order'))
-        self.assertLess(self.publish.index(same), self.publish.index("gh release create"))
 
-    def test_the_publish_step_checks_the_order_again_after_the_build(self) -> None:
-        recheck = self.publish.index('scripts/release_channel.py order --tag "$TAG"')
-        self.assertLess(self.publish.index("scripts/cut-release.py"), recheck)
-        self.assertLess(self.publish.index('git fetch --force --tags origin'), recheck)
-        self.assertLess(recheck, self.publish.index("gh release create"))
-
-    def test_an_existing_release_stops_later_jobs_and_is_never_replaced(self) -> None:
-        self.assertIn('scripts/release_channel.py existing --tag "$TAG" >> "$GITHUB_OUTPUT"', self.guard)
-        for forbidden in ("--clobber", "gh release upload", "gh release delete"):
-            with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, self.workflow)
-
-    def test_publishing_covers_every_output_file_and_attests_nothing(self) -> None:
-        # GitHub offers no attestation for a private repository owned by a personal account, so none is made.
-        cut = self.publish.index("scripts/cut-release.py")
-        release = self.publish.index("gh release create")
-        self.assertLess(cut, release)
-        self.assertIn('"$OUT"/*', self.publish[release:])
-        for withdrawn in ("attest", "id-token"):
-            with self.subTest(withdrawn=withdrawn):
-                self.assertNotIn(withdrawn, self.workflow)
-        self.assertNotIn("if: always()", self.publish)
-        self.assertNotIn("continue-on-error", self.workflow)
-
-    def test_publish_installs_the_test_extra_on_ubuntu_with_cis_python(self) -> None:
-        self.assertIn('python -m pip install -e ".[test]"', self.publish)
-        self.assertRegex(self.publish, r"(?m)^    runs-on: ubuntu-latest$")
-        ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertIn('python-version: "3.11"', self.publish)
-        self.assertIn('python-version: "3.11"', ci.split("\n  cut-release:\n", 1)[1])
-        self.assertIn('python -m pip install -e ".[test]"', ci.split("\n  cut-release:\n", 1)[1])
-
-    def test_ci_still_defines_the_validate_matrix_and_cut_release(self) -> None:
+class ContinuousIntegrationTests(unittest.TestCase):
+    def test_ci_runs_only_cut_release_and_no_tests(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        systems = json.loads(re.search(r"\) && '(\[[^']*\])' \|\| '", workflow).group(1))
-        self.assertEqual(systems, ["ubuntu-latest", "macos-latest"])
-        self.assertIn('python-version: ["3.11"]', workflow)
-        self.assertEqual(re.findall(r"(?m)^  ([a-z-]+):$", workflow.split("\njobs:\n", 1)[1]), ["validate", "cut-release"])
+        self.assertEqual(re.findall(r"(?m)^  ([a-z-]+):$", workflow.split("\njobs:\n", 1)[1]), ["cut-release"])
+        for withdrawn in ("run-tests.py", "macos", "full-matrix", "matrix", "unittest"):
+            with self.subTest(withdrawn=withdrawn):
+                self.assertNotIn(withdrawn, workflow)
         self.assertNotRegex(workflow, r"(?i)gates? (publishing|a release|releases)")
 
     def test_ci_proves_the_release_path_with_nothing_above_read_permission(self) -> None:
@@ -460,18 +514,8 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn('scripts/cut-release.py --version v0.0.0-rc.0 --out "$RUNNER_TEMP/release"', job)
         self.assertIn('git status --porcelain', job)
 
-    def test_every_ci_system_sizes_its_workers_from_the_runner(self) -> None:
+    def test_ci_runs_on_every_change_request_and_each_push_to_main(self) -> None:
         ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertEqual(re.findall(r"(?m)^    timeout-minutes: (\d+)$", ci), ["120", "120"])
-        self.assertEqual(re.findall(r"(?m)^.*scripts/run-tests\.py.*$", ci),
-                         ["""        run: python scripts/run-tests.py --workers "$(python -c 'import os; print(os.cpu_count())')\""""])
-        self.assertRegex(ci, r"(?m)^      - shell: bash\n        run: python scripts/run-tests\.py ")
-
-    def test_ci_runs_ubuntu_and_adds_macos_on_a_push_to_main_or_with_the_label(self) -> None:
-        ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertIn("""        os: ${{ fromJSON((github.event_name == 'push' """
-                      """|| contains(github.event.pull_request.labels.*.name, 'full-matrix')) """
-                      """&& '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}\n""", ci)
         self.assertNotIn("windows-latest", ci)
         self.assertRegex(ci, r"(?m)^  push:\n    branches: \[main\]$")
         self.assertRegex(ci, r"(?m)^on:\n  pull_request:\n  push:$")
@@ -486,14 +530,6 @@ class WorkflowWiringTests(unittest.TestCase):
                                r"(?:  #.*\n)*"
                                r"  group: \$\{\{ github\.event_name == 'pull_request' && format\('ci-\{0\}', github\.event\.pull_request\.number\) \|\| github\.run_id \}\}\n"
                                r"  cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$")
-
-    def test_the_release_flags_and_notes_come_from_the_channel(self) -> None:
-        self.assertIn('scripts/release_channel.py flags --tag "$TAG"', self.publish)
-        self.assertIn("scripts/release_channel.py notes ", self.publish)
-        self.assertIn('scripts/release_channel.py previous --tag "$TAG" --published "$RUNNER_TEMP/published.txt"', self.publish)
-        self.assert_line(self.publish, 'gh release list --exclude-drafts --limit 1000 --json tagName --jq \'.[].tagName\' > "$RUNNER_TEMP/published.txt"')
-        self.assertIn("--notes-file", self.publish)
-        self.assertNotIn("--generate-notes", self.publish)
 
 
 if __name__ == "__main__":

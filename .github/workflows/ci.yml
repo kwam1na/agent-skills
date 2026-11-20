@@ -14,70 +14,12 @@ concurrency:
   group: ${{ github.event_name == 'pull_request' && format('ci-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Bytecode under skills/ fails corpus validation, and the suite imports skill scripts.
+# Bytecode under skills/ fails corpus validation, which cut-release runs first.
+# CI runs no tests: the full local suite before a tag is the only run of them.
 env:
   PYTHONDONTWRITEBYTECODE: "1"
 
 jobs:
-  validate:
-    timeout-minutes: 120
-    strategy:
-      # Every operating system reports, so each failure is known and has an owner.
-      fail-fast: false
-      matrix:
-        # Every job informs, and publishing reads none of them. macOS runs on a push to main, or with the full-matrix
-        # label. The label is read from a push's event, so it applies from the next push.
-        os: ${{ fromJSON((github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'full-matrix')) && '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
-        python-version: ["3.11"]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      # The run-delivery tool is POSIX-only. Its video evidence cases need ffmpeg and ffprobe, and its harness
-      # configuration case needs the runtime's minimum Node, so they run here rather than skip.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22.6.0"
-      - name: Install ffmpeg
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - name: Install ffmpeg
-        if: runner.os == 'macOS'
-        run: brew install ffmpeg
-      # A runner has no git identity, and the suite's fixtures commit with the host's.
-      - name: Configure git identity
-        run: |
-          git config --global user.name "CI"
-          git config --global user.email "ci@example.invalid"
-      - name: Install test dependencies
-        run: python -m pip install -e ".[test]"
-      # The page lane's locked packages; the suite fails without them rather than skip.
-      - name: Install page lane packages
-        run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Validate corpus and record inventory
-        shell: bash
-        run: |
-          set -o pipefail
-          python scripts/validate-registry.py | tee validation-result.json
-      - run: python tests/test_registry.py
-      # The parallel runner the merge checks use: discover's verdict, across worker processes.
-      # The runner's real core count: the default, half of them, runs one unit at a time on a macOS runner.
-      - shell: bash
-        run: python scripts/run-tests.py --workers "$(python -c 'import os; print(os.cpu_count())')"
-      # The suite would miss a writer that runs after its last corpus validation.
-      - name: Check no bytecode was written under skills
-        if: always()
-        shell: bash
-        run: |
-          found=$(find skills \( -name __pycache__ -o -name '*.pyc' \) -print)
-          if [ -n "$found" ]; then echo "$found"; exit 1; fi
-      - uses: actions/upload-artifact@v4
-        with:
-          name: validation-${{ matrix.os }}-py${{ matrix.python-version }}
-          path: validation-result.json
-
   # Every change proves the release path, the way a version tag's publish job runs it.
   cut-release:
     runs-on: ubuntu-latest
