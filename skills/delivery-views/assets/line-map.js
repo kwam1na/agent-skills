@@ -2524,9 +2524,10 @@
     return box;
   }
 
-  // A push redraws at once; the runs come from the view the server renders after it.
+  // A push redraws at once; the runs come from the view the server renders after it. The server's word that the runs
+  // moved comes once their views are written, so that re-read waits for nothing.
   var runsAsked = null;
-  function refreshRuns() {
+  function refreshRuns(wait) {
     if (typeof fetch !== "function" || typeof location !== "object" || !/^https?:$/.test(location.protocol)) { return; }
     clearTimeout(runsAsked);
     runsAsked = setTimeout(function () {
@@ -2547,7 +2548,7 @@
         DRIFT = drifted ? readDrift(drifted[1]) : null;
         if (isObject(next)) { runs = next; safely(lastGood || shown); }
       }).catch(function () { /* the runs already shown stay */ });
-    }, 3000);
+    }, typeof wait === "number" ? wait : 3000);
   }
 
   function timelineFor(doc, item) {
@@ -4256,6 +4257,9 @@
           safely(lastGood || shown);
         });
       } catch (error) { /* a store without a status line still serves its pushes and read below */ }
+    }
+    if (typeof store.onRuns === "function") {
+      try { store.onRuns(function () { refreshRuns(0); }); } catch (error) { /* the pushes and the interval still re-read */ }
     }
     var pushed = false;
     if (typeof store.subscribe === "function") {

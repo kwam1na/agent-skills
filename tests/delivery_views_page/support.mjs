@@ -5,7 +5,7 @@ import { closeSync, cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSy
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { JSDOM } from "jsdom";
+import { JSDOM, VirtualConsole } from "jsdom";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const RENDER = path.join(ROOT, "skills", "delivery-views", "scripts", "render.py");
@@ -115,6 +115,47 @@ export function renderHistoryPage(document, { config, runsCommands = null, expor
   }
 }
 
+export const RUNS_CORPUS = path.join(ROOT, "tests", "fixtures", "delivery-views", "runs");
+export const RUNS_RENDERERS = [
+  { id: "line-map", argv: ["python3", "-B", "render.py", "line-map"], output: "line-map.html", timeoutSeconds: 30 },
+  { id: "history", argv: ["python3", "-B", "render.py", "history"], output: "delivery-history.html", timeoutSeconds: 60 },
+  { id: "runs", argv: ["python3", "-B", "render.py", "runs"], output: "runs.html", timeoutSeconds: 60 },
+];
+
+/**
+ * Renders `render.py runs` (or the `view` given) in a throwaway repository whose runs command replays `runsCommands`,
+ * with `now` as the page's as-of time and `watched` as what the live server says of the run store. Fails on a non-zero
+ * exit.
+ */
+export function renderRunsPage(document, { runsCommands, now = "2026-11-20T10:00:00Z", watched = null, renderers = RUNS_RENDERERS,
+  view = "runs" } = {}) {
+  const root = repository({ config: { spec: "delivery-views-config/1", runs: REPLAYED_RUNS }, runsCommands, renderers });
+  try {
+    const env = { ...process.env };
+    delete env.DELIVERY_LIVE_RUNS;
+    if (watched) env.DELIVERY_LIVE_RUNS = watched;
+    const result = runSync(PYTHON, ["-B", RENDER, view, "--config", ".agents/delivery-views.json",
+      "--binding", ".agents/orchestration.json", ...(view === "line-map" ? [] : ["--now", now])],
+      { cwd: root, env, input: JSON.stringify(document), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    if (result.status !== 0) throw new Error(`render.py ${view} exited ${result.status}: ${result.stderr}`);
+    return result.stdout;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/** The page as the live server serves it at /view/: the adapter goes in right after the opt-in marker. */
+export function served(page) {
+  const result = runSync(PYTHON, ["-B", "-c", [
+    "import sys; sys.path.insert(0, sys.argv[1]); import render_state as r",
+    "sys.stdin.reconfigure(encoding='utf-8'); sys.stdout.reconfigure(encoding='utf-8', newline='\\n')",
+    "page = sys.stdin.read()",
+    "sys.stdout.write(page.replace(r.LIVE_OPT_IN, r.LIVE_OPT_IN + '\\n<script>\\n' + r._LIVE_ADAPTER + '\\n</script>', 1))",
+  ].join("\n"), path.join(ROOT, "skills", "orchestrate-work", "scripts")], { input: page, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  if (result.status !== 0) throw new Error(`injecting the adapter failed: ${result.stderr}`);
+  return result.stdout;
+}
+
 /** A snapshot's text, as a golden pins it: every chapter, the story's included, as the page draws it. */
 export function pageText(app) {
   return app.textContent ?? "";
@@ -169,7 +210,7 @@ export function planEnd(app) {
  */
 export async function openPage(page, scenario = {}) {
   const listeners = { push: [], status: [] };
-  const stream = { document: [], error: [] };
+  const stream = { document: [], error: [], runs: [] };
   let answerRead = null;
   const animations = [];
   const intervals = [];
@@ -177,8 +218,19 @@ export async function openPage(page, scenario = {}) {
   let clock = 0;
   const fetched = [];
   const fetchOptions = [];
+  // jsdom can't navigate: a page that reloads itself reports it, and the result's `navigations` counts each.
+  const navigations = [];
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.sendTo(console, { omitJSDOMErrors: true });
+  virtualConsole.on("jsdomError", (error) => {
+    if (/^Not implemented: navigation/.test(error.message)) navigations.push(error.message);
+    else console.error(error);
+  });
   const dom = new JSDOM(page, {
-    ...(scenario.rendered ? { url: VIEW_ADDRESS } : {}),
+    virtualConsole,
+    // `address` opens the page somewhere other than its own view, as the live server's front page; `fetchAt` is then
+    // where the server answers with `rendered`.
+    ...(scenario.rendered ? { url: scenario.address ?? VIEW_ADDRESS } : {}),
     runScripts: "dangerously",
     beforeParse(window) {
       if (scenario.now) window.Date.now = () => Date.parse(scenario.now);
@@ -242,8 +294,11 @@ export async function openPage(page, scenario = {}) {
           : Promise.reject(new Error("unexpected fetch " + url));
       }
       if (scenario.rendered) {
+        const fromServer = window.fetch;
         window.fetch = (url, options) => {
-          if (url !== VIEW_ADDRESS) return Promise.reject(new Error("unexpected fetch " + url));
+          // With the server's adapter too, its document is still read where it lives.
+          if (url === "/document" && scenario.server) return fromServer(url, options);
+          if (url !== (scenario.fetchAt ?? VIEW_ADDRESS)) return Promise.reject(new Error("unexpected fetch " + url));
           fetched.push(url);
           fetchOptions.push(options);
           const answer = typeof scenario.rendered === "function" ? scenario.rendered() : scenario.rendered;
@@ -292,6 +347,8 @@ export async function openPage(page, scenario = {}) {
     if ("status" in step) listeners.status.forEach((listener) => listener(step.status));
     if ("resolve" in step) answerRead(step.resolve);
     if ("event" in step) stream.document.forEach((listener) => listener({ data: JSON.stringify(step.event) }));
+    // The live server's word that the runs moved, its data exactly as the server writes it.
+    if ("runs" in step) stream.runs.forEach((listener) => listener({ data: step.runs }));
     if ("dropped" in step) stream.error.forEach((listener) => listener({}));
     if ("hover" in step) document.querySelector(step.hover).dispatchEvent(new dom.window.Event("mouseenter"));
     if ("leave" in step) document.querySelector(step.leave).dispatchEvent(new dom.window.Event("mouseleave"));
@@ -318,7 +375,7 @@ export async function openPage(page, scenario = {}) {
   const scrollY = dom.window.scrollY;
   const storedTheme = (() => { try { return { ...dom.window.localStorage }; } catch { return null; } })();
   dom.window.close();
-  return Object.assign(snapshots, { storage: storedTheme, animations, fetched, fetchOptions, scrollY });
+  return Object.assign(snapshots, { storage: storedTheme, animations, fetched, fetchOptions, scrollY, navigations });
 }
 
 const TOOLS = path.join(ROOT, "tests", "delivery_views_page", "page_tools.py");

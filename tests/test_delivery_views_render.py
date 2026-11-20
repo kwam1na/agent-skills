@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import unittest
+import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -1239,3 +1242,251 @@ class StoryFixtureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# The runs page, read from the runtime's captured output (tests/fixtures/run-events/runs): each run's own runs show and runs view, changed only in
+# its id and the hour it ran (tests/fixtures/delivery-views/runs/build.py).
+RUNS_CASE = Path(__file__).resolve().parent / "fixtures" / "delivery-views" / "runs"
+CAPTURED = json.loads((RUNS_CASE / "runs-commands.json").read_text(encoding="utf-8"))
+ABSENT = {"spec": "delivery-state-absent/1"}
+INSIDE_PLAN, AGENT = "run-open-execute-inside-plan-1", "run-open-waiting-on-an-agent-1"
+REVIEW_AGAIN, EXECUTE_AGAIN = "run-open-review-entered-again-1", "run-open-execute-entered-again-1"
+ENDED, LEFT_OPEN, PARTIAL = "run-ended-plan-then-execute-1", "run-displaced-then-partial-1", "run-displaced-then-partial-2"
+
+
+class RunsPageTests(unittest.TestCase):
+    """What `render.py runs` reads of every listed run, and the pages each view prints without a record."""
+
+    # Its unavailable case waits on a read held past the render's deadline: bounded, but a real process.
+    run_quietly = True
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.folder = tempfile.TemporaryDirectory()
+        cls.root = Path(cls.folder.name)
+        cls.runs = Runs(cls.root)
+        cls.runs.answer(CAPTURED)
+        document = {"state": {"queue": [{"subject": "V26-0001", "runId": ENDED}],
+                              "planned": [{"subject": "PAY-101", "runId": AGENT}]}}
+        cls.page = render.collect_run_page(document, config(cls.runs), cls.root, cls.root / "cache.json",
+                                           time.monotonic() + FAR)
+        cls.by_id = {entry["runId"]: entry for entry in cls.page["runs"]}
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.folder.cleanup()
+
+    def test_the_fixture_is_the_captured_runtime_output_changed_only_in_ids_and_times(self) -> None:
+        built = subprocess.run([sys.executable, "-B", str(RUNS_CASE / "build.py"), "--check"], capture_output=True)
+        self.assertEqual(built.returncode, 0, "runs-commands.json differs from a rebuild of the captured runs")
+
+    def test_the_payload_holds_every_captured_run_with_what_each_shows(self) -> None:
+        self.assertEqual([entry["runId"] for entry in self.page["runs"]],
+                         [INSIDE_PLAN, EXECUTE_AGAIN, REVIEW_AGAIN, AGENT, ENDED, LEFT_OPEN, PARTIAL])
+        self.assertEqual(self.page["notes"], [])
+        ended = self.by_id[ENDED]
+        self.assertEqual((ended["section"], ended["stages"], ended["currentStage"], ended["waits"], ended["needsYou"]),
+                         ("ended", ["plan", "execute", "review"], None, [], False))
+        self.assertEqual(ended["gates"], [
+            {"command": "scripts/validate-registry.py", "outcome": "pass", "durationMs": 4200},
+            {"command": "scripts/run-tests.py", "outcome": "fail", "durationMs": 615000}])
+        self.assertEqual(ended["decisions"], [{"fork": "the branch name", "choice": "claude/V26-0001, the repository's convention",
+                                               "text": None, "why": None}])
+        self.assertEqual(ended["blockers"], [{"code": "review.deferral-untracked",
+                                              "summary": "One deferral has no tracked follow-up."}])
+        self.assertEqual(ended["changeRequest"], "https://github.com/example/repository/pull/1")
+        self.assertEqual(ended["result"], {"result": "complete", "unit": "subagent-tokens", "total": 152352, "coverage": "partial"})
+        self.assertEqual([round_["round"] for round_ in ended["summary"]["roundDetail"]], [1])
+        self.assertEqual((ended["ticket"], ended["piece"]), ("V26-0001", "V26-0001"))
+        agent = self.by_id[AGENT]
+        self.assertEqual(agent["piece"], "PAY-101")
+        self.assertEqual((agent["stages"], agent["currentStage"], agent["activity"]["nextStep"]),
+                         (["diagnose"], "diagnose", "Trace the failing assertion."))
+        self.assertEqual(agent["waits"], [{"waitId": "reproduction", "waitingOn": "agent", "owner": "claude-code",
+                                           "reason": "A subagent is reproducing the failure.",
+                                           "nextAction": "Compare its observation with the prediction.",
+                                           "since": "2026-11-20T05:00:00Z", "needsYou": False}])
+        partial = self.by_id[PARTIAL]
+        self.assertEqual((partial["section"], partial["result"]["result"], partial["displaces"]), ("ended", "partial", LEFT_OPEN))
+        for entry in self.page["runs"]:
+            self.assertNotIn("unavailable", entry)
+
+    def test_the_open_execute_run_inside_plan_draws_three_stages_and_no_verify_or_lens(self) -> None:
+        run = self.by_id[INSIDE_PLAN]
+        # Its runtime prepare and verify phases and its lens attempt with phase review add no stage.
+        self.assertEqual((run["stages"], run["currentStage"]), (["plan", "execute", "review"], "execute"))
+        self.assertEqual(run["activity"], {"activityId": "execute-slice-2", "phase": "execute", "state": "running",
+                                           "nextStep": "Fix the round's finding.", "at": "2026-11-20T08:00:02Z"})
+        self.assertEqual([gate["command"] for gate in run["gates"]], ["scripts/validate-registry.py"])
+        self.assertEqual([(wait["waitId"], wait["needsYou"]) for wait in run["waits"]], [("push-approval", True)])
+        self.assertTrue(run["needsYou"])
+
+    def test_a_stage_entered_again_is_current_and_still_drawn_once_in_first_entry_order(self) -> None:
+        self.assertEqual((self.by_id[REVIEW_AGAIN]["stages"], self.by_id[REVIEW_AGAIN]["currentStage"]),
+                         (["plan", "execute", "review"], "review"))
+        self.assertEqual((self.by_id[EXECUTE_AGAIN]["stages"], self.by_id[EXECUTE_AGAIN]["currentStage"]),
+                         (["plan", "execute", "review"], "execute"))
+
+    def test_only_the_unresolved_human_wait_needs_you(self) -> None:
+        # The ended run's human wait was resolved, and the agent wait is no one's to answer here.
+        self.assertEqual([entry["runId"] for entry in self.page["runs"] if entry["needsYou"]], [INSIDE_PLAN])
+
+    def test_a_displaced_run_is_listed_with_the_ended_runs_never_under_now(self) -> None:
+        left = self.by_id[LEFT_OPEN]
+        self.assertEqual((left["open"], left["section"], left["displacedBy"]), (True, "ended", PARTIAL))
+        self.assertEqual([entry["runId"] for entry in self.page["runs"] if entry["section"] == "now"],
+                         [INSIDE_PLAN, EXECUTE_AGAIN, REVIEW_AGAIN, AGENT])
+
+    def test_a_run_whose_view_fails_or_passes_the_deadline_is_unavailable_and_the_others_render(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            runs = Runs(Path(folder))
+            runs.answer({**CAPTURED, f"runs view {AGENT} --json": None, f"runs show {PARTIAL} --json": None,
+                         f"runs view {REVIEW_AGAIN} --json": {"sleep": 30, "then": CAPTURED[f"runs view {REVIEW_AGAIN} --json"]}})
+            page = render.collect_run_page(ABSENT, config(runs), Path(folder), Path(folder) / "cache.json", time.monotonic() + 5)
+        shown = {entry["runId"]: entry for entry in page["runs"]}
+        self.assertTrue(shown[AGENT]["unavailable"] and shown[REVIEW_AGAIN]["unavailable"] and shown[PARTIAL]["unavailable"])
+        self.assertEqual((shown[AGENT]["section"], shown[REVIEW_AGAIN]["open"]), ("now", True))
+        self.assertEqual(sorted(run_id for run_id, entry in shown.items() if not entry.get("unavailable")),
+                         sorted([INSIDE_PLAN, EXECUTE_AGAIN, ENDED, LEFT_OPEN]))
+
+    def test_a_run_that_grew_is_read_again_and_an_unchanged_one_comes_from_the_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            runs = Runs(root)
+            runs.answer(CAPTURED)
+            # The runs page's own cache, beside the line map's, which holds another shape.
+            cache = views_common.runs_cache_path(root / "state").with_name("runs-page.json")
+            render.collect_run_page(ABSENT, config(runs), root, cache, time.monotonic() + FAR)
+            show = json.loads(CAPTURED[f"runs show {INSIDE_PLAN} --json"])
+            show["events"].append({"seq": 17, "kind": "gate.reported", "at": "2026-11-20T08:00:03Z",
+                                   "payload": {"command": "scripts/run-tests.py", "outcome": "pass", "durationMs": 2500}})
+            listed = json.loads(CAPTURED["runs list --json"])
+            for row in listed["runs"]:
+                row["bytes"] += 200 if row["runId"] == INSIDE_PLAN else 0
+            runs.answer({**CAPTURED, "runs list --json": json.dumps(listed), f"runs show {INSIDE_PLAN} --json": json.dumps(show)})
+            again = {entry["runId"]: entry for entry in
+                     render.collect_run_page(ABSENT, config(runs), root, cache, time.monotonic() + FAR)["runs"]}
+            asked = runs.calls()
+        self.assertEqual([gate["command"] for gate in again[INSIDE_PLAN]["gates"]],
+                         ["scripts/validate-registry.py", "scripts/run-tests.py"])
+        self.assertEqual(sorted(call for call in asked if not call.startswith("runs list")),
+                         sorted([f"runs show {INSIDE_PLAN} --json", f"runs view {INSIDE_PLAN} --json"]))
+        self.assertEqual(again[ENDED]["gates"], self.by_id[ENDED]["gates"])
+        self.assertFalse(views_common.runs_cache_path(root / "state").exists())
+
+    def test_over_the_budget_the_oldest_ended_runs_give_up_their_details_first(self) -> None:
+        size = len(render.embed(self.page).encode("utf-8"))
+        partial = len(render.embed(self.by_id[PARTIAL]).encode("utf-8"))
+        # Room for all but part of the oldest ended run: it alone is cut.
+        cut = render.run_page_within_budget(self.page, size - partial // 2)
+        clipped = [entry["runId"] for entry in cut["runs"] if entry.get("clipped")]
+        self.assertEqual(clipped, [PARTIAL])
+        self.assertLessEqual(len(render.embed(cut).encode("utf-8")), size - partial // 2)
+        everything = render.run_page_within_budget(self.page, 1)
+        self.assertTrue(all(entry.get("clipped") for entry in everything["runs"]))
+        self.assertEqual(render.run_page_within_budget(self.page), self.page)
+
+    def test_each_view_renders_from_the_absent_document(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            runs = Runs(Path(folder))
+            runs.answer(CAPTURED)
+            renderers = [{"id": name, "argv": ["python3", "-B", "render.py", name], "output": output, "timeoutSeconds": 30}
+                         for name, output in (("line-map", "line-map.html"), ("history", "history.html"), ("runs", "runs.html"))]
+            repository = Repository(Path(folder), {"spec": views_common.CONFIG_SPEC,
+                                                   "runs": {"argv": runs.argv, "timeoutSeconds": 10}}, renderers)
+            pages = {}
+            for name in ("runs", "line-map", "history"):
+                done = subprocess.run([sys.executable, "-B", str(render.__file__), name, "--config", ".agents/delivery-views.json",
+                                       "--binding", ".agents/orchestration.json"], cwd=repository.root,
+                                      input=json.dumps(ABSENT).encode("utf-8"), capture_output=True, timeout=120)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                pages[name] = done.stdout.decode("utf-8")
+            cached = sorted(path.name for path in (Path(folder) / "state" / ".cache" / "delivery-views").iterdir())
+        # The runs page keeps its own cache: the line map's holds another shape.
+        self.assertEqual(cached, ["runs-page.json"])
+        listed = [entry["runId"] for entry in block(pages["runs"], "delivery-run-page")["runs"]]
+        self.assertEqual(sorted(listed), sorted(self.by_id))
+        for name in ("line-map", "history"):
+            with self.subTest(view=name):
+                self.assertIn("No delivery is under way.", pages[name])
+                self.assertIn('href="runs.html"', pages[name])
+                self.assertIn('<meta name="delivery-state-live">', pages[name])
+                self.assertIsNone(block(pages[name], "delivery-state"))
+
+    def test_a_lens_attempt_or_a_runtime_phase_never_reopens_a_stage(self) -> None:
+        def observed(seq, activity, phase, state):
+            return {"seq": seq, "kind": "activity.observed", "at": f"2026-11-20T09:00:0{seq}Z",
+                    "payload": {"activityId": activity, "attemptId": f"{activity}-1", "phase": phase, "state": state}}
+        exported = {"spec": "delivery-run-export/2", "runId": "run-1", "summary": {}, "readout": {}, "events": [
+            observed(1, "stage-execute", "execute", "running"), observed(2, "stage-review", "review", "running"),
+            observed(3, "stage-review", "review", "completed"),
+            # After review exits: a lens attempt and a runtime verify, neither a stage.
+            observed(4, "review-lens-outcome", "review", "running"), observed(5, "command-0002", "verify", "running")]}
+        shown = render.run_of_events(exported)
+        self.assertEqual((shown["stages"], shown["currentStage"]), (["execute", "review"], "execute"))
+        self.assertEqual(shown["activity"]["activityId"], "command-0002")
+        # Once the verify and the lens end, the run is doing what it did before them: execute, and its next step.
+        events = exported["events"]
+        events[0]["payload"]["nextStep"] = "Build it."
+        events.extend([observed(6, "command-0002", "verify", "completed"), observed(7, "review-lens-outcome", "review", "completed")])
+        self.assertEqual(render.run_of_events(exported)["activity"],
+                         {"activityId": "stage-execute", "phase": "execute", "state": "running", "nextStep": "Build it.",
+                          "at": "2026-11-20T09:00:01Z"})
+        # A later state of the same activity that names no next step keeps the one it had.
+        events.append(observed(8, "stage-execute", "execute", "waiting"))
+        self.assertEqual(render.run_of_events(exported)["activity"],
+                         {"activityId": "stage-execute", "phase": "execute", "state": "waiting", "nextStep": "Build it.",
+                          "at": "2026-11-20T09:00:08Z"})
+        # The activity that moved last is current, though another opened after it.
+        events.extend([observed(9, "execute-slice-2", "execute", "running"), observed(10, "stage-execute", "execute", "running")])
+        self.assertEqual(render.run_of_events(exported)["activity"]["activityId"], "stage-execute")
+
+
+class LiveRunsPageTests(unittest.TestCase):
+    """The real runs renderer as the live server's liveRuns page, with no record."""
+
+    run_quietly = True
+
+    def test_live_over_an_empty_state_directory_answers_with_the_inventorys_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            runs = Runs(root)
+            runs.answer(CAPTURED)
+            argv = [sys.executable, "-B", str(render.__file__)]
+            inputs = ["--config", ".agents/delivery-views.json", "--binding", ".agents/orchestration.json"]
+            renderers = [{"id": "line-map", "argv": [*argv, "line-map", *inputs], "output": "line-map.html", "timeoutSeconds": 60},
+                         {"id": "runs", "argv": [*argv, "runs", *inputs], "output": "runs.html", "timeoutSeconds": 60}]
+            repository = Repository(root, {"spec": views_common.CONFIG_SPEC, "runs": {"argv": runs.argv, "timeoutSeconds": 10}},
+                                    renderers)
+            binding = json.loads((root / ".agents" / "orchestration.json").read_text(encoding="utf-8"))
+            binding["state"]["liveHome"] = "line-map"
+            binding["state"]["liveRuns"] = {"renderer": "runs", "inventory": {"argv": [*runs.argv, "runs"]}}
+            (root / ".agents" / "orchestration.json").write_text(json.dumps(binding), encoding="utf-8")
+            (root / "state").mkdir()
+            wrapper = Path(render.__file__).resolve().parents[2] / "orchestrate-work" / "scripts" / "render_state.py"
+            live = subprocess.Popen([sys.executable, "-B", str(wrapper), "live", "--dir", "state", "--binding", ".agents/orchestration.json"],
+                                    cwd=repository.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                address = json.loads(live.stdout.readline())["live"]
+                deadline = time.monotonic() + 60
+                status, page = None, ""
+                while time.monotonic() < deadline:
+                    try:
+                        with urllib.request.urlopen(f"http://{address}/", timeout=10) as answer:
+                            status, page = answer.status, answer.read().decode("utf-8")
+                            break
+                    except urllib.error.HTTPError:
+                        time.sleep(0.2)
+                self.assertEqual(status, 200)
+                shown = block(page, "delivery-run-page")
+                listed = [row["runId"] for row in json.loads(CAPTURED["runs list --json"])["runs"]]
+                self.assertEqual(sorted(entry["runId"] for entry in shown["runs"]), sorted(listed))
+                # The fixture's store is not on this machine, so the server says the runs aren't watched.
+                self.assertEqual(block(page, "delivery-run-page-view")["watched"], "unwatched")
+                self.assertIn("onRuns", page)
+            finally:
+                # Stopped by the PID this test recorded.
+                live.terminate()
+                live.wait(10)
+                for stream in (live.stdout, live.stderr):
+                    stream.close()
