@@ -1177,8 +1177,21 @@ describe("the hosting status in the hero's live line", () => {
   it("draws no strip, and a current publication shows only as the live line, its times on hover or focus", async () => {
     expect(built().shell).not.toMatch(/hosting-strip|hosting-times|<aside/);
     const served = { now: (await revision(1, auxiliaryProjection("old"))) as Served };
-    const { dom, store, document } = await hostedPage(served);
+    const { dom, document } = await hostedPage(served, false);
     try {
+      await vi.waitFor(() =>
+        expect(Reflect.get(dom.window, "deliveryStateStore")).toBeDefined(),
+      );
+      const store = Reflect.get(dom.window, "deliveryStateStore") as ReturnType<
+        typeof createViewStore
+      >;
+      // Before the line is drawn the status is said on its own; drawing the line alone, with no status change between
+      // (the store's own tick is a second away), puts it out of sight.
+      expect(status(document).classList.contains("hosted-announce")).toBe(false);
+      dom.window.eval(built().renderer);
+      expect(document.querySelector(".fact.since[data-hosting]")).not.toBeNull();
+      await Promise.resolve();
+      expect(status(document).classList.contains("hosted-announce")).toBe(true);
       await store.poll();
       expect(store.status().kind).toBe("current");
       const fact = line(document);
