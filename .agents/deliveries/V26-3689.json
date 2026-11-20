@@ -186,7 +186,7 @@
       ]
     },
     "V26-3692": {
-      "title": "Show a delivery's integration step on its hosted page",
+      "title": "Publish the local live view's record in full on the hosted page",
       "lane": "lane-4",
       "why": "The operator added it on 2026-11-20 after finding this delivery's own hosted page omits its integrate/shared-machine-capacity base: the hosted snapshot schema drops meta.integration and the integration facts.",
       "criteria": [

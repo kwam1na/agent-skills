@@ -3,6 +3,7 @@
 - Lane 1 delivers V26-3680, then V26-3681, each handed off before the next starts.
 - Lanes 2 and 3 start V26-3682 and V26-3683 only once V26-3680 has merged on the base. Until then the lead holds
   them back. V26-3683 also waits for V26-3573 to be on the base, since it changes the lead-wait fixture tests.
+- Lane 4 delivers V26-3693, then V26-3692, both about the hosted page, independent of the machine ledger. A worker change reaches the live page only after the lead redeploys it.
 - `catalog.json` is shared by region: each lane edits only its own skill's lines, as Decision 16 says, under the
   span the lead grants.
 - `provenance.lock.json` is shared. Refresh it with `scripts/update-provenance.py`, never by hand; a conflict in it
