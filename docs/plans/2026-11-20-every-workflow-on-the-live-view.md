@@ -73,7 +73,7 @@ Checked against `main` at `4035682f` on 2026-11-20:
 - Every story has landed on `main` through the merge queue. The full local suite has passed on macOS with Python
   3.11 at the base head after the last one landed, run with `--workers 4 --budget tests/suite-budget.json`, inside
   the budget.
-- This repository adopts it from a release candidate (KEY-4), and one directly invoked `execute-work` run and one
+- This repository adopts it from a release candidate (V26-3669), and one directly invoked `execute-work` run and one
   `deliver-work` request through `plan` and `execute` are watched end to end on the live server before the final is
   tagged. Tagging is the operator's. The change is additive, a minor version.
 
@@ -103,7 +103,7 @@ Checked against `main` at `4035682f` on 2026-11-20:
 
    `execute-work`'s unconditional sentences ("`run.started` before reading repository authority…", "`run.ended`
    last…") are replaced by references to the kernel's rule. This is a withdrawn behaviour, so every skill in the
-   `linear` profile is searched by meaning for the unconditional start and end, and KEY-1 adds absence pins on that
+   `linear` profile is searched by meaning for the unconditional start and end, and V26-3666 adds absence pins on that
    phrasing and its synonyms.
 
 3. **Stage markers have their own identity.** At each workflow's entry and exit, the kernel has it emit
@@ -139,7 +139,7 @@ Checked against `main` at `4035682f` on 2026-11-20:
 
    A record change still sends `event: document` as today, now after its views are written. `event: runs` is sent
    with or without a record. Pages reach `/events` only through the live adapter the server injects
-   (`_LIVE_ADAPTER` in `render_state.py`), so KEY-2 adds `deliveryStateStore.onRuns(fn)` to it, calling `fn` with the
+   (`_LIVE_ADAPTER` in `render_state.py`), so V26-3667 adds `deliveryStateStore.onRuns(fn)` to it, calling `fn` with the
    event's data on each `runs` event. The adapter keeps `read`, `subscribe` and `onStatus` as they are. The runs page
    re-fetches itself through `onRuns`. The line map's `refreshRuns` re-fetches through it too, with no delay, keeping
    its 30-second interval. A page that registers no `onRuns` is unaffected. An
@@ -180,7 +180,7 @@ Checked against `main` at `4035682f` on 2026-11-20:
    workflow that joins a run, and an epic lane, does neither. The lead keeps starting the delivery's live server as
    today.
 
-10. **Characterize the runtime first, and keep what it shows.** Before any prose changes, KEY-1 runs the pinned
+10. **Characterize the runtime first, and keep what it shows.** Before any prose changes, V26-3666 runs the pinned
     0.8.6 runtime in a fixture repository. It records, as vectors, whether each planned emission is accepted:
     `run.started` without `ticket`, the stage markers and waits with `HEAD^{tree}` as candidate, `run.started` while
     another run is current with and without `--force`, and `emit` with no managed installation registered. It then
@@ -212,14 +212,14 @@ Checked against `main` at `4035682f` on 2026-11-20:
 ## Approval Handoffs
 
 - The operator approves this plan before `lead-setup`.
-- The operator approves creating the four tracker items, whose keys replace `KEY-1` to `KEY-4`.
-- Any runtime refusal KEY-1 finds goes to the operator before KEY-1 continues (Decision 10).
+- The operator approves creating the four tracker items. Approved and created on 2026-11-20 as V26-3666 to V26-3669.
+- Any runtime refusal V26-3666 finds goes to the operator before V26-3666 continues (Decision 10).
 - The operator grants the lanes `push` and `draftPullRequests`.
-- The operator calls the release candidate KEY-4 adopts, and the final.
+- The operator calls the release candidate V26-3669 adopts, and the final.
 
 ## Execution posture and sensors
 
-Test-first, with KEY-1 characterization-first for the runtime. Sensors:
+Test-first, with V26-3666 characterization-first for the runtime. Sensors:
 
 - `tests/test_run_event_emission_corpus.py`, for ownership, the lifecycle rule's pins and absence pins.
 - `tests/test_run_event_acceptance.py`, new, for the runtime vectors and captured output.
@@ -233,7 +233,7 @@ Test-first, with KEY-1 characterization-first for the runtime. Sensors:
 - `tests/test_own_deliveries.py`, for each new test module's catalogue entry.
 - `scripts/validate-registry.py` and `scripts/update-provenance.py --check`.
 
-KEY-1's runtime tests run the stored runtime under Node 22.6 or newer in a temporary git repository, never in the
+V26-3666's runtime tests run the stored runtime under Node 22.6 or newer in a temporary git repository, never in the
 checkout. Where Node is missing or older, they fail naming the need, rather than skip, so the guard is never vacuous.
 Live server tests bind `--port 0`, keep to their own folders and temporary git common directories, and stop only the
 servers they started, by recorded PID. A class that waits on a real server process is marked `run_quietly`. New
@@ -242,7 +242,7 @@ tests reuse the existing live-server and fixture-repository builders and keep th
 
 ## Scenarios
 
-KEY-1, in `tests/test_run_event_acceptance.py`, against the stored runtime:
+V26-3666, in `tests/test_run_event_acceptance.py`, against the stored runtime:
 
 - Each acceptance vector in `tests/fixtures/run-events/acceptance.json` is re-run, so a later runtime that refuses
   one fails it. `run.started` while another run is current is refused without `--force` and accepted with it,
@@ -251,7 +251,7 @@ KEY-1, in `tests/test_run_event_acceptance.py`, against the stored runtime:
   same driven sequence and compared, apart from times and ids, so a runtime whose view changes shape fails it.
 - The driven runs are evidence of what the runtime accepts and shows, not of what the skills say.
 
-KEY-1, in `tests/test_run_event_emission_corpus.py`:
+V26-3666, in `tests/test_run_event_emission_corpus.py`:
 
 - `EMITTED_KINDS` lists the four lifecycle kinds under `skills/compound-delivery-kernel/SKILL.md`. A second owner of
   any kind fails.
@@ -269,7 +269,7 @@ KEY-1, in `tests/test_run_event_emission_corpus.py`:
   and their synonyms ("start the run", "begin a run", "emit `run.started` first", "`run.ended` last"), outside a
   reference to the kernel.
 
-KEY-2, in `tests/test_orchestration_render.py`:
+V26-3667, in `tests/test_orchestration_render.py`:
 
 - A binding with `state.liveRuns` naming a declared renderer validates. One naming an undeclared renderer, or with an
   `inventory` without `argv`, is refused, naming the field.
@@ -301,7 +301,7 @@ KEY-2, in `tests/test_orchestration_render.py`:
   fails `/health` or answers as another server. `live --stop` exits without signalling, the sleeper is still alive,
   and the test then stops the sleeper by its recorded PID.
 
-KEY-3, in `tests/test_delivery_views_render.py`. Every run in the inventory comes from KEY-1's captured bytes,
+V26-3668, in `tests/test_delivery_views_render.py`. Every run in the inventory comes from V26-3666's captured bytes,
 changed only in ids and times:
 
 - The runs payload holds every captured run: the open `execute` run inside `plan` waiting on a human, the open run
@@ -326,7 +326,7 @@ changed only in ids and times:
 - `live` over an empty state directory with the real `render.py runs` as the `liveRuns` renderer answers `/` with
   200 and the inventory's runs.
 
-KEY-3 page rows, in `tests/delivery_views_page/runs.test.mjs`:
+V26-3668 page rows, in `tests/delivery_views_page/runs.test.mjs`:
 
 - "Now" lists open runs before ended ones. Each order is newest first, checked with two ended runs.
 - "Needs you" appears only on the unresolved human wait. The agent wait shows its reason and next action without it.
@@ -335,7 +335,7 @@ KEY-3 page rows, in `tests/delivery_views_page/runs.test.mjs`:
 - The displaced run shows under ended runs as "Left open, replaced".
 - The detail panel draws gates, decisions, blockers, the change request and the run summary's rounds.
 - With the real `_LIVE_ADAPTER` injected, as the existing line-map test injects it, and driven with the exact
-  `event: runs` bytes and re-fetch sequence KEY-2's server produces, the page re-fetches itself through `onRuns` and
+  `event: runs` bytes and re-fetch sequence V26-3667's server produces, the page re-fetches itself through `onRuns` and
   the open panel shows the new `gate.reported`. The line map re-fetches its runs through `onRuns` on the same event
   without the three-second delay.
 - A new `runs` golden case pins the page whole. Every existing line-map and history golden renders unchanged.
@@ -344,19 +344,19 @@ KEY-3 page rows, in `tests/delivery_views_page/runs.test.mjs`:
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | KEY-1 | `skills/compound-delivery-kernel/`, `skills/execute-work/`, `skills/plan-work/SKILL.md`, `skills/diagnose-work/`, `skills/deliver-work/SKILL.md`, `tests/test_run_event_emission_corpus.py`, `tests/test_run_event_acceptance.py`, `tests/fixtures/run-events/`, `tests/test_own_deliveries.py`, `.agents/orchestration.json` |
-| 1 | 2 | KEY-2 | `skills/orchestrate-work/scripts/render_state.py`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/SKILL.md`, `tests/test_orchestration_render.py` |
-| 2 | 2 | KEY-3 | `skills/delivery-views/`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_history.py`, `tests/delivery_views_page/`, `tests/fixtures/delivery-views/` |
-| 3 | 1 | KEY-4 | `AGENTS.md`, `docs/own-deliveries.md`, `.agents/delivery-views.json` |
+| 1 | 1 | V26-3666 | `skills/compound-delivery-kernel/`, `skills/execute-work/`, `skills/plan-work/SKILL.md`, `skills/diagnose-work/`, `skills/deliver-work/SKILL.md`, `tests/test_run_event_emission_corpus.py`, `tests/test_run_event_acceptance.py`, `tests/fixtures/run-events/`, `tests/test_own_deliveries.py`, `.agents/orchestration.json` |
+| 1 | 2 | V26-3667 | `skills/orchestrate-work/scripts/render_state.py`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/SKILL.md`, `tests/test_orchestration_render.py` |
+| 2 | 2 | V26-3668 | `skills/delivery-views/`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_history.py`, `tests/delivery_views_page/`, `tests/fixtures/delivery-views/` |
+| 3 | 1 | V26-3669 | `AGENTS.md`, `docs/own-deliveries.md`, `.agents/delivery-views.json` |
 
-KEY-3 follows KEY-1 for its captured run output and KEY-2 for the push it is driven with. KEY-4 keeps lane 1's
-`.agents/orchestration.json` from KEY-1. Each lane updates the catalog entry, every selected profile and the
-provenance digests in the same change as its skill edits, as the repository requires. KEY-4 runs once a release
-candidate holding KEY-1 to KEY-3 is applied here.
+V26-3668 follows V26-3666 for its captured run output and V26-3667 for the push it is driven with. V26-3669 keeps lane 1's
+`.agents/orchestration.json` from V26-3666. Each lane updates the catalog entry, every selected profile and the
+provenance digests in the same change as its skill edits, as the repository requires. V26-3669 runs once a release
+candidate holding V26-3666 to V26-3668 is applied here.
 
 ## Stories
 
-### KEY-1. Every delivery workflow reports its run in one vocabulary
+### V26-3666. Every delivery workflow reports its run in one vocabulary
 
 Lane 1, tier 1, not blocked. Characterization-first for the runtime, then test-first. Files:
 `skills/compound-delivery-kernel/SKILL.md`, `skills/execute-work/SKILL.md`,
@@ -368,7 +368,7 @@ Lane 1, tier 1, not blocked. Characterization-first for the runtime, then test-f
 Implement Decisions 2, 3 (emission side), 4 and 10, and the kernel's sentences of Decision 9. Catalogue
 `tests/test_run_event_acceptance.py` in `tests/test_own_deliveries.py` and the binding's check catalogue.
 
-### KEY-2. The live server serves without a record and follows the run store
+### V26-3667. The live server serves without a record and follows the run store
 
 Lane 2, tier 1, not blocked. Test-first. Files: `skills/orchestrate-work/scripts/render_state.py`,
 `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/SKILL.md` and
@@ -377,9 +377,9 @@ Lane 2, tier 1, not blocked. Test-first. Files: `skills/orchestrate-work/scripts
 Implement Decisions 5, 6 (with `onRuns` on the adapter), 7 (the server side) and 9 (`--if-absent`, `--stop` and
 the `delivery-live/` entries).
 
-### KEY-3. A live runs page in the line map's language
+### V26-3668. A live runs page in the line map's language
 
-Lane 2, tier 2, after KEY-1 and KEY-2. Test-first. Files: `skills/delivery-views/scripts/render.py`,
+Lane 2, tier 2, after V26-3666 and V26-3667. Test-first. Files: `skills/delivery-views/scripts/render.py`,
 `skills/delivery-views/scripts/views_common.py`, `skills/delivery-views/assets/`, `skills/delivery-views/SKILL.md`,
 `tests/test_delivery_views_render.py`, `tests/test_delivery_views_history.py`, `tests/delivery_views_page/` and
 `tests/fixtures/delivery-views/`.
@@ -387,9 +387,9 @@ Lane 2, tier 2, after KEY-1 and KEY-2. Test-first. Files: `skills/delivery-views
 Implement Decisions 3 (reading side), 7 (the views' no-record pages) and 8, and the line map's re-fetch on
 `event: runs`.
 
-### KEY-4. Watch this repository's own runs
+### V26-3669. Watch this repository's own runs
 
-Lane 1, tier 3, after KEY-1, KEY-2 and KEY-3. Sensor-only. Files: `AGENTS.md`, `docs/own-deliveries.md`,
+Lane 1, tier 3, after V26-3666, V26-3667 and V26-3668. Sensor-only. Files: `AGENTS.md`, `docs/own-deliveries.md`,
 `.agents/delivery-views.json` and `.agents/orchestration.json`.
 
 Declare the run-event command in `AGENTS.md`, `runs` in `.agents/delivery-views.json`, and the runs renderer and
