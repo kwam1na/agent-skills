@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -445,11 +446,18 @@ class EstimateTests(LedgerCase):
                 self.assertEqual(machine.main(["run", "--", *argv], ledger=self.ledger), 0)
             self.assertEqual(machine.main(["run", "--subject", "s", "--label", "l", "--", sys.executable, "-c",
                                            "pass"], ledger=self.ledger), 0)
-        subjects = [entry["subject"] for entry in self.ledger.costs()["entries"]]
-        unlabelled = subjects[:2]
-        self.assertEqual(len(set(unlabelled)), 2)
-        self.assertTrue(all(subject.startswith(Path(sys.executable).name + " ") for subject in unlabelled))
-        self.assertEqual(subjects[2], "s")
+            # The same command line again is the same subject, so its cost is found and measured.
+            self.assertEqual(machine.main(["run", "--", *first], ledger=self.ledger), 0)
+        entries = self.ledger.costs()["entries"]
+        subjects = [entry["subject"] for entry in entries]
+
+        def digest(argv: list[str]) -> str:
+            return f"{Path(argv[0]).name} {hashlib.sha256(shlex.join(argv).encode('utf-8')).hexdigest()[:16]}"
+
+        self.assertEqual(subjects, [digest(first), digest(second), "s"])
+        self.assertEqual([len(entry["passed"]) for entry in entries], [2, 1, 1])
+        self.assertEqual(self.ledger.estimate(None, "run", digest(first))["from"], "measured")
+        self.assertEqual(self.ledger.estimate(None, "run", digest([sys.executable, "-c", "y = 2"]))["from"], "none")
         ledger_text = "".join((self.directory / name).read_text(encoding="utf-8")
                               for name in ("costs.json", "history.jsonl"))
         self.assertNotIn("secret-", ledger_text, "no argument reaches the shared ledger")
