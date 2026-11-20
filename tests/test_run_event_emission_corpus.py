@@ -322,6 +322,7 @@ UNNESTED_SECTIONS: dict[str, tuple[str, ...]] = {
 # it defers to. The synonyms are lower-case and matched case-insensitively.
 WITHDRAWN_LIFECYCLE_SKILLS: tuple[str, ...] = (
     "skills/execute-work/SKILL.md",
+    "skills/execute-work/references/run-observation-contract.md",
     "skills/plan-work/SKILL.md",
     "skills/diagnose-work/SKILL.md",
     "skills/deliver-work/SKILL.md",
@@ -330,6 +331,7 @@ WITHDRAWN_LIFECYCLE_SYNONYMS: tuple[str, ...] = (
     "start the run",
     "starts the run",
     "start a run",
+    "start a linked successor",
     "starts a run",
     "starts its run",
     "begin a run",
