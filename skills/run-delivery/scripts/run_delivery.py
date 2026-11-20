@@ -9432,7 +9432,13 @@ def reuse_lines(item: dict, ids: list[str], granted: list[str] | set[str] = ()) 
     """For each selected check, whether the hand-off's record of it applies at the handed head, as the queue's `applies`
     answers it (a granted id with the grant's own-diff bound), or every reason it doesn't, and its measured median.
     The environment and host facts are the queue's to compare at its own run."""
-    c = cfg()
+    try:
+        return applies_lines(cfg(), item, ids, granted)
+    except Stop as error:  # shown, never a refusal: whatever the queue can't read, the acceptance's own checks say
+        return [f"checks: {error}, so whether a hand-off record applies isn't shown"]
+
+
+def applies_lines(c, item: dict, ids: list[str], granted: list[str] | set[str]) -> list[str]:
     head, lines = item["head"], []
     with queue_reader(c) as runner:
         base_head = git("rev-parse", c.base_ref)
