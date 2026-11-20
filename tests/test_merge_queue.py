@@ -7370,8 +7370,9 @@ class ContractTests(unittest.TestCase):
             "among them.",
             "`selection.unread` names paths no check reads.",
             "When the base moves after a candidate's checks passed, a selected check is carried to the new base, with "
-            "no run again, when no file the move changed is in the candidate's diff and either every such file matches "
-            "`selection.unread` or the check's read set is known and no such file is in it.",
+            "no run again, when no file the move changed is in the candidate's diff and its passed run applies across "
+            "the move, as \"Reused checks\" says: every such file matches `selection.unread`, or the check's read set is "
+            "known and no such file is in it, and its definition and its run's facts are the queue's now.",
         ):
             with self.subTest(phrase=phrase[:40]):
                 self.assertIn(phrase, guide)
