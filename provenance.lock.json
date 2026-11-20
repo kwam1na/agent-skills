@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "3d232b3757ca2b70360bf4adfc7bf232da8e0ce1d8b8944ad1fd97cb41fb264c"
+          "sha256": "a6df4273d8115bf9a1c03a6192cee4fd09e14b9d7b00d9439a36c97549f1f264"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -230,19 +230,19 @@
         },
         {
           "path": "skills/delivery-views/references/hosted-snapshot.schema.json",
-          "sha256": "3d384ca0f9eb66f12999be26613be2eda3bac01391f6ee2d483469376ab32247"
+          "sha256": "167ea37bf7642c8269bb62e0e77ec30d6aea435241bedb04c4665032e4bd7415"
         },
         {
           "path": "skills/delivery-views/scripts/hosted.py",
-          "sha256": "44b7c24bc34b5741f9382f4a02b7e9706887010cd3ae8cfd39001a48777f3c73"
+          "sha256": "60bd9e43dc804eb6e866b4d14852d8d343a8573a2e08d788946b6526e1b0813f"
         },
         {
           "path": "skills/delivery-views/scripts/public_projection.py",
-          "sha256": "f3a6607ee50056bba3cd4a3297f70f6e47b355833bda0e3bdb6d4349195df66f"
+          "sha256": "86f0b2d0f4f1760f2aa6c21d36d5487f01d3db6c822ea5f428ad2cb148e841f5"
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "cf297f96ba465b8c6f77d888d14d988199e2e18aadefc7b8e5bffd21f0cc08fb"
+          "sha256": "c6f5ba83f3f601d3ddd9fbfadbe02a55653ffa19252c9377d1bd9027f702f15d"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",

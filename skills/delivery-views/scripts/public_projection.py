@@ -1,16 +1,17 @@
-"""Bounded data-only hosted line-map projection and stable source-cut guard.
+"""The hosted line-map snapshot and stable source-cut guard.
 
-The versioned schema is shared with the service. Projection drops fields the
-schema does not name; validation refuses them. Public prose is intentional:
-known configured secrets cause a bounded refusal. Producer prose containing
-recognizable local references is explicitly omitted; raw uploads with paths
-remain invalid,
-not a claim to recognize every secret someone may type. No network or subprocess
-is used here. Callers supply the complete selected source inventory, including
-run inventory/review inputs, before collecting from those sources.
+The hosted page shows what the local live view shows, from the same record: the snapshot carries the same cut the
+local page renders from, story, journal facts, files, left-open work and drift included, paths on the publishing machine included. The one
+rule kept is that no credential is published. A configured secret's value anywhere in the cut, or a field under a
+credential-named key, refuses the cut with a bounded code. A sibling delivery's hosted link is a read capability, so
+it is left out and the page names the sibling without one. The byte, list and text bounds keep the snapshot within
+what the service accepts. No scanner claims to recognize every secret someone may type. No network or subprocess is
+used here. Callers supply the complete selected source inventory, including run inventory and review inputs, before
+collecting from those sources.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -28,44 +29,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[1] / 'references/hosted-snapshot.
 SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding='utf-8'))
 MAX_BYTES = 16 * 1024 * 1024
 MAX_SOURCE_BYTES = 128 * 1024 * 1024
-# Absolute workstation/temp paths and file URLs are never public view content.
-# Option assignments use the same local-reference boundary as quoted prose.
-# Explicit relative paths are local too; validated HTTPS tokens are handled below.
-LOCAL_PATH = re.compile(r'(?:file://|(?:^|[\s\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e“”‘’])(?:/[A-Za-z0-9_.-]+/|[A-Za-z]:[\\/]|\\\\|~[/\\]|\.{1,2}[/\\]|(?:\.?agents|\.agent-skills|\.orchestration|docs|scripts|skills|tests)[/\\]))')
-HTTPS_START = re.compile(r'https://(?!/)', re.I)
-
-
-def _has_local_path(text):
-    # HTTPS path components may themselves contain punctuation and names such as
-    # docs/. They are public URL tokens, not local references. Secret scans still
-    # inspect the original text independently.
-    pieces=[];position=0
-    closing={')':'(',']':'[','}':'{'}
-    while match:=HTTPS_START.search(text,position):
-        end=match.end();stack=[]
-        # A URL can contain balanced punctuation, but an unmatched closing
-        # wrapper ends its span. Resume there so adjacent prose is still scanned.
-        while end<len(text):
-            character=text[end]
-            if character.isspace() or character in '<>"\'`“”‘’\\':break
-            if character in '([{':stack.append(character)
-            elif character in closing:
-                if not stack or stack[-1]!=closing[character]:break
-                stack.pop()
-            end+=1
-        token=text[match.start():end]
-        unwrapped = re.sub(r'[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e“”‘’]+$', '', token)
-        pieces.extend((text[position:match.start()],' ' if _url(token) or _url(unwrapped) else token))
-        position=end
-    pieces.append(text[position:])
-    return LOCAL_PATH.search(''.join(pieces)) is not None
-
-
 CREDENTIAL_KEY = re.compile(r'^(?:password|token|secret|api[_-]?key|credential|authorization|cookie)$', re.I)
-OMITTED_LOCAL_REFERENCE = '[Local reference omitted]'
-# A review's settled resolutions, ended reasons and carried notes are prose like its raised summaries.
-PROSE_FIELDS = frozenset(('headline title text summary label description detail reason why waitingOn clears evidence '
-                          'resolution endedReason note').split())
 
 
 class ProjectionError(ValueError):
@@ -95,14 +59,19 @@ def _check(value, schema):
     schema = _resolve(schema)
     for keyword in ('anyOf', 'oneOf'):
         if keyword in schema:
-            matches = 0
+            matches, typed = 0, None
             for branch in schema[keyword]:
                 try:
                     _check(value, branch)
                     matches += 1
-                except ProjectionError:
-                    pass
-            if not matches or keyword == 'oneOf' and matches != 1:
+                except ProjectionError as error:
+                    # The branch for this value's type says why it failed: a credential field, a long text or list.
+                    kinds = _resolve(branch).get('type')
+                    if typed is None and kinds and any(_typed(value, kind) for kind in (kinds if isinstance(kinds, list) else [kinds])):
+                        typed = error
+            if not matches:
+                raise ProjectionError(str(typed) if typed is not None else 'snapshot.schema')
+            if keyword == 'oneOf' and matches != 1:
                 raise ProjectionError('snapshot.schema')
     kinds = schema.get('type')
     if kinds and not any(_typed(value, kind) for kind in (kinds if isinstance(kinds, list) else [kinds])):
@@ -142,28 +111,6 @@ def _check(value, schema):
             _check(entry, child)
 
 
-def _project(value, schema):
-    schema = _resolve(schema)
-    for keyword in ('anyOf', 'oneOf'):
-        if keyword in schema:
-            for branch in schema[keyword]:
-                try:
-                    projected = _project(value, branch)
-                    _check(projected, branch)
-                    return projected
-                except ProjectionError:
-                    continue
-            raise ProjectionError('snapshot.projection')
-    if isinstance(value, dict):
-        props = schema.get('properties', {})
-        extra = schema.get('additionalProperties', False)
-        return {key: _project(entry, props.get(key, extra)) for key, entry in value.items()
-                if key in props or isinstance(extra, dict)}
-    if isinstance(value, list):
-        return [_project(entry, schema.get('items', {})) for entry in value]
-    return value
-
-
 def _strings(value):
     if isinstance(value, str):
         yield value
@@ -174,34 +121,6 @@ def _strings(value):
     elif isinstance(value, list):
         for entry in value:
             yield from _strings(entry)
-
-
-def _omit_local_prose(value, schema, path=()):
-    """Omit whole sensitive fields only where ordinary prose is schema-valid.
-
-    Identifiers, enums and links retain their constraints: a marker that cannot
-    satisfy their schema leaves the original value to fail strict validation.
-    """
-    schema=_resolve(schema)
-    for keyword in ('anyOf','oneOf'):
-        if keyword in schema:
-            for branch in schema[keyword]:
-                try:_check(value,branch)
-                except ProjectionError:continue
-                return _omit_local_prose(value,branch,path)
-            return value
-    prose=(bool(path) and path[-1] in PROSE_FIELDS
-           or len(path)>1 and isinstance(path[-1],int) and path[-2] in PROSE_FIELDS
-           or len(path)==3 and path[:2]==('document','focus'))
-    if prose and isinstance(value,str) and _has_local_path(value):
-        try:_check(OMITTED_LOCAL_REFERENCE,schema)
-        except ProjectionError:return value
-        return OMITTED_LOCAL_REFERENCE
-    if isinstance(value,dict):
-        return {key:_omit_local_prose(entry,schema.get('properties',{}).get(key,schema.get('additionalProperties',{})),(*path,key))
-                for key,entry in value.items()}
-    if isinstance(value,list):return [_omit_local_prose(entry,schema.get('items',{}),(*path,index)) for index,entry in enumerate(value)]
-    return value
 
 
 def _url(value):
@@ -223,124 +142,67 @@ def encode(value: dict) -> bytes:
 
 
 def validate(value: object, *, secret_values=()) -> None:
-    """Validate an upload before sending; the receiver independently enforces this contract."""
+    """Validate an upload before sending; the receiver independently enforces this contract, all but the secrets."""
     secret_values = tuple(secret_values)
     if len(encode(value)) > MAX_BYTES:
         raise ProjectionError('snapshot.byte_bound')
     try:
         _check(value, SCHEMA)
-        for text in _strings(value):
-            if _has_local_path(text):
-                raise ProjectionError('snapshot.local_path')
-            if any(secret and secret in text for secret in secret_values):
-                raise ProjectionError('snapshot.configured_secret')
+        if secret_values and any(secret and secret in text for text in _strings(value) for secret in secret_values):
+            raise ProjectionError('snapshot.configured_secret')
         links = value['links']
         urls = [*links['issues'].values(), *links['commits'].values(),
                 *(row['href'] for row in links['changes'].values())]
         if not all(_url(url) for url in urls):
             raise ProjectionError('snapshot.unsafe_link')
-        subjects = {row['subject'] for name in ('queue', 'planned')
-                    for row in value['document']['state'].get(name, [])}
-        named = {row.get('runId') for name in ('queue', 'planned')
-                 for row in value['document']['state'].get(name, [])}
-        if not set(value['runs']) <= named or not set(value['reviews']) <= subjects:
-            raise ProjectionError('snapshot.unrelated_evidence')
     except (RecursionError, KeyError, TypeError) as error:
         raise ProjectionError('snapshot.structure') from error
 
 
-# What a journal entry publishes, besides a review round's named facts: its identity, kind and times.
-JOURNAL_MEMBERS = ('id', 'at', 'kind', 'lane', 'subject', 'occurredAt')
+def _without_capabilities(value: dict) -> None:
+    """Leave out each sibling delivery's hosted link: anyone holding it can read that delivery. The link goes from the
+    sibling's row, its group and the journal entry that added it, and anywhere else the cut repeats it, the sibling's
+    name stands in its place."""
+    document = value.get('document') if isinstance(value.get('document'), dict) else {}
+    state = document.get('state') if isinstance(document.get('state'), dict) else {}
+    across = document.get('across') if isinstance(document.get('across'), dict) else {}
+    holders = [row for rows in (state.get('siblings'), across.get('groups')) if isinstance(rows, list)
+               for row in rows if isinstance(row, dict)]
+    holders += [entry['data'] for entry in document.get('journal') or []
+                if isinstance(entry, dict) and entry.get('kind') == 'sibling.added' and isinstance(entry.get('data'), dict)]
+    names = {}
+    for row in holders:
+        link = row.pop('link', None)
+        if isinstance(link, str) and link:
+            names[link] = str(row.get('name') or row.get('sibling') or 'the sibling')
+
+    def scrub(node):
+        if isinstance(node, str):
+            for link, name in names.items():
+                node = node.replace(link, name)
+            return node
+        if isinstance(node, list):
+            return [scrub(entry) for entry in node]
+        if isinstance(node, dict):
+            return {scrub(key): scrub(entry) for key, entry in node.items()}
+        return node
+    if names:
+        value.update(scrub(value))
 
 
-def _registered_kinds(journal: list) -> None:
-    """Refuse an entry whose kind the registry of kinds doesn't list: the snapshot names only kinds it knows. What an
-    entry publishes is the schema's to say, by name, so a kind added to the registry publishes no facts of its own."""
-    kinds = render.narrator.journal_words.load_registry()['kinds']
-    if any(not isinstance(entry, dict) or entry.get('kind') not in kinds for entry in journal):
-        raise ProjectionError('snapshot.unregistered_kind')
-
-
-def project(document: dict, runs: dict, config: dict, *, source_fingerprint: str,
-            plan: dict | None = None, needs: dict | None = None, secret_values=()) -> dict:
-    """Allowlist one current delivery's shared bounded line-map data, never history."""
+def project(document: dict, runs: dict, config: dict, *, source_fingerprint: str, plan: dict | None = None,
+            needs: dict | None = None, files: dict | None = None, repository: Path | None = None,
+            secret_values=()) -> dict:
+    """The cut the local live view renders from, for one current delivery, less the credentials. It never carries
+    history: the hosted page has none to link to."""
     named = render.named_runs(document)
     selected = {key: value for key, value in runs.items() if key in named}
     data = render.line_map_data(document, selected, config, theme_key='hosted-delivery', history=None,
-                                plan=plan, needs=needs, story=False)
-    # The links come from what is published: an entry's facts are not, so no commit or change request they name is.
-    # The links are worked out from what is published, so no sibling, nor the words the views give siblings, adds one:
-    # the hosted page draws no sibling (whether it may is a separate decision).
-    shown = {key: value for key, value in data['document'].items() if key != 'across'}
-    if isinstance(shown.get('state'), dict):
-        shown['state'] = {key: value for key, value in shown['state'].items() if key != 'siblings'}
-    published = {**shown, 'journal': [
-        {key: entry[key] for key in JOURNAL_MEMBERS if key in entry} if isinstance(entry, dict) else entry
-        for entry in data['document'].get('journal', [])]}
-    data['links'] = render.page_links(published, data['runs'], config, data['reviews'])
-    # Keep the existing per-lens null/unavailable distinction without publishing
-    # artifact text. A shortened source also uses the existing round-level
-    # clipping note, which the trusted shared consumer already displays.
-    for summary in [*data['runs'].values(), *data['reviews'].values()]:
-        for row in summary.get('roundDetail', []):
-            briefs = row.get('briefs')
-            if not isinstance(briefs, dict):
-                continue
-            markers = {}
-            shortened = False
-            for lens, pair in briefs.items():
-                markers[lens] = {}
-                for part in ('brief', 'result'):
-                    if not isinstance(pair, dict) or part not in pair:
-                        continue
-                    raw = pair[part]
-                    marker = None if raw is None else {'unavailable': True}
-                    if isinstance(raw, dict) and type(raw.get('shortened')) is bool:
-                        marker['shortened'] = raw['shortened']
-                        shortened = shortened or raw['shortened']
-                    markers[lens][part] = marker
-            row['briefs'] = markers
-            if shortened:
-                row.setdefault('clipped', {})['texts'] = True
-    # Paths and parser diagnostics are local-only. Preserve the indicator, not the diagnostic.
-    if isinstance(data.get('plan'), dict):
-        if 'unreadable' in data['plan']:
-            data['plan'] = {'unreadable': 'plan.json unavailable'}
-        elif 'absent' in data['plan']:
-            data['plan'] = {'absent': 'plan.json'}
-    _registered_kinds(data['document'].get('journal', []))
-    value = _project({'schemaVersion': SCHEMA['properties']['schemaVersion']['const'],
-                      'sourceFingerprint': source_fingerprint, **data}, SCHEMA)
-    meta = value['document']['state'].get('meta', {})
-    if 'planFile' in meta:
-        meta['planFile'] = 'plan.json'
-    public_plan = (value.get('plan') or {}).get('plan')
-    if isinstance(public_plan, dict):
-        # Optional provenance references may name local files. The review itself,
-        # its candidate identities and verdicts stay in the public plan chapter.
-        holders = [(public_plan.get('approved', {}), 'review')]
-        holders.extend((change, key) for change in public_plan.get('changes', []) for key in ('source', 'ref'))
-        for holder, key in holders:
-            if isinstance(holder.get(key), str) and _has_local_path(holder[key]):
-                del holder[key]
-    subjects = {row['subject'] for name in ('queue', 'planned')
-                for row in value['document']['state'].get(name, [])}
-    parent = meta.get('trackerParent')
-    for key in ('tickets',):
-        if key in value['document']['state']:
-            value['document']['state'][key] = {k: v for k, v in value['document']['state'][key].items()
-                                               if k in subjects or k == parent}
-    for key in ('stats', 'estimates'):
-        if key in value['document']:
-            value['document'][key] = {k: v for k, v in value['document'][key].items() if k in subjects}
-    value['reviews'] = {key: row for key, row in value['reviews'].items() if key in subjects}
-    # Known secrets still fail closed even when a path in the same field would
-    # otherwise cause its prose to be omitted.
-    secrets=tuple(secret_values)
-    if any(secret and secret in text for text in _strings(value) for secret in secrets):
-        raise ProjectionError('snapshot.configured_secret')
-    value=_omit_local_prose(value,SCHEMA)
-    validate(value, secret_values=secrets)
+                                plan=plan, needs=needs, files=files, repository=repository)
+    value = copy.deepcopy({'schemaVersion': SCHEMA['properties']['schemaVersion']['const'],
+                           'sourceFingerprint': source_fingerprint, **data})
+    _without_capabilities(value)
+    validate(value, secret_values=secret_values)
     return value
 
 

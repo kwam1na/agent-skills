@@ -38,7 +38,7 @@ import render
 import views_common as views
 
 PROTOCOL = 'hosted-delivery-api/1'
-RENDERER = 'delivery-line-map/2'
+RENDERER = 'delivery-line-map/3'
 IDENTITY = 'hosted-identity.json'
 STATUS = 'hosted-status.json'
 OWNER = 'hosted-owner.json'
@@ -73,9 +73,9 @@ SAFE_ERRORS = ERRORS | frozenset(('sidecar_unsafe sidecar_unreadable sidecar_ove
  'terminal_corrupt terminal_unfinished terminal_source_changed terminal_expired final_publication_pending owner_elsewhere').split())
 # A projection refusal names its own bounded code, never the refused value, so a status can say which rule refused a cut.
 PROJECTION_ERRORS = frozenset(('snapshot.byte_bound snapshot.configured_secret snapshot.const snapshot.credential_field '
- 'snapshot.duplicate snapshot.enum snapshot.json snapshot.key snapshot.list_bound snapshot.local_path snapshot.number_bound '
- 'snapshot.object_bound snapshot.pattern snapshot.projection snapshot.schema snapshot.structure snapshot.text_bound '
- 'snapshot.type snapshot.unknown_field snapshot.unregistered_kind snapshot.unrelated_evidence snapshot.unsafe_link '
+ 'snapshot.duplicate snapshot.enum snapshot.json snapshot.key snapshot.list_bound snapshot.number_bound '
+ 'snapshot.object_bound snapshot.pattern snapshot.schema snapshot.structure snapshot.text_bound '
+ 'snapshot.type snapshot.unknown_field snapshot.unsafe_link '
  'source.byte_bound source.changed source.deadline source.path').split())
 SAFE_ERRORS |= PROJECTION_ERRORS
 
@@ -625,6 +625,8 @@ def selected_files(directory):
     names=['state.json','journal.jsonl','plan.json',render.NEEDS_FILE]
     if any((directory/name).is_symlink() or not (directory/name).resolve().is_relative_to(directory)
            for name in [*names,'review-artifacts']):raise PublishError('source_path')
+    # The files view's reads, which the local page reads as unreadable when they can't be trusted, as the cut does.
+    names.append(render.LANE_CHANGES_FILE)
     state=render.review_state.read_state(directory)
     journal=render.review_state.read_journal(directory)
     subjects={row['subject'] for name in ('queue','planned') for row in state.get(name,[])}
@@ -695,8 +697,10 @@ def collect(inputs,arguments=None):
                     summary=render._read_run(run,run_id,rows[run_id],config['findings']['reportSpecs'])
                     if summary is None:raise PublishError('source_invalid',transient=True)
                     runs[run_id]=summary
+        # The same cut the local live view renders: its files view and the integration's drift, read here as there.
         value=public.project(doc,runs,config,source_fingerprint='0'*64,
-              plan=render.read_plan_block(directory,doc),needs=render.read_needs_block(directory))
+              plan=render.read_plan_block(directory,doc),needs=render.read_needs_block(directory),
+              files=render.read_lane_changes_block(directory),repository=root)
         # Close the complete collection interval, including optional inputs and
         # payload construction, rather than verifying APIs before those reads.
         before=copy.deepcopy(trace)

@@ -9,40 +9,9 @@ function patch(before, after) {
   if (line.split(before).length !== 2) throw Error("hosted.asset_hook_drift");
   line = line.replace(before, after);
 }
-// Small host adapter; every chapter/detail renderer still comes from the corpus.
-// The hosted snapshot carries no story and no entry's facts, by its schema. The page says what is not published rather
-// than that nothing was recorded, and leaves out the steps and notes it would draw without words.
-patch(
-  "  function runFor(doc, item) {",
-  'function hostedCut(doc) { return !!(globalThis.deliveryStateStore && typeof globalThis.deliveryStateStore.projection === "function") && !isObject(doc.story); }\n  var UNPUBLISHED = "Its reason is not published on the hosted page.";\n  function runFor(doc, item) {',
-);
-patch(
-  'el("h2", "title", "The story could not be told from this record.")',
-  'el("h2", "title", hostedCut(doc) ? "What happened is not published on the hosted page." : "The story could not be told from this record.")',
-);
-// A kept review publishes no facts: the publisher matched its digest and candidate to the native review it sent.
-patch(
-  "          || (evidence && (!keptReview(evidence) || keptReview(evidence).digest !== native.digest))",
-  "          || (!hostedCut(doc) && evidence && (!keptReview(evidence) || keptReview(evidence).digest !== native.digest))",
-);
-patch(
-  "    return evidence && keptReview(evidence) ? keptReview(evidence).candidateRef : undefined;",
-  "    if (hostedCut(doc)) { var sent = nativeReviews[item.subject]; return isObject(sent) ? sent.candidateRef : undefined; }\n    return evidence && keptReview(evidence) ? keptReview(evidence).candidateRef : undefined;",
-);
-// A stopped piece's and a broken base's reasons are not patched: the page draws them only from the supervisor's
-// published needs list, already in words, and from a closed page's left-open block, which the hosted page never carries.
-patch(
-  'toldLine(doc, events[events.length - 1]) || "No reason recorded."',
-  'toldLine(doc, events[events.length - 1]) || (hostedCut(doc) ? UNPUBLISHED : "No reason recorded.")',
-);
-patch(
-  "    var notes = list(doc.journal).filter(function (entry) {\n",
-  "    var notes = list(doc.journal).filter(function (entry) {\n      if (hostedCut(doc)) { return false; }\n",
-);
-patch(
-  "    var rows = journalFor(doc, item.subject, HISTORY);\n    if (!rows.length) { return null; }",
-  "    var rows = journalFor(doc, item.subject, HISTORY);\n    if (!rows.length || hostedCut(doc)) { return null; }",
-);
+// Small host adapter; every chapter/detail renderer still comes from the corpus. The hosted snapshot is the local live
+// view's own cut, so the page draws everything the local page does: these hooks only replace the local page's HTML
+// refresh with the hosted store's coherent projection push.
 patch(
   "  function refreshRuns() {",
   '  function refreshRuns() { if (globalThis.deliveryStateStore && typeof globalThis.deliveryStateStore.projection === "function") { return; }',
@@ -61,6 +30,9 @@ patch(
     if (!payload) { return; }
     VIEW = payload.view; runs = payload.runs; nativeReviews = payload.reviews; readLinks(payload.links);
     PLAN = payload.plan || null; plan = PLAN && isObject(PLAN.plan) ? PLAN.plan : null; NEEDS = payload.needs || null;
+    FILES = payload.files ? readNeeds(JSON.stringify(payload.files)) : null;
+    LEFT_OPEN = payload.leftOpen ? readNeeds(JSON.stringify(payload.leftOpen)) : null;
+    DRIFT = payload.integration ? readDrift(JSON.stringify(payload.integration)) : null;
     if (PLAN && !parts.plan) {
       var section = el("section", "chapter chapter-plan arrived"); section.id = "plan";
       parts.plan = el("div", "inner"); section.appendChild(parts.plan);

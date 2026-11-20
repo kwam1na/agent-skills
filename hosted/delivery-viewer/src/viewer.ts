@@ -30,6 +30,7 @@ if (match && statusNode && timesNode && app && entry) {
       : "";
   }
   function seed(body: PublicProjection) {
+    // The blocks the local page embeds, by the ids the corpus renderer reads them from.
     const fields: Record<string, unknown> = {
       state: body.document,
       runs: body.runs,
@@ -38,6 +39,9 @@ if (match && statusNode && timesNode && app && entry) {
       view: body.view,
       plan: body.plan,
       needs: body.needs,
+      files: body.files,
+      "left-open": body.leftOpen,
+      integration: body.integration,
     };
     for (const [key, value] of Object.entries(fields)) {
       const id = `delivery-${key}`;

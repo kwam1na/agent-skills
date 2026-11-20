@@ -224,11 +224,11 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(len([call for call in self.api.calls if call[1]=='session']),1)
 
     def test_a_refused_cut_names_the_projection_code_in_the_retried_status(self):
-        def refuse():raise hosted.public.ProjectionError('snapshot.local_path')
-        with self.assertRaisesRegex(hosted.PublishError,'^snapshot.local_path$') as caught:self.publisher.step(refuse)
+        def refuse():raise hosted.public.ProjectionError('snapshot.credential_field')
+        with self.assertRaisesRegex(hosted.PublishError,'^snapshot.credential_field$') as caught:self.publisher.step(refuse)
         self.assertTrue(caught.exception.transient)
-        bad=copy.deepcopy(VALID);bad['view']['title']='Open tests/test_merge_queue.py'
-        with self.assertRaisesRegex(hosted.PublishError,'^snapshot.local_path$'):self.publisher.step(lambda:bad)
+        bad=copy.deepcopy(VALID);bad['document']['state']['meta']['token']='a credential'
+        with self.assertRaisesRegex(hosted.PublishError,'^snapshot.credential_field$'):self.publisher.step(lambda:bad)
         # A code the projection does not define, and every other unavailable source, stays generic.
         for error in (hosted.public.ProjectionError('/Users/operator/private'),OSError('x')):
             def fail(error=error):raise error
@@ -236,18 +236,18 @@ class PublisherTests(unittest.TestCase):
                 self.publisher.step(fail)
         args=SimpleNamespace(config='views.json',binding='binding.json',state_dir=str(self.state),key='APP-1')
         inputs=views_common.Inputs(self.root,self.config,{},self.state)
-        for answer,code in (({'refused':'snapshot.local_path'},'^snapshot.local_path$'),
+        for answer,code in (({'refused':'snapshot.credential_field'},'^snapshot.credential_field$'),
                             ({'refused':'TOKEN-shaped words'},'^source_unavailable$'),({'refused':7},'^source_unavailable$')):
             with self.subTest(answer=answer),mock.patch.object(hosted.views,'run_json',return_value=answer), \
                  self.assertRaisesRegex(hosted.PublishError,code):hosted.child_collect(args,inputs)
-        hosted.atomic(self.state/hosted.STATUS,{'spec':'hosted-delivery-status/1','state':'retrying','code':'snapshot.local_path'})
-        self.assertEqual(hosted.status(self.state,self.config['hosted'],'APP-1')['code'],'snapshot.local_path')
+        hosted.atomic(self.state/hosted.STATUS,{'spec':'hosted-delivery-status/1','state':'retrying','code':'snapshot.credential_field'})
+        self.assertEqual(hosted.status(self.state,self.config['hosted'],'APP-1')['code'],'snapshot.credential_field')
         # The collect child answers a refusal with the code alone.
         with mock.patch.object(hosted,'load_inputs',return_value=SimpleNamespace(state_directory=self.state,config=self.config)), \
-             mock.patch.object(hosted,'collect',side_effect=hosted.public.ProjectionError('snapshot.local_path')),mock.patch('builtins.print') as printed:
+             mock.patch.object(hosted,'collect',side_effect=hosted.public.ProjectionError('snapshot.credential_field')),mock.patch('builtins.print') as printed:
             self.assertEqual(hosted.main(['collect','--config','views.json','--binding','binding.json',
                                           '--state-dir',str(self.state),'--key','APP-1']),0)
-        self.assertEqual(json.loads(printed.call_args.args[0]),{'refused':'snapshot.local_path'})
+        self.assertEqual(json.loads(printed.call_args.args[0]),{'refused':'snapshot.credential_field'})
 class ConfigTests(unittest.TestCase):
     def test_explicit_origins_and_environment_names_fail_closed(self):
         self.assertIsNone(views_common.validate_config({'spec':'delivery-views-config/1'})['hosted'])
@@ -282,7 +282,7 @@ class ReceiverTests(unittest.TestCase):
                 if fixture.mode=='oversize':answer={'padding':'x'*(hosted.MAX_RESPONSE+1)}
                 else:
                     if operation in ('snapshots','confirm'):
-                        if self.headers.get('X-Renderer-Version')!='delivery-line-map/2':
+                        if self.headers.get('X-Renderer-Version')!='delivery-line-map/3':
                             self.send_response(422);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(b'{"error":"unsupported_renderer"}');return
                         if operation=='snapshots' and self.headers.get('X-Snapshot-Digest')!=hashlib.sha256(body).hexdigest():
                             self.send_error(422);return
@@ -292,9 +292,9 @@ class ReceiverTests(unittest.TestCase):
                         self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(json.dumps({'error':error.code}).encode());return
                     if isinstance(answer,dict) and 'protocolVersion' in answer:
                         answer['protocolVersion']='hosted-delivery-api/1'
-                        if 'rendererVersion' in answer:answer['rendererVersion']='delivery-line-map/2'
+                        if 'rendererVersion' in answer:answer['rendererVersion']='delivery-line-map/3'
                         if answer.get('receipt'):
-                            answer['receipt']['protocolVersion']='hosted-delivery-api/1';answer['receipt']['rendererVersion']='delivery-line-map/2'
+                            answer['receipt']['protocolVersion']='hosted-delivery-api/1';answer['receipt']['rendererVersion']='delivery-line-map/3'
                 if fixture.mode=='lost' and operation=='snapshots':
                     fixture.mode='normal';self.connection.shutdown(socket.SHUT_RDWR);self.connection.close();return
                 self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(json.dumps(answer).encode())
@@ -347,7 +347,7 @@ class ReceiverTests(unittest.TestCase):
         with mock.patch.dict(os.environ,{'FIXTURE_PUBLISH_TOKEN':TOKEN,'PYTHONPATH':str(self.state)}):
             result=self.publisher.step(lambda:copy.deepcopy(VALID))
         self.assertEqual(result['receipt']['protocolVersion'],'hosted-delivery-api/1')
-        self.assertEqual(result['receipt']['rendererVersion'],'delivery-line-map/2')
+        self.assertEqual(result['receipt']['rendererVersion'],'delivery-line-map/3')
         self.assertEqual(result['receipt']['digest'],hashlib.sha256(hosted.public.encode(VALID)).hexdigest())
         self.assertEqual([call[0] for call in self.observed],['status','session','snapshots'])
         self.assertEqual(hosted.CHILDREN,set())

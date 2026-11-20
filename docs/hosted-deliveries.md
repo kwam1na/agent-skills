@@ -1,7 +1,7 @@
 # Hosted deliveries
 
-A repository may publish a bounded data projection to a signed-out capability
-link. Local delivery state remains authoritative. The Worker package in
+A repository may publish its delivery to a signed-out capability link, where it
+reads as the local live view does. Local delivery state remains authoritative. The Worker package in
 `hosted/delivery-viewer/` is deployed separately from portable workflow archives.
 No live proof is claimed by packaging, source tests, local receivers or service CI.
 
@@ -50,6 +50,25 @@ identity/receipt sidecars with their record for same-link recovery; keep them ou
 of release archives and public exports. Never copy one repository's sidecars to
 another. Consult the installed skill for `retry`, terminal deadline and recovery.
 
+## What a hosted link shows
+
+A hosted link shows what the local live view shows, from the same record: every
+chapter, the story, each journal entry with its facts, the integration step, the
+plan, Needs you, review evidence with its briefs and results, the files view,
+what a closed delivery left open and how far the integration's target moved. Its
+prose keeps the paths, commands and names the record holds, as the local page
+draws them. Anyone holding the link reads all of it.
+
+What is never published is a credential. A cut that holds a configured secret's
+value anywhere, the publishing token among them, or a field named password,
+token, secret, API key, credential, authorization or cookie, is refused with its
+code, `snapshot.configured_secret` or `snapshot.credential_field`. `status` names
+the code and the page keeps its last cut until a clean one is sent. No scanner
+claims to recognize every secret someone may type. A sibling delivery's hosted
+link grants read access to that delivery, so the page names the sibling without
+it. The git identity in the local page's corner belongs to the reader's checkout,
+not to the record, so the hosted page has none.
+
 ## Service checks
 
 Use supported Node 22.22.2+ or 24.15+; CI pins 22.23.5. Run the service's own
@@ -67,10 +86,10 @@ result, and the local suite before a tag does not attest service CI.
 ## Versions move together
 
 The service and the publishing generation move together. The snapshot body is
-`hosted-delivery-snapshot/2`, sent as renderer `delivery-line-map/2`: a service that
+`hosted-delivery-snapshot/3`, sent as renderer `delivery-line-map/3`: a service that
 reads another version refuses the body as an unsupported renderer, and a publisher
 refuses a receipt naming another. Deploy the service and apply the generation in
-one step. A delivery hosted as `/1` stays at its last acknowledged cut and its page
+one step. A delivery hosted as `/2` or earlier stays at its last acknowledged cut and its page
 then reads as requiring a compatible snapshot, since nothing republishes a finished
 delivery. One still open under the older generation closes there first, as its
 journal must: the newer publisher reads that delivery's identity, pending body or

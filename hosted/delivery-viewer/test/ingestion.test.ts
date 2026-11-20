@@ -31,107 +31,45 @@ describe('ingestion boundary', () => {
     expect(response.status).toBe(valid ? 200 : 400);
     expect((await current(publicId)).status).toBe(valid ? 200 : 404);
   });
+  // A fixture body to change freely: the generated fixture types are its literal values.
+  type Loose = Record<string, any>;
+  // The hosted page shows what the local live view shows: prose arrives with the paths and commands the record holds.
   it.each([
-    ['--output=/Users/operator/work/wait.json', false], ['--output=/tmp/wait.json', false],
-    ['--output="/Users/operator/work/wait.json"', false], ["--output='/tmp/wait.json'", false],
-    ['--output /tmp/wait.json', false], [String.raw`--output=C:\work\wait.json`, false],
-    ['--output=C:/work/wait.json', false], [String.raw`--output=\\server\share\wait.json`, false],
-    ['--output=~/work/wait.json', false], ['--output="~/work/wait.json"', false],
-    ['--output=./wait.json', false], ['--output=../wait.json', false],
-    [String.raw`--output=.\wait.json`, false], [String.raw`--output=..\wait.json`, false],
-    ['--output=.orchestration/wait.json', false], ['--output=docs/wait.json', false],
-    [String.raw`--output=docs\wait.json`, false], ['--output=file:///tmp/wait.json', false],
-    ['--output=.agent-skills/current/wait.json', false],
-    ['python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py', false],
-    ['Read `/Users/operator/private/wait.json`', false], ['Inspect `docs/private-plan.md`', false],
-    ['--output=`/Users/operator/private/wait.json`', false], ['`--output=/Users/operator/private/wait.json`', false],
-    ['Read “/Users/operator/private/wait.json”', false],
-    ['Read ‘.agent-skills/current/run.py’', false], ['Output:/Users/operator/private/wait.json', false],
-    ['[/Users/operator/private/wait.json]', false], ['[docs/private-plan.md]', false],
-    [String.raw`Output:[C:\work\wait.json]`, false], ['Read “~/work/wait.json”', false], ['Read `../wait.json`', false],
-    ['{docs/private-plan.md}', false], ['<./wait.json>', false], ['Output;/tmp/wait.json', false], ['Output,/tmp/wait.json', false],
-    ['Read **/Users/operator/private/wait.json**', false], ['Inspect **docs/private-plan.md**', false],
-    ['Read _/Users/operator/private/wait.json_', false], ['Read ~~/Users/operator/private/wait.json~~', false],
-    ['https:///Users/operator/private/wait.json', false], ['https://user:pass@example.com/docs/private.md', false],
-    ['Read "https://example.com/public_docs/file"/Users/operator/private/wait.json', false],
-    ['Read `https://example.com/public_docs/file`docs/private-plan.md', false],
-    ['[public](https://example.com/public_docs/file)/Users/operator/private/wait.json', false],
-    ['[public](https://example.com/public_docs/file)docs/private-plan.md', false],
-    ['(https://example.com/public_docs/file)/Users/operator/private/wait.json', false],
-    ['[public](https://example.com/public_docs/file)[docs/private-plan.md]', false],
-    ['[public](https://example.com/public_docs/file){docs/private-plan.md}', false],
-    ['[public](https://example.com/public_docs/file)**/Users/operator/private/wait.json**', false],
-    ['[public](https://example.com/(nested/(docs/file)))/Users/operator/private/wait.json', false],
-    ['[public](https://example.com/public_docs/file)_docs/private-plan.md_', false],
-    ['[public](https://example.com/public_docs/file)~~docs/private-plan.md~~', false],
-    ['[public](https://example.com/public_docs/file)', true], ['(https://example.com/public_docs/file)', true],
-    ['https://example.com/(docs/file)', true], ['https://example.com/(outer/(docs/file))', true],
-    ['[public](https://example.com/(outer/(docs/file)))', true], ['https://example.com/docs/file;more', true],
-    ['https://example.com/docs/file,more', true], ['(https://example.com/docs/file)(https://example.com/docs/next)', true],
-    ['[public](https://example.com/public_docs/file)ready', true], ['https://[::1]/docs/file', true],
-    ['--output=https://example.com/public/wait.json', true], ['--timeout=1800.0', true],
-    ['--output=summary.json', true], ['--mode=public', true], ['Review https://example.com/docs/wait.json', true],
-    ['`https://example.com/docs/wait.json`', true], ['“https://example.com/docs/wait.json”', true],
-    ['[https://example.com/docs/wait.json]', true], ['‘https://example.com/docs/wait.json’', true],
-    ['<https://example.com/docs/wait.json>', true], ['Output:summary.json', true], ['[ready]', true], ['`--mode=public`', true],
-  ])('independently scans option-bearing public prose: %s', async (text, valid) => {
+    '--output=/Users/operator/work/wait.json', String.raw`--output=C:\work\wait.json`, '--output=~/work/wait.json',
+    'python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-wait',
+    'Read `docs/plans/approved.md`', '[public](https://example.com/public_docs/file)/Users/operator/private/wait.json',
+    'Verified file:///tmp/proof.json', 'https://example.com/docs/file;more',
+  ])('accepts the local view\'s prose as it is written: %s', async (text) => {
     const publicId = id(); await session(publicId);
-    const body = fixture(); body.document.state.meta.headline = text;
-    expect((await upload(publicId, 1, body)).status).toBe(valid ? 200 : 400);
-    expect((await current(publicId)).status).toBe(valid ? 200 : 404);
+    const body = fixture() as Loose;
+    body.document.state.meta.headline = text;
+    body.document.journal.push({ id: 99, at: '2026-11-15T00:09:00Z', kind: 'decision.recorded', lane: null, subject: null,
+      because: [1], data: { text, why: text } });
+    body.needs = { running: true, at: '2026-11-15T00:00:00Z', staleAfter: '2026-11-15T00:02:00Z',
+      items: [{ holding: false, source: 'listener', clears: 'listener restored', text }] };
+    body.document.story = { chapters: [{ said: text }] };
+    expect((await upload(publicId, 1, body)).status).toBe(200);
+    expect((await current(publicId)).status).toBe(200);
   });
-  it.each([..."!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~“”‘’"])(
-    'scans punctuation wrappers independently: %s', async (prefix) => {
-      const local = ['/Users/operator/private/wait.json', 'docs/private-plan.md', String.raw`C:\work\wait.json`,
-        '.agent-skills/current/run.py', '~/work/wait.json', './wait.json', '../wait.json'];
-      const benign = ['https://public_docs.example.com/part_docs/file', 'https://example.com/public_docs/file',
-        'HTTPS://example.com/public_docs/file', 'https://public-docs.example.com/.docs/file',
-        '--mode=public', 'ready'];
-      for (const text of [...local, ...benign]) {
-        // Slash controls that form UNC/absolute paths remain private.
-        const privateReference = local.includes(text) || prefix === '\\' || (prefix === '/' && text === 'ready');
+  it.each(['password', 'token', 'secret', 'apiKey', 'api_key', 'credential', 'Authorization', 'cookie'])(
+    'refuses a credential-named field at any depth: %s', async (key) => {
+      for (const place of ['journal fact', 'state', 'run', 'needs']) {
         const publicId = id(); await session(publicId);
-        const body = fixture(); body.document.state.meta.headline = `Read ${prefix}${prefix}${text}${prefix}${prefix}`;
-        expect((await upload(publicId, 1, body)).status).toBe(privateReference ? 400 : 200);
-        expect((await current(publicId)).status).toBe(privateReference ? 404 : 200);
+        const body = fixture() as Loose;
+        body.needs = { running: true, at: '2026-11-15T00:00:00Z', items: [{ holding: false, source: 's', clears: 'c', text: 't' }] };
+        const holder = place === 'journal fact' ? (body.document.journal[0].data ??= {})
+          : place === 'state' ? body.document.state.meta
+          : place === 'run' ? Object.values(body.runs as Record<string, Record<string, unknown>>)[0]
+          : body.needs.items[0];
+        (holder as Record<string, unknown>)[key] = 'a value';
+        expect((await upload(publicId, 1, body)).status, place).toBe(400);
+        expect((await current(publicId)).status, place).toBe(404);
       }
-    });
-  it.each([['(', ')'], ['[', ']'], ['{', '}']].flatMap(([opening, balancedClosing]) =>
-    [')', ']', '}'].map(closing => ({ opening, closing, balanced: closing === balancedClosing }))))(
-    'distinguishes URL wrapper types $opening $closing', async ({ opening, closing, balanced }) => {
+      // A field whose name only contains the word is ordinary.
       const publicId = id(); await session(publicId);
-      const body = fixture();
-      body.needs = { running: true, at: '2026-11-15T00:00:00Z', staleAfter: '2026-11-15T00:02:00Z',
-        items: [{ holding: false, source: 'listener', clears: 'listener restored',
-          text: `Read [public](https://example.com/${opening}nested${closing}/Users/operator/private/wait.json)` }] };
-      expect((await upload(publicId, 1, body)).status).toBe(balanced ? 200 : 400);
-      expect((await current(publicId)).status).toBe(balanced ? 200 : 404);
+      const body = fixture() as Loose; (body.document.state.meta as Record<string, unknown>)[`${key}Budget`] = 3;
+      expect((await upload(publicId, 1, body)).status).toBe(200);
     });
-  it.each([
-    ['Verified /Users/operator/private/proof.json', false], ['Verified docs/private-proof.md', false],
-    ['Verified --output=/tmp/private-proof.json', false], ['[Local reference omitted]', true],
-    ['Verified all acceptance criteria without a code change.', true],
-    ['Verified https://example.com/public_docs/proof', true],
-  ])('validates settled no-change evidence independently: %s', async (evidence, valid) => {
-    const publicId = id(); await session(publicId);
-    const body = fixture();
-    Object.assign(body.document.state, { planned: [{ subject: 'APP-2', title: 'No change needed', lane: null, stage: 'settled',
-      noChange: { evidence, baseHead: 'b'.repeat(40), handedAt: '2026-11-15T00:00:00Z', settledAt: '2026-11-15T00:01:00Z' } }] });
-    expect((await upload(publicId, 1, body)).status).toBe(valid ? 200 : 400);
-    expect((await current(publicId)).status).toBe(valid ? 200 : 404);
-  });
-  it('serves the deployed entrypoint through local Worker, DO and R2 bindings', async () => {
-    const publicId=id();
-    const auth={'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json'};
-    const acquired=await SELF.fetch(`https://service.test${route(publicId,'session')}`,{method:'POST',headers:auth,body:JSON.stringify({mode:'acquire',deliveryKey:'APP-1',ownerId:'c'.repeat(64)})});
-    expect(acquired.status).toBe(200);
-    const body=JSON.stringify(fixture());const hash=await digest(new TextEncoder().encode(body));
-    const accepted=await SELF.fetch(`https://service.test${route(publicId,'snapshots')}`,{method:'POST',headers:{...auth,'X-Writer-Epoch':'1','X-Snapshot-Sequence':'1','X-Snapshot-Digest':hash,'X-Renderer-Version':RENDERER},body});
-    expect(accepted.status).toBe(200);
-    const response=await SELF.fetch(`https://service.test/d/${publicId}/snapshots/${hash}`);
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe(body);
-  });
   it('hashes exact bytes and accepts data only with supported renderer and bounded headers', async () => {
     const publicId = id(); await session(publicId);
     const headers = { 'Content-Type': 'application/json', 'X-Renderer-Version': RENDERER,
@@ -143,9 +81,15 @@ describe('ingestion boundary', () => {
     // publisher move together.
     const valid = JSON.stringify(fixture());
     const exact = { ...headers, 'X-Snapshot-Digest': await digest(new TextEncoder().encode(valid)) };
-    const previous = await request(route(publicId, 'snapshots'), { method: 'POST', headers: {...exact, 'X-Renderer-Version': 'delivery-line-map/1'}, body: valid });
-    expect(previous.status).toBe(422);
-    expect(JSON.stringify(await previous.json())).toContain('unsupported_renderer');
+    expect(RENDERER).toBe('delivery-line-map/3');
+    for (const older of ['delivery-line-map/1', 'delivery-line-map/2']) {
+      const previous = await request(route(publicId, 'snapshots'), { method: 'POST', headers: {...exact, 'X-Renderer-Version': older}, body: valid });
+      expect(previous.status).toBe(422);
+      expect(JSON.stringify(await previous.json())).toContain('unsupported_renderer');
+    }
+    // An older body is refused too, under the current renderer.
+    const olderBody = JSON.stringify({ ...fixture(), schemaVersion: 'hosted-delivery-snapshot/2' });
+    expect((await upload(publicId, 1, olderBody)).status).toBe(400);
     expect((await current(publicId)).status).toBe(404);
     expect((await upload(publicId, 1, '[['.repeat(65))).status).toBe(400);
     expect((await upload(publicId, 1, '{"bad":')).status).toBe(400);
