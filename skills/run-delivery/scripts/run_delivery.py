@@ -973,6 +973,8 @@ class Config:
                       "cwd": g.get("cwd", "."), "timeoutSeconds": g.get("timeoutSeconds", timeout)}
                      for g in b.get("fallback", [])]
         flow_gates = f.get("gates")
+        if isinstance(flow_gates, list):
+            flow_gates = [named_gate(g, b) if isinstance(g, str) else g for g in flow_gates]
         if flow_gates == "none" and (b.get("fallback") or b.get("provider") or b.get("alwaysRun") or b.get("profiles")):
             self.conflicts.append(f"{own} says \"gates\": \"none\", but the binding declares checks the merge queue runs")
         if flow_gates == "none":
@@ -981,6 +983,10 @@ class Config:
             self.gates = take("gates", (gates, "orchestration binding (fallback checks: what the merge queue runs)"),
                               flow=flow_gates, default=[],
                               same=lambda a, b: [(g["id"], g["argv"]) for g in a] == [(g["id"], g["argv"]) for g in b])
+            if (isinstance(flow_gates, list) and any(isinstance(g, dict) and g.get("check") for g in flow_gates)
+                    and [(g["id"], g["argv"]) for g in flow_gates] == [(g["id"], g["argv"]) for g in self.gates]):
+                # The own config names the binding's fallback checks by id: those run through run-checks, as named.
+                self.gates = [ours if ours.get("check") else theirs for ours, theirs in zip(flow_gates, self.gates)]
         self.harness_settings = h
         if not self.bases:  # one base: check the harness config against it now; else against the delivery's base
             self.conflicts += self.harness_conflicts(self.binding_base, "the binding's base")
@@ -3045,24 +3051,190 @@ def write_stamp(artifact: Path, head: str, tree: str) -> None:
     (artifact / STAMP).write_text(json.dumps({"head": head, "tree": tree, "builtAt": now()}))
 
 
+def binding_checks(binding: dict | None) -> dict[str, dict]:
+    """The checks a binding defines, by id: its catalogue's, then alwaysRun's and fallback's, as run-checks reads them."""
+    b = binding or {}
+    found = [*((b.get("selection") or {}).get("catalogue") or []), *(b.get("alwaysRun") or []), *(b.get("fallback") or [])]
+    return {check["id"]: check for check in found if isinstance(check, dict) and isinstance(check.get("id"), str)}
+
+
+def named_gate(name: str, binding: dict | None) -> dict:
+    """A `gates` entry that names a check by id: it runs through run-checks from that definition. Its argv is the
+    definition's, for what shows or lends the gate; an id the binding doesn't define has none, which doctor reports."""
+    check = binding_checks(binding).get(name)
+    if check is None:
+        return {"id": name, "check": name, "argv": [], "cwd": ".", "unknown": True}
+    return {"id": name, "check": name, "argv": [("{base}" if a == "{baseHead}" else a) for a in check.get("argv") or []],
+            "cwd": check.get("cwd", "."),
+            "timeoutSeconds": check.get("timeoutSeconds", (binding or {}).get("checkTimeoutSeconds", 1800))}
+
+
+def check_runs(c, head: str, ids: list[str]) -> tuple[list[dict], float]:
+    """Run checks at `head` through the release's `merge_queue.py run-checks`, the way the queue runs them, and return
+    the records it prints with the run's whole time. Its refusal stops here with its own reason."""
+    argv = [sys.executable, "-B", str(c.release / "skills/orchestrate-work/scripts/merge_queue.py"), "--repo", str(repo()),
+            "--remote", c.remote, "--base", c.base_branch, "run-checks", "--head", head, "--checks", ",".join(ids)]
+    started = time.time()
+    proc = subprocess.Popen(argv, cwd=repo(), text=True, start_new_session=True, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    try:
+        out, err = proc.communicate()  # each check and prepare step is bounded by the queue's own timeouts
+    finally:
+        stop_group(proc)
+    seconds = time.time() - started
+    try:
+        said = json.loads(out)
+    except json.JSONDecodeError:
+        raise Stop(f"run-checks printed no records ({proc.returncode}): {(out + err).strip()[-800:]}") from None
+    if isinstance(said, dict):
+        raise Stop(f"run-checks refused: {said.get('reason')}: {said.get('detail')}")
+    return said, seconds
+
+
+def check_median(c, name: str) -> str:
+    """A check's measured median from the record's check history, as the queue keeps it."""
+    try:
+        seconds = (((c.record_state().get("meta") or {}).get("checkHistory") or {}).get("checks") or {}).get(name, {})
+        median = _validator().median_seconds(list(seconds.get("seconds") or []))
+    except (OSError, ValueError, AttributeError, TypeError):
+        median = None
+    return f"median {median}s" if median is not None else "no median yet"
+
+
+def record_line(record: dict) -> str:
+    seconds = f" in {record['seconds']}s" if "seconds" in record else ""
+    log = f"; its output: {record['log']}" if record.get("log") else ""
+    return f"{record['check']} {record['result']}{seconds} at {record['head'][:10]} ({record.get('where')}){log}"
+
+
+CHECK_RECORDS = "checks.jsonl"
+
+
+def check(args) -> None:
+    """Run checks by id at HEAD the way the queue does, and keep each record in the story's review folder."""
+    c = cfg()
+    key = c.require(args.key)
+    ids = [name.strip() for text in args.ids for name in text.split(",") if name.strip()]
+    if not ids:
+        raise Stop("name the checks to run, by id")
+    head = clean_head()
+    records, seconds = check_runs(c, head, ids)
+    with (review_dir(key) / CHECK_RECORDS).open("a", encoding="utf-8") as kept:
+        for record in records:
+            kept.write(json.dumps(record, sort_keys=True) + "\n")
+    for record in records:
+        print(f"check {record_line(record)}; {check_median(c, record['check'])}")
+    ran = sum(record.get("seconds", 0) for record in records)
+    print(f"prepare and checkout: {max(0, round(seconds - ran))}s of the run's {round(seconds)}s")
+    print(f"kept {len(records)} record(s) in {review_dir(key) / CHECK_RECORDS}")
+    if any(record["result"] != "passed" for record in records):
+        sys.exit(1)
+
+
+def handoff_records(key: str, head: str) -> dict[str, dict]:
+    """For each check the binding defines and doesn't exclude from reuse, the latest record the lane keeps at `head` or
+    its nearest ancestor, whatever its result, so a later failure replaces an earlier pass. A record from `check` or
+    from a gate counts alike; one at a commit `head` doesn't hold is left out, and so is a latest one that was skipped,
+    which no evidence entry can carry. Whether a record applies is the queue's to answer."""
+    c = cfg()
+    folder = review_dir(key)
+    kept = folder / CHECK_RECORDS
+    records = [json.loads(line) for line in kept.read_text(encoding="utf-8").splitlines() if line.strip()] if kept.exists() else []
+    gates = load_json(folder / "gates.json") or {}
+    records += [r["record"] for r in gates.get("results", []) if isinstance(r.get("record"), dict)]
+    excluded = {entry.get("check") for entry in ((c.binding or {}).get("reuse") or {}).get("exclude") or []
+                if isinstance(entry, dict)}
+    known = set(binding_checks(c.binding)) - excluded
+    distance: dict[str, int | None] = {}
+
+    def behind(commit: str) -> int | None:
+        if commit not in distance:
+            held = run(["git", "merge-base", "--is-ancestor", commit, head], cwd=repo(), check=False).returncode == 0
+            distance[commit] = int(git("rev-list", "--count", f"{commit}..{head}")) if held else None
+        return distance[commit]
+
+    latest: dict[str, tuple[int, float, dict]] = {}
+    for record in records:
+        name = record.get("check")
+        if name not in known or not isinstance(record.get("head"), str) or behind(record["head"]) is None:
+            continue
+        rank = (-behind(record["head"]), recorded_at(record))
+        if name not in latest or rank >= latest[name][:2]:
+            latest[name] = (*rank, record)
+    fields = (*_validator().EVIDENCE_FIELDS, *_validator().EVIDENCE_OPTIONAL)
+    return {name: {field: record[field] for field in fields if field in record}
+            for name, (_, _, record) in sorted(latest.items()) if record.get("result") in ("passed", "failed")}
+
+
+def recorded_at(record: dict) -> float:
+    """When a record was made, as a number: records carry times to the second or finer, which don't sort as text."""
+    try:
+        return datetime.datetime.fromisoformat(str(record.get("at")).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def records_shown(records: dict[str, dict]) -> str:
+    return "; ".join(f"{name} {r['result']} at {r['head'][:10]} ({r.get('where', 'unsaid')})"
+                     for name, r in records.items()) or "none"
+
+
+def checkout_record(c, g: dict, head: str, tree: str, code: int, seconds: float) -> dict:
+    """An inline gate's run record: run in the lane's own checkout, with its session's environment, so it carries
+    neither environment nor host facts. Its definition is the binding's check of that id, if it has one."""
+    binding = {"checkTimeoutSeconds": 1800, "profiles": {}, "environment": {}, "prepare": [], "hooks": "inherit",
+               **(c.binding or {})}
+    check = {"cwd": ".", "prerequisites": [], **(binding_checks(c.binding).get(g["id"]) or {
+        "id": g["id"], "argv": g["argv"], "cwd": g.get("cwd", "."), "timeoutSeconds": g.get("timeoutSeconds", 1800)})}
+    return {"check": g["id"], "definition": _validator().check_definition(check, binding), "head": head, "tree": tree,
+            "result": "passed" if code == 0 else "failed", "seconds": round(seconds, 3), "at": now(),
+            "where": "checkout"}
+
+
 def gate(args) -> None:
     c = cfg()
     key = c.require(args.key)
     if not c.gates:
         raise Stop(f"{c.path} declares no gates")
+    unknown = [g["id"] for g in c.gates if g.get("unknown")]
+    if unknown:
+        raise Stop(f"the gates name checks the binding doesn't define: {', '.join(unknown)}; run {flow_command()} doctor")
     head = clean_head()
     tree = git("rev-parse", "HEAD^{tree}")
     git("fetch", "-q", c.remote, c.base_branch)
     results, passed, built = [], True, False
     build_argv = (c.in_app or {}).get("build", {}).get("argv")
-    for g in c.gates:
+    gates = list(c.gates)
+    while gates and passed:
+        if gates[0].get("check"):
+            # Gates named by id, one after another, run in one run-checks call: one prepared checkout for them all.
+            group = []
+            while gates and gates[0].get("check"):
+                group.append(gates.pop(0))
+            print(f"gate {', '.join(g['id'] for g in group)}: run-checks at {head[:10]}", flush=True)
+            records, _ = check_runs(c, head, [g["check"] for g in group])
+            by_id = {record["check"]: record for record in records}
+            for g in group:
+                record = by_id[g["check"]]
+                code = 0 if record["result"] == "passed" else 1
+                tail = [f"its output: {record['log']}"] if record.get("log") else []
+                results.append({"id": g["id"], "argv": g["argv"], "exit": code, "seconds": round(record.get("seconds", 0)),
+                                "tail": tail, "record": record})
+                print(f"  {g['id']}: {'ok' if code == 0 else 'FAILED'} in {round(record.get('seconds', 0))}s"
+                      + ("" if code == 0 else f" ({record['result']})" + "".join(f"\n    {t}" for t in tail)))
+                if code != 0:
+                    passed = False
+            continue
+        g = gates.pop(0)
         argv = expand_argv(g["argv"], base=c.base_ref, key=key, delivery=c.delivery)
         started = time.time()
         print(f"gate {g['id']}: {' '.join(shlex.quote(a) for a in argv)}", flush=True)
         code, out = run_group(argv, repo() / g.get("cwd", "."), g.get("timeoutSeconds", 1800))
-        seconds = round(time.time() - started)
+        elapsed = time.time() - started
+        seconds = round(elapsed)
         tail = out.strip().splitlines()[-15:]
-        results.append({"id": g["id"], "argv": argv, "exit": code, "seconds": seconds, "tail": tail})
+        results.append({"id": g["id"], "argv": argv, "exit": code, "seconds": seconds, "tail": tail,
+                        "record": checkout_record(c, g, head, tree, code, elapsed)})
         print(f"  {'ok' if code == 0 else 'FAILED'} in {seconds}s" + ("" if code == 0 else "\n    " + "\n    ".join(tail)))
         if code != 0:
             passed = False
@@ -4062,7 +4234,8 @@ def review_move(c, key: str, when: str, last: bool = False) -> None:
 
 
 def handoff_and_post(c, key: str, lane: str, head: str, pr: str, rounds: int, post: str,
-                     checks: list[str] | None = None, base_merge: dict | None = None) -> str | None:
+                     checks: list[str] | None = None, base_merge: dict | None = None,
+                     evidence: list[dict] | None = None) -> str | None:
     """Hand off to the record and, with the tracker publisher, post the hand-off update under the entry it journals,
     holding the ledger's lock across the journal write, the post and its line. Returns what was posted, or None when the
     lane posts it (no publisher) or the publisher will (the call failed, so no line was written)."""
@@ -4070,7 +4243,8 @@ def handoff_and_post(c, key: str, lane: str, head: str, pr: str, rounds: int, po
     lead_moves = ((conf["transitions"].get("lead") or {}).get("candidate.handed")) if not conf["problems"] else None
     handed = ["handoff", "--lane", lane, "--subject", key, "--head", head, "--change-request", pr, "--rounds",
               str(rounds), *(["--checks", ",".join(checks)] if checks else []),
-              *(["--base-merge", json.dumps(base_merge)] if base_merge else [])]
+              *(["--base-merge", json.dumps(base_merge)] if base_merge else []),
+              *[part for entry in evidence or [] for part in ("--evidence", json.dumps(entry, sort_keys=True))]]
     if conf["mode"] != "publisher" or conf["problems"] or lead_moves:
         # With lead moves for a hand-off, the publisher makes them and posts the update with what they did.
         state_tool(*handed)
@@ -4828,6 +5002,12 @@ def checks_shown(names: list[str], added: dict[str, dict]) -> str:
     return ", ".join(f"{name} (added by this story)" if name in added else name for name in names)
 
 
+def checks_recorded(names: list[str], records: dict[str, dict]) -> str:
+    """Each named check as the lane's records show it: recorded, with its head and result, or named only."""
+    return "; ".join(f"{name} recorded at {records[name]['head'][:10]}: {records[name]['result']}" if name in records
+                     else f"{name} named only" for name in names)
+
+
 def provider_selects(c) -> bool:
     """Whether the binding names a provider: then a candidate with no lead selection runs the provider's answer, and
     the fallback only when it can't be had."""
@@ -5302,7 +5482,8 @@ def handoff(args) -> None:
     post = f"hand-off: {args.pr}, head {head[:10]}, {len(rounds)} review round(s); {validation}."
     if base_merge:
         post += f" Review carried from {reviewed} across base commits {', '.join(base_merge['baseCommits'])}."
-    posted = handoff_and_post(c, key, lane, head, args.pr, len(rounds), post, ran, base_merge)
+    records = handoff_records(key, head)
+    posted = handoff_and_post(c, key, lane, head, args.pr, len(rounds), post, ran, base_merge, list(records.values()))
     histories = [f"r{o['round']}: {round_history_text(o)}" for o in outcomes if round_history_text(o)]
     print("\n".join([
         f"**Hand-off: {key}** ({c.label(key)}, {lane})",
@@ -5314,7 +5495,9 @@ def handoff(args) -> None:
         + (f"; history: {'; '.join(histories)}" if histories else ""),
         f"- review lenses: {lenses_text(story_lenses, lenses_reason, requested)}",
         f"- validation: {validation}",
-        *([f"- checks run: {checks_shown(ran, added)}"] if ran else []),
+        *([f"- checks run: {checks_shown(ran, added)}", f"- checks run, as recorded: {checks_recorded(ran, records)}"]
+          if ran else []),
+        f"- check records: {records_shown(records)}",
         *([f"- PR review: {pr_line}"] if pr_line else []),
         "- in-app checks: " + ("; ".join(lines) or "none required"),
         "- run: none",
@@ -7721,7 +7904,8 @@ def lead_brief(args) -> None:
                               *(f"- `{lens}`: {charter_purpose(c.lenses[lens][1]) or '(its charter states no purpose)'}"
                                 for lens in c.story_lenses if lens not in MANDATED_LENSES and lens not in c.on_request),
                               *([on_request_line(c)] if c.on_request else [])]),
-        "gates": "\n".join(f"   - `{' '.join(expand_argv(g['argv'], base=c.base_ref, key='<key>', delivery=c.delivery))}`"
+        "gates": "\n".join(f"   - `{g['id']}`, the binding's check, run through `run-checks`" if g.get("check") else
+                           f"   - `{' '.join(expand_argv(g['argv'], base=c.base_ref, key='<key>', delivery=c.delivery))}`"
                            for g in c.gates) or "   - (none declared)",
         "never_touch": ", ".join(f"`{p}`" for p in c.never_touch) or "(nothing listed)",
         "listings": "".join(f" Adding or removing an output {' or '.join(f'`{p}`' for p in listed)} lists needs that file's "
@@ -14061,6 +14245,9 @@ def ship_gates(c, path: Path, s: dict) -> None:
             if code != 0:
                 raise Stop(f"prepare {' '.join(argv)} failed ({code}): {out.strip()[-300:]}")
         for g in c.gates:
+            if g.get("unknown"):
+                raise Stop(f"the gate {g['id']} names a check the binding doesn't define; run {flow_command()} doctor")
+            # A gate named by id runs its definition here: the ship's staged change is no commit run-checks could take.
             argv = expand_argv(g["argv"], base=s["from"], key=c.delivery, delivery=c.delivery)
             started = time.time()
             print(f"  gate {g['id']}: {' '.join(shlex.quote(a) for a in argv)}", flush=True)
@@ -14594,12 +14781,31 @@ class Doctor:
         if not c.gates and c.flow_raw.get("gates") != "none":
             return "wrong", ("no gates are declared; fix: declare the binding's fallback checks, or set "
                              f"\"gates\": \"none\" in {c.name} if the repository has none")
-        lost = [f"gate {g['id']} ({g['argv'][0]})" for g in c.gates if not resolves(g["argv"][0], self.root, g.get("cwd", "."))]
-        lost += [f"prepare step {argv[0]}" for argv in prepare_commands() if not resolves(argv[0], self.root)]
+        unknown = [g["id"] for g in c.gates if g.get("unknown")]
+        if unknown:
+            return "wrong", (f"the gates name checks the binding doesn't define: {', '.join(unknown)}; fix: name a "
+                             f"selection.catalogue, alwaysRun or fallback id, or correct {c.name} gates")
+        prepare = prepare_commands()
+        made = []
+
+        def found(argv0: str, cwd: str = ".") -> bool:
+            # A relative program no commit tracks, such as .venv/bin/python, is one the prepare steps make: a fresh
+            # clone lacks it until they run, and the gates run after them.
+            if prepare and "/" in argv0 and not Path(os.path.expanduser(argv0)).is_absolute() and not git(
+                    "ls-files", "--", (Path(cwd) / argv0).as_posix(), cwd=self.root, check=False):
+                made.append(argv0)
+                return True
+            return resolves(argv0, self.root, cwd)
+
+        lost = [f"gate {g['id']} ({g['argv'][0]})" for g in c.gates if not found(g["argv"][0], g.get("cwd", "."))]
+        lost += [f"prepare step {argv[0]}" for argv in prepare if not resolves(argv[0], self.root)]
         if lost:
             return "wrong", f"these don't resolve: {', '.join(lost)}; fix: install them, or correct the binding"
-        return "ok", (f"{len(c.gates)} gate(s): {', '.join(g['id'] for g in c.gates)}" if c.gates
-                      else f"none ({c.name} says so)")
+        named = [g["id"] for g in c.gates if g.get("check")]
+        return "ok", ((f"{len(c.gates)} gate(s): {', '.join(g['id'] for g in c.gates)}" if c.gates
+                       else f"none ({c.name} says so)")
+                      + (f"; run through run-checks: {', '.join(named)}" if named else "")
+                      + (f"; made by the prepare steps: {', '.join(sorted(set(made)))}" if made else ""))
 
     def lanes(self):
         c = self.c
@@ -15195,6 +15401,9 @@ def main(argv: list[str] | None = None) -> None:
     q = command(review_commands, "check", help="validate plan-review-evidence/1 records, hand-written or written by a review")
     q.add_argument("records", nargs="+", metavar="RECORD"); q.set_defaults(fn=plan_review_check)
     p = command(sub, "gate"); p.add_argument("key"); p.set_defaults(fn=gate)
+    p = command(sub, "check", help="run checks by id at HEAD the way the merge queue does, and keep each run's record")
+    p.add_argument("key"); p.add_argument("ids", nargs="+", help="the check ids, comma-separated or one an argument")
+    p.set_defaults(fn=check)
     p = command(sub, "claims-check", help="what your committed change still needs claimed, with the lead's request for each")
     p.add_argument("key"); p.set_defaults(fn=claims_check)
     p = command(sub, "build"); p.add_argument("key", nargs="?"); p.set_defaults(fn=build)
