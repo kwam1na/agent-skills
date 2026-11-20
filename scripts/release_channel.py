@@ -11,7 +11,8 @@ Commands:
     notes --tag TAG --out DIR --generated FILE    print the release notes
 
 Exit codes: 0 when the decision passes or the release is published; 1 when it refuses. Only `publish` publishes,
-and nothing here reads CI: a release rests on the full suite passing locally before the tag is pushed.
+and nothing here reads CI: a release rests on the full suite passing locally before the tag is pushed, where a
+flaky test, one the release doesn't change that passes when rerun on its own, does not hold it.
 """
 
 from __future__ import annotations
