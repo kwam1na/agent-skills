@@ -193,6 +193,10 @@
         {
           "id": "v26-3692-1",
           "text": "For the same record, the hosted page shows the same chapters, story, integration step (base, Rejoined main and the four Before it rejoins stops, moving as integration facts are journalled), reasons and history as the local live view, with no 'not published on the hosted page' or '[Local reference omitted]' text."
+        },
+        {
+          "id": "v26-3692-2",
+          "text": "A configured secret's value or a value under a credential-named key never reaches the hosted snapshot; the cut is refused or the value replaced, and the status names the bounded code."
         }
       ],
       "after": [
