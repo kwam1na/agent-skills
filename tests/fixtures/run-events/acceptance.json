@@ -1,0 +1,107 @@
+{
+  "spec": "run-event-acceptance-vectors/1",
+  "runtimeVersion": "0.8.6",
+  "about": "Whether the stored runtime accepts each emission the run lifecycle rule plans. Each vector runs in a fresh fixture repository with no managed installation, through the runtime's own CLI. `{tree}` is the fixture's HEAD^{tree}; `*` in an expected journal entry means the member is present.",
+  "vectors": [
+    {
+      "id": "run-started-without-ticket-and-no-installation",
+      "about": "A directly invoked workflow starts a version 2 run with no ticket, in a repository with no managed installation registered.",
+      "steps": [
+        {"emit": "run.started", "eventId": "start", "payload": {"host": "claude-code", "workflow": {"releaseId": "linear-v0.0.0", "profile": "linear"}}, "expect": "accepted"}
+      ],
+      "journal": [
+        {"kind": "run.started", "version": "run-event/2", "payload": {"host": "claude-code", "workflow": {"releaseId": "linear-v0.0.0", "profile": "linear"}}}
+      ]
+    },
+    {
+      "id": "stage-markers-with-the-head-tree",
+      "about": "Every stage marker, entered and exited in each terminal state, with HEAD^{tree} as its candidate.",
+      "steps": [
+        {"emit": "run.started", "eventId": "start", "payload": {"host": "claude-code", "workflow": {"releaseId": "linear-v0.0.0", "profile": "linear"}}, "expect": "accepted"},
+        {"emit": "activity.observed", "eventId": "route-in", "payload": {"activityId": "stage-route", "attemptId": "stage-route-1", "candidateTreeSha": "{tree}", "phase": "route", "state": "running", "owner": "claude-code"}, "expect": "accepted"},
+        {"emit": "activity.observed", "eventId": "route-out", "payload": {"activityId": "stage-route", "attemptId": "stage-route-1", "candidateTreeSha": "{tree}", "phase": "route", "state": "completed", "owner": "claude-code"}, "expect": "accepted"},
+        {"emit": "activity.observed", "eventId": "plan-in", "payload": {"activityId": "stage-plan", "attemptId": "stage-plan-1", "candidateTreeSha": "{tree}", "phase": "plan", "state": "running", "owner": "claude-code", "nextStep": "Write the plan."}, "expect": "accepted"},
+        {"emit": "activity.observed", "eventId": "plan-out", "payload": {"activityId": "stage-plan", "attemptId": "stage-plan-1", "candidateTreeSha": "{tree}", "phase": "plan", "state": "completed", "owner": "claude-code"}, "expect": "accepted"},
+        {"emit": "activity.observed", "eventId": "diagnose-in", "payload": {"activityId": "stage-diagnose", "attemptId": "stage-diagnose-1", "candidateTreeSha": "{tree}", "phase": "diagnose", "state": "running", "owner": "claude-code"}, "expect": "accepted"},
+        {"emit": "activity.observed", "eventId": "diagnose-out", "payload": {"activityId": "stage-diagnose", "attemptId": "stage-diagnose-1", "candidateTreeSha": "{tree}", "phase": "diagnose", "state": "failed", "owner": "claude-code"}, "expect": "accepted"},
+        {"emit": "activity.observed", "eventId": "execute-in", "payload": {"activityId": "stage-execute", "attemptId": "stage-execute-1", "candidateTreeSha": "{tree}", "phase": "execute", "state": "running", "owner": "claude-code"}, "expect": "accepted"},
+        {"emit": "activity.observed", "eventId": "review-in", "payload": {"activityId": "stage-review", "attemptId": "stage-review-1", "candidateTreeSha": "{tree}", "phase": "review", "state": "running", "owner": "claude-code"}, "expect": "accepted"},
+        {"emit": "activity.observed", "eventId": "review-out", "payload": {"activityId": "stage-review", "attemptId": "stage-review-1", "candidateTreeSha": "{tree}", "phase": "review", "state": "interrupted", "owner": "claude-code"}, "expect": "accepted"},
+        {"emit": "activity.observed", "eventId": "execute-out", "payload": {"activityId": "stage-execute", "attemptId": "stage-execute-1", "candidateTreeSha": "{tree}", "phase": "execute", "state": "completed", "owner": "claude-code"}, "expect": "accepted"},
+        {"emit": "activity.observed", "eventId": "compound-in", "payload": {"activityId": "stage-compound", "attemptId": "stage-compound-1", "candidateTreeSha": "{tree}", "phase": "compound", "state": "running", "owner": "claude-code"}, "expect": "accepted"},
+        {"emit": "activity.observed", "eventId": "compound-out", "payload": {"activityId": "stage-compound", "attemptId": "stage-compound-1", "candidateTreeSha": "{tree}", "phase": "compound", "state": "completed", "owner": "claude-code"}, "expect": "accepted"}
+      ],
+      "journal": [
+        {"kind": "activity.observed", "version": "run-event/2", "payload": {"activityId": "stage-route", "phase": "route", "state": "running", "candidateTreeSha": "{tree}"}},
+        {"kind": "activity.observed", "version": "run-event/2", "payload": {"activityId": "stage-compound", "phase": "compound", "state": "completed", "candidateTreeSha": "{tree}"}}
+      ]
+    },
+    {
+      "id": "waits-with-the-head-tree",
+      "about": "A human wait and an agent wait, started and resolved, with HEAD^{tree} as their candidate.",
+      "steps": [
+        {"emit": "run.started", "eventId": "start", "payload": {"host": "claude-code", "workflow": {"releaseId": "linear-v0.0.0", "profile": "linear"}}, "expect": "accepted"},
+        {"emit": "activity.observed", "eventId": "plan-in", "payload": {"activityId": "stage-plan", "attemptId": "stage-plan-1", "candidateTreeSha": "{tree}", "phase": "plan", "state": "running", "owner": "claude-code"}, "expect": "accepted"},
+        {"emit": "wait.started", "eventId": "approval-wait", "payload": {"activityId": "stage-plan", "attemptId": "stage-plan-1", "candidateTreeSha": "{tree}", "waitId": "plan-approval", "owner": "operator", "waitingOn": "human", "reason": "The plan needs the operator's approval.", "nextAction": "Approve the plan or ask for changes.", "scope": "This request's plan only."}, "expect": "accepted"},
+        {"emit": "wait.resolved", "eventId": "approval-resolved", "payload": {"activityId": "stage-plan", "attemptId": "stage-plan-1", "candidateTreeSha": "{tree}", "waitId": "plan-approval", "resolution": "The operator approved the plan.", "scope": "This request's plan only."}, "expect": "accepted"},
+        {"emit": "wait.started", "eventId": "agent-wait", "payload": {"activityId": "stage-plan", "attemptId": "stage-plan-1", "candidateTreeSha": "{tree}", "waitId": "plan-review", "owner": "claude-code", "waitingOn": "agent", "reason": "The plan's lenses are reviewing it.", "nextAction": "Reduce the round once both lenses return.", "scope": "Plan review round 1."}, "expect": "accepted"}
+      ],
+      "journal": [
+        {"kind": "wait.started", "version": "run-event/2", "payload": {"waitId": "plan-approval", "waitingOn": "human", "candidateTreeSha": "{tree}"}},
+        {"kind": "wait.resolved", "version": "run-event/2", "payload": {"waitId": "plan-approval"}},
+        {"kind": "wait.started", "version": "run-event/2", "payload": {"waitId": "plan-review", "waitingOn": "agent"}}
+      ]
+    },
+    {
+      "id": "second-start-without-force-is-refused",
+      "about": "A start while the worktree has an open current run is refused.",
+      "steps": [
+        {"emit": "run.started", "eventId": "start", "payload": {"host": "claude-code", "workflow": {"releaseId": "linear-v0.0.0", "profile": "linear"}}, "expect": "accepted"},
+        {"emit": "run.started", "eventId": "start-again", "payload": {"host": "claude-code", "workflow": {"releaseId": "linear-v0.0.0", "profile": "linear"}}, "expect": "refused", "code": "run_already_current"}
+      ],
+      "journal": [
+        {"kind": "run.started", "version": "run-event/2", "payload": {"host": "claude-code"}}
+      ]
+    },
+    {
+      "id": "second-start-with-force-displaces",
+      "about": "A start with --force while the worktree has an open current run is accepted and records the open run as displacedRunId.",
+      "steps": [
+        {"emit": "run.started", "eventId": "start", "payload": {"host": "claude-code", "workflow": {"releaseId": "linear-v0.0.0", "profile": "linear"}}, "expect": "accepted"},
+        {"emit": "run.started", "eventId": "start-again", "force": true, "payload": {"host": "claude-code", "workflow": {"releaseId": "linear-v0.0.0", "profile": "linear"}}, "expect": "accepted"}
+      ],
+      "journal": [
+        {"kind": "run.started", "version": "run-event/2", "payload": {"host": "claude-code", "displacedRunId": "*"}}
+      ]
+    },
+    {
+      "id": "a-runtime-command-records-its-phase",
+      "about": "The runtime's own prepare and verify record activity.observed under their command's phase in the current version 2 run.",
+      "steps": [
+        {"emit": "run.started", "eventId": "start", "payload": {"host": "claude-code", "workflow": {"releaseId": "linear-v0.0.0", "profile": "linear"}}, "expect": "accepted"},
+        {"command": "prepare", "exit": 0},
+        {"command": "verify", "exit": 1}
+      ],
+      "journal": [
+        {"kind": "activity.observed", "version": "run-event/2", "payload": {"phase": "prepare", "state": "completed", "owner": "delivery-harness.cli", "candidateTreeSha": "{tree}"}},
+        {"kind": "activity.observed", "version": "run-event/2", "payload": {"phase": "verify", "state": "failed", "owner": "delivery-harness.cli", "candidateTreeSha": "{tree}"}}
+      ]
+    },
+    {
+      "id": "lifecycle-events-in-a-version-2-run",
+      "about": "The kinds a run carries besides stages and waits: gates, a decision, a blocker, a change request and an end with cost.",
+      "steps": [
+        {"emit": "run.started", "eventId": "start", "payload": {"host": "claude-code", "workflow": {"releaseId": "linear-v0.0.0", "profile": "linear"}}, "expect": "accepted"},
+        {"emit": "gate.reported", "eventId": "gate", "payload": {"command": "scripts/validate-registry.py", "outcome": "pass", "durationMs": 4200}, "expect": "accepted"},
+        {"emit": "decision.recorded", "eventId": "decision", "payload": {"fork": "the branch name", "choice": "claude/fixture, the repository's convention"}, "expect": "accepted"},
+        {"emit": "blocker.recorded", "eventId": "blocker", "payload": {"code": "review.loop-bound-reached", "summary": "One P1 is open at the bound."}, "expect": "accepted"},
+        {"emit": "pr.opened", "eventId": "pr", "payload": {"url": "https://github.com/example/repository/pull/1", "candidateTreeSha": "{tree}"}, "expect": "accepted"},
+        {"emit": "run.ended", "eventId": "end", "payload": {"result": "blocked", "cost": {"unit": "subagent-tokens", "total": 1200, "reportedBy": "claude-code", "coverage": "partial"}}, "expect": "accepted"}
+      ],
+      "journal": [
+        {"kind": "gate.reported", "version": "run-event/2", "payload": {"command": "scripts/validate-registry.py", "durationMs": 4200}},
+        {"kind": "run.ended", "version": "run-event/2", "payload": {"result": "blocked"}}
+      ]
+    }
+  ]
+}
