@@ -155,7 +155,7 @@ class FixtureTests(unittest.TestCase):
             "last-delivery", "just-started", "standing-break", "overlapping-breaks", "uncaused-stop", "stop-then-handoff",
             "two-answers", "break-stops-a-piece", "failed-check-first", "recovered-merge", "bookkeeping-in-a-thread",
             "decision-on-a-break", "answered-bookkeeping", "requeued-stop", "batch-of-three", "bookkeeping-run",
-            "thread-at-story", "never-landed"]))
+            "thread-at-story", "never-landed", "v26-3670"]))
 
     def test_every_fixture_is_a_journal_of_facts_the_state_tool_accepts(self) -> None:
         for name in NAMES:
@@ -485,6 +485,11 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual((last["form"], last["words"]["head"], last["notLanded"]), ("finish", "Finished", ["B"]))
         self.assertIn("B never landed.", last["words"]["line"])
         self.assertEqual(story["digest"]["words"]["head"], "One of two pieces landed in 45m.")
+
+
+def rows_by(story: dict) -> dict:
+    """The ledger's rows by (subject, reason)."""
+    return {(row["subject"], row["reason"]): row for row in story["ledger"]}
 
 
 class Journal:
@@ -921,3 +926,168 @@ class QueueJournalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LedgerTests(unittest.TestCase):
+    """A landing ends its own story's stops, and the ledger tells each setback once, grouped by story and reason."""
+
+    def assertValid(self, story: dict) -> None:
+        self.assertEqual([error.message for error in SCHEMA.iter_errors(story)], [])
+
+    def stops(self, journal: Journal, minutes: list[int], subject: str = "A", reason: str = "interrupted") -> list[int]:
+        return [journal.add(minute, "candidate.stopped", {"reason": reason, "detail": f"stopped: {reason}"}, subject=subject)
+                for minute in minutes]
+
+    def test_a_story_stopped_then_landed_has_its_row_ended_at_the_landing_and_nothing_stands(self) -> None:
+        journal = Journal()
+        journal.started()
+        [stop] = self.stops(journal, [10])
+        merged = journal.add(30, "candidate.merged", {"head": "c" * 40}, subject="A")
+        story = journal.told()
+        self.assertValid(story)
+        [thread] = story["threads"]
+        self.assertEqual((thread["state"], thread["closing"], thread["closedAt"], thread["cost"], thread["endedBy"]),
+                         ("closed", merged, journal.entries[merged - 1]["at"], 20 * 60, "landing"))
+        self.assertEqual(thread["told"]["ending"], "It ended when A landed.")
+        [row] = story["ledger"]
+        self.assertEqual((row["subject"], row["reason"], row["count"], row["state"], row["since"], row["endedAt"], row["endedBy"],
+                          row["ending"], row["cost"]),
+                         ("A", "interrupted", 1, "closed", None, journal.entries[merged - 1]["at"], merged, "landing", 20 * 60))
+        self.assertEqual(story["digest"]["setbacks"]["standing"], [])
+        self.assertNotIn("still stand", story["digest"]["words"]["line"])
+
+    def test_a_stop_whose_story_has_not_landed_still_stands(self) -> None:
+        journal = Journal()
+        journal.started()
+        [stop] = self.stops(journal, [10], subject="B")
+        journal.add(30, "candidate.merged", {"head": "c" * 40}, subject="A")
+        story = journal.told()
+        [row] = story["ledger"]
+        self.assertEqual((row["subject"], row["state"], row["since"], row["endedAt"], row["cost"]),
+                         ("B", "open", journal.entries[stop - 1]["at"], None, None))
+        self.assertEqual(story["digest"]["words"]["line"], "One setback still stands.")
+
+    def test_six_stops_with_one_reason_are_one_row_and_two_reasons_two(self) -> None:
+        journal = Journal()
+        journal.started()
+        repeated = self.stops(journal, [10, 11, 12, 13, 14, 15])
+        [failed] = self.stops(journal, [16], reason="check_failed")
+        story = journal.told()
+        self.assertValid(story)
+        rows = rows_by(story)
+        self.assertEqual(sorted(rows), [("A", "check_failed"), ("A", "interrupted")])
+        row = rows[("A", "interrupted")]
+        self.assertEqual((row["count"], len(row["threads"]), row["firstOpenedAt"], row["lastOpenedAt"], row["state"]),
+                         (6, 6, journal.entries[repeated[0] - 1]["at"], journal.entries[repeated[-1] - 1]["at"], "open"))
+        self.assertEqual(rows[("A", "check_failed")]["count"], 1)
+        self.assertEqual(story["digest"]["words"]["line"], "Two setbacks still stand.")
+
+    def test_a_stop_a_hand_off_answers_keeps_that_ending_and_cost_after_its_story_lands(self) -> None:
+        journal = Journal()
+        journal.started()
+        start = journal.add(1, "check.started", subject="A")
+        stop = journal.stopped(10, "A", [journal.failed(5, "A", start)])
+        handed = journal.handed(25, "A", answers=[stop])
+        journal.add(40, "candidate.merged", {"head": "c" * 40}, subject="A")
+        story = journal.told()
+        [thread] = story["threads"]
+        self.assertEqual((thread["closing"], thread["cost"], thread["endedBy"]), (handed, 15 * 60, "answer"))
+        [row] = story["ledger"]
+        self.assertEqual((row["endedBy"], row["ending"], row["cost"]), (handed, "answer", 15 * 60))
+        self.assertEqual(story["digest"]["words"]["line"], "One setback cost 15m.")
+
+    def test_a_base_break_and_a_blocker_keep_their_own_endings_and_a_landing_ends_no_break(self) -> None:
+        journal = Journal()
+        journal.started()
+        broke = journal.add(5, "base.broken", {"source": "queue", "reason": "the main line failed its checks"}, lane=None)
+        blocker = journal.add(6, "blocker.recorded", {"text": "The dev backend is down."}, lane=None)
+        resolved = journal.add(20, "blocker.resolved", {"why": "It came back."}, lane=None, answers=[blocker])
+        journal.add(30, "candidate.merged", {"head": "c" * 40}, subject="A")
+        journal.add(31, "candidate.merged", {"head": "d" * 40}, subject=None)
+        story = journal.told()
+        self.assertValid(story)
+        by_opening = {thread["opening"]: thread for thread in story["threads"]}
+        self.assertEqual((by_opening[broke]["state"], by_opening[broke]["endedBy"]), ("open", None))
+        self.assertEqual((by_opening[blocker]["closing"], by_opening[blocker]["endedBy"]), (resolved, "answer"))
+        self.assertEqual([row["state"] for row in story["ledger"]], ["open", "closed"])
+
+    def test_a_landing_ends_only_its_own_storys_stops(self) -> None:
+        journal = Journal()
+        journal.started()
+        self.stops(journal, [10], subject="A")
+        self.stops(journal, [11], subject="B")
+        journal.add(30, "candidate.merged", {"head": "c" * 40}, subject="A")
+        rows = rows_by(journal.told())
+        self.assertEqual((rows[("A", "interrupted")]["state"], rows[("B", "interrupted")]["state"]), ("closed", "open"))
+
+    def test_a_stop_journalled_after_its_storys_landing_ends_there_at_no_cost(self) -> None:
+        # A recovered merge happened before the queue journalled the stops it didn't know were stale.
+        journal = Journal()
+        journal.started()
+        stop = self.stops(journal, [20])[0]
+        merged = journal.add(25, "candidate.merged", {"head": "c" * 40}, subject="A")
+        journal.entries[merged - 1]["occurredAt"] = "2026-11-16T09:15:00Z"
+        story = journal.told()
+        self.assertValid(story)
+        [thread] = story["threads"]
+        self.assertEqual((thread["closing"], thread["closedAt"], thread["cost"], thread["endedBy"]),
+                         (merged, journal.entries[stop - 1]["at"], 0, "landing"))
+
+    def test_a_no_change_settlement_ends_its_storys_stops_as_a_landing_does(self) -> None:
+        journal = Journal()
+        journal.started()
+        self.stops(journal, [10])
+        journal.add(20, "candidate.handed", {"head": "b" * 40, "checks": [], "noChange": True}, subject="A")
+        settled = journal.add(30, "handoff.accepted", {"settled": True}, lane=None, subject="A")
+        [row] = journal.told()["ledger"]
+        self.assertEqual((row["state"], row["endedBy"], row["ending"], row["cost"]), ("closed", settled, "landing", 20 * 60))
+        journal = Journal()
+        journal.started()
+        self.stops(journal, [10])
+        journal.add(20, "candidate.handed", {"head": "b" * 40, "checks": [], "noChange": True}, subject="A")
+        journal.add(30, "handoff.accepted", {"settled": False}, lane=None, subject="A")
+        self.assertEqual(journal.told()["ledger"][0]["state"], "open")
+
+    def test_a_chapter_lists_only_the_rows_that_opened_or_ended_in_it(self) -> None:
+        journal = Journal()
+        journal.started()
+        self.stops(journal, [10], subject="B")
+        journal.add(20, "candidate.merged", {"head": "c" * 40}, subject="A")
+        journal.add(30, "candidate.merged", {"head": "d" * 40}, subject="C")
+        self.stops(journal, [35], subject="D")
+        journal.add(40, "candidate.merged", {"head": "e" * 40}, subject="B")
+        journal.add(50, "candidate.merged", {"head": "f" * 40}, subject="E")
+        story = journal.told()
+        self.assertValid(story)
+        rows = rows_by(story)
+        b, d = rows[("B", "interrupted")], rows[("D", "interrupted")]
+        self.assertEqual([chapter["setbacks"] for chapter in story["chapters"]], [[b["id"]], [], [], [d["id"], b["id"]], []])
+        self.assertEqual((b["chapters"], d["chapters"]), ({"opened": "c1", "ended": "c4"}, {"opened": "c4", "ended": None}))
+        # No chapter carries a setback that is still standing from an earlier one, and one ended inside it is told once.
+        self.assertEqual([chapter["standing"] for chapter in story["chapters"]], [[], [], [], [b["threads"][-1]], []])
+        self.assertEqual(story["chapters"][3]["words"]["standing"],
+                         [{"thread": b["threads"][-1], "text": "B was stopped", "until": b["endedAt"]}])
+
+    def test_v26_3670s_own_record_has_its_stale_stops_ended_at_their_landings(self) -> None:
+        story, journal = told("v26-3670")
+        self.assertValid(story)
+        rows = rows_by(story)
+        stale = {subject: rows[(subject, "interrupted")] for subject in ("V26-3666", "V26-3667")}
+        landed = {subject: by_kind(journal, "candidate.merged", subject)[0] for subject in stale}
+        for subject, row in stale.items():
+            with self.subTest(subject=subject):
+                self.assertEqual((row["state"], row["ending"], row["endedBy"]), ("closed", "landing", landed[subject]))
+                self.assertEqual(sorted(row["threads"]),
+                                 sorted(thread["id"] for thread in story["threads"]
+                                        if journal[thread["opening"] - 1]["subject"] == subject))
+        self.assertEqual((stale["V26-3666"]["count"], stale["V26-3667"]["count"]), (5, 7))
+        failed = rows[("V26-3668", "check_failed")]
+        self.assertEqual((failed["state"], failed["ending"], failed["count"]), ("closed", "answer", 1))
+        self.assertGreater(failed["cost"], 0)
+        self.assertEqual(story["digest"]["setbacks"]["standing"], [])
+        self.assertNotIn("still stand", story["digest"]["words"]["line"])
+        self.assertEqual(sum(1 for row in story["ledger"] if row["state"] == "open"), 0)
+        # Each row is named by at most two chapters, the one it opened in and the one it ended in.
+        for row in story["ledger"]:
+            named = [chapter["id"] for chapter in story["chapters"] if row["id"] in chapter["setbacks"]]
+            self.assertEqual(sorted(named), sorted({row["chapters"]["opened"], row["chapters"]["ended"]} - {None}))
