@@ -659,6 +659,28 @@ def selection_errors(checks: list[dict], binding: dict, check_cwd: Path | None) 
     return problems
 
 
+def start_order(checks: list[dict], guards: list[str], history: dict) -> tuple[set[str], list[dict]]:
+    """The order a run starts its checks in, and the guard group: the binding's guards and every check they need,
+    first, in the given order; then the rest, longest first by their median in ``history``, those with none last.
+    Prerequisites still start before the checks that need them. It changes which check starts when, never which run."""
+    by_id = {check["id"]: check for check in checks}
+    group: set[str] = set()
+
+    def need(name: str) -> None:
+        if name in by_id and name not in group:
+            group.add(name)
+            for prerequisite in by_id[name]["prerequisites"]:
+                need(prerequisite)
+
+    for name in guards:
+        need(name)
+    median = lambda check: delivery_state.median_seconds(history.get(check["id"], {}).get("seconds", []))
+    rest = sorted((check for check in checks if check["id"] not in group),
+                  key=lambda check: (median(check) is None, -(median(check) or 0)))
+    preferred = [check for check in checks if check["id"] in group] + rest
+    return group, order_checks(preferred) or preferred
+
+
 def order_checks(checks: list[dict]) -> list[dict] | None:
     """Prerequisites first, otherwise in the given order; None on a cycle."""
     remaining = list(checks)
@@ -2866,9 +2888,11 @@ class Runner:
         self, subjects: list[str], checks: list[dict], checkout: Path, context: Context, result: Result,
         whole_run: bool = True, reused: dict[str, dict] | None = None, carried: dict[str, dict] | None = None,
     ) -> dict[str, str]:
-        """Run the checks in order, and record each one the lane's evidence lets this run reuse instead.
+        """Run the checks, and record each one the lane's evidence lets this run reuse instead.
 
-        A check a base move carried keeps the record of its passed run before the move, and does not run.
+        A check a base move carried keeps the record of its passed run before the move, and does not run. They start
+        in ``start_order``: the binding's guards first, with what they need, then the longest by measured median. No
+        other check starts while a guard is unfinished, and once one fails the rest are skipped, unrun.
         """
         reused = reused or {}
         carried = carried or {}
@@ -2883,6 +2907,8 @@ class Runner:
         flaked: dict[str, int] = {}
         began = time.monotonic()
         minimum = node_minimum()
+        guarding, ordered = start_order(checks, (self.binding.get("selection") or {}).get("guards") or [], history)
+        guard_failed: list[str] = []
 
         def show() -> None:
             self.write_progress(subjects, [records[check["id"]] for check in checks])
@@ -2916,7 +2942,7 @@ class Runner:
             return entry
 
         limit = self.binding.get("parallelChecks", 1)
-        pending = list(checks)
+        pending = list(ordered)
         running: dict[concurrent.futures.Future, dict] = {}
         pool_type = concurrent.futures.ThreadPoolExecutor if limit > 1 else InlineExecutor
         with pool_type(max_workers=limit) as pool:
@@ -2926,7 +2952,12 @@ class Runner:
                     check = pending[0]
                     if any(name not in outcomes for name in check["prerequisites"]):
                         break
-                    if any(outcomes[name] != "passed" for name in check["prerequisites"]):
+                    outside = check["id"] not in guarding
+                    if outside and any(name not in outcomes for name in guarding):
+                        # Nothing else starts until every guard, and what it needs, has finished.
+                        break
+                    # Once a guard fails the run has ended: nothing else starts, another guard included.
+                    if guard_failed or any(outcomes[name] != "passed" for name in check["prerequisites"]):
                         pending.pop(0)
                         outcomes[check["id"]] = "skipped"
                         records[check["id"]]["state"] = "skipped"
@@ -3015,6 +3046,8 @@ class Runner:
                     result.checks.append(entry)
                     if entry["state"] != "passed":
                         failing.append(entry)
+                        if check["id"] in guarding:
+                            guard_failed.append(check["id"])
                 show()
                 # Telling a failure from the base's own can take as long as the check, so the lead hears now, once
                 # the row above says the same. A batch's culprit search only re-runs what its whole run already said.
