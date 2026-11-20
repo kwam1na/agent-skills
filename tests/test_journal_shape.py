@@ -45,6 +45,7 @@ INVENTORY = {
         _key("accept_handoff", {"handoff.accepted"}): 1,
         _key("reject_handoff", {"handoff.rejected"}): 1,
         _key("select_checks", {"check.selected", "check.selection.cleared"}): 1,
+        _key("select_checks", {"decision.recorded"}): 1,
         _key("capture_review", {"review.recorded"}): 1,
         _key("carry_review", {"review.carried"}): 1,
         _key("_journal_recovery", {"candidate.merged"}): 1,
