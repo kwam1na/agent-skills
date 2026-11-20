@@ -140,6 +140,17 @@
           "text": "What each watched run showed is recorded in the delivery's proof."
         }
       ]
+    },
+    "V26-3675": {
+      "title": "Record a merge when the candidate's own lane waits on another story",
+      "lane": "lane-1",
+      "why": "The merge queue refused to record V26-3667's and V26-3666's merges in this delivery because each lane waited on another story (workflow gap 56; earlier gap 105 in V26-3645). The operator moved V26-3675 into V26-3670 on 2026-11-20 so the fix lands with this delivery.",
+      "criteria": [
+        {
+          "id": "v26-3675-1",
+          "text": "With the merging candidate's lane waiting on another held story and a focus naming the candidate, the queue's merge write and a reconcile both record the merge, and the lane keeps waiting on that story or rests as lane_rows_after intends, never waiting with no waitingOn; a test reproduces the refused write first."
+        }
+      ]
     }
   },
   "finish": [

@@ -396,3 +396,7 @@ Declare the run-event command in `AGENTS.md`, `runs` in `.agents/delivery-views.
 `state.liveRuns` in the binding. Say in `docs/own-deliveries.md` how to start and stop the standing live server.
 Watch one directly invoked `execute-work` run and one `deliver-work` request through `plan` and `execute` end to
 end, and record what each showed.
+
+### V26-3675. Record a merge when the candidate's own lane waits on another story
+
+Lane 1, tier 3, not blocked. Added mid-delivery: The merge queue refused to record V26-3667's and V26-3666's merges in this delivery because each lane waited on another story (workflow gap 56; earlier gap 105 in V26-3645). The operator moved V26-3675 into V26-3670 on 2026-11-20 so the fix lands with this delivery.
