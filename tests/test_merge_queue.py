@@ -608,6 +608,13 @@ class MergeQueueTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = Path(tempfile.mkdtemp(prefix="merge-queue-test-")).resolve()
         self.addCleanup(shutil.rmtree, self.directory, True)
+        # Each test's own empty machine ledger, at the default capacity, which every queue it starts inherits: no
+        # test's claims, costs or capacity reach another's.
+        self.machine_directory = self.directory / "machine"
+        patched = mock.patch.dict(os.environ, {"AGENT_SKILLS_MACHINE_DIR": str(self.machine_directory)})
+        patched.start()
+        self.addCleanup(patched.stop)
+        os.environ.pop("AGENT_SKILLS_MACHINE_CLAIM", None)
 
     def adopter(self, binding_changes: dict | None = None, mode: str = "normal") -> Adopter:
         return Adopter(self.directory, binding_changes, mode)
@@ -2775,7 +2782,10 @@ class WorkRootSafetyTests(MergeQueueTestCase):
                 env, facts, dropped = runner.check_environment()
                 self.assertNotIn("MQ_DROPPED", env)
                 self.assertIn("MQ_DROPPED", dropped)
-                self.assertEqual(facts["names"], sorted(env))
+                # The runner sets its machine names itself, so a failure never asks for them in inherit.
+                self.assertEqual(set(dropped) & set(queue.MACHINE_NAMES), set())
+                # The record names all the check received, but for the runner-owned machine names it leaves out.
+                self.assertEqual(facts["names"], sorted(name for name in env if name not in queue.MACHINE_NAMES))
                 # Listed in inherit, it reaches the check, which passes.
                 runner.binding = {**runner.binding, "inherit": ["MQ_DROPPED"]}
                 self.assertEqual(runner.run_one(check, checkout, context).returncode, 0)
@@ -9120,3 +9130,478 @@ class ProviderRefusalTests(MergeQueueTestCase):
         self.assertEqual(queue.binding_errors({**binding, "selection": {"lead": False, "refusalStops": True}}),
                          ["/selection/refusalStops: needs selection.lead, since only the lead's selection releases a "
                           "candidate the provider refused"])
+
+
+# A check that writes what the machine ledger holds while it runs, and the claim it runs under.
+LEDGER_PROBE = """
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+import machine
+with open(sys.argv[2], "w") as out:
+    json.dump(dict(reading=machine.Ledger().reading(), claim=os.environ.get("AGENT_SKILLS_MACHINE_CLAIM")), out)
+"""
+
+# Another process's claim, made once and left: it says what it was given, and its exit releases it.
+OTHER_CLAIM = """
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import machine
+claim = machine.Ledger().request("run", "other", label="other", slots=int(sys.argv[2]))
+print(json.dumps(claim.record))
+"""
+
+
+class StopServing(Exception):
+    """Ends a serve that would otherwise never return."""
+
+
+class MachineClaimQueueTests(MergeQueueTestCase):
+    """A queue turn claims machine slots before the merge slot, never waits for them while holding it, and releases
+    its claim however the turn ends. Each test has its own machine ledger with its capacity written explicitly."""
+
+    run_quietly = True
+
+    def capacity(self, slots: int) -> None:
+        self.machine_directory.mkdir(parents=True, exist_ok=True)
+        (self.machine_directory / "capacity.json").write_text(json.dumps(
+            {"schemaVersion": "machine-capacity/1", "slots": slots, "setAt": "2026-11-20T00:00:00Z",
+             "why": "the test's own capacity"}, indent=2) + "\n", encoding="utf-8")
+
+    def ledger(self) -> "queue.machine.Ledger":
+        return queue.machine.Ledger(self.machine_directory, stderr=io.StringIO())
+
+    def measured(self, adopter: Adopter, check_id: str, slots: int) -> None:
+        """Five passed runs of a check, each of 100 s wall and ``slots`` times that in CPU."""
+        identity = queue.machine.repository_identity(adopter.operator)
+        for _ in range(5):
+            self.ledger().record_cost(identity, "check", check_id, queue.machine.Measured(0, 100, 100 * slots, "passed"))
+
+    def turns(self) -> list[dict]:
+        return [claim for claim in [*self.ledger().reading()["running"], *self.ledger().reading()["waiting"]]
+                if claim["subject"] == "turn"]
+
+    def admissions(self, subject: str = "turn") -> list[dict]:
+        return [entry for entry in self.ledger().read_history()
+                if entry["event"] in ("admitted", "override") and entry["subject"] == subject]
+
+    def claim_files(self) -> list[str]:
+        return sorted(path.stem for path in (self.machine_directory / "claims").glob("*.json"))
+
+    @staticmethod
+    def until(condition: Callable[[], object], seconds: float = 60) -> None:
+        deadline = time.monotonic() + seconds
+        while not condition():
+            if time.monotonic() > deadline:
+                raise AssertionError("the condition never held")
+            time.sleep(0.02)
+
+    def probe_adopter(self, mode: str = "normal", **binding: object) -> tuple[Adopter, Path]:
+        """An adopter whose always-run check is the ledger probe, with the probe's output file."""
+        out = self.directory / "probe.json"
+        # -B: a check's declared environment doesn't carry PYTHONDONTWRITEBYTECODE, and the probe imports a script.
+        probe = {"id": "probe", "argv": [PY, "-B", "-c", LEDGER_PROBE, str(SCRIPTS), str(out)], "cwd": ".",
+                 "reasons": ["probe"], "prerequisites": []}
+        return self.adopter({"alwaysRun": [probe], "fallback": [check_entry("fallback")], **binding}, mode), out
+
+    def hold_slot(self, adopter: Adopter) -> tuple[subprocess.Popen, Path]:
+        """Another delivery's command holding the base's merge slot until the returned file exists."""
+        ready, release = self.directory / "slot-held", self.directory / "slot-release"
+        for path in (ready, release):
+            path.unlink(missing_ok=True)
+        holder = subprocess.Popen([PY, "-B", "-c", HOLD_SLOT, str(SCRIPTS), str(adopter.operator), "main",
+                                   "Delivery C", str(ready), str(release)])
+        self.addCleanup(lambda: (holder.poll() is None and holder.kill(), holder.wait(30)))
+        self.until(lambda: ready.exists() or holder.poll() is not None)
+        self.assertIsNone(holder.poll())
+        return holder, release
+
+    def test_a_turn_waits_for_capacity_before_the_slot_and_names_what_holds_it(self) -> None:
+        self.capacity(4)
+        adopter = self.adopter()
+        self.candidate(adopter)
+        ledger = self.ledger()
+        # Measured at 4 slots, so the holder takes the whole machine whatever it asks for.
+        ledger.record_cost(None, "run", "lane suite", queue.machine.Measured(0, 600, 2400, "passed"))
+        holder = ledger.acquire("run", "lane suite", slots=4, delivery="V26-9")
+        before = state_tool.read_state(adopter.state)["meta"]["checking"]["now"]
+        said = io.StringIO()
+        results: list = []
+        turn = threading.Thread(target=lambda: results.extend(self.run_queue(adopter, "feature")))
+        with contextlib.redirect_stderr(said):
+            turn.start()
+            try:
+                self.until(lambda: [claim["state"] for claim in self.turns()] == ["waiting"])
+                [waiting] = self.turns()
+                self.assertIsNone(waiting["admittedBy"])
+                # The claim names its delivery, so the lead's wait can tell its own queue's long wait.
+                self.assertEqual(waiting["delivery"], state_tool.read_state(adopter.state)["meta"]["headline"])
+                slot = state_tool.merge_slot_path(adopter.operator, "main")
+                self.assertIsNone(state_tool.slot_holder(slot))
+                if slot.exists():
+                    # Nothing holds the slot's lock: it is taken at once.
+                    with state_tool.file_lock(slot, 0):
+                        pass
+                self.assertEqual(state_tool.read_state(adopter.state)["meta"]["checking"]["now"], before)
+                self.until(lambda: "waits for" in said.getvalue())
+                self.assertIn(f"lane suite (delivery V26-9, 4 slots, expected end {holder.record['expectedEnd']})",
+                              said.getvalue())
+            finally:
+                holder.release()
+                turn.join(120)
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        [admitted] = self.admissions()
+        self.assertEqual((admitted["claim"], admitted["admittedBy"]), (waiting["id"], "capacity"))
+        self.assertEqual(self.claim_files(), [])
+        # Each check's cost is kept under its own id, measured with its CPU, and nothing under the turn.
+        identity = queue.machine.repository_identity(adopter.operator)
+        costs = {entry["subject"]: entry for entry in self.ledger().costs()["entries"]
+                 if (entry["repository"], entry["kind"]) == (identity, "check")}
+        self.assertEqual(sorted(costs), ["always", "unit"])
+        for entry in costs.values():
+            [passed] = entry["passed"]
+            self.assertIsNotNone(passed["cpuSeconds"])
+            self.assertGreater(passed["cpuSeconds"], 0)
+
+    def test_the_turns_claim_before_the_slot_is_the_lead_selections_largest_times_the_parallel_checks(self) -> None:
+        self.capacity(8)
+        adopter = self.adopter({"selection": {"lead": True}, "parallelChecks": 2})
+        self.candidate(adopter)
+        state_tool.select_checks(adopter.state, "feature", binding=adopter.binding, head=adopter.item("feature")["head"],
+                                 checks=[check_entry("x"), check_entry("y"), check_entry("z")], reason="three")
+        for name, slots in (("x", 3), ("y", 1), ("z", 2), ("always", 8), ("fallback", 8)):
+            self.measured(adopter, name, slots)
+        claim = adopter.runner().claim_turn(["feature"])
+        self.assertEqual(claim.record["slots"], 6)
+        self.assertEqual(claim.record["admittedBy"], "capacity")
+        claim.release()
+        # A selection recorded for another head no longer counts: the pre-claim is alwaysRun's and fallback's.
+        adopter.lead_set("feature", head=adopter.lane_commit("feature", {"src/app.txt": "app three\n"}))
+        stale = adopter.runner().claim_turn(["feature"])
+        self.addCleanup(stale.release)
+        self.assertEqual(stale.record["slots"], 16)
+
+    def test_a_direct_check_takes_and_releases_a_turn_claim(self) -> None:
+        self.capacity(4)
+        adopter = self.adopter()
+        self.candidate(adopter)
+        adopter.runner().run_command("check", ["feature"])
+        self.assertEqual([entry["subject"] for entry in self.admissions()], ["turn"])
+        self.assertEqual(self.claim_files(), [])
+
+    def test_an_exception_escaping_a_turn_releases_its_claim_in_serve(self) -> None:
+        self.capacity(4)
+        adopter = self.adopter()
+        self.candidate(adopter)
+        with mock.patch.object(queue.Runner, "_run_command", side_effect=KeyboardInterrupt), \
+                self.assertRaises(KeyboardInterrupt):
+            queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True, poll=0)
+        self.assertEqual(len(self.admissions()), 1)
+        self.assertEqual(self.claim_files(), [])
+
+    def test_without_a_lead_selection_the_turns_claim_counts_always_run_and_fallback(self) -> None:
+        self.capacity(8)
+        adopter = self.adopter({"parallelChecks": 1})
+        self.candidate(adopter)
+        self.measured(adopter, "always", 2)
+        self.measured(adopter, "fallback", 3)
+        claim = adopter.runner().claim_turn(["feature"])
+        self.assertEqual(claim.record["slots"], 3)
+        claim.release()
+        # A selection recorded at the current head counts only where the binding lets the lead select: this one doesn't.
+        state_tool.select_checks(adopter.state, "feature", binding={**adopter.binding, "selection": {"lead": True}},
+                                 head=adopter.item("feature")["head"], checks=[check_entry("x")], reason="one")
+        self.measured(adopter, "x", 7)
+        ignored = adopter.runner().claim_turn(["feature"])
+        self.addCleanup(ignored.release)
+        self.assertEqual(ignored.record["slots"], 3)
+
+    def test_under_the_slot_the_turns_claim_grows_to_what_the_queue_selected(self) -> None:
+        self.capacity(6)
+        adopter, out = self.probe_adopter(parallelChecks=2)
+        self.candidate(adopter)
+        for name, slots in (("probe", 3), ("fallback", 3), ("unit", 4)):
+            self.measured(adopter, name, slots)
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        [admitted] = self.admissions()
+        self.assertEqual((admitted["slots"], admitted["admittedBy"]), (6, "capacity"))
+        seen = json.loads(out.read_text())
+        [turn] = seen["reading"]["running"]
+        self.assertEqual((turn["slots"], turn["admittedBy"], seen["reading"]["used"]), (8, "slot", 8))
+        self.assertEqual(seen["claim"], admitted["claim"])
+        self.assertEqual(self.claim_files(), [])
+
+    def test_under_the_slot_the_turns_claim_shrinks_to_one_check(self) -> None:
+        self.capacity(8)
+        # The provider selects one check, dummy, beside the always-run probe: the fallback is counted only before.
+        adopter, out = self.probe_adopter("dummy", parallelChecks=1)
+        self.candidate(adopter)
+        for name, slots in (("probe", 1), ("dummy", 1), ("fallback", 5)):
+            self.measured(adopter, name, slots)
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        [admitted] = self.admissions()
+        self.assertEqual(admitted["slots"], 5)
+        seen = json.loads(out.read_text())
+        self.assertEqual(([claim["slots"] for claim in seen["reading"]["running"]], seen["reading"]["used"]), ([1], 1))
+
+    def test_only_the_slots_own_process_is_admitted_by_the_slot(self) -> None:
+        self.capacity(1)
+        adopter = self.adopter()
+        self.candidate(adopter)
+        seen: dict = {}
+
+        def in_the_slot(runner, subject) -> None:
+            other = subprocess.run([PY, "-B", "-c", OTHER_CLAIM, str(SCRIPTS), "1"], capture_output=True, text=True,
+                                   timeout=60)
+            seen["other"] = json.loads(other.stdout)
+            own = runner.ledger().request("run", "in-slot", slots=1)
+            seen["own"] = dict(own.record)
+            own.release()
+
+        results = self.run_queue(adopter, "feature", seams={"after_sync": in_the_slot})
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual((seen["other"]["state"], seen["other"]["admittedBy"]), ("waiting", None))
+        self.assertEqual((seen["own"]["state"], seen["own"]["admittedBy"]), ("running", "slot"))
+        self.assertFalse(queue.machine.slot_held())
+
+    def test_a_check_that_claims_runs_under_the_turns_claim_in_the_runners_ledger(self) -> None:
+        self.capacity(4)
+        marker, said = self.directory / "inner-claim", self.directory / "inner-said"
+        inner = [PY, "-B", str(SCRIPTS / "machine.py"), "run", "--slots", "4", "--label", "inner", "--wait-seconds",
+                 "20", "--", PY, "-c",
+                 f"import os; open({str(marker)!r}, 'w').write(os.environ['AGENT_SKILLS_MACHINE_CLAIM'])"]
+        wrapper = (f"import subprocess, sys; done = subprocess.run({inner!r}, capture_output=True, text=True); "
+                   f"open({str(said)!r}, 'w').write(done.stderr); sys.exit(done.returncode)")
+        adopter = self.adopter({"alwaysRun": [{"id": "claims", "argv": [PY, "-c", wrapper], "cwd": ".",
+                                               "reasons": ["claims"], "prerequisites": []}], "fallback": []})
+        self.candidate(adopter, {"notes/only.txt": "a note\n"})
+        self.measured(adopter, "claims", 4)
+        home = self.directory / "home"
+        home.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        [admitted] = self.admissions()
+        self.assertEqual(admitted["slots"], 4)
+        self.assertEqual(marker.read_text(), admitted["claim"])
+        self.assertIn(f"running under claim {admitted['claim']} (queue turn: feature)", said.read_text())
+        self.assertEqual(self.admissions("inner"), [], "the inner run took no claim of its own")
+        inner_costs = [entry for entry in self.ledger().costs()["entries"] if entry["subject"] == "inner"]
+        self.assertEqual([(entry["kind"], len(entry["passed"])) for entry in inner_costs], [("run", 1)])
+        self.assertFalse((home / ".local/state/agent-skills/machine").exists())
+        # The record's names and digest are those taken without the runner-owned machine names.
+        [check] = [item for item in results[1].document()["checks"] if item["id"] == "claims"]
+        runner = adopter.runner()
+        runner.binding = adopter.binding
+        # Resolved once, as a turn's claim resolves it, before the environment is stripped below.
+        self.assertEqual(runner.ledger().directory, self.machine_directory)
+        plain = {key: value for key, value in os.environ.items() if key not in queue.MACHINE_NAMES}
+        with mock.patch.dict(os.environ, plain, clear=True):
+            bare = runner.check_environment()[1]
+        runner.turn_claim = mock.Mock(id="0" * 32)
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.directory / "xdg")}):
+            env, claimed, _ = runner.check_environment()
+        self.assertEqual(claimed, bare)
+        self.assertEqual(check["environment"], bare)
+        # A binding that declares a machine name in its own environment records the same names and digest.
+        declaring = {**adopter.binding, "environment": {**adopter.binding["environment"],
+                                                        "AGENT_SKILLS_MACHINE_DIR": "/declared"}}
+        runner.binding = declaring
+        self.assertEqual(runner.check_environment()[1], bare)
+        runner.binding = adopter.binding
+        self.assertEqual({name: env[name] for name in queue.MACHINE_NAMES},
+                         {"AGENT_SKILLS_MACHINE_CLAIM": "0" * 32, "AGENT_SKILLS_MACHINE_DIR": str(self.machine_directory),
+                          "XDG_STATE_HOME": str(self.directory / "xdg")})
+        # The runner's own steps get the claim and the ledger too.
+        own = runner.environment()
+        self.assertEqual((own["AGENT_SKILLS_MACHINE_CLAIM"], own["AGENT_SKILLS_MACHINE_DIR"]),
+                         ("0" * 32, str(self.machine_directory)))
+        # A profile that moves XDG_STATE_HOME or HOME leaves the check in the runner's ledger all the same, even when
+        # the runner found its ledger without AGENT_SKILLS_MACHINE_DIR in its own environment.
+        unset = {key: value for key, value in os.environ.items() if key not in queue.MACHINE_NAMES}
+        with mock.patch.dict(os.environ, unset, clear=True):
+            env, _, _ = runner.check_environment({"XDG_STATE_HOME": "/elsewhere", "HOME": "/elsewhere"})
+        self.assertEqual(Path(subprocess.run([PY, "-B", "-c", "import sys; sys.path.insert(0, sys.argv[1]); import "
+                                                               "machine; print(machine.machine_directory())",
+                                              str(SCRIPTS)], env=env, capture_output=True, text=True,
+                                             timeout=60).stdout.strip()), self.machine_directory)
+
+    def test_every_turn_releases_its_claim_however_it_ends(self) -> None:
+        self.capacity(4)
+        adopter = self.adopter()
+        self.candidate(adopter, {"src/app.txt": "FAIL here\n"}, name="failing")
+        queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True, poll=0)
+        self.assertEqual(adopter.item("failing")["stage"], "stopped")
+        self.assertEqual((self.claim_files(), queue.machine.slot_held()), ([], False))
+        # The failed check's run is kept apart from passed runs, so it never feeds the estimate.
+        [unit] = [entry for entry in self.ledger().costs()["entries"] if entry["subject"] == "unit"]
+        self.assertEqual(([item["result"] for item in unit["failed"]], unit["passed"]), (["failed"], []))
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="raising")
+
+        def stop(runner, subject) -> None:
+            raise RuntimeError("a stop while the slot is held")
+
+        queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True, poll=0,
+                    seams={"after_sync": stop})
+        self.assertEqual(adopter.item("raising")["stage"], "stopped")
+        self.assertEqual((self.claim_files(), queue.machine.slot_held()), ([], False))
+        # With the machine full, the next turn's claim waits behind the holder and is admitted once it lets go.
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="next")
+        holder = self.ledger().acquire("run", "full", slots=4)
+        served = threading.Thread(target=lambda: queue.serve(adopter.operator, adopter.state, remote="origin",
+                                                             base="main", until_idle=True, poll=0))
+        with contextlib.redirect_stderr(io.StringIO()):
+            served.start()
+            try:
+                self.until(lambda: [claim["state"] for claim in self.turns()] == ["waiting"])
+                self.assertIsNone(self.turns()[0]["admittedBy"])
+            finally:
+                holder.release()
+                served.join(120)
+        self.assertEqual(adopter.item("next")["stage"], "merged")
+        self.assertEqual(self.admissions()[-1]["admittedBy"], "capacity")
+        self.assertEqual(self.claim_files(), [])
+
+    def kept_through_a_retry(self, adopter: Adopter, between: Callable[[], None]) -> tuple[dict, list[dict]]:
+        """Serve a queued candidate while another command holds the slot. At the retry, ``between`` runs and the slot
+        is let go; the next pause ends serve. Returns the kept claim and what a later arrival was given."""
+        holder, release = self.hold_slot(adopter)
+        ledger = self.ledger()
+        kept: dict = {}
+        later: list = []
+        pauses = []
+
+        def sleep(_: float) -> None:
+            pauses.append(1)
+            if len(pauses) == 1:
+                [turn] = self.turns()
+                kept.update(turn)
+                arrival = ledger.request("run", "later", slots=1)
+                self.addCleanup(arrival.release)
+                self.assertFalse(arrival.poll(), "a later arrival went ahead of the kept claim")
+                later.append(arrival)
+                between()
+                release.write_text("go")
+                holder.wait(30)
+                return
+            self.assertTrue(later[0].poll())
+            raise StopServing
+
+        with self.assertRaises(StopServing):
+            queue.serve(adopter.operator, adopter.state, remote="origin", base="main", poll=0, slot_wait=0.2,
+                        sleep=sleep)
+        self.assertEqual(kept["state"], "running")
+        return kept, [dict(later[0].record)]
+
+    def test_a_turn_keeps_its_claim_across_a_slot_retry_and_releases_it_when_the_turn_ends(self) -> None:
+        self.capacity(1)
+        adopter = self.adopter()
+        self.candidate(adopter)
+        kept, [later] = self.kept_through_a_retry(adopter, lambda: None)
+        self.assertEqual(adopter.item("feature")["stage"], "merged")
+        self.assertEqual([entry["claim"] for entry in self.admissions()], [kept["id"]], "the turn claimed once")
+        self.assertEqual(later["admittedBy"], "capacity")
+        self.assertEqual(self.claim_files(), [later["id"]])
+
+    def test_a_pass_that_takes_no_turn_releases_a_kept_claim(self) -> None:
+        self.capacity(1)
+        adopter = self.adopter()
+        head = self.candidate(adopter)
+
+        def held() -> None:
+            current = state_tool.read_state(adopter.state)
+            state_tool.patch(adopter.state, writer="lead", version=current["version"],
+                             assignments={"/meta/hold": {"reason": "the lead holds it", "since": state_tool.now()}})
+
+        def awaiting_repair() -> None:
+            state_tool.append_journal(adopter.state, kind="base.broken", data={"source": "lead", "detail": "broken"})
+
+        def dequeued() -> None:
+            current = state_tool.read_state(adopter.state)
+            state_tool.patch(adopter.state, writer="lead", version=current["version"], changes={"queue": []})
+
+        def undo(row: str) -> None:
+            current = state_tool.read_state(adopter.state)
+            if row == "held":
+                state_tool.patch(adopter.state, writer="lead", version=current["version"],
+                                 assignments={"/meta/hold": None})
+            elif row == "awaiting repair":
+                [broken] = journaled(adopter, "base.broken")[-1:]
+                state_tool.append_journal(adopter.state, kind="base.repaired", data={"source": "lead", "head": head},
+                                          answers=[broken["id"]])
+            else:
+                adopter.enqueue("feature", head)
+
+        for row, between in (("held", held), ("awaiting repair", awaiting_repair), ("dequeued", dequeued)):
+            with self.subTest(row=row):
+                kept, [later] = self.kept_through_a_retry(adopter, between)
+                self.assertNotIn(kept["id"], self.claim_files())
+                self.assertEqual(later["admittedBy"], "capacity")
+                self.assertEqual(adopter.item("feature")["stage"] if row != "dequeued" else "queued", "queued")
+                for path in (self.machine_directory / "claims").glob("*.json"):
+                    path.unlink()
+                undo(row)
+
+    def test_a_setup_that_stops_after_a_retry_releases_the_kept_claim(self) -> None:
+        self.capacity(1)
+        adopter = self.adopter()
+        self.candidate(adopter)
+        restore: list[Callable[[], None]] = []
+
+        def broken() -> None:
+            git, away = adopter.operator / ".git", adopter.operator / ".git-away"
+            git.rename(away)
+            restore.append(lambda: away.rename(git))
+
+        try:
+            kept, [later] = self.kept_through_a_retry(adopter, broken)
+        finally:
+            for put_back in restore:
+                put_back()
+        self.assertNotIn(kept["id"], self.claim_files())
+        self.assertEqual(later["admittedBy"], "capacity")
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+
+
+class RunChecksClaimTests(MergeQueueTestCase):
+    """run-checks claims machine slots around each check, waits by default, and steps off with --now --why."""
+
+    run_quietly = True
+
+    def test_now_runs_at_once_and_a_capped_wait_exits_75_with_no_record(self) -> None:
+        MachineClaimQueueTests.capacity(self, 1)
+        adopter = self.adopter()
+        holder = queue.machine.Ledger(self.machine_directory, stderr=io.StringIO()).acquire("run", "full", slots=1)
+        self.addCleanup(holder.release)
+        head = run("rev-parse", "origin/main", cwd=adopter.operator)
+        base = [PY, "-B", str(SCRIPTS / "merge_queue.py"), "--repo", str(adopter.operator), "--remote", "origin",
+                "--base", "main", "run-checks", "--head", head, "--checks", "fallback"]
+        forced = subprocess.run([*base, "--now", "--why", "w"], capture_output=True, text=True, timeout=120)
+        self.assertEqual(forced.returncode, 0, forced.stderr)
+        [record] = json.loads(forced.stdout)
+        self.assertEqual(record["result"], "passed")
+        history = queue.machine.Ledger(self.machine_directory).read_history()
+        [override] = [entry for entry in history if entry["event"] == "override"]
+        self.assertEqual((override["subject"], override["admittedBy"], override["why"]), ("fallback", "now", "w"))
+        costs = queue.machine.Ledger(self.machine_directory).costs()["entries"]
+        self.assertEqual([(entry["kind"], entry["subject"], len(entry["passed"])) for entry in costs],
+                         [("check", "fallback", 1)])
+        capped = subprocess.run([*base, "--wait-seconds", "1"], capture_output=True, text=True, timeout=120)
+        self.assertEqual(capped.returncode, 75, capped.stderr)
+        self.assertEqual(capped.stdout, "")
+        self.assertIn("waits for 1 slot", capped.stderr)
+        self.assertIn("gave up after", capped.stderr)
+        alone = subprocess.run([*base, "--now"], capture_output=True, text=True, timeout=120)
+        self.assertEqual(alone.returncode, 2)
+        self.assertIn("--now needs --why", alone.stderr)
+        reason = subprocess.run([*base, "--why", "w"], capture_output=True, text=True, timeout=120)
+        self.assertEqual(reason.returncode, 2)
+        self.assertIn("--why goes with --now", reason.stderr)
+
+    def test_a_measured_run_reads_its_output_as_text_mode_does(self) -> None:
+        done = queue.run_process([PY, "-c", "import sys; sys.stdout.buffer.write(b'a\\r\\nb\\r\\xff'); "
+                                            "sys.stderr.write('e')"],
+                                 cwd=self.directory, env=dict(os.environ), timeout=30, measure=True)
+        self.assertEqual((done.returncode, done.stdout, done.stderr, done.timed_out), (0, "a\nb\n\ufffd", "e", False))
+        self.assertIsNotNone(done.cpuSeconds)

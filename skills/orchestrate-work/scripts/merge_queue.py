@@ -30,6 +30,7 @@ import json
 import os
 import platform
 import re
+import selectors
 import shutil
 import signal
 import stat
@@ -47,6 +48,7 @@ from typing import Callable, Iterable, Iterator
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import delivery_state  # noqa: E402
+import machine  # noqa: E402
 import region_ownership  # noqa: E402
 import render_state  # noqa: E402
 from delivery_state import load_schema, validate  # noqa: E402
@@ -570,10 +572,16 @@ def check_title(check: dict) -> dict:
 # How a check runs, as one digest; the state tool's select compares selections by it too.
 check_definition = delivery_state.check_definition
 # The names the runner sets on every check itself, whose values say who runs it: never in an environment digest.
+# The machine names say which claim a check runs under and which ledger it uses, so a check whose own argv claims runs
+# under its runner's claim, in its runner's ledger. They are left out of a run record's names as well as its digest,
+# so a record made with or without them compares as it did.
+MACHINE_NAMES = (machine.CLAIM_VARIABLE, machine.DIRECTORY_VARIABLE, "XDG_STATE_HOME")
 RUNNER_OWNED = frozenset({
     "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_TERMINAL_PROMPT",
-    "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
+    "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", *MACHINE_NAMES,
 })
+# The commands that run checks, each of which is one queue turn: the turn claims machine slots before the merge slot.
+TURN_COMMANDS = ("check", "run", "batch")
 
 
 def undetermined(check: dict, binding: dict) -> list[str]:
@@ -708,6 +716,8 @@ class Completed:
     stderr: str
     timed_out: bool
     seconds: float
+    # The CPU seconds of the process and every descendant it waited for, where it was reaped with wait4.
+    cpuSeconds: float | None = None
 
 
 def run_process(
@@ -719,13 +729,16 @@ def run_process(
     stdin: str | None = None,
     track: Callable[[subprocess.Popen], None] | None = None,
     untrack: Callable[[subprocess.Popen], None] | None = None,
+    measure: bool = False,
 ) -> Completed:
     """Run ``argv`` without a shell, in its own process group.
 
     On timeout the whole group is killed, so children a check spawned go with
     it. A missing executable is reported as a failure, not raised. ``track``
     is given the process once it starts, and ``untrack`` once it has ended, so
-    a caller can stop its group meanwhile, by the pid it started.
+    a caller can stop its group meanwhile, by the pid it started. With
+    ``measure``, and no ``stdin``, the process is reaped with ``os.wait4``
+    where the system has it, so the result carries its CPU seconds.
     """
     started = time.monotonic()
     kwargs: dict = {}
@@ -753,6 +766,8 @@ def run_process(
     if track is not None:
         track(process)
     try:
+        if measure and stdin is None and hasattr(os, "wait4"):
+            return _communicate_measured(process, timeout, started)
         return _communicate(process, stdin, timeout, started)
     finally:
         if untrack is not None:
@@ -779,6 +794,79 @@ def _communicate(process: subprocess.Popen, stdin: str | None, timeout: float | 
             stdout, stderr = "", ""
         return Completed(None, stdout, stderr, True, time.monotonic() - started)
     return Completed(process.returncode, stdout, stderr, False, time.monotonic() - started)
+
+
+def _communicate_measured(process: subprocess.Popen, timeout: float | None, started: float) -> Completed:
+    """``_communicate``, reaping with ``os.wait4`` so the CPU of the process and what it waited for is measured.
+
+    As ``communicate`` does, both pipes are read to their end in this thread, then the process is reaped. A timeout
+    kills the whole group and ends the run as timed out, and a descendant outside the group that still holds the pipes
+    after the bounded drain is not waited for.
+    """
+    with contextlib.suppress(OSError):
+        process.stdin.close()  # type: ignore[union-attr]
+    streams = {process.stdout.fileno(): [], process.stderr.fileno(): []}  # type: ignore[union-attr]
+    order = list(streams)
+    selector = selectors.DefaultSelector()
+    for descriptor in streams:
+        selector.register(descriptor, selectors.EVENT_READ)
+
+    def read_until(deadline: float | None) -> None:
+        while selector.get_map():
+            left = None if deadline is None else deadline - time.monotonic()
+            if left is not None and left <= 0:
+                return
+            for key, _ in selector.select(0.5 if left is None else min(left, 0.5)):
+                chunk = os.read(key.fd, 65536)
+                if chunk:
+                    streams[key.fd].append(chunk)
+                else:
+                    selector.unregister(key.fd)
+
+    def reap(deadline: float | None) -> float | None:
+        while True:
+            try:
+                pid, status, usage = os.wait4(process.pid, os.WNOHANG)
+            except ChildProcessError:
+                return None
+            if pid:
+                process.returncode = os.waitstatus_to_exitcode(status)
+                return round(usage.ru_utime + usage.ru_stime, 3)
+            if deadline is not None and time.monotonic() >= deadline:
+                return None
+            time.sleep(0.01)
+
+    def text(descriptor: int) -> str:
+        # As text mode's communicate gives it: UTF-8, undecodable bytes replaced, every line end as "\n".
+        decoded = b"".join(streams[descriptor]).decode("utf-8", errors="replace")
+        return decoded.replace("\r\n", "\n").replace("\r", "\n")
+
+    def closed() -> None:
+        selector.close()
+        for stream in (process.stdout, process.stderr):
+            with contextlib.suppress(OSError):
+                stream.close()  # type: ignore[union-attr]
+
+    deadline = None if timeout is None else started + timeout
+    read_until(deadline)
+    cpu = None
+    if not selector.get_map():
+        cpu = reap(deadline)
+        if process.returncode is not None:
+            closed()
+            return Completed(process.returncode, text(order[0]), text(order[1]), False, time.monotonic() - started,
+                             cpu)
+    kill_group(process)
+    read_until(time.monotonic() + DRAIN_SECONDS)
+    drained = not selector.get_map()
+    if not drained:
+        # Something outside the group still holds the pipes: stop waiting for it.
+        with contextlib.suppress(OSError):
+            process.kill()
+    stdout, stderr = (text(order[0]), text(order[1])) if drained else ("", "")
+    closed()
+    cpu = reap(time.monotonic() + DRAIN_SECONDS)
+    return Completed(None, stdout, stderr, True, time.monotonic() - started, cpu)
 
 
 def version_numbers(text: str) -> tuple[int, ...] | None:
@@ -1038,6 +1126,14 @@ class Runner:
         self._stopping = False
         self._counter = 0
         self._logs = 0
+        # The machine claim this runner's turn holds, set before the merge slot; and the claim a run-checks check runs
+        # under, which run-checks' own options shape. Each process this runner starts is told which claim it runs under.
+        self.turn_claim: machine.Claim | None = None
+        self.check_claim: machine.Claim | None = None
+        self.now_why: str | None = None
+        self.wait_seconds: float | None = None
+        self._machine: machine.Ledger | None = None
+        self._machine_repository: str | None = None
         self._tool_digests: dict[tuple[str, int, int], str] = {}
 
     # -- git ---------------------------------------------------------------
@@ -1050,7 +1146,9 @@ class Runner:
             if key not in GIT_LOCATION_VARIABLES and key not in GIT_PATHSPEC_VARIABLES
             and not re.match(r"GIT_CONFIG_(KEY|VALUE)_\d+\Z", key)
         }
-        return self.declared(env, extra)
+        env = self.declared(env, extra)
+        env.update(self.machine_environment())
+        return env
 
     def check_environment(self, profile: dict[str, str] | None = None,
                           context: Context | None = None) -> tuple[dict[str, str], dict, list[str]]:
@@ -1068,12 +1166,17 @@ class Runner:
         baseline = {environment_name(name) for name in (*CHECK_BASELINE, *(WINDOWS_BASELINE if WINDOWS else ()))}
         listed = {environment_name(name) for name in self.binding.get("inherit", [])}
 
+        machine_names = {environment_name(name) for name in MACHINE_NAMES}
+
         def kept(name: str) -> bool:
             name = environment_name(name)
+            if name in machine_names:
+                # The runner sets these itself, below, and they are never inherited, listed or digested.
+                return False
             return name in baseline or name in listed or name.startswith("LC_")
 
         inherited = {key: value for key, value in os.environ.items() if kept(key)}
-        dropped = sorted(key for key in os.environ if not kept(key))
+        dropped = sorted(key for key in os.environ if not kept(key) and environment_name(key) not in machine_names)
         profile = profile or {}
         resolved = {key: context.element(value) for key, value in profile.items()}
         # A value made from workRoot says where the run happens, and one made from the tree is the tree's, which the
@@ -1083,10 +1186,103 @@ class Runner:
         digested = {key: value for key, value in inherited.items() if environment_name(key) not in UNDIGESTED}
         digested.update(self.binding.get("environment", {}))
         digested.update(stable)
+        digested = {key: value for key, value in digested.items() if environment_name(key) not in machine_names}
         env = self.declared(dict(inherited), resolved)
         text = json.dumps(sorted(digested.items()), ensure_ascii=True, separators=(",", ":"))
-        facts = {"names": sorted(env), "digest": "sha256:" + hashlib.sha256(text.encode("ascii")).hexdigest()}
+        facts = {"names": sorted(key for key in env if environment_name(key) not in machine_names),
+                 "digest": "sha256:" + hashlib.sha256(text.encode("ascii")).hexdigest()}
+        env.update(self.machine_environment())
         return env, facts, dropped
+
+    # -- the machine ledger --------------------------------------------------
+
+    def machine_environment(self) -> dict[str, str]:
+        """The runner-owned machine names every process this runner starts gets: the claim it runs under, when there
+        is one, and the ledger's location. The directory is always the one this runner resolved, which outranks
+        XDG_STATE_HOME and HOME, so a binding or profile that sets either still leaves its checks in this ledger."""
+        values = {name: os.environ[name] for name in MACHINE_NAMES[2:] if os.environ.get(name)}
+        values[machine.DIRECTORY_VARIABLE] = str(self.ledger().directory)
+        claim = self.check_claim or self.turn_claim
+        named = claim.id if claim is not None else None
+        if named:
+            values[machine.CLAIM_VARIABLE] = named
+        return values
+
+    def ledger(self) -> machine.Ledger:
+        if self._machine is None:
+            self._machine = machine.Ledger()
+            self._machine_repository = machine.repository_identity(self.repository)
+        return self._machine
+
+    def check_slots(self, ids: list[str], binding: dict | None = None) -> int:
+        """The machine slots a set of checks takes: the largest measured slots among them, times as many as run at once."""
+        if not ids:
+            return 1
+        ledger = self.ledger()
+        largest = max(ledger.estimate(self._machine_repository, "check", name)["slots"] for name in ids)
+        parallel = (self.binding if binding is None else binding).get("parallelChecks", 1)
+        return max(1, largest * min(max(int(parallel), 1), len(ids)))
+
+    def expected_checks(self, subjects: list[str]) -> tuple[list[str], dict]:
+        """The checks a turn expects to run, before it holds the slot: each candidate's lead selection at its handed
+        head, where the binding lets the lead select, and otherwise the binding's alwaysRun and fallback checks."""
+        binding: dict = {}
+        for ref in (f"{PRIVATE_REF}/base", f"refs/remotes/{self.remote}/{self.base}"):
+            shown = self.git("show", f"{ref}:{BINDING_PATH}", check=False)
+            with contextlib.suppress(ValueError, TypeError):
+                found = json.loads(shown.stdout)
+                if isinstance(found, dict):
+                    binding = found
+                    break
+        items = {}
+        with contextlib.suppress(delivery_state.StateError, OSError, KeyError):
+            items = {item["subject"]: item for item in delivery_state.read_state(self.state_directory)["queue"]}
+        lead = bool((binding.get("selection") or {}).get("lead"))
+        ids: list[str] = []
+        unselected = False
+        for subject in subjects:
+            item = items.get(subject) or {}
+            selection = item.get("leadSelection")
+            if lead and selection and selection.get("head") == item.get("head"):
+                ids += [check["id"] for check in selection.get("checks", []) if isinstance(check, dict)]
+            else:
+                unselected = True
+        if unselected:
+            ids += [check["id"] for key in ("alwaysRun", "fallback") for check in binding.get(key) or []
+                    if isinstance(check, dict) and "id" in check]
+        return list(dict.fromkeys(ids)), binding
+
+    def delivery_name(self) -> str:
+        delivery = self.state_directory.name
+        with contextlib.suppress(delivery_state.StateError, OSError, KeyError):
+            delivery = delivery_state.read_state(self.state_directory)["meta"]["headline"]
+        return delivery
+
+    def claim_turn(self, subjects: list[str]) -> machine.Claim:
+        """Claim this turn's machine slots, waiting while the machine is full, before any merge slot is held."""
+        try:
+            slots = self.check_slots(*self.expected_checks(subjects))
+        except (RuntimeError, OSError, ValueError, KeyError, TypeError):
+            slots = 1
+        ledger = self.ledger()
+        return ledger.acquire("check", "turn", label=f"queue turn: {', '.join(subjects)}", slots=slots,
+                              repository=self._machine_repository, delivery=self.delivery_name(),
+                              story=subjects[0] if len(subjects) == 1 else None)
+
+    def resize_turn(self, checks: list[dict]) -> None:
+        """Resize the turn's claim, under the slot, to the checks the queue selected."""
+        if self.turn_claim is None or not machine.slot_held():
+            return
+        with contextlib.suppress(ValueError, machine.LedgerUnavailable):
+            self.turn_claim.resize(self.check_slots([check["id"] for check in checks]))
+
+    def record_cost(self, check: dict, completed: Completed) -> None:
+        """Keep a check's run in the machine's cost record, under its own id, whoever claimed for it."""
+        result = "timedOut" if completed.timed_out else "passed" if completed.returncode == 0 else "failed"
+        measured = machine.Measured(completed.returncode if completed.returncode is not None else -1,
+                                    round(completed.seconds, 3), completed.cpuSeconds, result)
+        with contextlib.suppress(machine.LedgerUnavailable, OSError):
+            self.ledger().record_cost(self._machine_repository, "check", check["id"], measured)
 
     def declared(self, env: dict[str, str], extra: dict[str, str] | None = None) -> dict[str, str]:
         """``env`` with the binding's environment, ``extra``, the git identity and the hooks directory on top."""
@@ -1208,7 +1404,8 @@ class Runner:
         quotes stays the run's own."""
         resolved = context.argv(argv)
         env, _, dropped = self.check_environment(profile, context)
-        completed = run_process(resolved, cwd=cwd, env=env, timeout=timeout, track=self._track, untrack=self._untrack)
+        completed = run_process(resolved, cwd=cwd, env=env, timeout=timeout, track=self._track, untrack=self._untrack,
+                                measure=True)
         if completed.returncode != 0 and dropped:
             completed.stdout = (f"merge-queue: this run's environment left out {', '.join(dropped)}; a check that "
                                 f"needs one gets it once the binding lists it in inherit\n{completed.stdout}")
@@ -1771,7 +1968,7 @@ class Runner:
                     outcomes[check["id"]] = "skipped"
                     records.append({**record, "result": "skipped", "at": now()})
                     continue
-                completed = self.run_one(check, checkout, context)
+                completed = self.run_claimed(check, checkout, context)
                 assert completed is not None
                 passed = completed.returncode == 0 and not completed.timed_out
                 outcomes[check["id"]] = "passed" if passed else "failed"
@@ -2829,6 +3026,22 @@ class Runner:
         timeout = check.get("timeoutSeconds", self.binding["checkTimeoutSeconds"])
         return self.run_declared(check["argv"], cwd, context, timeout, profile=self.profile_environment(check))
 
+    def run_claimed(self, check: dict, checkout: Path, context: Context) -> Completed | None:
+        """run-checks' run of one check, inside a machine claim of its own, waiting while the machine is full unless
+        run-checks was told --now or capped its wait; a capped wait that ends unadmitted raises ``machine.GaveUp``."""
+        ledger = self.ledger()
+        claim = ledger.acquire("check", check["id"], label=check["id"], slots=1, repository=self._machine_repository,
+                               now_why=self.now_why, wait_seconds=self.wait_seconds)
+        self.check_claim = claim
+        try:
+            completed = self.run_one(check, checkout, context)
+            if completed is not None:
+                self.record_cost(check, completed)
+            return completed
+        finally:
+            self.check_claim = None
+            claim.release()
+
     def host_facts(self, check: dict, checkout: Path, context: Context) -> dict:
         """The host a check runs on, as its run record says it: the system, release and machine, and the sha256 of
         each tool it names, links followed, or null for one that isn't found.
@@ -2896,6 +3109,8 @@ class Runner:
         """
         reused = reused or {}
         carried = carried or {}
+        # Under the slot, the turn's claim takes the slots these checks need, growing at once or shrinking.
+        self.resize_turn(checks)
         outcomes: dict[str, str] = {}
         records = {check["id"]: {"id": check["id"], "state": "pending", **check_title(check)} for check in checks}
         history = self.history()["checks"]
@@ -2922,6 +3137,8 @@ class Runner:
         def finish(check: dict, completed: Completed) -> dict:
             """Record one finished run of a check; a failed or timed-out run keeps its output and failing tests."""
             state = "timed_out" if completed.timed_out else "passed" if completed.returncode == 0 else "failed"
+            # The turn claimed for every check: each one's cost is still kept under its own id.
+            self.record_cost(check, completed)
             record = records[check["id"]]
             record.update(state=state, finishedAt=now())
             node = node_fields(self.check_node(check, checkout, context), minimum)
@@ -3878,7 +4095,9 @@ class Runner:
                                            after_merge=self.after_merge, doing=doing) as lock:
                 self.slot_lock = lock
                 try:
-                    yield
+                    # A claim made or grown while this process holds the slot is admitted at once.
+                    with machine.holding_slot():
+                        yield
                 finally:
                     self.slot_lock = None
         except delivery_state.StateError as error:
@@ -3887,6 +4106,19 @@ class Runner:
             raise
 
     def run_command(self, subcommand: str, subjects: list[str], approved_by: str | None = None) -> list[Result]:
+        # A turn claims its machine slots first, waiting while the machine is full, and never while it holds the merge
+        # slot. Serve passes the claim it keeps across a retry; a turn that claimed for itself releases it here.
+        owned = None
+        if self.turn_claim is None and subcommand in TURN_COMMANDS and subjects:
+            owned = self.turn_claim = self.claim_turn(subjects)
+        try:
+            return self._run_command(subcommand, subjects, approved_by)
+        finally:
+            if owned is not None:
+                owned.release()
+                self.turn_claim = None
+
+    def _run_command(self, subcommand: str, subjects: list[str], approved_by: str | None = None) -> list[Result]:
         try:
             with self.slot(slot_doing(subcommand, subjects)), self.locked():
                 # A state that cannot be read or written is reported by the subcommand itself, as before.
@@ -4194,94 +4426,128 @@ def serve(
         # An idle wait ends when the next read of the sources is due, so it is never late by a poll.
         sleep(poll if not interval else max(0.0, min(poll, due - clock())))
 
-    while True:
-        # A killed serve or run leaves live state behind; clear it first, even when nothing is queued.
-        Runner(repository, state_directory, remote=remote, base=base, lead=lead).recover()
-        if interval and clock() >= due:
-            # Before the queue is read, so a merge the forge reports is never taken again.
-            _refresh(repository, state_directory, member)
-            due = clock() + interval
-        state = delivery_state.read_state(state_directory)
-        journal = delivery_state.read_journal(state_directory)
-        waiting = [
-            item["subject"] for item in sorted(state["queue"], key=lambda entry: (entry["order"], entry["subject"]))
-            if item["stage"] == "queued" and not item.get("pending")
-        ]
-        if delivery_state.base_awaits_repair(journal):
-            # Only the lead's named repair goes through a held queue, alone and first; nothing else while the base waits.
-            waiting = [subject for subject in waiting
-                       if next(item for item in state["queue"] if item["subject"] == subject).get("repair")][:1]
-        if state["meta"].get("hold") or not waiting:
+    # A turn's machine claim, kept only across a retry after its turn found the merge slot or the queue held.
+    kept_claim: machine.Claim | None = None
+
+    def let_go() -> None:
+        nonlocal kept_claim
+        if kept_claim is not None:
+            kept_claim.release()
+            kept_claim = None
+
+    try:
+        while True:
+            # A killed serve or run leaves live state behind; clear it first, even when nothing is queued.
+            Runner(repository, state_directory, remote=remote, base=base, lead=lead).recover()
+            if interval and clock() >= due:
+                # Before the queue is read, so a merge the forge reports is never taken again.
+                _refresh(repository, state_directory, member)
+                due = clock() + interval
+            state = delivery_state.read_state(state_directory)
+            journal = delivery_state.read_journal(state_directory)
+            waiting = [
+                item["subject"] for item in sorted(state["queue"], key=lambda entry: (entry["order"], entry["subject"]))
+                if item["stage"] == "queued" and not item.get("pending")
+            ]
+            if delivery_state.base_awaits_repair(journal):
+                # Only the lead's named repair goes through a held queue, alone and first; nothing else while the base waits.
+                waiting = [subject for subject in waiting
+                           if next(item for item in state["queue"] if item["subject"] == subject).get("repair")][:1]
+            if state["meta"].get("hold") or not waiting:
+                # A pass that takes no turn releases a claim kept across a retry, so it holds no slots while idle.
+                let_go()
+                if until_idle:
+                    return results
+                pause()
+                continue
+            # A setup that broke since the last turn would refuse every candidate in turn: hold instead, taking none.
+            checked, _, candidate = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+            if checked.stop is not None or candidate:
+                let_go()
+                if candidate:
+                    hold_for_setup(state_directory, candidate_hold(candidate))
+                elif checked.stop["reason"] != "queue_locked":
+                    hold_for_setup(state_directory, checked.stop["detail"])
+                if until_idle:
+                    return results
+                pause()
+                continue
+            heads = {item["subject"]: item["head"] for item in state["queue"]}
+            runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams,
+                            slot_wait=slot_wait, after_merge=merged_last)
+            # Last, since dropping the previous runner above runs its finalizer, where a stop can land.
+            before_turn()
+            # The turn claims its machine slots before the merge slot, waiting while the machine is full. A claim kept
+            # from a turn that found the slot or the queue held keeps its place ahead of later arrivals.
+            claim, kept_claim = kept_claim or runner.claim_turn(waiting), None
+            runner.turn_claim = claim
+            try:
+                taken = runner.run_command("batch" if len(waiting) > 1 else "run", waiting)
+            except BaseException:
+                claim.release()
+                raise
+            merged_last = any(result.outcome == "merged" for result in taken)
+            if all(result.stop is not None and result.stop["reason"] == "queue_locked" for result in taken):
+                # Another runner holds the queue: nothing was attempted, so nothing is recorded. The claim is kept
+                # through the retry.
+                kept_claim = claim
+                if until_idle:
+                    return results
+                pause()
+                continue
+            # The turn has ended, however it ended: its claim goes now.
+            claim.release()
+            refused = [result for result in taken if result.outcome == "refused" and result.candidate is not None
+                       and result.stop["reason"] != "queue_locked"]
+            troubled = any(result.stop is not None and result.stop["reason"] != "queue_locked" for result in taken)
+            cause_known, broken = True, None
+            if troubled:
+                # A stop or refusal names its code, not its cause: the setup check says whether the setup broke this turn.
+                again, _, candidate = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+                if again.stop is not None:
+                    cause_known = again.stop["reason"] != "queue_locked"
+                    broken = again.stop["detail"] if cause_known else None
+                elif candidate:
+                    broken = candidate_hold(candidate)
+            for result in taken:
+                write_result(state_directory, result)
+                if cause_known and broken is None and result in refused:
+                    # A refusal leaves the candidate queued as it was; serve stops it, journaled once, as any stop.
+                    with contextlib.suppress(Stop, delivery_state.StateError):
+                        runner.write(build=_refused_stop(state_directory, result.candidate, heads.get(result.candidate), result.stop["reason"]))
+            if broken is not None:
+                # None of this turn's candidates was at fault: back to queued, so no lane hands anything off again.
+                requeued, kept = _requeue_after_setup(runner, taken, heads)
+                hold_for_setup(state_directory, broken, kept, requeued)
+            for result in taken:
+                # Reported only once every result is written and every refusal stopped, so a reader never loses them.
+                if on_result is not None:
+                    on_result(result)
             if until_idle:
-                return results
-            pause()
-            continue
-        # A setup that broke since the last turn would refuse every candidate in turn: hold instead, taking none.
-        checked, _, candidate = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
-        if checked.stop is not None or candidate:
-            if candidate:
-                hold_for_setup(state_directory, candidate_hold(candidate))
-            elif checked.stop["reason"] != "queue_locked":
-                hold_for_setup(state_directory, checked.stop["detail"])
-            if until_idle:
-                return results
-            pause()
-            continue
-        heads = {item["subject"]: item["head"] for item in state["queue"]}
-        runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams,
-                        slot_wait=slot_wait, after_merge=merged_last)
-        # Last, since dropping the previous runner above runs its finalizer, where a stop can land.
-        before_turn()
-        taken = runner.run_command("batch" if len(waiting) > 1 else "run", waiting)
-        merged_last = any(result.outcome == "merged" for result in taken)
-        if all(result.stop is not None and result.stop["reason"] == "queue_locked" for result in taken):
-            # Another runner holds the queue: nothing was attempted, so nothing is recorded.
-            if until_idle:
-                return results
-            pause()
-            continue
-        refused = [result for result in taken if result.outcome == "refused" and result.candidate is not None
-                   and result.stop["reason"] != "queue_locked"]
-        troubled = any(result.stop is not None and result.stop["reason"] != "queue_locked" for result in taken)
-        cause_known, broken = True, None
-        if troubled:
-            # A stop or refusal names its code, not its cause: the setup check says whether the setup broke this turn.
-            again, _, candidate = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
-            if again.stop is not None:
-                cause_known = again.stop["reason"] != "queue_locked"
-                broken = again.stop["detail"] if cause_known else None
-            elif candidate:
-                broken = candidate_hold(candidate)
-        for result in taken:
-            write_result(state_directory, result)
-            if cause_known and broken is None and result in refused:
-                # A refusal leaves the candidate queued as it was; serve stops it, journaled once, as any stop.
-                with contextlib.suppress(Stop, delivery_state.StateError):
-                    runner.write(build=_refused_stop(state_directory, result.candidate, heads.get(result.candidate), result.stop["reason"]))
-        if broken is not None:
-            # None of this turn's candidates was at fault: back to queued, so no lane hands anything off again.
-            requeued, kept = _requeue_after_setup(runner, taken, heads)
-            hold_for_setup(state_directory, broken, kept, requeued)
-        for result in taken:
-            # Reported only once every result is written and every refusal stopped, so a reader never loses them.
-            if on_result is not None:
-                on_result(result)
-        if until_idle:
-            results += taken
-        after = delivery_state.read_state(state_directory)
-        # A candidate a stopped base re-run put back moved too: it is checked again, and a second stop stops it.
-        moved = any(item["subject"] in waiting and item["stage"] != "queued" for item in after["queue"]) or any(
-            result.stop is not None and result.stop["reason"] == "base_rerun_stopped" for result in taken)
-        if not moved:
-            # Nothing it took left queued (another runner held the lock): wait rather than spin.
-            if until_idle:
-                return results
-            pause()
+                results += taken
+            after = delivery_state.read_state(state_directory)
+            # A candidate a stopped base re-run put back moved too: it is checked again, and a second stop stops it.
+            moved = any(item["subject"] in waiting and item["stage"] != "queued" for item in after["queue"]) or any(
+                result.stop is not None and result.stop["reason"] == "base_rerun_stopped" for result in taken)
+            if not moved:
+                # Nothing it took left queued (another runner held the lock): wait rather than spin.
+                if until_idle:
+                    return results
+                pause()
+    finally:
+        # However serve ends, it keeps no claim.
+        let_go()
 
 
-def run_checks(repository: Path, *, remote: str, base: str, head: str, checks: list[str]) -> list[dict]:
-    """Run checks at ``head`` the way the queue does, from any checkout, and return a record of each run."""
+def run_checks(repository: Path, *, remote: str, base: str, head: str, checks: list[str],
+               now_why: str | None = None, wait_seconds: float | None = None) -> list[dict]:
+    """Run checks at ``head`` the way the queue does, from any checkout, and return a record of each run.
+
+    Each check claims machine slots around its run and waits while the machine is full, unless ``now_why`` steps off
+    that default or ``wait_seconds`` caps the wait, which raises ``machine.GaveUp`` when it ends unadmitted."""
     runner = Runner(repository, repository, remote=remote, base=base)
+    runner.now_why = now_why
+    runner.wait_seconds = wait_seconds
     try:
         return runner.run_records(head, checks)
     finally:
@@ -4321,11 +4587,26 @@ def main(argv: list[str] | None = None) -> int:
                                                      "and print a record of each run")
     running.add_argument("--head", required=True, help="the commit to run them at")
     running.add_argument("--checks", required=True, help="the check ids, comma-separated")
+    running.add_argument("--now", action="store_true", help="run each check at once, whatever the machine holds; "
+                                                            "needs --why, which is recorded")
+    running.add_argument("--why", help="why the run steps off waiting for the machine")
+    running.add_argument("--wait-seconds", type=float, help="the most each check waits for the machine; a wait that "
+                                                            "ends unadmitted exits 75 and runs nothing more")
     args = parser.parse_args(argv)
     if args.command == "run-checks":
+        if args.now and not args.why:
+            parser.error("--now needs --why")
+        if args.why and not args.now:
+            parser.error("--why goes with --now")
         try:
             records = run_checks(args.repo, remote=args.remote, base=args.base, head=args.head,
-                                 checks=[name for name in args.checks.split(",") if name])
+                                 checks=[name for name in args.checks.split(",") if name],
+                                 now_why=args.why if args.now else None, wait_seconds=args.wait_seconds)
+        except machine.GaveUp as error:
+            # Its waiting lines and this one are on stderr; stdout carries no record.
+            sys.stderr.write(f"{error}\n")
+            sys.stderr.flush()
+            return machine.EX_TEMPFAIL
         except Stop as stop:
             sys.stdout.buffer.write(ascii_json({"reason": stop.reason, "detail": stop.detail}))
             return 1
