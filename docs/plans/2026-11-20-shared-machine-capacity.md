@@ -144,14 +144,14 @@ documentation only.
 
    **A ledger that can't be used doesn't stop the run.** The ledger is unavailable only when the directory, or
    `ledger.lock` within it, can't be created or opened. In that case the command says `machine ledger unavailable:
-   <reason>; running unclaimed` on stderr and runs as it would have before this plan.
+   <reason>; running unclaimed` on stderr and runs as it would have before this plan. The views and `lead-wait` show
+   the ledger as unavailable. The ledger is information for agents' calls, so losing it must not halt work.
 
    Ordinary contention never counts as unavailable:
    - a `lock_timeout` on `ledger.lock` is retried, as part of the wait;
    - a claim file that a concurrent release removed between the listing of `claims/` and its read is skipped;
    - a malformed claim file whose lock is held counts as live with the slots it last said, or with 1 when it says
-     none; one whose lock is free is removed, as Decision 3 says. The views and `lead-wait` show the ledger as unavailable. The ledger is information for agents' calls,
-   so losing it must not halt work.
+     none; one whose lock is free is removed, by the liveness rule above.
 4. **Admission rule.** `used` is the sum of `slots` over live `running` claims. A waiting claim is admitted when one
    of these holds:
    - **Capacity.** No earlier live waiter is still waiting, no exclusive claim is running, and `used + slots ≤
@@ -180,8 +180,9 @@ documentation only.
      - `AGENT_SKILLS_MACHINE_CLAIM`, naming the turn's claim in the queue and the check's claim in `run-checks`;
      - `AGENT_SKILLS_MACHINE_DIR` and `XDG_STATE_HOME`, when set.
 
-     They are runner-owned names, added to `RUNNER_OWNED` (`merge_queue.py:573`), so no environment digest or reuse
-     comparison includes them. A check whose own argv claims therefore runs under its turn's claim. It never waits
+     They are runner-owned names, added to `RUNNER_OWNED` (`merge_queue.py:573`). They are also left out of a run
+     record's environment `names`, so neither the digest nor `fact_differences`' comparison of names includes them.
+     A record made with or without them, including one written before this change, compares as it did. A check whose own argv claims therefore runs under its turn's claim. It never waits
      behind it, and it uses its runner's ledger.
 5. **Waiting is the default, and it is uncapped unless the caller caps it.** A waiting command prints, on stderr only,
    one line when it starts waiting and one each time the ledger changes. Each line says:
@@ -229,7 +230,9 @@ documentation only.
      `alwaysRun` and `fallback` checks.
    - **A turn keeps its claim across a slot retry.** When the turn's wait for the slot ends in `queue_locked`, it keeps
      its claim through serve's retry, so it doesn't lose its place to later arrivals. It releases the claim when the
-     turn ends, in a `finally`, as Decision 3 says. `holding_slot()` clears its marker in a `finally` too.
+     turn ends, in a `finally`, as Decision 3 says. `holding_slot()` clears its marker in a `finally` too. serve
+     releases a kept claim, in a `finally`, as soon as a pass takes no turn and whenever serve itself ends. A pass
+     takes no turn when the queue is held, nothing is queued, the base awaits repair, or a setup step stops.
    - **Under the slot, the turn claim is resized** to the same formula over the checks the queue actually selected.
      It grows at once under the slot, or shrinks. The queue takes no claim per check. Each check's cost is still
      recorded under `(check, <id>)`.
@@ -420,9 +423,9 @@ Capacity is always set explicitly, by writing `capacity.json` in the test's own 
 | 11c | MC-2 | capacity 6 and full; under the slot the queue selects checks whose formula gives 8 | the turn claim grows to 8 with `admittedBy: slot`, and `used` is exactly 8 (not 14). |
 | 11d | MC-2 | under the slot the queue selects one check with slots 1 | the turn claim shrinks to 1, and `used` drops by the difference. |
 | 22 | MC-2 | capacity full; process A, the queue fixture, holds the base's merge slot; a separate process B makes a 1-slot claim | B stays `waiting` with no `admittedBy`. A claim made in A under the slot is admitted `slot`. |
-| 31 | MC-2 | capacity 4 and full with the turn's claim of 4; the turn's check argv runs `machine.py run --slots 4 -- <marker>` | the marker appears with no wait, and `used` never exceeds the turn claim. The check's environment digest equals the one taken without the runner-owned variables. |
+| 31 | MC-2 | capacity 4 and full with the turn's claim of 4; the turn's check argv runs `machine.py run --slots 4 -- <marker>` | the marker appears with no wait, and `used` never exceeds the turn claim. The inner command prints `running under claim <the turn's claim id>`, and its cost entry appears in the test directory's `costs.json` under `(run, <label>)`. With `HOME` pointed at a fresh temporary directory for the row, no machine directory is created at the resolver's default path. The check's environment digest and its record's `names` equal those taken without the runner-owned variables. |
 | 32 | MC-2 | one serve process; turn 1 has a failing check; and, in a second row, a turn that raises a Stop while holding the slot | afterwards `claims/` holds no file for that turn's claim and `holding_slot()` is clear. With capacity then filled from another process, turn 2's pre-claim is `waiting` with no `admittedBy`, and is admitted `capacity` only once that claim is released. |
-| 33 | MC-2 | the turn's claim is admitted, but its slot wait ends in `queue_locked` | the turn keeps its claim through serve's retry, so no later arrival is admitted ahead of it, and releases it when the turn ends. |
+| 33 | MC-2 | the turn's claim is admitted, but its slot wait ends in `queue_locked` | the turn keeps its claim through serve's retry, so no later arrival is admitted ahead of it, and releases it when the turn ends. In a second row, the lead sets `meta.hold` before the retry: by the end of the next pass `claims/` holds no file for that turn, and a claim from another process is admitted `capacity`. |
 | 26 | MC-2 | `run-checks --now --why w` while full; then `run-checks --wait-seconds 1` while full | the first runs at once with `admittedBy: now, why: w`. The second exits 75 with no record on stdout. |
 | 12 | MC-3 | a lane runs `run_delivery.py claim --now --why z -- <argv>` while full | argv runs. The delivery journals `decision.recorded` with z, and the history matches it. |
 | 19 | MC-3 | capacity 4; a queue fixture's turn claim of 4 running; `run_delivery.py claim --slots 4 -- <argv writing a marker>` without `--now` | the marker is absent and the claim is `waiting`. Its line names the turn claim's label, delivery, slots and expected end. The marker appears after the turn claim is released. |
