@@ -546,6 +546,8 @@ class OwnedProcessTests(unittest.TestCase):
         self.wait_for(lambda:hosted.read_json(self.state/hosted.STATUS).get('code')=='unauthorized')
         cleanup();self.clock.write_text('700')
         self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK))
+        # The watcher lets its lock go before its process is gone, and a retry refuses while the recorded owner runs.
+        self.wait_for(lambda:not hosted.process_matches(owner))
         self.assertEqual(hosted.archive_status(self.archive)['state'],'final-publication-pending')
         self.assertEqual(hosted.read_json(self.archive/hosted.IDENTITY)['publicId'],identity['publicId'])
         self.clock.write_text('0');self.api.code=None
@@ -714,7 +716,7 @@ class InstalledLifecycleTests(unittest.TestCase):
         self.assertTrue(hosted.locked(self.state/hosted.LOCK))
         self.state_command('journal','--kind','delivery.closed','--data','{}')
         (self.state/'.hosted-unreferenced').write_text('active atomic staging body')
-        self.command('lead-close')
+        self.command('lead-close','--without-compounding','the fixture closes early')
         closed=json.loads((self.state.parent/'flow-log/FX-1.closed.json').read_text())
         archive=Path(closed['archive'])/self.state.name
         self.wait_archive_published(archive)
@@ -737,6 +739,7 @@ class InstalledLifecycleTests(unittest.TestCase):
             f'if "collect" in sys.argv:\n import time\n open({str(marker)!r},"w").write(str(os.getpid()))\n time.sleep(60)\n'+
             'def budget(frame,event,arg):\n if event=="call" and frame.f_code.co_name=="finalize_hosted":\n  frame.f_globals["HOSTED_CLOSE_SECONDS"]=1\n  sys.settrace(None)\n return budget\nsys.settrace(budget)\n')
         self.command('lead-init',supervised=True)
+        self.command('lead-compound','--not-required','--why','the fixture taught nothing new')
         self.wait_for(lambda:(self.state/hosted.TERMINAL).exists())
         intent=hosted.read_json(self.state/hosted.TERMINAL)
         self.assertEqual(hosted.finished_entry(hosted.record_document(self.state)),intent['entry'])

@@ -38,6 +38,7 @@ The cases:
 | `parked-round-reports` | the parked fixture record | round reports with findings, fixes and a confirming round |
 | `parked-round-report-unreadable` | the parked fixture record | as above, with round 2's report unreadable |
 | `delivery-records-epic` | a real delivery record of nine merged pieces | their three recorded runs |
+| `integration` | a delivery whose two pieces landed and that is rejoining its target: two catch-ups, a failed then a passing suite, a round asking for changes struck by the second catch-up, and an approving round with an over-budget suite at the current head | an empty inventory |
 | `round-card-record` | a record built with the state tool for the two pieces that landed the round card, its entries since rewritten as facts | their two recorded runs, one with stored findings |
 
 Real records and run listings named the capturing machine's home directory; the

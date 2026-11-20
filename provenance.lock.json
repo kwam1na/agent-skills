@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "cfd6ad08485e514c2cd1a37f56c55348123fc36f700e26cac1999d1ba894b7db"
+          "sha256": "3d232b3757ca2b70360bf4adfc7bf232da8e0ce1d8b8944ad1fd97cb41fb264c"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -210,11 +210,11 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.css",
-          "sha256": "744b082c26fa715d0409dd5d8e9ab289c668741644af975b19714d96134e8c36"
+          "sha256": "a6e72f045215e86f3c85284ccc815eb24f22153cc6b27915eb832b1e3604c2f6"
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "038d819b37883c6d98cdc51e247371a92c24434c9d8a69e47baf4e71c795da62"
+          "sha256": "f5db51a5133688f09884fe7944d4d65c6508336365b5c655193d7f15bcca5b61"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
@@ -242,7 +242,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "540cfe51e1e71ade1a249888dcf9bec719a46edbb526e1ba2fdf5268b48d2b80"
+          "sha256": "cf297f96ba465b8c6f77d888d14d988199e2e18aadefc7b8e5bffd21f0cc08fb"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
@@ -250,7 +250,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
-          "sha256": "f4c09f5e31c1f4eef552701e78e4022bdd753031e1e859b5b357056fb05d1d81"
+          "sha256": "a2705d9def3a4d747e73b4b86f7508a943ff9207a683dc3b8cbd27e13eb92839"
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",
@@ -514,15 +514,15 @@
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
-          "sha256": "c76e1d45e487564b899eb489dc21a66226b48c6d3c6dda16c95a91085f58b326"
+          "sha256": "a8f2e12f66b81ea7ff4f4270838286996c78feb03b9bb82f268513ff093ec9ab"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "34dc9dc09dfb0307464a39dd90b1cf139a796b976c3c9146d51ff6c68416b127"
+          "sha256": "b6ab7237d72975444936bd8d653beb9c5d7533439a51db483e094f06dc53c5ad"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "9673ee4649ae617797628223238611520c7f35fb62308d0e8c05575444965015"
+          "sha256": "81394527b845c9476da7ae7a6df9718faf60fffeaad2849bed9f31ab418465e8"
         },
         {
           "path": "skills/orchestrate-work/references/story.schema.json",
@@ -530,11 +530,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
-          "sha256": "0bfb05dbf82e5fd7a73204fb7b73281e792ae80721b8865c8a1e2f0f3fefcfe5"
+          "sha256": "9cb138c8138229b0e144b6fce5174974915d8ef8ac8b51266605f85014f3cc98"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "ab81ecbaabd95db323b9400f55cf730dcceb19fef32f1945df09a08f7741c54d"
+          "sha256": "3602415362c848653f649f3fd77a46a9f2d7d2a4ae86ef3f92fc3cba5a84c4cc"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
@@ -542,7 +542,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "ed27617d368f6f336640c88a57ed1be82c335e947027b6eb0e013ad06183867a"
+          "sha256": "90beecdc4b18b41ef6829643ca28ca4f6ee44c65f0a51eb17197a095cc4d1e69"
         },
         {
           "path": "skills/orchestrate-work/scripts/narrator.py",
@@ -550,7 +550,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/region_ownership.py",
-          "sha256": "3e5cd04f3fed4eee56c8b23073ba74f9095a68475d5292c3ae926395131a2e76"
+          "sha256": "6bfdd7ff988c2574773edb692057934e9610520c1decfd969642c439a275570e"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
@@ -1083,7 +1083,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "bcfd82b72e283b2beffe704ad35a6d19074298be61bfcf274c5af5e71b6ac049"
+          "sha256": "0604593fc44cffc9f8a112bde983d8aec570bd73e5ce047b1be713aad8e2ee9e"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1111,11 +1111,15 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "090a5f54bd4d9ea134aa2c243bb49d847fd1b2054f9b2f91b7f995492bd465c1"
+          "sha256": "5944d8d52112ee0cb48ffea73c1d72c8194d071804510e863b9f53ee130feeea"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "90157325c25b4e30ae6dac1fc0b4547e965616e0bca4690925d5614d3f2db108"
+          "sha256": "80246c1a2a54852b1cb0d4c80e3ea8098cf5b642f7cf19f53988d70c3ae59eb9"
+        },
+        {
+          "path": "skills/run-delivery/scripts/gaps.py",
+          "sha256": "5737a6a012a99c7c7d4b74fe92bd0ac1c7ecb02cc630a1c2e0972153b4c42ee8"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
@@ -1123,11 +1127,11 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "1c4b389665b4d98e4563c0dad8662593158da68289ddf1c9ff21f4b04e59e2c9"
+          "sha256": "ce4ab63f0715bb2c29eae732cc466122ed86c9a37bb38a7de29990d8d30df704"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
-          "sha256": "f03c50da36be41fe66802ec5f88776f69434d5bc872b99114839b2bc1d91a04c"
+          "sha256": "fefd7315c2b5dd436d7d4759be9cbff640ec0ee859406f70b962976c73e1aaa6"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",
@@ -1139,7 +1143,7 @@
         },
         {
           "path": "skills/run-delivery/templates/lane-brief.md",
-          "sha256": "7547933a0d8606f862beca0146a30baf98792186c22cc9ae72d233cb895df2f5"
+          "sha256": "deaea4d008562dbc83da3fd429cee7f1d335a9f12a5677faf2fa40409786d34d"
         },
         {
           "path": "skills/run-delivery/templates/round-brief.md",

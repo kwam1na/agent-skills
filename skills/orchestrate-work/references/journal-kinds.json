@@ -214,11 +214,67 @@
         "focused"
       ]
     },
+    "gapClass": {
+      "description": "Where a gap lies: the workflow (the installed release's skills and tools), the repository, or the host the agents run in.",
+      "enum": [
+        "workflow",
+        "repo",
+        "host"
+      ]
+    },
+    "gapEvidence": {
+      "description": "A gap's evidence file, copied into the record: its path relative to the record, and its sha256.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "commandLine": {
+      "description": "A command and its arguments, as run.",
+      "type": "string",
+      "pattern": "\\S",
+      "maxLength": 4096
+    },
     "holdVerdict": {
       "enum": [
         "block",
         "warn"
       ]
+    },
+    "finishBy": {
+      "description": "Who marked a finish line met: the lead, for a line the record can't prove, or the supervisor.",
+      "enum": [
+        "lead",
+        "supervisor"
+      ]
+    },
+    "finishEvidence": {
+      "description": "What shows a lead-held finish line met, as the lead gave it. It holds something other than spaces.",
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "compoundingOutcome": {
+      "description": "What the delivery's compound-learning decision was: a learning preserved, none needed, or the decision skipped at a lead-close.",
+      "enum": [
+        "required",
+        "not-required",
+        "skipped"
+      ]
+    },
+    "compoundingReference": {
+      "description": "Where the preserved learning is, such as a solution note's path. It holds something other than spaces.",
+      "type": "string",
+      "pattern": "\\S"
     },
     "rerunVerdict": {
       "description": "What a re-run on the main line found: the main line is broken, the failure is the piece's, or no verdict was reached.",
@@ -368,6 +424,39 @@
         }
       }
     },
+    "regionClaims": {
+      "description": "Region claims on one path: each lane, its anchor, its half-open lines and any story.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "lane",
+          "baseHead",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "lane": {
+            "$ref": "#/$defs/name"
+          },
+          "baseHead": {
+            "$ref": "#/$defs/commit"
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "story": {
+            "$ref": "#/$defs/name"
+          }
+        }
+      }
+    },
     "recovery": {
       "description": "A recovered merge's source identity.",
       "type": "object",
@@ -452,6 +541,15 @@
     },
     "exitCode": {
       "type": "integer"
+    },
+    "suiteResult": {
+      "description": "What one run of the lead's suite found: every test passed; every test passed and the run went over its budget; a test failed or the run stopped; or the run never started, its checkout or a prepare step failing first.",
+      "enum": [
+        "passed",
+        "over-budget",
+        "failed",
+        "unreadable"
+      ]
     }
   },
   "kinds": {
@@ -508,6 +606,38 @@
       },
       "instruction": "On the epic: the piece the lead added to the plan, its title, and why."
     },
+    "story.approved": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Plan approved",
+      "data": {
+        "title": {
+          "type": "prose"
+        },
+        "plan": {
+          "type": "path"
+        },
+        "review": {
+          "type": "path",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "The plan with {subject} was approved for delivery",
+        "line": "{title}. The plan is {plan}[; its review record is {review}]"
+      },
+      "explain": "The lead started the delivery of an approved plan that holds this piece, so the tracker can refine it.",
+      "tracker": {
+        "posts": "ticket",
+        "heading": "Plan approved"
+      },
+      "instruction": "On the ticket: the plan this story is in was approved for delivery, naming the plan and its review record; the refine moves are made with it."
+    },
     "lane.assigned": {
       "altitude": "story",
       "tone": "note",
@@ -545,6 +675,10 @@
         "round": {
           "type": "round"
         },
+        "head": {
+          "type": "commit",
+          "optional": true
+        },
         "startedAt": {
           "type": "instant"
         },
@@ -574,7 +708,7 @@
       ],
       "opensThread": false,
       "words": {
-        "head": "Review round {round} on {subject}",
+        "head": "Review round {round} on {subject}[ at {head:commit}]",
         "line": "Findings: {findings.P0} P0, {findings.P1} P1, {findings.P2} P2 and {findings.P3} P3[, after {refused:count:refused result}][, restarted {restarts:count:time}]"
       },
       "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
@@ -1568,6 +1702,127 @@
       },
       "instruction": "On the epic, record the previous and published base heads and the default branch commit."
     },
+    "integration.merged": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Target merged in",
+      "data": {
+        "target": {
+          "type": "name"
+        },
+        "targetHead": {
+          "type": "commit"
+        },
+        "head": {
+          "type": "commit"
+        },
+        "conflicts": {
+          "type": "paths"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "The lead merged {target} into the integration",
+        "line": "{target} at {targetHead:commit}, merged at {head:commit}[, resolving {conflicts:list} by hand]"
+      },
+      "explain": "The lead brought the target's newer work into the integration, so it rejoins the target from its current head.",
+      "tracker": null,
+      "instruction": "None: the integration step shows in the record and the live view."
+    },
+    "integration.suite": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Integration suite",
+      "data": {
+        "head": {
+          "type": "commit"
+        },
+        "result": {
+          "type": "suiteResult"
+        },
+        "seconds": {
+          "type": "seconds"
+        },
+        "budgetSeconds": {
+          "type": "seconds",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": {
+          "by": "result",
+          "cases": {
+            "passed": "The integration suite passed",
+            "over-budget": "The integration suite passed over its budget",
+            "unreadable": "The integration suite could not start"
+          },
+          "otherwise": "The integration suite failed"
+        },
+        "line": "At {head:commit}, in {seconds:duration}[ against a budget of {budgetSeconds:duration}]"
+      },
+      "explain": "The lead ran the full suite on the integration at one head.",
+      "tracker": null,
+      "instruction": "None: the integration step shows in the record and the live view."
+    },
+    "integration.requested": {
+      "altitude": "story",
+      "tone": "ready",
+      "label": "Change request opened",
+      "data": {
+        "changeRequest": {
+          "type": "changeRequest"
+        },
+        "head": {
+          "type": "commit"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "The integration asks to rejoin its target",
+        "line": "{changeRequest} at {head:commit}"
+      },
+      "explain": "The lead opened the change request that takes the integration into its target, at one head.",
+      "tracker": null,
+      "instruction": "None: the integration step shows in the record and the live view."
+    },
+    "integration.landed": {
+      "altitude": "story",
+      "tone": "landed",
+      "label": "Rejoined the target",
+      "data": {
+        "target": {
+          "type": "name"
+        },
+        "head": {
+          "type": "commit"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "The integration rejoined {target}",
+        "line": "{target} is now at {head:commit}"
+      },
+      "explain": "The change request into the target merged, so the delivery's work is on the target.",
+      "tracker": null,
+      "instruction": "None: the integration step shows in the record and the live view."
+    },
     "base.published": {
       "altitude": "bookkeeping",
       "tone": "note",
@@ -1698,6 +1953,110 @@
       "explain": "The lead changed which lane may edit a file.",
       "tracker": null,
       "instruction": "None: which lane may edit a file shows in the record and the views."
+    },
+    "ownership.released": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Lines released",
+      "data": {
+        "path": {
+          "type": "path"
+        },
+        "span": {
+          "type": "span"
+        },
+        "base": {
+          "type": "base"
+        },
+        "merge": {
+          "type": "commit"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{path} was released from {lane:lane}",
+        "line": "From line {span.first} up to {span.after} at {base.head:commit}, when {subject:ticket} landed at {merge:commit}"
+      },
+      "explain": "A story landed, so the lines claimed for it went back to no lane.",
+      "tracker": null,
+      "instruction": "None: which lane may edit which lines shows in the record and the views."
+    },
+    "ownership.carried": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Lines carried",
+      "data": {
+        "path": {
+          "type": "path"
+        },
+        "from": {
+          "type": "span"
+        },
+        "to": {
+          "type": "span"
+        },
+        "was": {
+          "type": "commit"
+        },
+        "base": {
+          "type": "base"
+        },
+        "story": {
+          "type": "name",
+          "optional": true
+        },
+        "inFlight": {
+          "type": "names",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{path} was carried for {lane:lane}",
+        "line": "From line {from.first} up to {from.after} at {was:commit} to line {to.first} up to {to.after} at {base.head:commit}[, for {story:ticket}][; {inFlight:list:ticket} must merge the base to use it]"
+      },
+      "explain": "A story of the lane landed inside a claim of the lane, so the claim moved to the merge with those lines in it.",
+      "tracker": null,
+      "instruction": "None: which lane may edit which lines shows in the record and the views."
+    },
+    "ownership.carved": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Lines carved",
+      "data": {
+        "path": {
+          "type": "path"
+        },
+        "base": {
+          "type": "base"
+        },
+        "removed": {
+          "type": "regionClaims"
+        },
+        "added": {
+          "type": "regionClaims"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{path} was carved at {base.head:commit}",
+        "line": "{added:count:claim} written[, replacing {removed:count:claim}]"
+      },
+      "explain": "The lead split a file's lines between lanes in one step.",
+      "tracker": null,
+      "instruction": "None: which lane may edit which lines shows in the record and the views."
     },
     "ownership.claimed": {
       "altitude": "bookkeeping",
@@ -2223,6 +2582,57 @@
       },
       "instruction": "On the blocked ticket, or the epic when every ticket is blocked: the blocker, and whose answer or work unblocks it."
     },
+    "gap.noted": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Gap noted",
+      "data": {
+        "class": {
+          "type": "gapClass"
+        },
+        "text": {
+          "type": "prose"
+        },
+        "why": {
+          "type": "prose"
+        },
+        "by": {
+          "type": "name"
+        },
+        "release": {
+          "type": "name",
+          "optional": true
+        },
+        "generation": {
+          "type": "name",
+          "optional": true
+        },
+        "command": {
+          "type": "commandLine",
+          "optional": true
+        },
+        "evidence": {
+          "type": "gapEvidence",
+          "optional": true
+        },
+        "occurrenceOf": {
+          "type": "count",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "A {class} gap was noted[ on {subject}][ again, as gap {occurrenceOf}]",
+        "line": "{text}"
+      },
+      "explain": "Friction met while delivering, noted when it happened, for the close-out to route by where it lies.",
+      "tracker": null,
+      "instruction": "None: a repo gap is filed as its own follow-up at close-out, and workflow and host gaps stay in the delivery's own reports."
+    },
     "blocker.resolved": {
       "altitude": "headline",
       "tone": "landed",
@@ -2443,6 +2853,14 @@
       "data": {
         "finish": {
           "type": "name"
+        },
+        "evidence": {
+          "optional": true,
+          "type": "finishEvidence"
+        },
+        "by": {
+          "optional": true,
+          "type": "finishBy"
         }
       },
       "because": {
@@ -2460,6 +2878,46 @@
         "heading": "Finish line met"
       },
       "instruction": "On the epic: the finish line and the evidence that met it."
+    },
+    "compounding.recorded": {
+      "altitude": "headline",
+      "tone": "decision",
+      "label": "Compounding decided",
+      "data": {
+        "outcome": {
+          "type": "compoundingOutcome"
+        },
+        "reference": {
+          "type": "compoundingReference",
+          "optional": true
+        },
+        "why": {
+          "type": "prose",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": {
+          "by": "outcome",
+          "cases": {
+            "required": "A learning was preserved",
+            "not-required": "No new learning to preserve"
+          },
+          "otherwise": "The compound-learning decision was skipped"
+        },
+        "line": "[{reference}][{why}]"
+      },
+      "explain": "The lead's compound-learning decision for the delivery, which its close waits on.",
+      "tracker": {
+        "posts": "epic",
+        "heading": "Compounding decided"
+      },
+      "instruction": "On the epic: whether a learning was preserved and where, or why none was, or why the decision was skipped."
     },
     "hook.held": {
       "altitude": "story",

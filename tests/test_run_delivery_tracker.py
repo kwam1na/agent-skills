@@ -42,7 +42,16 @@ WORKFLOW = [
     {"id": "21", "name": "Submit for review", "from": ["In Progress"], "to": "In Review"},
     {"id": "31", "name": "Complete", "from": ["In Review"], "to": "Done"},
     {"id": "41", "name": "Close epic", "from": None, "to": "Closed"},
+    # Refining, with names the tooling assumes nothing about.
+    {"id": "51", "name": "Triage", "from": ["New"], "to": "Triaged"},
+    {"id": "61", "name": "Groom", "from": ["To Groom", "Triaged"], "to": "Groomed"},
 ]
+PLAN, REVIEW = "docs/plans/facts.md", "docs/plans/facts.review.json"
+
+
+def approved(key: str) -> dict:
+    """A story.approved's facts for `key`: the plan holding it and its review record."""
+    return {"title": f"Thing {key}", "plan": PLAN, "review": REVIEW}
 
 
 def _load_publisher():
@@ -1005,6 +1014,49 @@ class Scenarios:
         self.assertEqual([item["holding"] for item in items], [False])
         self.assertIn("Complete", items[0]["text"])
 
+    def transitions(self, d: Delivery) -> list[list]:
+        return [call for call in d.calls() if call[0] == "transition"]
+
+    def test_one_refine_move_is_made_once_on_each_story_that_needs_it_and_left_to_people_elsewhere(self) -> None:
+        d = self.delivery({"refine": ["Groom"], "targets": {"Groom": "Groomed"}})
+        for key, status in (("EP-2", "To Groom"), ("EP-3", "Groomed"), ("EP-4", "In Progress")):
+            d.ticket(key, status=status)
+        entries = {key: d.entry("story.approved", key, approved(key)) for key in ("EP-2", "EP-3", "EP-4")}
+        self.published(d)
+        self.published(d)  # A second run moves nothing and posts nothing.
+        self.assertEqual([d.status(key) for key in entries], ["Groomed", "Groomed", "In Progress"])
+        self.assertEqual(len(self.transitions(d)), 1)
+        self.assertEqual({key: d.outcomes(entry["id"]) for key, entry in entries.items()},
+                         {"EP-2": ["transition", "comment"], "EP-3": ["skip", "comment"], "EP-4": ["handled", "comment"]})
+        for key in entries:
+            [comment] = d.comments(key)
+            self.assertTrue(comment.startswith(f"Plan approved: The plan with {key} was approved for delivery"), comment)
+            self.assertIn(f"The plan is {PLAN}; its review record is {REVIEW}", comment)
+        self.assertIn('Moved with "Groom".', d.comments("EP-2")[0])
+        self.assertIn("already made by someone else", d.comments("EP-3")[0])
+        self.assertIn("belongs to people", d.comments("EP-4")[0])
+
+    def test_two_refine_moves_are_walked_from_wherever_each_story_stands(self) -> None:
+        d = self.delivery({"refine": ["Triage", "Groom"], "targets": {"Triage": "Triaged", "Groom": "Groomed"}})
+        for key, status in (("EP-2", "New"), ("EP-3", "Triaged"), ("EP-4", "Groomed")):
+            d.ticket(key, status=status)
+        entries = {key: d.entry("story.approved", key, approved(key)) for key in ("EP-2", "EP-3", "EP-4")}
+        self.published(d)
+        self.published(d)
+        self.assertEqual({d.status(key) for key in entries}, {"Groomed"})
+        self.assertEqual(len(self.transitions(d)), 3)
+        self.assertEqual({key: d.outcomes(entry["id"]) for key, entry in entries.items()},
+                         {"EP-2": ["transition", "transition", "comment"], "EP-3": ["skip", "transition", "comment"],
+                          "EP-4": ["skip", "comment"]})
+        self.assertIn('Moved with "Triage".\nMoved with "Groom".', d.comments("EP-2")[0])
+
+    def test_without_refine_a_plan_approval_posts_and_moves_nothing(self) -> None:
+        d = self.delivery({"start": ["Start work"]})
+        d.ticket("EP-2", status="To Groom")
+        entry = d.entry("story.approved", "EP-2", approved("EP-2"))
+        self.published(d)
+        self.assertEqual((d.status("EP-2"), self.transitions(d), d.outcomes(entry["id"])), ("To Groom", [], ["comment"]))
+
     def test_a_lead_move_is_made_once(self) -> None:
         d = self.delivery({"lead": {"candidate.merged": ["Complete"], "delivery.closed": ["Close epic"]}})
         d.ticket("EP-2", status="In Review")
@@ -1409,6 +1461,22 @@ class TrackerSettingsTests(unittest.TestCase):
             conf = tp.settings(tmp, {"tracker": {"argv": ["adapter"], "transitions": bad}}, {})
             self.assertTrue(tp.refusal(conf))
             self.assertEqual(tp.untargeted(conf), [], "a malformed tracker is refused, never read for its moves")
+
+    def test_refine_is_a_list_of_moves_whose_last_has_a_target_and_an_intermediate_one_without_is_named(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="tracker-refine-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        conf = lambda transitions: tp.settings(tmp, {"tracker": {"argv": ["adapter"], "transitions": transitions}}, {})
+        for bad in ("Groom", ["Groom", ""], [7]):
+            with self.subTest(refine=bad):
+                self.assertIn("tracker.transitions.refine must be a list of transition names",
+                              tp.refusal(conf({"refine": bad, "targets": {"Groom": "Groomed"}})))
+        refused = tp.refusal(conf({"refine": ["Triage", "Groom"], "targets": {"Triage": "Triaged"}}))
+        self.assertIn("tracker.transitions.refine's last move, 'Groom', needs a tracker.transitions.targets entry",
+                      refused)
+        two = conf({"refine": ["Triage", "Groom"], "targets": {"Groom": "Groomed"}})
+        self.assertEqual(two["problems"], [])
+        self.assertEqual(tp.untargeted(two), ["Triage"], "doctor warns of the intermediate move with no target")
+        self.assertEqual(conf({"refine": [], "start": ["Begin"]})["problems"], [])
 
     def test_a_tracker_with_no_known_adapter_needs_some_publisher_unless_manual(self) -> None:
         tmp = Path(tempfile.mkdtemp(prefix="tracker-unknown-"))
@@ -3162,6 +3230,298 @@ class RegistryUpdateTests(unittest.TestCase):
             kinds["candidate.stopped"]["tracker"] = None
         with mock.patch.object(tp.journal_words, "REGISTRY_FILE", self.planted(unposted)):
             self.assertEqual([ticket for ticket, _ in self.posted(self.MERGED, self.STOPPED)], ["EP-2"])
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class PlanApprovalJournalTests(unittest.TestCase):
+    """With `transitions.refine` set, the plan's approval journals one story.approved per story: at lead-init in plan
+    order, and after each later story.added, at lead-plan change and at the registration lead-brief shares. Without it,
+    none."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from tests import test_run_delivery as harness
+        cls.harness = harness
+        for name, value in vars(harness.installed_release()).items():
+            setattr(cls, name, value)
+
+    def fixture(self, refine: list[str] | None, review: bool = True):
+        h = self.harness
+        fx = h.Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        m = fx.main
+        path = h.plan_delivery(fx)
+        if review:
+            (m / "docs/plan.review.json").write_text("{}\n")  # the plan's review record, beside it
+        if refine is not None:
+            conf = json.loads((m / ".agents/run-delivery.json").read_text())
+            conf["tracker"]["transitions"] = {"refine": refine, "targets": {refine[-1]: "Groomed"}}
+            (m / ".agents/run-delivery.json").write_text(json.dumps(conf, indent=2))
+        h.commit(m, "FX-1: the review record and the tracker's refine moves")
+        h.sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        return fx, path
+
+    def journal(self, fx) -> list[dict]:
+        return json.loads(self.harness.sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py",
+                                          "--dir", fx.tmp / "record", "show").stdout)["journal"]
+
+    def added_later(self, fx, path) -> list[tuple[str, str]]:
+        """A story added with lead-plan change, then one added to the delivery file and registered by lead-brief: the
+        kinds and subjects each journals."""
+        h, m = self.harness, fx.main
+        before = len(self.journal(fx))
+        code, out = fx.flow("lead-plan", "change", "--kind", "added", "--subjects", "FX-4", "--title", "Thing four",
+                            "--text", "Thing four works", "--why", "A lane found the gap.", "--lane", "lane-1", cwd=m)
+        self.assertEqual(code, 0, out)
+        h.add_story(fx, path, "FX-5", why="The operator asked for it.")
+        code, out = fx.flow("lead-brief", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn("registered FX-5", out)
+        return [(e["kind"], e["subject"]) for e in self.journal(fx)[before:] if e["kind"].startswith("story.")]
+
+    def test_each_story_is_approved_at_init_in_plan_order_and_each_added_story_after_its_addition(self) -> None:
+        fx, path = self.fixture(["Groom"])
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        journal = self.journal(fx)
+        self.assertEqual([(e["kind"], e["subject"]) for e in journal[:3]],
+                         [("record.started", None), ("story.approved", "FX-2"), ("story.approved", "FX-3")])
+        self.assertEqual(journal[1]["data"], {"title": "Thing one", "plan": "docs/plan.md",
+                                              "review": "docs/plan.review.json"})
+        self.assertEqual(self.added_later(fx, path), [("story.added", "FX-4"), ("story.approved", "FX-4"),
+                                                      ("story.added", "FX-5"), ("story.approved", "FX-5")])
+        approvals = [e for e in self.journal(fx) if e["kind"] == "story.approved"]
+        self.assertEqual([e["data"]["title"] for e in approvals[2:]], ["Thing four", "Thing FX-5"])
+
+    def test_lead_init_and_doctor_before_it_say_what_the_approval_will_do_to_each_story(self) -> None:
+        # With no review record beside the plan, the approval names none.
+        fx, path = self.fixture(["Groom"], review=False)
+        h, m = self.harness, fx.main
+        snapshot = fx.tmp / "record/snapshots/tracker.json"
+        snapshot.parent.mkdir(parents=True)
+        snapshot.write_text(json.dumps({"schemaVersion": "work-snapshot/1", "source": "tracker",
+                                        "takenAt": "2026-11-19T10:00:00Z", "items": [
+            {"subject": "FX-2", "state": "backlog", "status": "To Groom", "offeredTransitions": ["Groom"]},
+            {"subject": "FX-3", "state": "backlog", "status": "Groomed", "offeredTransitions": ["Begin"]}]}))
+        said = ['FX-2: the plan\'s approval will refine it ("Groom" from To Groom)', "FX-3: refined already (Groomed)"]
+        bound = h.doctor_binding()
+        bound["state"]["publishers"] = []
+        (m / ".agents/orchestration.json").write_text(json.dumps(bound, indent=2))
+        conf = json.loads((m / ".agents/run-delivery.json").read_text())
+        del conf["gates"]  # The binding's fallback checks are the gates.
+        conf["tracker"]["updates"] = "manual"  # bound to Jira's snapshot, with no publisher
+        (m / ".agents/run-delivery.json").write_text(json.dumps(conf, indent=2))
+        h.commit(m, "FX-1: bind the repository")
+        h.sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        row = lambda: h.doctor_lines(fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=m)[1])["story readiness"]
+        suffix = f"; at the plan's approval: {'; '.join(said)}"
+        self.assertTrue(row()[1].endswith(suffix), row())  # with no start move
+        conf["tracker"]["transitions"]["start"] = ["Begin"]
+        (m / ".agents/run-delivery.json").write_text(json.dumps(conf, indent=2))
+        h.commit(m, "FX-1: a start move too")
+        h.sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        self.assertEqual(row(), ("ok", f"each of the 2 stories still planned is ready for its next start move{suffix}"))
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn("".join(f"  refine: {line}\n" for line in said), out)
+        self.assertEqual([e["data"] for e in self.journal(fx) if e["kind"] == "story.approved"],
+                         [{"title": "Thing one", "plan": "docs/plan.md"}, {"title": "Thing two", "plan": "docs/plan.md"}])
+        # Once the record started, the approval is journalled, and doctor no longer says what it will do, with start
+        # moves or without them.
+        self.assertNotIn("at the plan's approval", row()[1])
+        del conf["tracker"]["transitions"]["start"]
+        (m / ".agents/run-delivery.json").write_text(json.dumps(conf, indent=2))
+        self.assertEqual(row(), ("ok", "lanes make no start move, so there is no readiness to check"))
+
+    def test_without_refine_nothing_journals_a_plan_approval(self) -> None:
+        fx, path = self.fixture(None)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.added_later(fx, path), [("story.added", "FX-4"), ("story.added", "FX-5")])
+        self.assertNotIn("story.approved", [e["kind"] for e in self.journal(fx)])
+
+
+class ReadinessWalkTests(unittest.TestCase):
+    """Readiness walks the start moves as the publisher's `move` does: a move whose target is the item's status is
+    made, and the story is ready when the item offers the first move not yet made. The tracker's own names here are
+    made up; nothing in the tooling knows them."""
+
+    TARGETS = {"Groom": "Groomed"}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec = importlib.util.spec_from_file_location("run_delivery_readiness", SCRIPTS / "run_delivery.py")
+            cls.run_delivery = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(cls.run_delivery)
+            views = ROOT / "skills/delivery-views/scripts"
+            spec = importlib.util.spec_from_file_location("snapshot_readiness", views / "snapshot.py")
+            cls.snapshot = importlib.util.module_from_spec(spec)
+            # The reader imports its own helpers, and its dataclasses look the module up by name.
+            with mock.patch.object(sys, "path", [str(views), *sys.path]), \
+                    mock.patch.dict(sys.modules, {"snapshot_readiness": cls.snapshot}):
+                spec.loader.exec_module(cls.snapshot)
+        finally:
+            sys.dont_write_bytecode = previous
+
+    def readiness(self, item: dict | None, start: list[str], targets: dict | None = None,
+                  refine: list[str] | None = None, read=None) -> tuple[str, str | None]:
+        transitions = {"start": start, **({"targets": targets} if targets is not None else {}),
+                       **({"refine": refine} if refine is not None else {})}
+        items = None if item is None else {"FX-3": {"subject": "FX-3", "title": "Three", **item}}
+        rd = self.run_delivery
+        with mock.patch.object(rd, "tracker_conf", lambda c: {"transitions": transitions}), \
+                mock.patch.object(rd, "tracker_snapshot_items", lambda c: items):
+            return (read or rd.story_readiness)(object(), "FX-3")
+
+    def refine_outcome(self, item: dict | None, refine: list[str], targets: dict) -> str | None:
+        return self.readiness(item, ["Begin"], targets, refine, read=self.run_delivery.refine_outcome)
+
+    def test_under_one_refine_move_an_item_the_approval_can_refine_or_already_refined_is_ready(self) -> None:
+        refine, targets = ["Groom"], {"Groom": "Groomed"}
+        ready = lambda item: self.assertEqual(self.readiness(item, ["Begin"], targets, refine), ("ready", None))
+        ready({"state": "backlog", "status": "Backlog", "offeredTransitions": ["Groom"]})
+        ready({"state": "backlog", "status": "Groomed", "offeredTransitions": ["Begin"]})
+        ready({"state": "backlog", "status": "Backlog"})  # a tracker that restricts no move
+        self.refused(self.readiness({"state": "backlog", "status": "Backlog", "offeredTransitions": []},
+                                    ["Begin"], targets, refine), "Backlog", "Groom")
+        # Refined, the item goes on to its start moves.
+        self.refused(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": []},
+                                    ["Begin"], targets, refine), "Groomed", "Begin")
+
+    def test_under_refine_an_item_offering_its_next_start_move_is_ready_as_the_publisher_would_start_it(self) -> None:
+        # The approval leaves an item its refine move isn't offered from to people, and the start then moves it.
+        refine, targets = ["Groom"], {"Groom": "Groomed", "Ready": "Ready for dev"}
+        for item, start in (({"state": "backlog", "status": "Ready for dev", "offeredTransitions": ["Begin"]},
+                             ["Ready", "Begin"]),
+                            ({"state": "backlog", "status": "Backlog", "offeredTransitions": ["Begin"]}, ["Begin"])):
+            with self.subTest(status=item["status"]):
+                self.assertEqual(self.readiness(item, start, targets, refine), ("ready", None))
+
+    def test_under_two_refine_moves_the_first_not_yet_made_must_be_offered(self) -> None:
+        refine, targets = ["Triage", "Groom"], {"Triage": "Triaged", "Groom": "Groomed"}
+        self.assertEqual(self.readiness({"state": "backlog", "status": "Triaged", "offeredTransitions": ["Groom"]},
+                                        ["Begin"], targets, refine), ("ready", None))
+        self.refused(self.readiness({"state": "backlog", "status": "Backlog", "offeredTransitions": ["Groom"]},
+                                    ["Begin"], targets, refine), "Backlog", "Triage")
+
+    def test_the_refine_outcome_says_what_the_plans_approval_will_do(self) -> None:
+        refine, targets = ["Triage", "Groom"], {"Triage": "Triaged", "Groom": "Groomed"}
+        said = lambda item: self.refine_outcome(item, refine, targets)
+        self.assertEqual(said({"state": "backlog", "status": "New", "offeredTransitions": ["Triage"]}),
+                         'FX-3: the plan\'s approval will refine it ("Triage" from New)')
+        self.assertEqual(said({"state": "backlog", "status": "Triaged", "offeredTransitions": []}),
+                         'FX-3: the plan\'s approval can\'t refine it: "Groom" isn\'t offered from Triaged')
+        self.assertEqual(said({"state": "backlog", "status": "Groomed", "offeredTransitions": []}),
+                         "FX-3: refined already (Groomed)")
+        self.assertEqual(said({"state": "started", "status": "In Progress", "offeredTransitions": ["Stop"]}),
+                         'FX-3: the plan\'s approval can\'t refine it: "Triage" isn\'t offered from In Progress')
+        self.assertEqual(said({"state": "backlog", "status": "Todo"}),
+                         'FX-3: the plan\'s approval will refine it ("Triage" from Todo)')
+        for item in (None, {"state": "backlog"}):
+            self.assertEqual(said(item), "FX-3: whether the plan's approval refines it wasn't checked: the tracker "
+                                         "snapshot doesn't say")
+        self.assertIsNone(self.refine_outcome({"state": "backlog", "status": "New"}, [], targets))
+
+    def linear_item(self, state_type: str, name: str) -> dict:
+        """The item `snapshot.py`'s Linear reader builds from a faked GraphQL answer for one child."""
+        node = {"identifier": "FX-3", "createdAt": "2026-11-01T09:00:00.000Z", "title": "Three", "description": "",
+                "state": {"type": state_type, "name": name}, "inverseRelations": {"nodes": []}}
+        page = {"data": {"issue": {"createdAt": "2026-11-01T08:00:00.000Z", "children": {
+            "nodes": [node], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}
+        sent = []
+
+        def transport(method, url, headers, timeout, body=None):
+            sent.append(json.loads(body))
+            return self.snapshot.Response(200, {}, json.dumps(page).encode())
+
+        code, out, err = self.snapshot.run(
+            ["--kind", "linear", "--parent", "FX-1", "--token-env", "FX_LINEAR_KEY", "--now", "2026-11-01T10:00:00Z"],
+            environ={"FX_LINEAR_KEY": "lin_api_fixture"}, transport=transport, clock=lambda: 0.0, sleep=lambda s: None,
+            cwd=None)
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("state { type name }", sent[0]["query"])
+        [item] = json.loads(out)["items"]
+        self.assertEqual((item["status"], "offeredTransitions" in item), (name, False))
+        return {key: value for key, value in item.items() if key not in ("subject", "title")}
+
+    def refused(self, outcome: tuple[str, str | None], status: str, move: str) -> None:
+        self.assertEqual(outcome, ("not-ready", f'FX-3 is in {status}: "{move}" isn\'t offered; refine it first'))
+
+    def test_a_jira_item_already_at_the_first_moves_target_is_ready_when_it_offers_the_next(self) -> None:
+        item = {"state": "backlog", "status": "Groomed", "offeredTransitions": ["Begin"]}
+        self.assertEqual(self.readiness(item, ["Groom", "Begin"], self.TARGETS), ("ready", None))
+
+    def test_a_linear_item_at_a_target_or_in_backlog_is_ready_since_linear_restricts_no_move(self) -> None:
+        groomed = self.linear_item("unstarted", "Groomed")
+        self.assertEqual(groomed["state"], "backlog")
+        for start in (["Groom"], ["Groom", "Begin"]):
+            with self.subTest(start=start):
+                self.assertEqual(self.readiness(groomed, start, self.TARGETS), ("ready", None))
+        backlog = self.linear_item("backlog", "Backlog")
+        self.assertEqual(self.readiness(backlog, ["Groom", "Begin"], self.TARGETS), ("ready", None))
+
+    def test_a_jira_item_read_without_its_transitions_is_not_checked(self) -> None:
+        outcome = self.readiness({"state": "backlog"}, ["Groom", "Begin"], self.TARGETS)
+        self.assertEqual(outcome, ("not-checked", "FX-3: readiness wasn't checked: the tracker snapshot doesn't list "
+                                                  "its offered moves"))
+
+    def test_backlog_items_are_ready_only_when_they_offer_the_first_move(self) -> None:
+        start = ["Groom", "Begin"]
+        self.assertEqual(self.readiness({"state": "backlog", "status": "Backlog", "offeredTransitions": ["Groom"]},
+                                        start, self.TARGETS), ("ready", None))
+        for offered in (["Begin"], []):
+            with self.subTest(offered=offered):
+                self.refused(self.readiness({"state": "backlog", "status": "Backlog", "offeredTransitions": offered},
+                                            start, self.TARGETS), "Backlog", "Groom")
+
+    def test_an_item_at_the_first_target_offering_nothing_names_the_next_move(self) -> None:
+        self.refused(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": []},
+                                    ["Groom", "Begin"], self.TARGETS), "Groomed", "Begin")
+
+    def test_an_item_with_every_move_made_is_ready(self) -> None:
+        self.assertEqual(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": []},
+                                        ["Groom"], self.TARGETS), ("ready", None))
+
+    def test_one_start_move_with_no_target_behaves_as_before_in_each_case(self) -> None:
+        start = ["Begin"]
+        for targets in (self.TARGETS, None):
+            with self.subTest(targets=targets):
+                ready = lambda item: self.assertEqual(self.readiness(item, start, targets), ("ready", None))
+                ready({"state": "backlog", "status": "Groomed", "offeredTransitions": ["Begin"]})
+                ready({"state": "backlog", "status": "Backlog", "offeredTransitions": ["Begin"]})
+                ready({"state": "started", "status": "In Progress", "offeredTransitions": []})
+                self.refused(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": []},
+                                            start, targets), "Groomed", "Begin")
+                self.refused(self.readiness({"state": "backlog", "status": "Backlog", "offeredTransitions": ["Groom"]},
+                                            start, targets), "Backlog", "Begin")
+                self.assertEqual(self.readiness({"state": "backlog"}, start, targets)[0], "not-checked")
+                self.assertEqual(self.readiness(None, start, targets)[0], "not-checked")
+                self.assertEqual(self.readiness({"state": "backlog"}, [], targets), ("ready", None))
+
+    def test_an_item_at_the_last_moves_target_has_the_whole_start_made_as_the_publisher_reads_it(self) -> None:
+        # The publisher's move skips every move when the last one's target is the ticket's status.
+        targets = {"Groom": "Groomed", "Begin": "Ready"}
+        self.assertEqual(self.readiness({"state": "backlog", "status": "Ready", "offeredTransitions": ["Start"]},
+                                        ["Groom", "Begin"], targets), ("ready", None))
+
+    def test_the_walk_passes_every_leading_move_already_made(self) -> None:
+        targets = {"Groom": "Groomed", "Approve": "Groomed"}
+        start = ["Groom", "Approve", "Begin"]
+        self.assertEqual(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": ["Begin"]},
+                                        start, targets), ("ready", None))
+        self.refused(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": ["Approve"]},
+                                    start, targets), "Groomed", "Begin")
+
+    def test_a_status_named_by_a_target_never_skips_a_move_that_targets_another(self) -> None:
+        # As the publisher's move: a move counts as made only when its own target is the item's status.
+        targets = {"Groom": "Groomed", "Begin": "Begun"}
+        self.refused(self.readiness({"state": "backlog", "status": "Groomed", "offeredTransitions": ["Close"]},
+                                    ["Groom", "Begin"], targets), "Groomed", "Begin")
+        self.refused(self.readiness({"state": "backlog", "status": "Elsewhere", "offeredTransitions": ["Begin"]},
+                                    ["Groom", "Begin"], targets), "Elsewhere", "Groom")
 
 
 if __name__ == "__main__":

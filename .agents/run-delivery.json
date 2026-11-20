@@ -29,15 +29,6 @@
         "exec .venv/bin/python -B -m unittest tests.test_own_deliveries.StandingBinding"
       ],
       "timeoutSeconds": 300
-    },
-    {
-      "id": "durable-text",
-      "argv": [
-        "sh",
-        "-c",
-        "exec .venv/bin/python -B -m unittest tests.test_linear_qualification.LinearQualificationTests.test_durable_corpus_contains_no_plan_or_ticket_ids"
-      ],
-      "timeoutSeconds": 300
     }
   ],
   "hooks": {

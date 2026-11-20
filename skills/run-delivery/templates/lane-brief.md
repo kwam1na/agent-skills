@@ -38,6 +38,10 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 - Branch: `{{branch}}`. Commit subjects start with the story key.
 - Never touch: {{never_touch}}. Change only the files your lane owns (below, and `lanes.<lane>.owns` in
   the delivery file). The lead refuses a hand-off that changes anything else.{{listings}}
+- Before your first review round, run `{{flow}} claims-check <key>` in your checkout: it lists every change your
+  claims don't hold, each with the request for the lead. Ask the lead for the span of a file lanes share by lines by
+  anchor (`--around TEXT`) or a quoted line, with `--insert before` or `--insert after` for an insertion at a span's
+  edge, never by bare line numbers.
 - Long commands (gates, builds, in-app checks) can take minutes: run them in the background or with a long timeout,
   never under a short tool timeout.
 
@@ -144,6 +148,15 @@ progress, it isn't in "Needs you", and your row goes back to the state you left 
 If a product run builds your story, bind its run id at start, before your first round:
 `python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir {{state}} bind-run --lane <lane> --subject <key> --run <run id>`.
 The live view then shows the run's rounds before your hand-off, and the hand-off keeps the run. A story with no run binds none.
+
+## Gaps
+
+Note friction with `note-gap` when it happens, and class it as workflow, repo or host:
+`{{flow}} note-gap --class workflow|repo|host --text "<what>" --why "<what it cost>" [--evidence FILE] [--command "<command>"] [--same-as N]`.
+When you write a script to get behaviour the workflow or a tool should provide, note a workflow gap with the script as
+its evidence before moving on. One-off reads for understanding don't count; anything you'd need again does. It lists
+the open gaps of the same class first: name one with `--same-as N` when yours repeats it. A workflow gap needs
+`--evidence`. The close-out files repo gaps as follow-ups and keeps workflow and host gaps out of your tracker.
 
 ## Your turn
 

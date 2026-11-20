@@ -23,16 +23,16 @@ CATALOGUE_MODULES = (
     "delivery_provider_rails_contract", "delivery_views", "delivery_views_adopter", "delivery_views_history",
     "delivery_views_hosted", "delivery_views_hosted_projection", "delivery_views_page", "delivery_views_plan", "delivery_views_plan_fixtures", "delivery_views_render",
     "delivery_views_review_projection", "delivery_views_snapshots", "diagnosis", "documented_install_surface",
-    "fault_injection", "forge_adapters", "handoff_listing", "historical_qualifications", "hive_knowledge_adapter", "hooks", "host_exposure", "jira_profile", "journal_kinds", "journal_shape", "knowledge_library", "lane_rows",
+    "fault_injection", "forge_adapters", "handoff_listing", "historical_qualifications", "hive_knowledge_adapter", "hooks", "host_exposure", "jira_profile", "journal_kinds", "journal_shape", "knowledge_library", "lane_changes", "lane_rows",
     "lane_ruling_corpus", "lead_plan_changes", "lead_wait", "lifecycle", "linear_profile", "linear_qualification", "measure_test_writes",
     "merge_occurrence", "merge_queue", "narrator", "no_current_set_names", "orchestration_adopter", "orchestration_render",
-    "orchestration_state", "own_deliveries", "product_descriptors", "product_launcher", "product_release",
-    "profile_inventory", "provenance", "provider_qualification", "qualification", "readme", "receipt", "registry",
+    "orchestration_state", "own_deliveries", "ownership_lock_race", "product_descriptors", "product_launcher", "product_release",
+    "profile_inventory", "provenance", "provider_qualification", "qualification", "readme", "receipt", "region_claims", "region_grants", "registry",
     "release_archive", "release_channel", "release_entry_budget", "release_integration", "review_and_compounding",
     "review_base_reopening", "review_bound_corpus", "review_grace", "review_orchestration", "round_brief_template_corpus",
-    "router", "run_delivery", "run_delivery_hooks", "run_delivery_hosted", "run_delivery_peers", "run_delivery_plan_review",
-    "run_delivery_pr_review",
-    "run_delivery_pr_review_gates", "run_delivery_supervisor", "run_delivery_tracker", "run_event_emission_corpus",
+    "router", "run_delivery", "run_delivery_compounding", "run_delivery_finish", "run_delivery_hooks", "run_delivery_hosted", "run_delivery_peers", "run_delivery_plan_review",
+    "run_delivery_gaps", "run_delivery_lens_request", "run_delivery_pr_review",
+    "run_delivery_pr_review_gates", "run_delivery_supervisor", "run_delivery_tracker", "run_delivery_tool_commits", "run_event_emission_corpus",
     "run_tests", "runless_reviews", "suite_budget", "test_dependency_guard", "test_environment", "tracker_contract", "update_provenance",
     "validate", "siblings", "waits", "waits_review", "workflow_graph_contract", "workflow_observation", "workflows",
 )
@@ -178,6 +178,8 @@ ATTESTED_ARCHIVES = {
     "linear-v3.1.0-rc.1": "eaa41b88298de8e71a6b43949e1ce4f6c7646f38c8267fff621d5f6d1b93912a",
     "linear-v3.1.0": "44c396accce958850aec9854cd0c295e4d88d7e8512c9620c447e68b0be4e9bb",
     "linear-v3.2.0": "e13cd6d1937db33af0989270f088a98f68ff86f5bc834539084a1c544c7133c4",
+    "linear-v3.3.0": "e8e583ecb2b63372ed40f39b883504390d411ba1574690614ab79aee64869284",
+    "linear-v3.4.0": "124be4db375748c44e1c2e371253bb58025326810afdc63d82a0ed4c2d822847",
 }
 HOOK_COMMAND = 'python3 -B "${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py" hook claude-code %s || exit 1'
 
@@ -191,16 +193,14 @@ class StandingBinding(unittest.TestCase):
         settings = json.loads((ROOT / ".agents/run-delivery.json").read_text(encoding="utf-8"))
         self.assertEqual(settings["hooks"], {"lead.may-stop": "enforce"})
 
-    def test_every_lane_gate_runs_the_catalogue_and_durable_text_guards(self) -> None:
-        # The two cheap guards the queue runs on every candidate also run in every lane's gate, so a lane meets them
-        # before review. They run through sh, so a fresh clone without .venv still resolves each gate.
+    def test_every_lane_gate_runs_the_catalogue_guard(self) -> None:
+        # The cheap catalogue guard the queue runs on every candidate also runs in every lane's gate, so a lane meets
+        # it before review. It runs through sh, so a fresh clone without .venv still resolves the gate.
         settings = json.loads((ROOT / ".agents/run-delivery.json").read_text(encoding="utf-8"))
         gates = {gate["id"]: gate["argv"] for gate in settings["gates"]}
         self.assertEqual(gates.get("catalogue"),
                          ["sh", "-c", "exec .venv/bin/python -B -m unittest tests.test_own_deliveries.StandingBinding"])
-        self.assertEqual(gates.get("durable-text"),
-                         ["sh", "-c", "exec .venv/bin/python -B -m unittest tests.test_linear_qualification."
-                          "LinearQualificationTests.test_durable_corpus_contains_no_plan_or_ticket_ids"])
+        self.assertNotIn("durable-text", gates)
 
     def test_the_committed_settings_hold_exactly_the_two_dispatcher_entries(self) -> None:
         settings = json.loads((ROOT / ".claude/settings.json").read_text(encoding="utf-8"))

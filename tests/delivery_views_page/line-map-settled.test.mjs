@@ -30,7 +30,7 @@ test("a story settled with no change reads closed, counts as landed at the close
   const stop = shown.app.querySelector('.stop-btn[data-subject="S"]');
   expect(stop.className).not.toContain("unlanded");
   expect(stop.getAttribute("aria-label")).toBe("Work S, Closed, no change needed");
-  expect(shown.app.querySelector("#now .title").textContent).not.toContain("1 of 2");
+  expect(shown.app.querySelector("#now .now-count").textContent).not.toContain("1 of 2");
   expect(shown.app.querySelector("#left .say").textContent).toBe("2 of 2 pieces have landed.");
   expect(card.app.querySelector("#detail").textContent)
     .toContain(`No change needed. Evidence, run at the main line's ${BASE.slice(0, 10)}: S.1: test_it passes at the base`);
@@ -69,7 +69,7 @@ test("the plan counts every proof of a unit settled with no change done, and say
 test("on an open delivery a settled story counts as landed everywhere the line map counts", async () => {
   const document = record({ queue: [item("A", "merged")], planned: [noChange("S")], journal: journal(landed("A")) });
   const [shown, card] = await open(render(document), { steps: [{ click: '.stop-btn[data-subject="S"]' }] });
-  expect(shown.app.querySelector("#now .title").textContent).toBe("Every piece has landed.");
+  expect(shown.app.querySelector("#now .now-count").textContent).toBe("Every piece has landed");
   expect(shown.app.querySelector("#left .left-number").firstChild.textContent).toBe("0");
   expect([...shown.app.querySelectorAll("#line .line .name")].map((name) => name.textContent)).toEqual(["Lane one2 of 2 landed"]);
   expect(shown.app.querySelector("svg[aria-label^='Every lane merges']").getAttribute("aria-label")).toContain("2 of 2 pieces landed");

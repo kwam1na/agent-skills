@@ -72,6 +72,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pr_review_gates  # noqa: E402
+import gaps  # noqa: E402
 import tracker_publisher  # noqa: E402
 
 TOOL = Path(__file__).resolve().parent.parent
@@ -147,9 +148,14 @@ class Transient(Stop):
     429. A PR-review wait's loop tries it again; everywhere else it refuses at once, as any Stop does."""
 
 
+class Terminated(SystemExit):
+    """A stop by SIGTERM or SIGHUP. It exits as SystemExit does, and code that takes a module's own exit as a failed
+    load re-raises it, so a stop that lands while a module loads is never lost."""
+
+
 def _terminate(signum, _frame):
     # A kill from the agent's tool timeout becomes an exception, so `finally` blocks stop processes and leases.
-    raise SystemExit(128 + signum)
+    raise Terminated(128 + signum)
 
 
 
@@ -417,6 +423,21 @@ def run(argv: list[str], cwd: Path | None = None, check: bool = True, **kw) -> s
 
 def git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
     return run(["git", *args], cwd=cwd, check=check).stdout.strip()
+
+
+def tool_commit(*args: str, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
+    """A git command that makes a commit of the tool's own, run with no repository hook: `core.hooksPath` names an empty
+    folder under the git common directory's run-delivery folder, as the merge queue's bypass does, whatever the
+    binding's `hooks` says. The tool wrote what it commits, and a merge brings in commits that passed their own hooks."""
+    common = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=cwd))
+    empty = common / "run-delivery" / "empty-hooks"
+    empty.mkdir(parents=True, exist_ok=True)
+    for leftover in empty.iterdir():  # it stays empty: nothing put there ever runs
+        if leftover.is_dir() and not leftover.is_symlink():
+            shutil.rmtree(leftover)
+        else:
+            leftover.unlink()
+    return run(["git", "-c", f"core.hooksPath={empty}", *args], cwd=cwd, check=check)
 
 
 def repo() -> Path:
@@ -907,6 +928,36 @@ class Config:
                 self.conflicts.append(f"{where} narrows {lens}, a mandated lens, whose use is plan and story")
             self.lens_use[lens] = tuple(u for u in LENS_USES if u in use)
         self.story_lenses = [lens for lens in lenses if "story" in self.lens_use[lens]]
+        # A story lens on request: `"default": false` in its review.lenses entry, or review.default for a
+        # harness.config.ts lens, as review.use gives one its use. It runs only when --lenses or the brief names it.
+        declared_default: dict[str, tuple[object, str]] = {}
+        for lens, spec in review.get("lenses", {}).items():
+            if "default" in spec:
+                declared_default[lens] = (spec["default"], f"{own} review.lenses.{lens}.default")
+        defaults = review.get("default", {})
+        if not isinstance(defaults, dict):
+            self.conflicts.append(f"{own} review.default must map lens ids to true or false, not {defaults!r}")
+            defaults = {}
+        for lens, default in defaults.items():
+            if lens not in lenses:
+                self.conflicts.append(f"{own} review.default names {lens}, which isn't a declared lens")
+            elif lens in declared_default and declared_default[lens][0] != default:
+                self.conflicts.append(f"{own} review.default gives {lens} the default {default!r}, but review.lenses "
+                                      f"gives it {declared_default[lens][0]!r}")
+            else:
+                declared_default[lens] = (default, f"{own} review.default.{lens}")
+        self.on_request: list[str] = []
+        for lens in lenses:
+            default, where = declared_default.get(lens, (True, ""))
+            if not isinstance(default, bool):
+                self.conflicts.append(f"{where} must be true or false, not {default!r}")
+            elif default is False and lens in MANDATED_LENSES:
+                self.conflicts.append(f"{where} puts {lens}, a mandated lens, on request; it runs in every round")
+            elif default is False and "story" not in self.lens_use[lens]:
+                self.conflicts.append(f"{where} puts {lens} on request, but its use is plan only: only a story lens "
+                                      "can be on request")
+            elif default is False:
+                self.on_request.append(lens)
         self.plan_lenses_declared = [lens for lens in lenses if "plan" in self.lens_use[lens]]
         self.prepare = take("review.prepare", (b.get("prepare"), "orchestration binding"), flow=review.get("prepare"),
                             default=[])
@@ -1123,6 +1174,7 @@ class Config:
         self.brief_notes = d.get("brief", {}).get("notes")
         for k in self.stories:
             self.requirements(k)  # validated on load
+            brief_lenses(self, k)
 
     def effective_ownership(self, state: dict) -> dict[str, list[str]]:
         return state.get("laneOwnership", {lane: entry["owns"] for lane, entry in self.lanes.items()})
@@ -1241,7 +1293,8 @@ def state_reader(script: Path):
             spec.loader.exec_module(tool)
         except BaseException as error:
             sys.modules.pop(name, None)
-            if isinstance(error, KeyboardInterrupt):
+            # A tool that exits as it loads is run as a command; a stop that lands while it loads is still a stop.
+            if isinstance(error, (KeyboardInterrupt, Terminated)):
                 raise
             tool = None
         if tool is not None and not all(callable(getattr(tool, wanted, None)) for wanted in STATE_READER_NAMES):
@@ -1690,17 +1743,99 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
 LEGACY_LENSES = "none recorded: the story's review began before lenses were chosen, so every declared lens runs"
 
 
-def story_lens_set(c, folder: Path) -> tuple[list[str], str | None]:
-    """The story's review lenses and why, fixed by round 1's meta. A round 1 meta with no reason was prepared before
+NOT_ON_REQUEST = "every story lens not on request"
+
+
+def brief_lenses(c, key: str) -> list[str]:
+    """The lenses a story's delivery-file entry asks for, its brief lenses, in declaration order. Each must be a
+    declared story lens: any other is refused, naming it."""
+    return story_brief_lenses(c.story_lenses, key, c.stories[key])
+
+
+def story_brief_lenses(story_lenses: list[str], key: str, story: dict) -> list[str]:
+    named = story.get("lenses", [])
+    if (not isinstance(named, list) or not all(isinstance(lens, str) for lens in named)
+            or len(set(named)) != len(named)):
+        raise Stop(f"story {key}: lenses must list story lens ids, each once, not {named!r}")
+    for lens in named:
+        if lens not in story_lenses:
+            raise Stop(f"story {key}: lenses names {lens}, which isn't a declared story lens; the declared story "
+                       f"lenses are {', '.join(story_lenses)}")
+    return [lens for lens in story_lenses if lens in named]
+
+
+def plan_lenses(c) -> dict:
+    """Each story's brief lenses, for the stories that name any."""
+    return {key: story["lenses"] for key, story in c.stories.items() if story.get("lenses")}
+
+
+def lenses_words(lenses: list[str]) -> str:
+    """A story's brief lenses as a plan change's before or after reads them."""
+    return f"lenses: {', '.join(lenses)}" if lenses else "no lenses"
+
+
+def on_request_line(c) -> str:
+    """The lane brief's line for the lenses on request: each with its purpose and the stories whose brief asks for it."""
+    def item(lens: str) -> str:
+        asking = [key for key in c.stories if lens in c.stories[key].get("lenses", [])]
+        origin = f" (the brief of {', '.join(asking)} asks for it)" if asking else ""
+        return f"`{lens}`{origin}: {charter_purpose(c.lenses[lens][1]) or '(its charter states no purpose)'}"
+    return ("- On request, run only when `--lenses` or the story's brief names it: "
+            + "; ".join(item(lens) for lens in c.on_request))
+
+
+def accepted_brief(c, key: str, lenses: list[str], meta: dict | None) -> tuple[str, list[str]]:
+    """At acceptance: where each lens on request in the story's set came from, as its lens line shows it, and each
+    brief lens the set lacks, as a problem naming its removal."""
+    if not (meta or {}).get("lensesReason"):
+        return "", []
+    # Round 1's own record, as handed: no lookup that a lens since withdrawn could stop.
+    requested = (meta or {}).get("requested") or {}
+    return (requested_text({lens: who for lens, who in requested.items() if lens in lenses}),
+            unrun_brief_lenses(c, key, lenses))
+
+
+def latest_lenses(c, folder: Path) -> tuple[list[str], str | None, dict[str, str]]:
+    """The story's review lenses, why, and where each lens on request in them came from, fixed by round 1's meta, as
+    obtain-review fixes a review's lens set before its first round. A round 1 meta with no reason was prepared before
     lenses were chosen: its story runs every declared lens, as it did then, plan-only lenses included."""
     first = load_json(folder / "round-1.meta.json") or {}
     if not first.get("lensesReason"):
-        return list(c.lenses), None
+        return list(c.lenses), None, {}
     gone = [lens for lens in first["lenses"] if lens not in c.lenses]
     if gone:
         raise Stop(f"the story's review lenses include {', '.join(gone)}, which this repository no longer declares; "
                    "declare it again, or restart round 1 with --restart and other --lenses")
-    return list(first["lenses"]), first["lensesReason"]
+    return list(first["lenses"]), first["lensesReason"], dict(first.get("requested", {}))
+
+
+def story_lens_set(c, folder: Path) -> tuple[list[str], str | None]:
+    """The story's review lenses and why, fixed by round 1's meta (see `latest_lenses`)."""
+    lenses, reason, _ = latest_lenses(c, folder)
+    return lenses, reason
+
+
+def default_lenses(c, key: str) -> tuple[list[str], str]:
+    """Round 1's set without --lenses: the mandated pair, every story lens not on request, and the brief's lenses."""
+    brief = brief_lenses(c, key)
+    lenses = [lens for lens in c.story_lenses if lens not in c.on_request or lens in brief]
+    if not c.on_request and not brief:
+        return lenses, EVERY_STORY_LENS
+    return lenses, NOT_ON_REQUEST + (f", and the brief's {', '.join(brief)}" if brief else "")
+
+
+def requested_lenses(c, key: str, lenses: list[str]) -> dict[str, str]:
+    """Where each lens on request in a round 1 set came from: the story's brief, or else the lane's --lenses."""
+    brief = brief_lenses(c, key)
+    return {lens: "brief" if lens in brief else "lane" for lens in lenses if lens in c.on_request}
+
+
+def unrun_brief_lenses(c, key: str, lenses: list[str]) -> list[str]:
+    """Each brief lens the story's set lacks, which only a hand edit after round 1 leaves: the set is fixed there, so
+    the lens comes out of the entry, and a review it missed belongs in a follow-up."""
+    return [f"{key}'s brief asks for {lens}, but its review's lens set, fixed at round 1, lacks it: take it out of the "
+            f"story's entry with lead-plan change --kind lenses --subjects {key} --lenses <the others> --why <why>"
+            for lens in brief_lenses(c, key) if lens not in lenses]
 
 
 def chosen_lenses(c, args) -> tuple[list[str], str] | None:
@@ -1729,8 +1864,22 @@ def chosen_lenses(c, args) -> tuple[list[str], str] | None:
     return [lens for lens in c.story_lenses if lens in named], reason.strip()
 
 
-def lenses_text(lenses: list[str], reason: str | None) -> str:
-    return f"{', '.join(lenses)}; reason: {reason or LEGACY_LENSES}"
+def requested_text(requested: dict[str, str] | None) -> str:
+    """Where each lens on request came from, as the lens lines show it after the reason; nothing when none ran."""
+    return (f"; on request: {', '.join(f'{lens} (asked for by the {who})' for lens, who in requested.items())}"
+            if requested else "")
+
+
+def lenses_text(lenses: list[str], reason: str | None, requested: dict[str, str] | None = None) -> str:
+    return f"{', '.join(lenses)}; reason: {reason or LEGACY_LENSES}{requested_text(requested)}"
+
+
+def on_request_text(c) -> str:
+    """The lenses on request, each with its charter's purpose, as doctor and config list them."""
+    def purpose(lens: str) -> str:
+        charter = Path(c.lenses[lens][1])
+        return (charter.exists() and charter_purpose(charter)) or "(its charter states no purpose)"
+    return "; ".join(f"{lens}: {purpose(lens)}" for lens in c.on_request)
 
 
 def charter_purpose(path: Path) -> str:
@@ -1774,12 +1923,19 @@ def review_prepare(args) -> None:
     if previous and not args.restart:
         raise Stop(f"round {n} is already prepared (at {previous['candidate'][:10]}). Reduce it, or pass --restart to "
                    "discard it; a restart is recorded and the lead has to accept it")
-    # The story's lenses, fixed at round 1: chosen there with --lenses, else every declared story lens.
+    # The story's lenses, fixed at round 1: chosen there with --lenses, else the default set.
     chosen = chosen_lenses(c, args)
     if n == 1:
-        lenses, reason = chosen or (list(c.story_lenses), EVERY_STORY_LENS)
+        if chosen:
+            left = [lens for lens in brief_lenses(c, key) if lens not in chosen[0]]
+            if left:
+                raise Stop(f"--lenses leaves out {', '.join(left)}: the story's brief asks for "
+                           f"{'it' if len(left) == 1 else 'them'}, so every round of it runs "
+                           f"{'it' if len(left) == 1 else 'them'}; name {'it' if len(left) == 1 else 'them'} too")
+        lenses, reason = chosen or default_lenses(c, key)
+        requested = requested_lenses(c, key, lenses)
     else:
-        lenses, reason = story_lens_set(c, folder)
+        lenses, reason, requested = latest_lenses(c, folder)
         if chosen and chosen[0] != lenses:
             raise Stop(f"--lenses names {', '.join(chosen[0])}, but the story's lenses, fixed at round 1, are "
                        f"{', '.join(lenses)}: leave --lenses out to keep them")
@@ -1839,12 +1995,13 @@ def review_prepare(args) -> None:
         print(f"{key} round {n}: the record's writer is another generation, so this round's start isn't journalled: "
               "the views won't show it as under way")
     meta_path.write_text(json.dumps({"round": n, "candidate": candidate, "tree": tree, "startedAt": now(),
-                                     "lenses": lenses, **({"lensesReason": reason} if reason else {}),
+                                     "lenses": lenses, **({"lensesReason": reason, "requested": requested}
+                                                          if reason else {}),
                                      "attempts": attempts, "restarts": restarts}, indent=2))
     append_log("prepares", key, {"round": n, "candidate": candidate, "restart": bool(previous)})
     state_tool("focus", "--lane", lane, "--text", f"{key} review round {n}", "--state", "reviewing", check=False)
     print(f"{key} round {n}: candidate {candidate[:10]}, tree {tree[:10]}" + (f" (restart {len(restarts)})" if restarts else ""))
-    print(f"lenses: {lenses_text(lenses, reason)}")
+    print(f"lenses: {lenses_text(lenses, reason, requested)}")
     print()
     if n == 1 and not restarts:
         print("Start one reviewer per lens, in parallel, each with exactly this prompt. Keep track of each reviewer: "
@@ -5046,7 +5203,10 @@ def handoff(args) -> None:
     last = outcomes[-1]
     if last["outcome"] != "aligned":
         raise Stop(f"round {last['round']} is {last['outcome']}; the lenses have not all approved")
-    story_lenses, lenses_reason = story_lens_set(c, folder)
+    story_lenses, lenses_reason, requested = latest_lenses(c, folder)
+    unrun = unrun_brief_lenses(c, key, story_lenses) if lenses_reason else []
+    if unrun:
+        raise Stop("\n  ".join(unrun))
     if {e["lens"] for e in last["entries"]} != set(story_lenses):
         raise Stop(f"round {last['round']} doesn't carry every lens of the story's set, {', '.join(story_lenses)}")
     notes = evidence_notes(last) if c.no_deferrals else []
@@ -5152,7 +5312,7 @@ def handoff(args) -> None:
           if base_merge else []),
         "- review rounds: " + "; ".join(f"r{o['round']} {o['outcome']}" for o in outcomes) + " (review evidence captured)"
         + (f"; history: {'; '.join(histories)}" if histories else ""),
-        f"- review lenses: {lenses_text(story_lenses, lenses_reason)}",
+        f"- review lenses: {lenses_text(story_lenses, lenses_reason, requested)}",
         f"- validation: {validation}",
         *([f"- checks run: {checks_shown(ran, added)}"] if ran else []),
         *([f"- PR review: {pr_line}"] if pr_line else []),
@@ -5413,15 +5573,18 @@ def plan_finish(c, at: str) -> list[dict]:
 
 
 def plan_view(c) -> dict:
-    """What drift detection compares: each story's criteria and each finish line's covers."""
+    """What drift detection compares: each story's criteria, each finish line's covers, and, when any story names
+    some, each story's brief lenses (left out otherwise, so a plan with none compares as it always did)."""
     return {"criteria": {key: {item["id"]: item["text"] for item in story.get("criteria", [])}
                          for key, story in c.stories.items()},
-            "covers": {line["id"]: plan_covers(line) for line in c.finish}}
+            "covers": {line["id"]: plan_covers(line) for line in c.finish},
+            **({"lenses": lenses} if (lenses := plan_lenses(c)) else {})}
 
 
 def view_of_snapshot(snapshot: dict) -> dict:
     return {"criteria": {unit["subject"]: {item["id"]: item["text"] for item in unit["criteria"]} for unit in snapshot["units"]},
-            "covers": {line["id"]: line["covers"] for line in snapshot["finish"]}}
+            "covers": {line["id"]: line["covers"] for line in snapshot["finish"]},
+            **({"lenses": snapshot["lenses"]} if snapshot.get("lenses") else {})}
 
 
 def view_digest(view: dict) -> str:
@@ -5431,7 +5594,7 @@ def view_digest(view: dict) -> str:
 def snapshot_entry(c, late: bool) -> dict:
     at = now()
     return {"type": "snapshot", "at": at, "late": late, "units": [plan_unit(c, key) for key in c.stories],
-            "finish": plan_finish(c, at)}
+            "finish": plan_finish(c, at), **({"lenses": lenses} if (lenses := plan_lenses(c)) else {})}
 
 
 def write_snapshot(c, late: bool) -> dict:
@@ -5473,6 +5636,8 @@ def plan_drift(c, log: list[dict]) -> list[dict]:
                 return True
             if kind == "finish" and change["kind"] == "finish" and change.get("finish") == finish and change.get("after") == after:
                 return True
+            if kind == "lenses" and "lenses" in change and key in change["subjects"] and change["lenses"] == after:
+                return True
         return False
 
     found = []
@@ -5491,6 +5656,13 @@ def plan_drift(c, log: list[dict]) -> list[dict]:
         for ident, text in old.items():
             if ident not in criteria and not explained("criterion", key, ident, None):
                 found.append({"kind": "changed", "subjects": [key], "criteria": [ident], "before": text})
+    # A story's brief lenses, recorded as a `changed` change carrying the lenses it leaves, since the plan's change
+    # kinds are the view's.
+    for key in view["criteria"]:
+        old, new = before.get("lenses", {}).get(key, []), view.get("lenses", {}).get(key, [])
+        if old != new and not explained("lenses", key, after=new):
+            found.append({"kind": "changed", "subjects": [key], "lenses": new, "before": lenses_words(old),
+                          "after": lenses_words(new)})
     for ident, covers in view["covers"].items():
         if before["covers"].get(ident) != covers and not explained("finish", finish=ident, after=covers):
             found.append({"kind": "finish", "subjects": [], "finish": ident,
@@ -5759,9 +5931,10 @@ def lead_plan(args) -> None:
     if args.action == "change":
         # A flag the kind doesn't read is refused rather than ignored: --criterion on a story's removal once removed
         # the whole story. --lane and --after are for a story --kind added brings into the delivery.
-        takes = {"subjects": ("added", "removed", "relaxed", "changed"), "criterion": ("added", "removed", "relaxed", "changed"),
+        takes = {"subjects": ("added", "removed", "relaxed", "changed", "lenses"),
+                 "criterion": ("added", "removed", "relaxed", "changed"),
                  "text": ("added", "relaxed", "changed", "finish"), "lane": ("added",), "after": ("added",),
-                 "finish": ("finish",), "covers": ("finish",), "label": ("finish",)}
+                 "finish": ("finish",), "covers": ("finish",), "label": ("finish",), "lenses": ("lenses",)}
         for flag, kinds in takes.items():
             given = getattr(args, flag) != [] if flag == "subjects" else getattr(args, flag) is not None  # --subjects defaults to []
             if given and args.kind not in kinds:
@@ -5851,6 +6024,36 @@ def lead_plan(args) -> None:
             change["before"] = existing["text"]
             existing["text"] = args.text
         change.update(criteria=[args.criterion], after=args.text)
+    elif args.kind == "lenses":
+        # The story's brief lenses, recorded as a `changed` change carrying the lenses it leaves; '' removes them.
+        if len(change["subjects"]) != 1 or args.lenses is None:
+            raise Stop("--kind lenses takes one story in --subjects and --lenses, the lens ids its brief asks for "
+                       "('' for none)")
+        key = change["subjects"][0]
+        named = [lens.strip() for lens in args.lenses.split(",") if lens.strip()]
+        story = f"the declared story lenses are {', '.join(c.story_lenses)}"
+        for lens in named:
+            if lens not in c.story_lenses:
+                raise Stop(f"--lenses names {lens}, which isn't a declared story lens; {story}")
+        if len(set(named)) != len(named):
+            raise Stop(f"--lenses names a lens more than once; {story}")
+        before = stories[key].get("lenses", [])
+        after = [lens for lens in c.story_lenses if lens in named]
+        added = [lens for lens in after if lens not in before]
+        started = (c.state / "state.json").exists() and any(
+            e.get("kind") == "review.started" and e.get("subject") == key and e["data"].get("round") == 1
+            for e in load_state()["journal"])
+        if added and started:
+            raise Stop(f"{key}'s review has begun, and its lens set is fixed at round 1, so its brief can't add "
+                       f"{', '.join(added)}; a review the story missed belongs in a follow-up. Removing a brief lens "
+                       "is accepted")
+        if after == before:
+            raise Stop(f"{key}'s brief lenses are already {', '.join(after) or 'none'}: nothing to change")
+        if after:
+            stories[key]["lenses"] = after
+        else:
+            stories[key].pop("lenses", None)
+        change.update(kind="changed", lenses=after, before=lenses_words(before), after=lenses_words(after))
     elif dropping:
         # One criterion leaves the story, which stays; the change keeps its wording, and no `after` says it is gone.
         if len(change["subjects"]) != 1:
@@ -5945,7 +6148,7 @@ def lead_plan(args) -> None:
         said = f"{'added story' if new_story else args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip()
         if dropping:
             said = f"removed {args.criterion} from {change['subjects'][0]}"
-        git("commit", "-q", "-m", f"{c.delivery}: plan change {ids} ({said})", cwd=root)
+        tool_commit("commit", "-q", "-m", f"{c.delivery}: plan change {ids} ({said})", cwd=root)
         if planned_after is not None:  # as it stands now: a story registered since the check above stays planned
             patch_from(lambda doc: {"planned": [p for p in doc["state"].get("planned", [])
                                                 if p["subject"] not in change["subjects"]]}, "the plan change's planned work")
@@ -5967,6 +6170,8 @@ def lead_plan(args) -> None:
                                  "the added story's planned work")
             if patched is not None:
                 state_tool("journal", "--kind", "story.added", "--subject", key, "--data", json.dumps(story_added(c, key, change.get("why"))))
+                if (approved := story_approved(c, key)) is not None:
+                    state_tool("journal", "--kind", "story.approved", "--subject", key, "--data", json.dumps(approved))
         rebuild_plan(c)
     print(f"recorded {ids}: {said}" if dropping else
           f"recorded {ids}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
@@ -5993,7 +6198,7 @@ def plan_approval(c, raw: dict, args) -> None:
             c.load_delivery(c.delivery)
             raise
         git("add", str(c.delivery_path), cwd=c.root)
-        git("commit", "-q", "-m", f"{c.delivery}: approval {args.id} {args.state}", cwd=c.root)
+        tool_commit("commit", "-q", "-m", f"{c.delivery}: approval {args.id} {args.state}", cwd=c.root)
         rebuild_plan(c)
     print(f"approval {args.id}: {args.state}")
     print(f"committed the delivery file; push it so lanes see it: "
@@ -6221,6 +6426,164 @@ def candidate_ownership(c, lane: str, base: str, head: str, state: dict) -> tupl
     return changed, [f"{path}: {outside[path]}" if path in outside else path for path in changed
                      if path in outside or (path not in regional_paths and path not in shared
                                             and owners_of(ownership, path) != [lane])]
+
+
+def claims_report(c, helper, lane: str, key: str, base: str, head: str, state: dict) -> tuple[list[str], list[str]]:
+    """Decision 7: the committed change from ``base`` to ``head`` against ``lane``'s claims, as (held, needed): what
+    a whole-file claim, a span or a shared output holds, and each hunk, creation, deletion, mode or binary change the
+    lane still needs a claim for, with the lead's request for it. ``head`` may be a tree."""
+    regions = state.get("laneRegions", [])
+    ownership = c.effective_ownership(state)
+    shared = shared_outputs(c)
+    command = flow_command()
+    held, needed = [], []
+    for path in helper.changed_paths(c.root, base, head):
+        on_path = [claim for claim in regions if claim["path"] == path]
+        if path in shared:
+            held.append(f"{path}: a declared shared output")
+            continue
+        if not on_path:
+            owners = owners_of(ownership, path)
+            if owners == [lane]:
+                held.append(f"{path}: {lane}'s whole file")
+            else:
+                holder = f" ({' and '.join(owners)} hold{'s' if len(owners) == 1 else ''} it)" if owners else ""
+                needed.append(f"{path}: needs a whole-file claim{holder}\n    {command} lead-own --grant {shlex.quote(path)} "
+                              f"--lane {lane}")
+            continue
+        mine = [claim for claim in on_path if claim["lane"] == lane]
+        try:
+            spans, rows = helper.change_report(c.root, path, base, head, mine)
+        except helper.RegionError as error:
+            needed.append(f"{path}: {error}; lanes share it by lines ({', '.join(described_claim(claim) for claim in on_path)})")
+            continue
+        size = len(helper.lines(c.root, helper.entry(c.root, base, path)[1]))
+        want: set[int] = set()
+        edges: set[int] = set()  # the lines an insertion at the edge of one of the lane's spans needs
+        for row in rows:
+            if row["claim"] is not None:
+                held.append(f"{path} {row['where']}: inside {described_claim(row['claim'], row['span'], base)}")
+                continue
+            needed.append(f"{path} {row['where']}: outside {lane}'s spans")
+            first, removed = row["first"], row["removed"]
+            lines_ = range(first, first + removed) if removed else range(first - 1, first + 1)
+            if not removed and (first - 1 < 1 or first > size):
+                needed[-1] += " (an insertion at the file's edge needs a whole-file claim)"
+                continue
+            missing = {line for line in lines_ if not any(start <= line < end for start, end in spans)}
+            want.update(missing)
+            if not removed and len(missing) == 1:
+                edges.update(missing)
+        others = []
+        for claim in on_path:
+            if claim["lane"] != lane:
+                with contextlib.suppress(helper.RegionError):  # one that no longer maps holds no line here
+                    others.append((helper.mapped(c.root, claim, base), claim))
+        text = helper.text_lines(c.root, base, path)
+        claimed = [*spans, *(span for span, _ in others)]
+        for start, end in runs_of(sorted(want)):
+            touching = next((claim for (first, last), claim in zip(spans, mine) if first <= end and start <= last), None)
+            story = touching.get("story") if touching else key
+            # Decision 13: the request names the lines by a line's text, with --insert for one past a block's edge.
+            found = ((edges & set(range(start, end))) and helper.anchor_for(path, text, start, end, claimed, True)) \
+                or helper.anchor_for(path, text, start, end, claimed)
+            if found is None:
+                needed.append(f"  lines {start}-{end - 1} of {path}: no line's text names a block that holds them; "
+                              "ask the lead for a carve that gives them")
+                continue
+            words, insert, span = found
+            clash = [described_claim(claim, other, base) for other, claim in others if helper.overlapping(other, span)]
+            needed.append(f"  {command} lead-own --region {shlex.quote(path)} --lane {lane} --base {base} "
+                          f"--around={shlex.quote(words)}" + (f" --insert {insert}" if insert else "")
+                          + (f" --story {story}" if story else "")
+                          + (f"   (overlaps {', '.join(clash)}: a carve gives it)" if clash else ""))
+    return held, needed
+
+
+def runs_of(numbers: list[int]) -> list[tuple[int, int]]:
+    """Sorted line numbers as half-open runs."""
+    runs: list[list[int]] = []
+    for number in numbers:
+        if runs and runs[-1][1] == number:
+            runs[-1][1] = number + 1
+        else:
+            runs.append([number, number + 1])
+    return [(start, end) for start, end in runs]
+
+
+def claims_check(args) -> None:
+    """Decision 7, a lane command: what the story's committed change needs claimed, and the lead's request for each.
+    Writes nothing and journals nothing; exits 1 when anything is needed."""
+    c = cfg()
+    key = c.require(args.key)
+    helper = _region_ownership()
+    git("fetch", "-q", c.remote, c.base_branch)
+    head = git("rev-parse", "HEAD")
+    base = git("merge-base", c.base_ref, head)
+    state = c.record_state()
+    lane = c.lane_of(key, state)
+    try:
+        held, needed = claims_report(c, helper, lane, key, base, head, state)
+    except helper.RegionError as error:
+        raise Stop(str(error)) from error
+    print(f"{key} on {lane}, {head[:12]} against its merge base {base[:12]} with {c.base_ref}:")
+    for line in held:
+        print(f"  holds {line}")
+    if not needed:
+        print("  nothing more to claim")
+        return
+    print("Needs a claim (ask the lead to run each request):")
+    for line in needed:
+        print(f"  {line}" if not line.startswith("  ") else line)
+    sys.exit(1)
+
+
+def lead_claims(args) -> None:
+    """Decision 8: whether the queue would accept each story's ownership, on the tree it would sync with the base."""
+    c = cfg()
+    require_lead_checkout(c)
+    helper = _region_ownership()
+    git("fetch", "-q", c.remote, c.base_branch)
+    base = git("rev-parse", c.base_ref)
+    state = c.record_state()
+    queued = {item["subject"]: item for item in state.get("queue", []) if item["stage"] != "merged"}
+    keys = [c.require(key) for key in args.keys] if args.keys else list(c.stories)
+    shown = 0
+    for key in keys:
+        item = queued.get(key)
+        if item is not None:
+            head, where = item["head"], "its handed head"
+        else:
+            fetched = run(["git", "fetch", "-q", c.remote, c.branch(key)], check=False).returncode == 0
+            ref = f"refs/remotes/{c.remote}/{c.branch(key)}"
+            if not fetched or run(["git", "rev-parse", "--verify", "--quiet", ref], check=False).returncode:
+                if args.keys:
+                    print(f"{key}: no hand-off and no pushed branch")
+                continue
+            head, where = git("rev-parse", ref), f"its pushed branch {c.branch(key)}"
+        shown += 1
+        lane = c.lane_of(key, state)
+        merged = run(["git", "merge-tree", "--write-tree", base, head], check=False)
+        if merged.returncode:
+            print(f"{key} ({lane}), {where} {head[:12]}: conflicts with {c.base_ref} at {base[:12]}, so no ownership verdict")
+            continue
+        tree = merged.stdout.split()[0]
+        try:
+            outside = helper.queue_problems(c.root, state, lane, (item or {}).get("acceptedRegionPaths", []), base, tree)
+            held, needed = claims_report(c, helper, lane, key, base, tree, state)
+        except helper.RegionError as error:
+            print(f"{key} ({lane}), {where} {head[:12]}: the queue could not check region ownership: {error}")
+            continue
+        verdict = ("the queue would refuse it: region ownership refused " + f"{lane}'s changes: "
+                   + "; ".join(f"{path}: {reason}" for path, reason in outside.items())) if outside \
+            else "the queue would accept its ownership"
+        print(f"{key} ({lane}), {where} {head[:12]} merged with {c.base_ref} at {base[:12]}: {verdict}")
+        for line in held:
+            print(f"  holds {line}")
+        for line in needed:
+            print(f"  {line}" if not line.startswith("  ") else line)
+    if not shown and not args.keys:
+        print("no story has a hand-off or a pushed branch")
 
 
 def owner_words(c, path: str) -> str:
@@ -6657,6 +7020,15 @@ def draft_delivery(c, args, integration_target: str | None = None) -> None:
             if found["after"]:
                 story["after"] = found["after"]
             read[g["key"]] = found
+        # A `Lenses:` sentence asks for lenses on the story's brief, as `Files:` names its files.
+        asked = plan_sentence(section_body(section), "Lenses:")
+        named = re.findall(r"`([^`\n]+)`", asked) if asked is not None else []
+        for lens in named:
+            if lens not in c.story_lenses:
+                notes.append(f"plan story {g['key']}'s Lenses sentence names {lens}, which isn't a declared story lens: "
+                             "drafted it without")
+        if any(lens in c.story_lenses for lens in named):
+            story["lenses"] = [lens for lens in c.story_lenses if lens in named]
         if g.get("label"):
             story["label"] = g["label"]
         if g.get("pinned"):
@@ -7063,13 +7435,19 @@ def lead_init(args) -> None:
     overlaps = ownership_overlaps(ownership, tracked_at_base(c), shared_outputs(c))
     if overlaps:
         raise Stop(f"lanes own the same files: {'; '.join(overlaps)}")
-    seed = {"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True}, "planned": planned,
-            "finish": finish, "laneOwnership": ownership}
+    # The integration step's facts are read against this: written only when the delivery rejoins a target.
+    target = c.raw.get("integrationTarget")
+    integration = {"integration": {"base": c.base_branch, "target": target, "remote": c.remote}} if target else {}
+    seed = {"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True, **integration}, "planned": planned,
+            "finish": finish, "laneOwnership": ownership, "regionsSettled": 0}
     for line in replace_record(c) if args.replace else []:
         print(line)
     state_tool("init", "--headline", c.raw.get("headline", c.delivery), "--seed", json.dumps(seed))
     state_tool("journal", "--kind", "record.started",
                "--data", json.dumps({"base": {"ref": c.base_ref, "head": git("rev-parse", c.base_ref)}}))
+    for item in planned:  # in plan order: the plan's approval refines each story, when the tracker refines
+        if (approved := story_approved(c, item["subject"])) is not None:
+            state_tool("journal", "--kind", "story.approved", "--subject", item["subject"], "--data", json.dumps(approved))
     if plan_declared(c):
         with plan_lock(c):
             if not any(entry["type"] == "snapshot" for entry in read_plan_log(c)):
@@ -7077,6 +7455,9 @@ def lead_init(args) -> None:
             rebuild_plan(c)
     print(f"initialized {c.state} with {len(planned)} planned stories across {len(c.lanes)} lanes"
           + (f"; wrote {c.state / PLAN_FILE}" if (c.state / PLAN_FILE).exists() else ""))
+    for item in planned:
+        if (outcome := refine_outcome(c, item["subject"])) is not None:
+            print(f"  refine: {outcome}")
     start_hosted(c)
     if (line:=hosted_line(c)):print(line)
     if args.no_supervisor or supervisor_off():
@@ -7300,6 +7681,8 @@ def _register_stories(c) -> list[str]:
         return []
     for key in added:
         state_tool("journal", "--kind", "story.added", "--subject", key, "--data", json.dumps(story_added(c, key)))
+        if (approved := story_approved(c, key)) is not None:
+            state_tool("journal", "--kind", "story.approved", "--subject", key, "--data", json.dumps(approved))
     if records_changes(c):
         for key in added:
             change = {"kind": "added", "subjects": [key], "by": "lead", "title": c.stories[key]["title"],
@@ -7336,7 +7719,8 @@ def lead_brief(args) -> None:
         "state": str(c.state.resolve()), "lead_checkout": str(c.root.resolve()), "bound": str(c.bound), "work": c.work,
         "lenses": "\n".join([f"- {', '.join(f'`{lens}`' for lens in MANDATED_LENSES)}: mandated, in every round.",
                               *(f"- `{lens}`: {charter_purpose(c.lenses[lens][1]) or '(its charter states no purpose)'}"
-                                for lens in c.story_lenses if lens not in MANDATED_LENSES)]),
+                                for lens in c.story_lenses if lens not in MANDATED_LENSES and lens not in c.on_request),
+                              *([on_request_line(c)] if c.on_request else [])]),
         "gates": "\n".join(f"   - `{' '.join(expand_argv(g['argv'], base=c.base_ref, key='<key>', delivery=c.delivery))}`"
                            for g in c.gates) or "   - (none declared)",
         "never_touch": ", ".join(f"`{p}`" for p in c.never_touch) or "(nothing listed)",
@@ -7386,10 +7770,16 @@ def no_summary(key: str) -> str:
 
 
 def story_readiness(c, key: str) -> tuple[str, str | None]:
-    """Whether a story's tracker item offers the first start move, from the tracker snapshot: ("ready", None),
-    ("not-ready", why), or ("not-checked", why) when the snapshot can't say. Nothing to check with no start move, or
-    for an item already under way. It reads; it never moves anything."""
-    moves = tracker_conf(c)["transitions"].get("start") or []
+    """Whether a story's tracker item offers the first start move not yet made, from the tracker snapshot: ("ready",
+    None), ("not-ready", why), or ("not-checked", why) when the snapshot can't say. It walks the start moves as the
+    publisher's move does: a move whose `targets` entry is the item's status is made, the whole start is made when the
+    last move's is, and a backlog item with every move made is ready. Under `refine`, an item offering its first refine
+    move not yet made is ready too, since the plan's approval makes it. An item with a status and no offered moves is on
+    a tracker that restricts no move, so its next move reads as offered. Nothing to check with no start move, or for an item already under way. It reads; it never
+    moves anything."""
+    transitions = tracker_conf(c)["transitions"]
+    moves = transitions.get("start") or []
+    targets = transitions.get("targets") or {}
     if not moves:
         return "ready", None
     items = tracker_snapshot_items(c)
@@ -7400,13 +7790,51 @@ def story_readiness(c, key: str) -> tuple[str, str | None]:
         return "not-checked", f"{key}: readiness wasn't checked: the tracker snapshot doesn't list it"
     if item.get("state") != "backlog":
         return "ready", None
+    status = item.get("status")
     offered = item.get("offeredTransitions")
-    if not isinstance(offered, list):
+    if not isinstance(offered, list) and not status:
         return "not-checked", f"{key}: readiness wasn't checked: the tracker snapshot doesn't list its offered moves"
-    if moves[0] in offered:
+    # Under refine, an item is also ready when it offers its first refine move not yet made, since the plan's approval
+    # makes it; one that offers neither that nor its next start move is refused, naming the refine move.
+    refining = next_move(transitions.get("refine") or [], status, targets)
+    if refining is not None and (not isinstance(offered, list) or refining in offered):
         return "ready", None
-    return "not-ready", (f"{key} is in {item.get('status') or 'a status the snapshot does not name'}: "
-                         f"\"{moves[0]}\" isn't offered; refine it first")
+    following = next_move(moves, status, targets)
+    if following is None or not isinstance(offered, list) or following in offered:
+        return "ready", None
+    if refining is not None:
+        return "not-ready", (f"{key} is in {status or 'a status the snapshot does not name'}: "
+                             f"\"{refining}\" isn't offered; refine it first")
+    return "not-ready", (f"{key} is in {status or 'a status the snapshot does not name'}: "
+                         f"\"{following}\" isn't offered; refine it first")
+
+
+def next_move(moves: list[str], status: str | None, targets: dict) -> str | None:
+    """The first of `moves` not yet made, as the publisher's move reads them, or None when every move is made: an item
+    at the last move's target has had them all made, and otherwise a move is made when its own target is the status."""
+    if not moves or (status and targets.get(moves[-1]) == status):
+        return None
+    return next((move for move in moves if not status or targets.get(move) != status), None)
+
+
+def refine_outcome(c, key: str) -> str | None:
+    """What the plan's approval will do to a story's tracker item, from the tracker snapshot, as one line: refine it,
+    find it refined already, or find it can't be moved; None when the tracker refines nothing."""
+    transitions = tracker_conf(c)["transitions"]
+    moves = transitions.get("refine") or []
+    if not moves:
+        return None
+    item = (tracker_snapshot_items(c) or {}).get(key)
+    status = (item or {}).get("status")
+    offered = (item or {}).get("offeredTransitions")
+    if not status and not isinstance(offered, list):
+        return f"{key}: whether the plan's approval refines it wasn't checked: the tracker snapshot doesn't say"
+    move = next_move(moves, status, transitions.get("targets") or {})
+    if move is None:
+        return f"{key}: refined already ({status})"
+    if not isinstance(offered, list) or move in offered:
+        return f"{key}: the plan's approval will refine it (\"{move}\" from {status or 'its status'})"
+    return f"{key}: the plan's approval can't refine it: \"{move}\" isn't offered from {status or 'its status'}"
 
 
 def is_lead_checkout(c, branch: str) -> bool:
@@ -7702,7 +8130,7 @@ def lead_sync(args) -> None:
                     if merge_head and merge_head != intent["defaultHead"]:
                         raise Stop("the checkout holds another merge; inspect it before resuming")
                     if not merge_head:
-                        result = run(["git", "merge", "--no-ff", "--no-commit", intent["defaultHead"]], check=False)
+                        result = tool_commit("merge", "--no-ff", "--no-commit", intent["defaultHead"], check=False)
                         if result.returncode and not git("rev-parse", "-q", "--verify", "MERGE_HEAD", check=False):
                             raise Stop(result.stderr or result.stdout)
                     restore_move_installation(c, intent)
@@ -7739,7 +8167,7 @@ def lead_sync(args) -> None:
                 if git("rev-parse", "HEAD") == intent["oldHead"]:
                     if git("write-tree") != intent["preparedTree"]:
                         raise Stop("the prepared merge tree changed before commit; inspect it before resuming")
-                    git("commit", "-m", intent["reason"])
+                    tool_commit("commit", "-m", intent["reason"])
                 if (git("rev-parse", "HEAD^{tree}") != intent["preparedTree"]
                       or git("show", "-s", "--format=%P", "HEAD").split() != intent["parents"]
                       or git("show", "-s", "--format=%B", "HEAD") != intent["reason"]):
@@ -7866,6 +8294,17 @@ def story_added(c, key: str, why: str | None = None) -> dict:
     return {"title": c.stories[key]["title"], "why": why}
 
 
+def story_approved(c, key: str) -> dict | None:
+    """A story.approved's facts, when the tracker refines a delivery's stories at its plan's approval: the story's
+    title, the plan's path and its review record's, when it has one. None when no refine move is configured, so
+    nothing journals it."""
+    if not tracker_conf(c)["transitions"].get("refine"):
+        return None
+    review = c.plan.with_name(c.plan.stem + ".review.json")
+    return {"title": c.stories[key]["title"], "plan": c.plan.as_posix(),
+            **({"review": review.as_posix()} if (c.root / review).is_file() else {})}
+
+
 def lead_flake(args) -> None:
     c = cfg()
     require_lead_checkout(c)
@@ -7916,18 +8355,62 @@ def lead_own(args) -> None:
         change_ownership(c, args)
 
 
+def region_story(c, args, state: dict, lane: str, key: str | None) -> str | None:
+    """Decision 1: a claim's story, a key of this delivery assigned to the claim's lane, or None for the lane's own."""
+    if key is None:
+        return None
+    if key not in c.stories or not any(entry.get("subject") == key for name in ("planned", "queue")
+                                       for entry in state.get(name, [])):
+        raise Stop(f"{key} is not a story this delivery's record holds")
+    if c.lane_of(key, state) != lane:
+        raise Stop(f"{key} is {c.lane_of(key, state)}'s story, not {lane}'s")
+    return key
+
+
+def described_claim(claim: dict, span: tuple[int, int] | None = None, base: str | None = None) -> str:
+    start, end = span or (claim["start"], claim["end"])
+    story = f" for {claim['story']}" if claim.get("story") else ""
+    return f"{claim['lane']}'s{story} [{start}, {end}) at {(base or claim['baseHead'])[:12]}"
+
+
+def regrant_words(helper, c, claims: list[dict], base: str) -> list[str]:
+    """The claims on a path that don't map to ``base``, each with why: they need a regrant, and refuse nothing."""
+    said = []
+    for claim in claims:
+        try:
+            helper.mapped(c.root, claim, base)
+        except helper.RegionError as error:
+            said.append(f"{described_claim(claim)} needs a regrant: {error}")
+    return said
+
+
 def change_regions(c, args) -> None:
     helper = _region_ownership()
     path = args.region or args.revoke_region
     if not helper.valid_path(path):
         raise Stop("name a repository-relative file")
-    if not args.base or args.start is None or args.end is None:
-        raise Stop("a region claim needs --base COMMIT --start LINE --end LINE")
+    numbered = args.start is not None or args.end is not None
+    if args.revoke_region and (args.around is not None or args.insert):
+        raise Stop("a revocation matches the claim by its coordinates: --base, --start and --end")
+    if not args.base or (args.around is None and (args.start is None or args.end is None)):
+        raise Stop("a region claim needs --base COMMIT and either --around TEXT or --start LINE --end LINE")
+    if args.around is not None and numbered:
+        raise Stop("name the lines by --around TEXT or by --start and --end, not both")
+    if args.revoke_region and args.story:
+        raise Stop("--story names a grant's story; a revocation matches the claim by its coordinates")
     base_head = git("rev-parse", "--verify", "--end-of-options", f"{args.base}^{{commit}}")
+    asked = None
+    if args.region:
+        try:
+            args.start, args.end, asked = resolve_lines(helper, c, path, base_head, args.start, args.end, args.around,
+                                                        args.insert, c.record_state().get("laneRegions", []))
+        except helper.RegionError as error:
+            raise Stop(str(error)) from error
     claim = {"lane": args.lane, "path": path, "baseHead": base_head, "start": args.start, "end": args.end}
     if args.region:
         git("fetch", "-q", c.remote, c.base_branch)
         base = git("rev-parse", c.base_ref)
+    said: dict = {}
 
     def compute(doc: dict) -> list[str]:
         state = doc["state"]
@@ -7937,39 +8420,331 @@ def change_regions(c, args) -> None:
         if args.lane not in ownership:
             raise Stop("name a lane recorded for this delivery")
         regions = list(state.get("laneRegions", []))
+        said.clear()
         if args.revoke_region:
-            if claim not in regions:
+            found = next((other for other in regions if helper.same_claim(other, claim)), None)
+            if found is None:
                 raise Stop(f"{args.lane} has no matching region claim for {path}")
-            regions.remove(claim)
-        elif claim not in regions:
-            if owners_of(ownership, path):
-                raise Stop(f"{path} already has a whole-file claim")
-            if path in shared_outputs(c):
-                raise Stop(f"{path} is a declared shared output")
-            try:
-                start, end = helper.mapped(c.root, claim, base)
-                for other in regions:
-                    if other["path"] == path:
-                        first, last = helper.mapped(c.root, other, base)
-                        if start < last and first < end:
-                            raise Stop(f"{path} [{start}, {end}) overlaps {other['lane']}'s [{first}, {last}) at {base[:12]}")
-            except helper.RegionError as error:
-                raise Stop(str(error)) from error
-            regions.append(claim)
-        return ["--set", json.dumps({"/laneRegions": regions})]
+            regions.remove(found)
+            return ["--set", json.dumps({"/laneRegions": regions})]
+        story = region_story(c, args, state, args.lane, args.story)
+        granted = {**claim, "story": story} if story else dict(claim)
+        if any(helper.same_claim(other, claim) and other.get("story") == story for other in regions):
+            return None
+        if owners_of(ownership, path):
+            raise Stop(f"{path} already has a whole-file claim")
+        if path in shared_outputs(c):
+            raise Stop(f"{path} is a declared shared output")
+        on_path = [other for other in regions if other["path"] == path]
+        # A regrant: this lane's claims on the path, of this story, that a landing left needing one, give way to it.
+        replaced = [other for other in on_path if other.get("regrant") and other["lane"] == args.lane
+                    and other.get("story") == story]
+        try:
+            start, end = helper.mapped(c.root, granted, base)
+            for other in on_path:
+                if any(other is gone for gone in replaced):
+                    continue
+                if other["lane"] == args.lane and other.get("story") == story:
+                    continue  # Decision 5: one lane's claims of one story are made one below, overlapping or touching
+                try:
+                    first, last = helper.mapped(c.root, other, base)
+                except helper.RegionError:
+                    continue  # Decision 3: a claim that no longer maps refuses no grant; it is named below
+                if start < last and first < end:
+                    raise Stop(f"{path} [{start}, {end}) overlaps {other['lane']}'s [{first}, {last}) at {base[:12]}")
+            kept = [other for other in on_path if not any(other is gone for gone in replaced)]
+            joined, runs = helper.coalesce(c.root, [*kept, granted], base_head)
+            for claim_now in joined:
+                if not any(claim_now is other for other in kept):
+                    helper.mapped(c.root, claim_now, base)
+            merged = [other for other in regions if other["path"] != path] + joined
+        except helper.RegionError as error:
+            raise Stop(str(error)) from error
+        said.update(replaced=replaced, runs=runs, stale=regrant_words(
+            helper, c, [other for other in on_path if not any(other is gone for gone in replaced)], base),
+            written=[claim_now for claim_now in joined if not any(claim_now is other for other in kept)])
+        return ["--set", json.dumps({"/laneRegions": merged})]
 
-    patch_from(compute, f"region ownership of {path}")
+    if patch_from(compute, f"region ownership of {path}") is None and not args.revoke_region:
+        print(f"{args.lane} already holds {path} [{args.start}, {args.end}) at {base_head}")
+        return
     action = "revoked" if args.revoke_region else "granted"
     change = f"{action} {args.lane}'s {path} [{args.start}, {args.end}) at {base_head}"
-    state_tool("journal", "--kind", f"ownership.{action}", "--lane", args.lane, "--data", json.dumps(
+    if args.story:
+        change += f" for {args.story}"
+    state_tool("journal", "--kind", f"ownership.{action}", "--lane", args.lane,
+               *(["--subject", args.story] if args.story else []), "--data", json.dumps(
         {"path": path, "span": {"first": args.start, "after": args.end}, "base": {"ref": args.base, "head": base_head}}))
     print(change)
+    for line in asked or []:
+        print(f"  {line}")
+    for written in said.get("written", []):
+        print(f"  {written_lines(helper, c, written)}")
+    for gone in said.get("replaced", []):
+        print(f"  replaces {described_claim(gone)}, which needed a regrant")
+    for run_ in said.get("runs", []):
+        print(f"  made one claim at {base_head[:12]} of {', '.join(described_claim(other) for other in run_)}, "
+              "which touch")
+    for line in said.get("stale", []):
+        print(f"  {line}")
+
+
+GIVE = re.compile(r"(?P<lane>[^:+\s]+)(?:\+(?P<insert>before|after))?:"
+                  r"(?:(?P<start>[0-9]+)-(?P<end>[0-9]+)|around=(?P<around>.+?))(?:@(?P<key>[A-Za-z][A-Za-z0-9]*-[0-9]+))?")
+
+
+def carve_gives(values: list[str]) -> list[dict]:
+    """Each --give as {lane, start, end} or {lane, around}, with its story and --insert side when it names them."""
+    gives = []
+    for value in values:
+        found = GIVE.fullmatch(value)
+        if not found:
+            raise Stop(f"--give {value!r}: name it as LANE[+before|+after]:START-END[@KEY] or "
+                       "LANE[+before|+after]:around=TEXT[@KEY]")
+        give = {"lane": found["lane"], **({"story": found["key"]} if found["key"] else {}),
+                **({"insert": found["insert"]} if found["insert"] else {})}
+        if found["around"] is not None:
+            give["around"] = found["around"]
+        else:
+            start, end = int(found["start"]), int(found["end"])
+            if start < 1 or end <= start:
+                raise Stop(f"--give {value!r}: END must be greater than START, from line 1")
+            give.update(start=start, end=end)
+        gives.append(give)
+    return gives
+
+
+def resolve_lines(helper, c, path: str, base: str, start: int | None, end: int | None, around: str | None,
+                  insert: str | None, regions: list[dict], taken: list[tuple[int, int]] = ()) -> tuple[int, int, list[str]]:
+    """The span a grant or a give names at ``base``: by --around's block (Decision 10) or its numbers, each edge at a
+    statement's start in a Python file (Decision 11), widened by --insert past an edge into an unclaimed line
+    (Decision 12). Returns it, and what to print of how it was read."""
+    said = []
+    if around is not None:
+        start, end = helper.anchored(c.root, base, path, around)
+        said.append(f"--around {around!r} names [{start}, {end}) at {base[:12]}")
+    helper.check_statements(c.root, base, path, start, end)
+    if insert:
+        held = list(taken)
+        for claim in regions:
+            if claim["path"] == path:
+                with contextlib.suppress(helper.RegionError):
+                    held.append(helper.mapped(c.root, claim, base))
+        size = len(helper.text_lines(c.root, base, path))
+        wider = helper.widened(start, end, insert, size, held)
+        said.append(f"--insert {insert} widens [{start}, {end}) to [{wider[0]}, {wider[1]}), so an insertion "
+                    f"{insert} its {'first' if insert == 'before' else 'last'} line falls inside")
+        start, end = wider
+    return start, end, said
+
+
+def written_lines(helper, c, claim: dict) -> str:
+    """Decision 9: a span written, with its first and last line as text at its base."""
+    try:
+        words = helper.span_lines(c.root, claim["baseHead"], claim["path"], claim["start"], claim["end"])
+    except (helper.RegionError, IndexError) as error:
+        words = f"its lines can't be read: {error}"
+    return f"{described_claim(claim)}: {words}"
+
+
+def change_carve(c, args) -> None:
+    """Decision 4: a path's claims recomputed in one write, or nothing written."""
+    helper = _region_ownership()
+    path = args.carve
+    if not helper.valid_path(path):
+        raise Stop("name a repository-relative file")
+    if not args.give:
+        raise Stop("a carve gives lines: --give LANE:START-END[@KEY], as many as it needs")
+    if args.start is not None or args.end is not None or args.lane or args.story:
+        raise Stop("a carve names its lines in each --give, not with --lane, --start, --end or --story")
+    if args.around is not None or args.insert:
+        raise Stop("a carve names each give's lines in its --give: LANE[+before|+after]:around=TEXT[@KEY]")
+    gives = carve_gives(args.give)
+    git("fetch", "-q", c.remote, c.base_branch)
+    base = git("rev-parse", c.base_ref)
+    carve_base = git("rev-parse", "--verify", "--end-of-options", f"{args.base or base}^{{commit}}")
+    asked: list[str] = []
+    try:
+        taken: list[tuple[int, int]] = []
+        for give in gives:
+            give["start"], give["end"], words = resolve_lines(
+                helper, c, path, carve_base, give.get("start"), give.get("end"), give.pop("around", None),
+                give.pop("insert", None), c.record_state().get("laneRegions", []), taken)
+            taken.append((give["start"], give["end"]))
+            asked += [f"{give['lane']}: {line}" for line in words]
+    except helper.RegionError as error:
+        raise Stop(f"the carve of {path} changes nothing: {error}") from error
+    said: dict = {}
+
+    def compute(doc: dict) -> list[str]:
+        state = doc["state"]
+        ownership = state.get("laneOwnership")
+        if ownership is None:
+            raise Stop("seed this record with lead-own --seed first")
+        for give in gives:
+            if give["lane"] not in ownership:
+                raise Stop(f"--give names {give['lane']}, which isn't a lane recorded for this delivery")
+            region_story(c, args, state, give["lane"], give.get("story"))
+        if owners_of(ownership, path):
+            raise Stop(f"{path} already has a whole-file claim")
+        if path in shared_outputs(c):
+            raise Stop(f"{path} is a declared shared output")
+        try:
+            result = helper.carve(c.root, list(state.get("laneRegions", [])), path, carve_base, gives)
+            spans = []
+            for claim in result["claims"]:
+                if claim["path"] == path:
+                    spans.append((helper.mapped(c.root, claim, base), claim))
+            for i, (one, first) in enumerate(spans):
+                for other, second in spans[i + 1:]:
+                    if helper.overlapping(one, other):
+                        raise Stop(f"the carve leaves {described_claim(first, one, base)} overlapping "
+                                   f"{described_claim(second, other, base)}")
+        except helper.RegionError as error:
+            raise Stop(f"the carve of {path} changes nothing: {error}") from error
+        said.clear()
+        said.update(result)
+        return ["--set", json.dumps({"/laneRegions": result["claims"]})]
+
+    patch_from(compute, f"the carve of {path}")
+    shown = lambda claim: {name: claim[name] for name in ("lane", "baseHead", "start", "end", "story") if name in claim}
+    state_tool("journal", "--kind", "ownership.carved", "--data", json.dumps(
+        {"path": path, "base": {"ref": c.base_branch, "head": carve_base},
+         "removed": [shown(claim) for claim in said["removed"]], "added": [shown(claim) for claim in said["added"]]}))
+    print(f"carved {path} at {carve_base}")
+    for line in asked:
+        print(f"  {line}")
+    for claim in said["removed"]:
+        print(f"  removed {described_claim(claim)}")
+    for claim in said["added"]:
+        print(f"  added {written_lines(helper, c, claim)}")
+
+
+def in_flight_before(c, state: dict, lane: str, landed: str, merge: str, story: str | None) -> list[str]:
+    """The lane's other stories still in flight on a branch that began before ``merge``: a claim carried to the merge
+    maps for each only once it merges the base. With ``story``, that story alone, if it is one of them."""
+    found = []
+    pieces = [*state.get("planned", []), *state.get("queue", [])]
+    for piece in pieces:
+        key = piece.get("subject")
+        if key == landed or key in found or c.lane_of(key, state) != lane or (story and key != story):
+            continue
+        if piece.get("stage") in ("merged", "settled"):
+            continue
+        heads = [ref for ref in (f"refs/remotes/{c.remote}/{c.branch(key)}", f"refs/heads/{c.branch(key)}")
+                 if run(["git", "rev-parse", "--verify", "--quiet", ref], check=False).returncode == 0]
+        if heads and any(run(["git", "merge-base", "--is-ancestor", merge, ref], check=False).returncode for ref in heads):
+            found.append(key)
+    return found
+
+
+def settle_landings(c) -> str:
+    """Decision 2, a supervisor step: each `candidate.merged` not settled yet, in journal order, one versioned patch
+    under the ownership lock, then its entries. A record that settled none, from an earlier release, starts at its
+    latest merge, or at 0 with none."""
+    helper = _region_ownership()
+    said = []
+    with ownership_lock(c):
+        # What to settle is read here; each write is computed again from the record it is pinned to.
+        merges = [entry for entry in load_state()["journal"] if entry["kind"] == "candidate.merged"]
+        state = c.record_state()
+        if "regionsSettled" not in state:
+            seed = merges[-1]["id"] if merges else 0
+            patch_from(lambda fresh: None if "regionsSettled" in fresh["state"] else {"regionsSettled": seed},
+                       "the first settled merge")
+            return f"settled from journal entry {seed}"
+        fetched = False
+        for merge in merges:
+            if merge["id"] <= state["regionsSettled"]:
+                continue
+            if not fetched:
+                git("fetch", "-q", c.remote, c.base_branch)
+                fetched = True
+            try:
+                landed = helper.merge_commit(c.root, c.base_ref, merge["data"]["head"])
+            except helper.RegionError as error:
+                raise Stop(f"can't find where {merge['subject']} landed on {c.base_ref}: {error}") from error
+            outcome: dict = {}
+
+            def compute(fresh: dict) -> dict | None:
+                state = fresh["state"]
+                if state.get("regionsSettled", 0) >= merge["id"]:
+                    return None
+                outcome.clear()
+                regions = state.get("laneRegions", [])
+                if not regions:
+                    return {"regionsSettled": merge["id"]}
+                if landed is None:
+                    return None  # a pass after the base holds it settles it
+                lane = c.lane_of(merge["subject"], state)
+                result = helper.settle(c.root, regions, merge["subject"], lane, landed)
+                outcome.update(result, lane=lane, inFlight={
+                    id(new): in_flight_before(c, state, lane, merge["subject"], landed, new.get("story"))
+                    for _, new in result["carried"]})
+                return {"laneRegions": result["regions"], "regionsSettled": merge["id"]}
+
+            try:
+                written = patch_from(compute, f"the claims {merge['subject']}'s landing settles")
+            except helper.RegionError as error:
+                raise Stop(f"settling {merge['subject']}'s landing: {error}") from error
+            if written is None and landed is None:
+                later = [entry for entry in merges if entry["id"] > merge["id"]]
+                if any(helper.merge_commit(c.root, c.base_ref, entry["data"]["head"]) for entry in later):
+                    raise Stop(f"can't find where {merge['subject']} (journal entry {merge['id']}) landed on "
+                               f"{c.base_ref}, though a later merge is there: its claims wait, and so does every later "
+                               "landing's settle, until the lead settles its claims by hand and sets regionsSettled")
+                said.append(f"{merge['subject']}'s merge isn't on {c.base_ref} yet")
+                break
+            subject = merge["subject"]
+            for claim in outcome.get("released", []):
+                state_tool("journal", "--kind", "ownership.released", "--lane", claim["lane"], "--subject", subject,
+                           "--data", json.dumps({"path": claim["path"], "span": {"first": claim["start"], "after": claim["end"]},
+                                                 "base": {"ref": c.base_branch, "head": claim["baseHead"]}, "merge": landed}))
+            for old, new in outcome.get("carried", []):
+                waiting = outcome["inFlight"][id(new)]
+                state_tool("journal", "--kind", "ownership.carried", "--lane", new["lane"], "--subject", subject,
+                           "--data", json.dumps({"path": new["path"], "from": {"first": old["start"], "after": old["end"]},
+                                                 "to": {"first": new["start"], "after": new["end"]}, "was": old["baseHead"],
+                                                 "base": {"ref": c.base_branch, "head": landed},
+                                                 **({"story": new["story"]} if new.get("story") else {}),
+                                                 **({"inFlight": waiting} if waiting else {})}))
+            if outcome:
+                said.append(f"{subject}: {len(outcome['released'])} released, {len(outcome['carried'])} carried, "
+                            f"{len(outcome['regrant'])} to regrant")
+                said += [f"carried {written_lines(helper, c, new)}" for _, new in outcome["carried"]]
+            state = c.record_state()
+    return "; ".join(said) or "nothing to settle"
+
+
+def regrant_needs(state: dict) -> list[dict]:
+    """Decision 2's "Needs you" items: each claim a landing left needing a regrant. None holds the close."""
+    items = []
+    for claim in state.get("laneRegions", []):
+        mark = claim.get("regrant")
+        if not isinstance(mark, dict):
+            continue
+        where = f"{claim['path']} [{claim['start']}, {claim['end']}) at {claim['baseHead'][:12]}"
+        items.append({"holding": False, "source": "the record's region claims",
+                      "text": f"{claim['lane']}'s claim on {where} needs a regrant after the merge {mark['merge'][:12]}: "
+                      f"{mark['reason'][:300]}",
+                      "clears": f"{flow_command()} lead-own --region {claim['path']} --lane {claim['lane']} ... "
+                      "regranting it, or --revoke-region revoking it", "kind": "regrant", "who": "lead",
+                      "lane": claim["lane"], **({"subject": claim["story"]} if claim.get("story") else {}),
+                      "fields": {"path": claim["path"], "detail": mark["reason"][:300]}})
+    return items
 
 
 def change_ownership(c, args) -> None:
+    if args.carve:
+        change_carve(c, args)
+        return
+    if args.give:
+        raise Stop("--give belongs to a carve: --carve PATH --give LANE:START-END[@KEY]")
     if not (args.region or args.revoke_region or args.claim) and any(
             value is not None for value in (args.base, args.start, args.end)):
         raise Stop("--base, --start and --end require --region or --revoke-region")
+    if args.story and not args.region:
+        raise Stop("--story names a region grant's story: use it with --region")
     if args.claim:
         change_claims(c, args)
         return
@@ -8395,8 +9170,10 @@ def accept_story(c, args) -> None:
     last = max(rounds, key=lambda e: e["data"]["round"], default=None)
     first_meta = handed_round_one_meta(c, key)
     story_lenses = accepted_lenses(list(c.lenses), doc["journal"], key, first_meta)
+    asked, unrun = accepted_brief(c, key, story_lenses, first_meta)
     print(f"  review lenses: {', '.join(story_lenses)}; reason: "
-          f"{(first_meta or {}).get('lensesReason') or 'reason not found'}")
+          f"{(first_meta or {}).get('lensesReason') or 'reason not found'}{asked}")
+    problems += unrun
     if not last or set(last["data"]["verdicts"]) != set(story_lenses) or set(last["data"]["verdicts"].values()) != {"approve"}:
         problems.append(f"the last journaled round is not approved by every lens of the story's set, "
                         f"{', '.join(story_lenses)}")
@@ -8937,6 +9714,13 @@ def lead_close(args) -> None:
     busy = [q["subject"] for q in state["queue"] if q.get("stage") not in ("merged", "stopped")]
     if busy or (state["meta"].get("checking") or {}).get("now"):
         raise Stop(f"the queue still holds work ({busy or 'a check is running'}); let it finish or stop it first")
+    skipped = None
+    if decision_owed(c, doc):
+        if args.without_compounding is None:
+            raise Stop(f"{DECISION_HOLD} is not recorded since the delivery last reopened: record it with "
+                       f"{flow_command()} lead-compound --required --ref REF, or --not-required --why TEXT, or close "
+                       "without it with lead-close --without-compounding WHY")
+        skipped = worded(args.without_compounding, "--without-compounding")
     # The run is stopped while the supervisor finishes its pass, which under --once waits on it, and again once the
     # supervisor has stopped, in case that pass started one.
     runs: list[str | None] = []
@@ -8946,6 +9730,11 @@ def lead_close(args) -> None:
             print(line)
     lead = c.lane_checkout(c.delivery)
     done, left = [], []
+    if skipped is not None:
+        # Journalled once the supervisor runs no pass, so none closes out beside this close on the decision it frees.
+        entry = journal_id(state_tool("journal", "--kind", COMPOUNDING_KIND, "--data",
+                                      json.dumps({"outcome": "skipped", "why": skipped})))
+        done.append(f"recorded {DECISION_HOLD} as skipped (journal entry {entry}): {skipped.strip()}")
     # Holds nothing: before the final render and the archive, so both carry it.
     try:
         posture = delivery_posture(c)
@@ -9031,6 +9820,8 @@ def lead_close(args) -> None:
     said = unregister_delivery(c)
     if said:
         done.append(said)
+    aligned, said = align_operator(c)
+    (left if aligned is False else done).append(said)
     # The final request is durable before the local view stops. The detached
     # watcher owns retries after this command's bounded wait.
     final=finalize_hosted(c,archive,closed)
@@ -9042,13 +9833,19 @@ def lead_close(args) -> None:
             done.append(said)
     except Stop as error:
         left.append(str(error))
+    try:
+        retired, kept = retire_lead(c)
+    except (Stop, OSError, ValueError) as error:
+        retired, kept = [], [f"the lead's checkout wasn't removed: {error}"]
+    done += retired
+    left += kept
     print(f"{c.delivery}: closed out")
     for line in done:
         print(f"  done: {line}")
     for line in left:
         print(f"  left: {line}")
-    print("  yours: archive the lane sessions, align your main checkout with the final base, and remove the lead's "
-          f"checkout {lead} when you no longer need it (its record is archived above).")
+    print("  lead: end or archive each lane session you started, where your host lets you, and name any you can't to "
+          "the operator.")
     if left:
         sys.exit(1)
 
@@ -9250,14 +10047,38 @@ def supervisor_down_words(state: Path) -> str:
 
 def waits_on(c) -> str:
     """What the supervisor's last pass found holding the close: its "Needs you", and the close condition's open parts.
-    Read from its pass log, where each pass writes it; empty before the first pass, or once nothing holds it."""
+    Read from its pass log, where each pass writes it; empty before the first pass, or once nothing holds it. The
+    finish lines not met and the compound-learning decision are read from the record as it stands, so a line marked
+    or a decision recorded since the pass is not named."""
+    unmet_lines = "finish lines not met: "  # as close_holds words that part
     path = lead_file(c, "supervisor.jsonl")
     lines = [line for line in path.read_text().splitlines() if line.strip()] if path.exists() else []
     try:
         last = json.loads(lines[-1]) if lines else {}
     except ValueError:  # a pass still writing its line
         last = {}
+    if not last:
+        return ""
     held = [str(item) for item in last.get("closeHeldBy") or []]
+    at = next((index for index, item in enumerate(held) if item.startswith(unmet_lines)), None)
+    if at is None:  # where close_holds puts it: after the stories not handed off or not merged
+        at = sum(1 for item in held if item.startswith(("not handed off: ", "not merged: ")))
+    held = [item for item in held if not item.startswith(unmet_lines)]
+    unmet = [line["id"] for line in (load_json(c.state / "state.json") or {}).get("finish") or []
+             if isinstance(line, dict) and not line.get("met")]
+    if unmet:
+        held.insert(at, unmet_lines + ", ".join(unmet))
+    # The compound-learning decision, as the record stands: a decision recorded since the pass drops it.
+    try:
+        owed = decision_owed(c, shown_record(c.release, c.state))
+    except (Stop, ValueError, OSError):
+        owed = DECISION_HOLD in held
+    at = held.index(DECISION_HOLD) if DECISION_HOLD in held else sum(
+        1 for item in held if item.startswith(("not handed off: ", "not merged: ", unmet_lines,
+                                               "lanes not idle or done: ", "not cleaned up: ")))
+    held = [item for item in held if item != DECISION_HOLD]
+    if owed and last.get("closeHeldBy") is not None:
+        held.insert(at, DECISION_HOLD)
     if not held:
         return ""
     shown = "; ".join(held[:5]) + (f"; and {len(held) - 5} more" if len(held) > 5 else "")
@@ -9325,8 +10146,13 @@ def finishing_command(c, doc: dict) -> str:
     # holding need waits on the lead, so a resumed supervisor would hold on it for good.
     with configured(c):  # doctor reads a delivery's close while its own configuration is the global one
         needs = [item for item in needs_you(c, doc, closing=True) if not clears_by_itself(item)]
-    unmet = [hold for hold in close_holds(c, doc, needs) if not hold.startswith("not cleaned up:")]
-    return "lead-run --resume" if not unmet else "lead-close"
+    unmet = [hold for hold in close_holds(c, doc, needs) if not hold.startswith("not cleaned up:") and hold != DECISION_HOLD]
+    command = "lead-run --resume" if not unmet else "lead-close"
+    if decision_owed(c, doc):
+        # The close waits on the decision first, whichever finishes it.
+        return (f"lead-compound --required --ref REF, or --not-required --why TEXT, then {command}; or lead-close "
+                "--without-compounding WHY")
+    return command
 
 
 @contextlib.contextmanager
@@ -9354,7 +10180,7 @@ def closed_status(c) -> str | None:
     if progress == "partway":
         command = finishing_command(c, doc)
         return (f"stopped partway through the close; finish it with {flow_command()} {command}"
-                + ("; lead-close doesn't wait for the tracker" if command == "lead-close" else ""))
+                + ("; lead-close doesn't wait for the tracker" if command.endswith("lead-close") else ""))
     if progress == "finished":
         return "stopped; the delivery is closed. " + (closed_words(closed) if closed else "")
     if closed:
@@ -9363,10 +10189,10 @@ def closed_status(c) -> str | None:
 
 
 def closed_words(closed: dict) -> str:
-    """Where a closed delivery went, and what is left: the friction note to write up, and the host's steps."""
+    """Where a closed delivery went: its archive, and the friction note archived in it, written up before the close."""
     note = closed.get("friction")
-    return f"Archive {closed.get('archive')}" + (f"; write up the friction note {note}, then archive the lane "
-                                                  "sessions" if note else "")
+    return f"Archive {closed.get('archive')}" + (f"; its friction note is {note}; the lead archives the lane sessions "
+                                                  f"it started and runs {flow_command()} lead-retire" if note else "")
 
 
 def supervisor_off() -> bool:
@@ -9648,11 +10474,60 @@ def journal_finish_met(c, doc: dict) -> list[str]:
                                                             for entry in fresh["state"]["finish"]]},
                        f"finish line {line['id']} met")
         if not journalled:
-            state_tool("journal", "--kind", "finish.met", "--subject", line["id"], "--data", json.dumps({"finish": line["id"]}))
+            state_tool("journal", "--kind", "finish.met", "--subject", line["id"], "--data",
+                       json.dumps({"finish": line["id"], "by": "supervisor"}))
             said.append(f"finish line {line['id']} met")
         # Logged last, so a pass whose journal failed leaves the line for the next pass to journal.
         append_log("finish", c.delivery, {"line": line["id"]})
     return said
+
+
+def lead_finish(args) -> None:
+    """Mark a finish line the record can't prove met, with the lead's evidence: the mark and its finish.met, with
+    `by: lead`, in one write, so a failure leaves neither. Refused, with nothing written, for a line the record
+    doesn't hold, a line the record proves, a line already met, and empty evidence. Then the live view is rendered
+    once, as a pass renders it, so the line drops out of the view and the status line at once."""
+    c = cfg()
+    evidence = args.evidence
+    if evidence.startswith("@"):
+        try:
+            evidence = Path(evidence[1:]).expanduser().read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            raise Stop(f"--evidence {args.evidence}: the file can't be read: {error}") from None
+    evidence = evidence.strip()
+    if not evidence:
+        raise Stop("--evidence is required: say what shows the line met, or name a file with @FILE, not empty or "
+                   "only spaces")
+    plan = load_json(c.state / PLAN_FILE) or {}
+    declared = {line["id"]: line for line in [*c.finish, *(plan.get("finish") or [])] if isinstance(line, dict)}
+    for _ in range(PATCH_ATTEMPTS):
+        doc = load_state()
+        line = next((entry for entry in doc["state"]["finish"] if entry["id"] == args.line), None)
+        if line is None:
+            held = ", ".join(entry["id"] for entry in doc["state"]["finish"]) or "none"
+            raise Stop(f"the record holds no finish line {args.line}: its lines are {held}")
+        if not leads_line(declared.get(args.line, line)):
+            raise Stop(f"finish line {args.line}: the record proves this line: the supervisor marks it when its "
+                       "criteria and proofs are done")
+        if line.get("met"):
+            raise Stop(f"finish line {args.line} is already met")
+        done = state_tool("journal", "--kind", "finish.met", "--subject", args.line,
+                          "--data", json.dumps({"finish": args.line, "evidence": evidence, "by": "lead"}),
+                          "--element", f"finish[id={args.line}]", "--patch", json.dumps({"met": True}),
+                          "--version", str(doc["state"]["version"]), check=False)
+        try:  # the state tool answers with one JSON document, pretty-printed
+            answer = json.loads(done.stdout)
+        except ValueError:
+            answer = {}
+        answer = answer if isinstance(answer, dict) else {}
+        if done.returncode == 0:
+            print(f"finish line {args.line} met (journal entry {answer['entry']['id']}); views: {render_views(c)}")
+            return
+        if answer.get("code") != "version_stale":
+            raise Stop(f"the state tool refused finish line {args.line}: "
+                       f"{(answer.get('error') or done.stderr or done.stdout).strip()[-600:]}")
+    raise Stop(f"version_stale: the record kept changing while finish line {args.line} was marked; tried "
+               f"{PATCH_ATTEMPTS} times, reading it afresh each time. Run it again once the other writer settles")
 
 
 def render_views(c, only: str | None = None) -> str:
@@ -10315,6 +11190,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           + "journalling base.repaired", "kind": "baseHealth" if found else "baseBroken", "who": "lead",
                           "since": events[-1].get("at"), "fields": {"detail": entry_said(events[-1])[:300]}})
     items += lane_needs(doc["state"])
+    items += regrant_needs(doc["state"])
     for item in doc["state"]["queue"]:
         merge = unaccepted_merge(doc, item)
         if merge:
@@ -10357,8 +11233,20 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           f"refuses drafts: {', '.join(drafts)}. Mark each ready, then lead-accept --requeue it if it "
                           "stopped", "clears": "marking each ready, then lead-accept --requeue for one that stopped",
                           "kind": "drafts", "who": "operator", "fields": {"subjects": drafts}})
+    if decision_owed(c, doc) and not open_work(c, doc):
+        stub = friction_stub_path(c)
+        items.append({"holding": True, "source": COMPOUNDING_SOURCE,
+                      "text": f"The compound-learning decision: write up the friction stub {stub} (the supervisor "
+                      "writes it once nothing else holds the close), run compound-learning on it, and record its "
+                      f"decision with {flow_command()} lead-compound",
+                      "clears": f"{flow_command()} lead-compound --required --ref REF, or --not-required --why TEXT",
+                      "kind": "compounding", "who": "lead", "fields": {"stub": str(stub)}})
+    items += lane_change_needs(c, doc["state"])
     items += record_needs(doc, items)
     return say_needs(c, doc, items + waits_needing(c, doc, items))
+
+
+COMPOUNDING_SOURCE = "compound-learning"
 
 
 def lane_named(lane: str) -> str:
@@ -10604,6 +11492,283 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
     return added
 
 
+# What each lane has pushed. A pass reads every assigned lane's story branch on the remote, as a diff from its merge
+# base with the delivery base, and writes what it changed beside the record: "Needs you" names a change outside the
+# lane's ground from it, and the line map's files view draws it. It refuses nothing; acceptance still decides.
+LANE_CHANGES_FILE = "lane-changes.json"
+LANE_CHANGES_SPEC = "delivery-lane-changes/1"
+# The diff a branch read takes: the one region_ownership.hunks takes, so a change's old lines are the hunks it checks.
+LANE_DIFF = ("diff", "--text", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--no-indent-heuristic",
+             "--inter-hunk-context=0", "--unified=0", "--diff-algorithm=myers")
+LANE_HUNK = re.compile(r"^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@", re.M)
+# The line that names where a change sits, on the new side: the nearest `def` or `class` in Python, `function` or
+# `const NAME =` in JavaScript, and a heading in Markdown.
+ENCLOSING_NAMES = {
+    "python": re.compile(r"^\s*(?:async\s+)?(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)"),
+    "javascript": re.compile(r"^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)"
+                             r"|^\s*(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*="),
+    "markdown": re.compile(r"^#{1,6}\s+(.*?)\s*#*\s*$"),
+}
+ENCLOSING_KINDS = {".py": "python", ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+                   ".jsx": "javascript", ".ts": "javascript", ".tsx": "javascript", ".md": "markdown"}
+# The files view's own bound: past it the claimed files are cut, and the cut is said.
+LANE_FILES_LIMIT = 400
+
+
+def enclosing_name(path: str, lines: list[str], line: int) -> str | None:
+    """The name of the block line `line` (one-based) sits in, on the new side: the line itself when it names one, else
+    the nearest one above it. In Python and JavaScript, the nearest one indented less than the code it holds, so a
+    sibling's nested function above is passed over; in Markdown, the nearest heading."""
+    kind = ENCLOSING_KINDS.get(os.path.splitext(path)[1].lower())
+    if kind is None or not lines:
+        return None
+    pattern = ENCLOSING_NAMES[kind]
+
+    def named(text: str) -> str | None:
+        found = pattern.match(text)
+        return next((group for group in found.groups() if group), None) if found else None
+
+    index = min(max(line, 1), len(lines)) - 1
+    if named(lines[index]):
+        return named(lines[index])
+    if kind == "markdown":
+        return next((named(text) for text in reversed(lines[:index]) if named(text)), None)
+    indent = lambda text: len(text) - len(text.lstrip())
+    below = indent(lines[index]) if lines[index].strip() else None
+    for text in reversed(lines[:index]):
+        if not text.strip():
+            continue
+        if below is None or indent(text) < below:
+            if named(text):
+                return named(text)
+            below = indent(text)
+    return None
+
+
+def read_lane_branch(c, story: str, base: str) -> dict | None:
+    """One lane's story branch as the remote holds it, read as a diff from its merge base with `base`: its head, that
+    merge base, and per changed file each change's old first line and size, new first line and size, and enclosing
+    name. None when the branch isn't pushed. A branch that can't be read says why, with no files."""
+    branch = c.branch(story)
+    said = {"story": story, "branch": branch}
+    listed = run(["git", "ls-remote", c.remote, f"refs/heads/{branch}"], cwd=c.root, check=False)
+    if listed.returncode != 0:
+        return {**said, "unreadable": f"git ls-remote failed: {(listed.stderr or listed.stdout).strip()[-300:]}"}
+    if not listed.stdout.strip():
+        return None
+    head = listed.stdout.split()[0]
+    said.update(head=head, base=base)
+    try:
+        run(["git", "fetch", "-q", "--no-write-fetch-head", c.remote, f"+refs/heads/{branch}:refs/remotes/{c.remote}/{branch}"],
+            cwd=c.root)
+        merge_base = git("merge-base", base, head, cwd=c.root)
+        paths = list(filter(None, run(["git", "diff", "--name-only", "--no-renames", "-z", merge_base, head],
+                                      cwd=c.root).stdout.split("\0")))
+        files = []
+        for path in paths:
+            # Not strictly decoded: a binary or non-UTF-8 file is still a change the read reports, by its hunks.
+            patch = run(["git", *LANE_DIFF, merge_base, head, "--", path], cwd=c.root, errors="replace").stdout
+            shown = run(["git", "show", f"{head}:{path}"], cwd=c.root, check=False, errors="replace")
+            text = shown.stdout.splitlines() if shown.returncode == 0 and "\0" not in shown.stdout else []
+            changes = []
+            for match in LANE_HUNK.finditer(patch):
+                first, removed, start, added = (int(n) if n is not None else 1 for n in match.groups())
+                changes.append({"old": first if removed else first + 1, "removed": removed,
+                                "start": start if added else start + 1, "added": added,
+                                "name": enclosing_name(path, text, start if added else start)})
+            files.append({"path": path, "changes": changes})
+    except (Stop, UnicodeError) as error:
+        return {**said, "unreadable": str(error)[-300:]}
+    return {**said, "mergeBase": merge_base, "readAt": now(), "files": files}
+
+
+def lane_holdings(c, lane: str, read: dict, state: dict) -> dict:
+    """The read with what the lane holds of each file, by the ownership acceptance uses: `holds` is "file", "span",
+    "shared" or "none", and each change is `inside` the lane's ground or not. On a file the lane holds by span, a change
+    outside its spans is outside, with the file still "span"; a file it can't change by span at all is "none"."""
+    if "files" not in read:
+        return read
+    helper = _region_ownership()
+    _, outside = candidate_ownership(c, lane, read["mergeBase"], read["head"], state)
+    regions = state.get("laneRegions", [])
+    shared = shared_outputs(c) if "laneOwnership" in state else set()
+    files = []
+    for entry in read["files"]:
+        path = entry["path"]
+        refused = path in outside or any(item.startswith(f"{path}: ") for item in outside)
+        changes = [dict(change, inside=not refused) for change in entry["changes"]]
+        holds = "shared" if path in shared else "span" if any(claim["path"] == path for claim in regions) else "file"
+        if refused and holds == "span" and not any(claim["path"] == path and claim["lane"] == lane for claim in regions):
+            holds = "none"  # other lanes share it by span, and this lane holds none of it
+            changes = [dict(change, inside=False) for change in changes]
+        elif refused and holds == "span":
+            spans = []
+            for claim in regions:
+                if claim["path"] == path and claim["lane"] == lane:
+                    with contextlib.suppress(helper.RegionError):
+                        spans.append(helper.mapped(c.root, claim, read["mergeBase"]))
+            try:
+                # What no span can hold, as acceptance's check refuses it: a creation, a deletion, a type, mode or
+                # binary change.
+                old_mode, _ = helper.entry(c.root, read["mergeBase"], path)
+                new_mode, _ = helper.entry(c.root, read["head"], path)
+                helper.require_text(c.root, read["head"], path)
+                whole = old_mode != new_mode
+            except helper.RegionError:
+                whole = True
+            for change in changes:
+                first, removed = change["old"], change["removed"]
+                change["inside"] = any(start <= first and first + removed <= end if removed else start < first < end
+                                       for start, end in spans)
+            # Refused for the file itself, or with no span that maps (a claim needing a regrant), or with every
+            # change inside: the lane can't change this file by span, so it is held as no file is.
+            if whole or not spans or not changes or all(change["inside"] for change in changes):
+                holds = "none"
+                changes = [dict(change, inside=False) for change in changes]
+        elif refused:
+            holds = "none"
+        files.append({"path": path, "holds": holds, "changes": changes})
+    return {**read, "files": files}
+
+
+def claimed_files(c, state: dict, base: str) -> dict:
+    """The delivery's claimed files at `base`, for the files view: each tracked file a lane's whole-file claim names,
+    and each file region claims share, with every claim's span mapped to `base` and the file's length there. A span
+    that no longer maps keeps its granted lines and says it needs a regrant."""
+    helper = _region_ownership()
+    ownership = c.effective_ownership(state)
+    regions = state.get("laneRegions", [])
+    tracked = git("ls-tree", "-r", "--name-only", base, cwd=c.root, check=False).splitlines()
+    regional = sorted({claim["path"] for claim in regions})
+    whole = [path for path in tracked if path not in regional and owners_of(ownership, path)]
+    files = []
+    for path in regional + whole:
+        if len(files) >= LANE_FILES_LIMIT:
+            break
+        shown = run(["git", "show", f"{base}:{path}"], cwd=c.root, check=False)
+        length = len(shown.stdout.splitlines()) if shown.returncode == 0 else 0
+        if path in regional:
+            spans = []
+            for claim in regions:
+                if claim["path"] != path:
+                    continue
+                try:
+                    start, end = helper.mapped(c.root, claim, base)
+                    spans.append({"lane": claim["lane"], "start": start, "end": end})
+                except helper.RegionError:
+                    spans.append({"lane": claim["lane"], "start": claim["start"], "end": claim["end"], "regrant": True})
+            files.append({"path": path, "lines": length, "spans": sorted(spans, key=lambda span: span["start"])})
+        else:
+            files.append({"path": path, "lines": length, "lanes": owners_of(ownership, path)})
+    return {"files": files, **({"more": len(regional) + len(whole) - len(files)}
+                               if len(regional) + len(whole) > len(files) else {})}
+
+
+def read_lane_changes(folder: Path) -> dict | None:
+    """The last pass's lane-changes.json, or None when there is none or it can't be read."""
+    try:
+        written = json.loads((folder / LANE_CHANGES_FILE).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return written if isinstance(written, dict) and written.get("spec") == LANE_CHANGES_SPEC else None
+
+
+def write_lane_changes(c) -> str:
+    """Read every assigned lane's pushed story branch and write lane-changes.json beside the record. A branch at the
+    same base and head as the last pass's read is not read again: its read, with its read time, is kept, and only
+    what the lane holds is judged afresh, so a grant shows at once."""
+    doc = load_state()
+    state = doc["state"]
+    base = git("rev-parse", "--verify", f"{c.base_ref}^{{commit}}", cwd=c.root)
+    last = (read_lane_changes(c.state) or {}).get("lanes") or {}
+    lanes = {}
+    for lane in state["lanes"]:
+        story = lane_story(state, lane["id"])
+        if story is None:
+            continue
+        earlier = last.get(lane["id"]) if isinstance(last.get(lane["id"]), dict) else {}
+        read = None
+        if earlier.get("story") == story["subject"] and earlier.get("base") == base and "files" in earlier:
+            listed = run(["git", "ls-remote", c.remote, f"refs/heads/{earlier['branch']}"], cwd=c.root, check=False)
+            if listed.returncode == 0 and listed.stdout.split()[:1] == [earlier.get("head")]:
+                with contextlib.suppress(KeyError, TypeError):  # a read this release can't take is read again
+                    kept = {name: earlier[name] for name in ("story", "branch", "head", "base", "mergeBase", "readAt")}
+                    kept["files"] = [{"path": f["path"], "changes": [{name: change[name] for name in
+                                                                      ("old", "removed", "start", "added", "name")}
+                                                                     for change in f["changes"]]} for f in earlier["files"]]
+                    read = kept
+        if read is None:
+            read = read_lane_branch(c, story["subject"], base)
+        if read is None:
+            continue
+        try:
+            lanes[lane["id"]] = lane_holdings(c, lane["id"], read, state)
+        except Stop as error:
+            lanes[lane["id"]] = {name: read[name] for name in ("story", "branch", "head", "base") if name in read} | {
+                "unreadable": str(error)[-300:]}
+    written = {"spec": LANE_CHANGES_SPEC, "at": now(), "base": base, "lanes": lanes,
+               **(claimed_files(c, state, base) if state.get("laneRegions") else {})}
+    path = c.state / LANE_CHANGES_FILE
+    staging = path.with_name(f".{LANE_CHANGES_FILE}.{os.getpid()}")
+    staging.write_text(json.dumps(written, indent=2) + "\n")
+    with open(c.state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            os.replace(staging, path)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+    return f"{len(lanes)} branch(es)"
+
+
+def lines_said(first: int, count: int) -> str:
+    return f"line {first}" if count <= 1 else f"lines {first}-{first + count - 1}"
+
+
+def lane_change_needs(c, state: dict) -> list[dict]:
+    """The "Needs you" items the last branch read raises, none of them holding the close: a changed file its lane
+    doesn't hold, each change outside the spans of a file it holds by span, naming the lines, and a branch that can't
+    be read, in place of that lane's items. A declared shared output, and a change inside a span, raise nothing."""
+    written = read_lane_changes(c.state)
+    if written is None:
+        return []
+    assigned = {lane["id"] for lane in state["lanes"]}
+    items = []
+    for lane, read in sorted((written.get("lanes") or {}).items()):
+        if lane not in assigned or not isinstance(read, dict):
+            continue
+        named = lane_named(lane)
+        named = named[:1].upper() + named[1:]
+        facts = {"holding": False, "who": "lead", "lane": lane, "subject": read.get("story")}
+        if "unreadable" in read:
+            items.append({**facts, "source": f"{lane}'s branch {read.get('branch')}", "kind": "laneUnreadable",
+                          "text": f"{named}'s branch `{read.get('branch')}` can't be read: {str(read['unreadable'])[:300]}",
+                          "clears": "a pass that reads the branch",
+                          "fields": {"branch": read.get("branch"), "detail": str(read["unreadable"])[:300]}})
+            continue
+        for entry in read.get("files") or []:
+            path, changes = entry["path"], entry.get("changes") or []
+            source = f"{lane}'s branch {read.get('branch')} at {str(read.get('head'))[:10]}"
+            if entry.get("holds") == "none":
+                items.append({**facts, "source": source, "kind": "laneOutside",
+                              "text": f"{named} changed `{path}`, which it doesn't hold.",
+                              "clears": "the branch no longer changing it, or the lead granting the file",
+                              "fields": {"path": path, "detail": "It doesn't hold the file."}})
+                continue
+            for change in changes:
+                if change.get("inside", True):
+                    continue
+                # Named by the merge base's lines, which the span check judged and a grant names.
+                lines = (lines_said(change["old"], change["removed"]) if change["removed"]
+                         else f"before line {change['old']}")
+                said = (f"changed {lines}" if change["removed"]
+                        else f"added {change['added']} line{'s' if change['added'] != 1 else ''} {lines}")
+                items.append({**facts, "source": source, "kind": "laneOutside",
+                              "text": f"{named} {said} of `{path}`, outside its span.",
+                              "clears": "the branch no longer changing those lines, or the lead granting them",
+                              "fields": {"path": path, "lines": lines, "detail": f"It {said}, outside its span."}})
+    return items
+
+
 NEEDS_FILE = "needs-you.json"
 
 
@@ -10697,14 +11862,8 @@ def removed_subjects(c) -> set[str]:
 
 def close_holds(c, doc: dict, needs: list[dict]) -> list[str]:
     """What holds the close: the close condition, read as the reasons it doesn't hold yet."""
-    state, removed = doc["state"], removed_subjects(c)
-    holds = []
-    planned = [p["subject"] for p in state.get("planned", []) if p["subject"] not in removed and p["stage"] != "settled"]
-    if planned:
-        holds.append(f"not handed off: {', '.join(planned)}")
-    unmerged = [q["subject"] for q in state["queue"] if q["stage"] != "merged" and q["subject"] not in removed]
-    if unmerged:
-        holds.append(f"not merged: {', '.join(unmerged)}")
+    state = doc["state"]
+    holds = open_work(c, doc)
     unmet = [line["id"] for line in state["finish"] if not line.get("met")]
     if unmet:
         holds.append(f"finish lines not met: {', '.join(unmet)}")
@@ -10717,7 +11876,9 @@ def close_holds(c, doc: dict, needs: list[dict]) -> list[str]:
             and c.lane_checkout(q["subject"]).exists()]
     if left:
         holds.append(f"not cleaned up: {', '.join(left)}")
-    holds += [item["text"] for item in needs if item["holding"]]
+    if decision_owed(c, doc):
+        holds.append(DECISION_HOLD)
+    holds += [item["text"] for item in needs if item["holding"] and item["source"] != COMPOUNDING_SOURCE]
     return holds
 
 
@@ -11269,7 +12430,8 @@ FOLLOWUP = "Deferred finding {finding} of {story} becomes follow-up {story}-{fin
 
 
 def followups_step(c, doc: dict) -> tuple[bool, str]:
-    """One follow-up item per deferred finding, keyed by story and finding id, which is also its followups[] id.
+    """One follow-up item per deferred finding, and per repo gap (its finding gap-<journal id>), keyed by story and
+    finding id, which is also its followups[] id.
     Each is journalled as a decision marked for the tracker publisher to file; the step holds until the publisher's
     ledger covers every one: a transient failure is retried by its next run, and a permanent one is shown. By hand,
     the record's followups are all there is."""
@@ -11283,6 +12445,11 @@ def followups_step(c, doc: dict) -> tuple[bool, str]:
         missing = []
     else:
         missing = [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
+    # Each repo gap noted since the last close is a follow-up too, filed the same way: a gap is no review finding, so
+    # noDeferrals leaves it one.
+    found = gaps.gaps(doc["journal"], REOPENING)
+    if found:
+        missing += [f for f in gaps.followups(found, c.delivery) if f"{f['story']}-{f['finding']}" not in have]
     for finding in missing:
         with marked_decision(c, followup=finding) as written:
             written.append(journal_id(state_tool("journal", "--kind", "followup.filed", "--subject",
@@ -11308,6 +12475,79 @@ def followups_step(c, doc: dict) -> tuple[bool, str]:
     return True, f"follow-ups: {len(marks)} filed or refused"
 
 
+def gap_writer(c) -> tuple[str, str | None]:
+    """Who notes a gap from this checkout: ("lead", None) in the lead checkout, else (the lane's id, its story) in a
+    story's own checkout, read from its branch."""
+    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=c.root, check=False)
+    if is_lead_checkout(c, branch):
+        return "lead", None
+    key = next((key for key in c.stories if c.branch(key) == branch), None)
+    if key is None:
+        raise Stop(f"run note-gap in the lead checkout, or in a story's own checkout on its branch: {branch} is neither")
+    return c.lane_of(key), key
+
+
+def running_release(c) -> tuple[str, str]:
+    """The release id and generation of the generation running, from its own entry in the receipt, as the round brief
+    reads them."""
+    return release_tuple()["releaseId"], c.release.resolve().name
+
+
+def note_gap(args) -> None:
+    """Journal gap.noted, as a new gap or as an occurrence of an open one, after listing the open
+    gaps of the same class it could repeat. A lane notes under its own writer, on its current story."""
+    c = cfg()
+    text, why = worded(args.text, "--text"), worded(args.why, "--why")
+    if args.gap_command is not None:
+        worded(args.gap_command, "--command")
+    by, story = gap_writer(c)
+    subject = args.subject or (c.delivery if by == "lead" else story)
+    evidence = Path(args.evidence).resolve() if args.evidence else None
+    if args.cls == "workflow" and evidence is None:
+        raise Stop("a workflow gap needs --evidence: the command's output, or the script you wrote to get the "
+                   "behaviour the workflow should give")
+    if evidence is not None and not evidence.is_file():
+        raise Stop(f"--evidence {args.evidence}: no such file")
+    release = generation = None
+    try:
+        release, generation = running_release(c)
+    except Stop:
+        if args.cls == "workflow":
+            raise
+    journal = load_state()["journal"]
+    try:
+        occurrence = gaps.occurrence_of(journal, args.cls, text, release, args.same_as)
+    except gaps.Refused as error:
+        raise Stop(str(error)) from None
+    listed = gaps.listing(journal, args.cls, release)
+    print(f"open {args.cls} gaps{' on ' + release if args.cls == 'workflow' else ''}, by journal id"
+          f"{' (name one with --same-as N)' if listed else ''}:")
+    print("\n".join(listed) or "  (none)")
+    data = {"class": args.cls, "text": text, "why": why, "by": by,
+            **({"release": release, "generation": generation} if release else {}),
+            **({"command": args.gap_command} if args.gap_command is not None else {}),
+            **({"occurrenceOf": occurrence} if occurrence is not None else {})}
+    entry_id = gaps.next_id(journal)
+    if evidence is not None:
+        try:
+            data["evidence"] = gaps.copy_evidence(c.state, entry_id, evidence)
+        except gaps.Refused as error:
+            raise Stop(str(error)) from None
+    writer = [] if by == "lead" else ["--writer", "lane", "--lane", by]
+    done = state_tool("journal", *writer, "--kind", "gap.noted", "--subject", subject, "--data", json.dumps(data),
+                      check=False)
+    if done.returncode != 0:
+        if evidence is not None:
+            gaps.drop_evidence(c.state, entry_id)
+        raise Stop(f"journal {gaps.KIND} failed: {(done.stderr or done.stdout).strip()[-600:]}")
+    number = journal_id(done)
+    if number != entry_id and evidence is not None:
+        raise Stop(f"gap.noted is journal entry {number}, but its evidence was copied under {entry_id}: another entry "
+                   f"was journalled at the same time; the evidence is at {c.state / data['evidence']['path']}")
+    print(f"noted {args.cls} gap {number} on {subject}" + (f", an occurrence of gap {occurrence}" if occurrence else "")
+          + (f"; evidence copied to {c.state / data['evidence']['path']}" if evidence is not None else ""))
+
+
 # New work after a close reopens the delivery, as the line map reads it.
 REOPENING = ("lane.assigned", "candidate.handed", "check.started")
 
@@ -11326,6 +12566,56 @@ def latest_close(journal: list[dict]) -> dict | None:
 def last_close(journal: list[dict]) -> dict | None:
     """The latest delivery.closed entry, reopened since or not."""
     return next((e for e in sorted(journal, key=lambda e: e["id"], reverse=True) if e["kind"] == "delivery.closed"), None)
+
+
+COMPOUNDING_KIND = "compounding.recorded"
+# How the close condition names the compound-learning decision while it is owed.
+DECISION_HOLD = "the compound-learning decision"
+
+
+def reopened_at(journal: list[dict]) -> int:
+    """The id of the entry that last reopened the delivery after a close, or 0 when it never was."""
+    at, closed = 0, False
+    for entry in sorted(journal, key=lambda e: e["id"]):
+        if entry["kind"] == "delivery.closed":
+            closed = True
+        elif entry["kind"] in REOPENING and closed:
+            at, closed = entry["id"], False
+    return at
+
+
+def compounding_decision(journal: list[dict]) -> dict | None:
+    """The latest compound-learning decision recorded since the delivery last reopened, or None."""
+    since = reopened_at(journal)
+    return next((e for e in sorted(journal, key=lambda e: e["id"], reverse=True)
+                 if e["kind"] == COMPOUNDING_KIND and e["id"] > since), None)
+
+
+def close_finished(c, doc: dict) -> bool:
+    """Whether the delivery's close has finished: its delivery.closed entry is named by a finished mark or by
+    closed.json. Such a close stands as it is, with or without a decision, as a record kept before decisions does."""
+    closed = latest_close(doc["journal"])
+    return closed is not None and (close_progress(doc) == "finished" or kept_close(c, closed) is not None)
+
+
+def decision_owed(c, doc: dict) -> bool:
+    """Whether the close waits on the compound-learning decision: none recorded since the latest reopening, and no
+    finished close to exempt it."""
+    return compounding_decision(doc["journal"]) is None and not close_finished(c, doc)
+
+
+def open_work(c, doc: dict) -> list[str]:
+    """The work still open, as the close condition words it: a planned story not settled, and a queued one not
+    merged, each leaving out the subjects a plan change removed."""
+    state, removed = doc["state"], removed_subjects(c)
+    holds = []
+    planned = [p["subject"] for p in state.get("planned", []) if p["subject"] not in removed and p["stage"] != "settled"]
+    if planned:
+        holds.append(f"not handed off: {', '.join(planned)}")
+    unmerged = [q["subject"] for q in state["queue"] if q["stage"] != "merged" and q["subject"] not in removed]
+    if unmerged:
+        holds.append(f"not merged: {', '.join(unmerged)}")
+    return holds
 
 
 def tracker_owed(c, doc: dict, closed: dict) -> str | None:
@@ -11428,6 +12718,105 @@ def finish_close(c, closed: dict, archive: Path) -> list[str]:
     return ["marked the close finished in the record and its archive"]
 
 
+def align_operator(c) -> tuple[bool | None, str]:
+    """Fast-forward the operator's checkout to its branch's remote tip, when it is clean and on the delivery's base or
+    its integration target, so the operator's main checkout holds what the delivery landed. Returns True when it is
+    aligned, None when the operator's own work holds it, another branch or uncommitted changes, which are theirs to
+    keep, and False when it can't fast-forward, with the line that says which."""
+    operator = c.main
+    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=operator, check=False)
+    dirty = git("status", "--porcelain", cwd=operator, check=False)
+    if branch not in {c.base_branch, c.raw.get("integrationTarget")} - {None}:
+        return None, f"left {operator} where it is: it is on {branch}"
+    ref = f"{c.remote}/{branch}"
+    if dirty:
+        return None, f"left {operator} where it is: it has uncommitted changes; align it with {ref} once they're settled"
+    fetched = run(["git", "fetch", "-q", c.remote, branch], cwd=operator, check=False)
+    if fetched.returncode != 0:
+        return False, f"left {operator} where it is: {c.remote}/{branch} couldn't be fetched"
+    moved = run(["git", "merge", "--ff-only", "-q", ref], cwd=operator, check=False)
+    if moved.returncode == 0:
+        return True, f"fast-forwarded {operator} to {ref}"
+    return False, f"left {operator} where it is: it can't fast-forward to {ref}"
+
+
+def retire_lead(c) -> tuple[list[str], list[str]]:
+    """Remove the lead's checkout once the close's archive holds everything in it: the delivery closed with its archive
+    landed, nothing of the delivery still runs from it, the record has nothing the archive lacks, no other checkout sits
+    inside it, and it has no change and its head is pushed. Never the operator's main checkout. What the close wrote
+    beside the record after the archive, its closed.json and the hosted sidecars, is copied into the archive first. The
+    command runs from that checkout, so it moves to the main checkout before removing it. Returns (what it did, why it
+    kept it)."""
+    lead = c.lane_checkout(c.delivery)
+    if not lead.exists() or lead.resolve() == c.main.resolve():
+        return [], []
+    doc = load_state()
+    kept = kept_close(c, latest_close(doc["journal"]))
+    if kept is None:
+        return [], [f"{lead} kept: the delivery's close hasn't archived the record yet"]
+    archive = Path(kept["archive"])
+    archived_ids, unreadable = set(), False
+    journal = archive / c.state.name / "journal.jsonl"
+    try:
+        for line in journal.read_text().splitlines():
+            if line.strip():
+                entry = json.loads(line)
+                archived_ids.add(entry.get("id") if isinstance(entry, dict) else None)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        unreadable = True
+    if unreadable:
+        return [], [f"{lead} kept: the archived journal {journal} can't be read"]
+    since = [entry["id"] for entry in doc["journal"] if entry.get("id") not in archived_ids]
+    if since:
+        return [], [f"{lead} kept: the record has {len(since)} journal entr{'y' if len(since) == 1 else 'ies'} the "
+                    f"archive lacks ({', '.join(map(str, since[:5]))}); close it again so the archive holds them"]
+    running = [pid for pid, _ in delivery_processes(lead, c.state, c.delivery, c.main)] + \
+        sorted(owned_hosted_processes(c))
+    if running:
+        return [], [f"{lead} kept: the delivery still runs from it (pid {', '.join(map(str, running))}); run "
+                    f"{flow_command()} lead-retire once they have stopped"]
+    nested = [path for path in worktrees_under(lead) if path.resolve() != lead.resolve()]
+    if nested:
+        return [], [f"{lead} kept: other checkouts sit inside it ({', '.join(map(str, nested[:3]))})"]
+    dirty = git("status", "--porcelain", "--untracked-files=all", cwd=lead, check=False)
+    if dirty:
+        return [], [f"{lead} kept: it has uncommitted or untracked files:\n      " + dirty[:400].replace("\n", "\n      ")]
+    head = git("rev-parse", "HEAD", cwd=lead)
+    if not git("branch", "-r", "--contains", head, cwd=lead, check=False):
+        return [], [f"{lead} kept: its head {head[:12]} is on no remote branch"]
+    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=lead, check=False)
+    pushed_tip = remote_head(branch) if branch and branch != "HEAD" else ""
+    # The record's folder and flow log as they stand now, hosted sidecars included, since the archive was taken before
+    # the close wrote its last files beside them; ignored files leave with the checkout.
+    retired = archive / "at-retire"
+    for source in (c.state, c.flow_log):
+        if source.exists():
+            shutil.copytree(source, retired / source.name, dirs_exist_ok=True)
+    os.chdir(c.main)
+    removed = run(["git", "worktree", "remove", str(lead)], cwd=c.main, check=False)
+    if removed.returncode != 0:
+        return [], [f"{lead} kept: git worktree remove failed: {(removed.stderr or removed.stdout).strip()[-300:]}"]
+    done = [f"removed the lead's checkout {lead} (its record is in {archive}, the files written after the archive in "
+            f"{retired})"]
+    if pushed_tip == head:
+        run(["git", "branch", "-D", branch], cwd=c.main, check=False)
+        done.append(f"deleted the local {branch} ({c.remote}/{branch} is kept)")
+    return done, []
+
+
+def lead_retire(args) -> None:
+    c = cfg()
+    done, kept = retire_lead(c)
+    for line in done:
+        print(f"  done: {line}")
+    for line in kept:
+        print(f"  left: {line}")
+    if not done and not kept:
+        print(f"{c.delivery}: the lead has no checkout of its own to remove")
+    if kept:
+        sys.exit(1)
+
+
 def archive_step(c, closed: dict) -> tuple[Path, list[str]]:
     """Release every lease the lead holds, archive the record, and fast-forward the operator's checkout when it is
     clean and on the final base. Done once for each close: a resumed close-out finds its archive."""
@@ -11446,33 +12835,79 @@ def archive_step(c, closed: dict) -> tuple[Path, list[str]]:
         said.append(f"released the lead's leases: {', '.join(str(lease.get('id')) for lease in held)}")
     archive, archived = archive_delivery(c)
     said += archived
-    operator = c.main
-    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=operator, check=False)
-    dirty = git("status", "--porcelain", cwd=operator, check=False)
-    if branch == c.base_branch and not dirty:
-        moved = run(["git", "merge", "--ff-only", "-q", c.base_ref], cwd=operator, check=False)
-        said.append(f"fast-forwarded {operator} to {c.base_ref}" if moved.returncode == 0
-                    else f"left {operator} where it is: it can't fast-forward to {c.base_ref}")
-    else:
-        said.append(f"left {operator} where it is: " + ("it has uncommitted changes" if dirty else f"it is on {branch}"))
+    said.append(align_operator(c)[1])
     marker.write_text(json.dumps({"archive": str(archive), "said": said, "at": now(), "entry": closed["id"],
                                   **closed_full_health(c)}, indent=2) + "\n")
     return archive, said
 
 
-def friction_step(c, archive: Path, said: list[str], shown: list[str]) -> Path:
-    """The friction note stub beside the archive, for the lead's compound-learning pass."""
-    note = archive.parent / f"{archive.name}.friction.md"
-    if note.exists():
-        return note
-    lines = [f"# {c.delivery}: friction", "", "Written by the supervisor at close-out. Add what was hard and why, then "
-             "run compound-learning on it.", "", "## Shown, never holding", ""]
+def workflow_gaps_step(c, archive: Path, found: list[dict]) -> Path | None:
+    """The workflow gaps beside the archive, grouped by release, for the workflow's maintainers; the archive holds
+    their evidence. None when no workflow gap was noted."""
+    report = gaps.workflow_report(found, c.delivery, archive, c.state.name)
+    if report is None:
+        return None
+    path = archive.parent / f"{archive.name}.workflow-gaps.md"
+    if not path.exists():
+        path.write_text(report)
+    return path
+
+
+HARD = "## What was hard"
+LEFT = "## What the close-out left to you"
+# The stub's sections the supervisor writes, which end what the lead wrote under HARD.
+GENERATED = ("## Shown, never holding", "## Gaps noted", LEFT)
+
+
+def friction_stub_path(c) -> Path:
+    """Where the friction stub is kept until the close-out archives it: among the lead-side files."""
+    return lead_file(c, "friction.md")
+
+
+def write_friction_stub(c, shown: list[str], found: list[dict]) -> Path:
+    """Write the friction stub's generated sections, "Shown, never holding" and "Gaps noted", as known now, keeping
+    whatever the lead wrote under "What was hard". The supervisor writes it once nothing but the compound-learning
+    decision holds the close, and again on each later pass until the close-out archives it."""
+    stub = friction_stub_path(c)
+    hard = ["- (yours: what was hard, and why)", ""]
+    if stub.exists():
+        lines = stub.read_text().splitlines()
+        if HARD in lines:
+            body = lines[lines.index(HARD) + 1:]
+            # The lead's text runs to the first generated section, its own "## " sections included.
+            end = next((n for n, line in enumerate(body) if line in GENERATED), len(body))
+            kept = body[:end]
+            while kept and not kept[0].strip():
+                kept = kept[1:]
+            hard = [*kept] if kept else hard
+            if hard[-1].strip():
+                hard.append("")
+    lines = [f"# {c.delivery}: friction", "", "Written by the supervisor once the work was done. Write what was hard, "
+             "and why, under \"What was hard\", run compound-learning on this note, and record its decision with "
+             f"{flow_command()} lead-compound. The other sections are rewritten on each pass until the close-out "
+             "archives the note.", "", HARD, "", *hard, "## Shown, never holding", ""]
     lines += [f"- {text}" for text in shown] or ["- (none)"]
-    lines += ["", "## What the close-out left to you", ""]
-    lines += [f"- {text}" for text in said if text.startswith("left ")]
-    lines += [f"- Remove the lead's checkout {c.lane_checkout(c.delivery)} once you no longer need it.",
-              "- Archive the lane sessions with your host's own tools.", ""]
-    note.write_text("\n".join(lines))
+    lines += ["", *gaps.friction_section(list(found))]
+    stub.parent.mkdir(parents=True, exist_ok=True)
+    staging = stub.with_name(f".{stub.name}.{os.getpid()}")
+    staging.write_text("\n".join(lines))
+    os.replace(staging, stub)
+    return stub
+
+
+def archived_stub(c, archive: Path, said: list[str]) -> Path:
+    """The friction stub's archived copy, with "What the close-out left to you" written after the archive, once."""
+    note = archive / c.flow_log.name / friction_stub_path(c).name
+    text = note.read_text() if note.exists() else ""
+    if LEFT not in text.splitlines():
+        lines = [LEFT, ""]
+        lines += [f"- {line}" for line in said if line.startswith("left ")]
+        lines += [f"- The lead runs `lead-retire`, which removes its checkout {c.lane_checkout(c.delivery)} once "
+                  "nothing of the delivery runs from it and the archive holds its record, and names what keeps it.",
+                  "- The lead ends or archives each lane session it started, where its host lets it, and names any it "
+                  "can't to you.", ""]
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text(text + ("" if not text or text.endswith("\n") else "\n") + "\n".join(lines))
     return note
 
 
@@ -11484,16 +12919,32 @@ def close_out(c, flapping: tuple[str, ...] = (), wait: bool = False) -> tuple[li
         said.append(line)
         if not ok:
             return said, False
-    closed = latest_close(load_state()["journal"])
+    doc = load_state()
+    closed = latest_close(doc["journal"])
+    if kept_close(c, closed) is None:
+        if decision_owed(c, doc):
+            # A delivery.closed journalled by hand: the archive waits for the decision, as lead-close does.
+            said.append(f"held before the archive: {DECISION_HOLD} is not recorded; record it with "
+                        f"{flow_command()} lead-compound")
+            return said, False
+        # The stub as known now, written first when no pass wrote it, so every supervised close archives one.
+        # Read once the steps above ran, so a filing the publisher refused for good during them is listed.
+        shown = [item["text"] for item in needs_you(c, doc, flapping, closing=True) if not item["holding"]]
+        write_friction_stub(c, shown, gaps.gaps(doc["journal"], REOPENING))
     archive, archived = archive_step(c, closed)
     said += archived
     said += finish_close(c, closed, archive)
-    # Read once the steps above ran, so a filing the publisher refused for good during them is listed.
-    shown = [item["text"] for item in needs_you(c, load_state(), flapping, closing=True) if not item["holding"]]
-    note = friction_step(c, archive, archived, shown)
+    doc = load_state()
+    found = gaps.gaps(doc["journal"], REOPENING)
+    report = workflow_gaps_step(c, archive, found)
+    note = archived_stub(c, archive, archived)
     marker = lead_file(c, "closed.json")
-    marker.write_text(json.dumps({**load_json(marker), "friction": str(note)}, indent=2) + "\n")
-    said.append(f"wrote the friction note stub {note}: write it up, and archive the lane sessions")
+    marker.write_text(json.dumps({**load_json(marker), "friction": str(note),
+                                  **({"workflowGaps": str(report)} if report else {})}, indent=2) + "\n")
+    if report:
+        said.append(f"wrote the workflow gaps {report}: sending it on is your call")
+    said.append(f"archived the friction note {note}; the lead archives the lane sessions it started and runs "
+                f"{flow_command()} lead-retire")
     return said, True
 
 
@@ -11877,12 +13328,13 @@ class Supervisor:
             entry["laneWords"] = lane_words(doc, remembered)
             return cleanup_merged(c, doc, entry["laneWords"])
 
-        steps = (("reconcile", reconcile_once), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
+        steps = (("reconcile", reconcile_once), ("regions", lambda: settle_landings(c)), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
                  ("peers", lambda: self.peer_merges(entry)),
                  ("lenses", lambda: journal_lens_returns(c)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
-                 ("peerWaits", lambda: write_peer_waits(c)), ("publish", lambda: render_views(c, only="publishers")),
+                 ("peerWaits", lambda: write_peer_waits(c)), ("laneChanges", lambda: write_lane_changes(c)),
+                 ("publish", lambda: render_views(c, only="publishers")),
                  ("blockers", self.blockers), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:
@@ -11905,6 +13357,13 @@ class Supervisor:
                 entry["cleanupBeforeClose"] = cleanup()
                 holds = close_holds(c, load_state(), needs)
             entry["needsYou"], entry["closeHeldBy"] = needs, holds
+            # The friction stub, first written once only the decision holds the close, then kept current until the
+            # close-out archives it.
+            if holds == [DECISION_HOLD] or (holds and friction_stub_path(c).exists()
+                                            and kept_close(c, latest_close(doc["journal"])) is None):
+                fresh = load_state()
+                entry["friction"] = str(write_friction_stub(
+                    c, [item["text"] for item in needs if not item["holding"]], gaps.gaps(fresh["journal"], REOPENING)))
             if not holds:
                 entry["closeOut"], closed = close_out(c, self.flapping(), self.once)
                 render_views(c)
@@ -12060,6 +13519,7 @@ class Supervisor:
             while True:
                 number += 1
                 closed = self.one_pass(number)
+                self.honour_signal()
                 if closed or self.once or self.stop_asked() or self.lose():
                     break
                 deadline = time.monotonic() + supervisor_pass_seconds(c)
@@ -12149,7 +13609,7 @@ def lead_suite(args) -> None:
     """The lead's own run of the binding's fullHealth, under any posture, at --at or the base head on the remote: in a
     detached checkout of that commit under the binding's work folder, prepared first and removed after, so nothing the
     lead does in its own checkout reaches the run. Its result is one line of the flow log's suite.jsonl, which the lead
-    cites when marking a finish line; it journals nothing."""
+    cites when marking a finish line, and, on a record with an integration step, an integration.suite entry."""
     c = cfg()
     binding = c.shelf.json(".agents/orchestration.json") or {}
     if not binding.get("fullHealth"):
@@ -12171,28 +13631,102 @@ def lead_suite(args) -> None:
     # run_group, and its checkout removed, by in_detached_checkout.
     began = time.monotonic()
 
-    def suite(checkout: Path) -> tuple[int, str, tuple[str | None, str | None]]:
+    def suite(checkout: Path) -> tuple[int, str, tuple[str | None, str | None], float | None]:
         asked = program_version(argv[0], checkout)
         try:
             code, out = run_group(argv, checkout, full_health_timeout(binding))
         except Stop as error:  # its timeout: a failure, with the version already read
             code, out = 1, str(error)
-        return code, out, asked
+        return code, out, asked, suite_budget(argv, checkout)
     print(f"lead-suite: running {shlex.join(argv)} at {commit[:10]} in {checkout}", flush=True)
+    started = True
     try:
-        code, out, (version, unread) = in_detached_checkout(c, commit, checkout, suite, full_health_timeout(binding))
+        code, out, (version, unread), budget = in_detached_checkout(c, commit, checkout, suite,
+                                                                    full_health_timeout(binding))
     except Stop as error:  # the checkout or a prepare step failed, before the interpreter was asked
-        code, out, version, unread = 1, str(error), None, "the run ended before its interpreter was asked"
+        code, out, version, unread, budget = 1, str(error), None, "the run ended before its interpreter was asked", None
+        started = False
     seconds = round(time.monotonic() - began, 1)
-    result = "passed" if code == 0 else "failed"
+    # Exit 3 is over its budget only where the run itself was held to a suite-budget/1 file; elsewhere it is a failure.
+    result = ("unreadable" if not started else "passed" if code == 0 else
+              "over-budget" if code == 3 and budget is not None else "failed")
     append_log("suite", c.delivery, {"commit": commit, "result": result, "exit": code, "argv": argv, "seconds": seconds,
                                      "output": out[-2000:], "platform": platform.platform(), "interpreter": version,
                                      **({"interpreterUnread": unread} if unread else {})})
+    integration = record_integration()
+    if integration:
+        state_tool("journal", "--kind", "integration.suite", "--subject", c.delivery, "--data", json.dumps(
+            {"head": commit, "result": result, "seconds": seconds,
+             **({"budgetSeconds": budget} if budget is not None else {})}))
     print(out[-2000:].rstrip())
     print(f"lead-suite: {result} at {commit[:10]} (exit {code}, {seconds}s); "
-          f"recorded in {flow_log('suite', c.delivery)}")
+          f"recorded in {flow_log('suite', c.delivery)}" + ("" if not integration else " and the journal"))
     if code:
-        sys.exit(code if 0 < code < 256 else 1)
+        raise SystemExit(code if 0 < code < 256 else 1)
+# The run's budget: the file a --budget argument names, read in the run's own checkout at the head it ran, as its
+# wall seconds when it reads as suite-budget/1, and None otherwise.
+def suite_budget(argv: list[str], checkout: Path) -> float | None:
+    named = next((argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--budget"),
+                 next((arg.split("=", 1)[1] for arg in argv if arg.startswith("--budget=")), None))
+    if not named:
+        return None
+    try:
+        budget = json.loads((checkout / named).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(budget, dict) or budget.get("schemaVersion") != "suite-budget/1":
+        return None
+    wall = budget.get("wallSeconds")
+    return wall if isinstance(wall, (int, float)) and not isinstance(wall, bool) and wall >= 0 else None
+# The record's integration step, {base, target, remote}, or None for a delivery without one or with no record yet.
+def record_integration() -> dict | None:
+    if not (cfg().state / "state.json").exists():
+        return None
+    integration = load_state()["state"]["meta"].get("integration")
+    return integration if isinstance(integration, dict) else None
+# The lead's record of the integration step: each fact under the delivery's own key, at a head the lead checkout has.
+def lead_integrate(args) -> None:
+    """Journal one fact of the integration step: the target merged in, an integration review round, the change request
+    into the target, or its merge. Refused, with nothing journalled, on a record without an integration step and for a
+    head that isn't a commit here, once the target is fetched."""
+    c = cfg()
+    integration = record_integration()
+    if not integration:
+        raise Stop("the record has no integration step: lead-init writes one only for a delivery with an "
+                   "integrationTarget")
+    target, remote = integration["target"], integration["remote"]
+    git("fetch", "-q", remote, target, check=False)
+    head = git("rev-parse", "--verify", "--quiet", f"{args.head}^{{commit}}", check=False)
+    if not head:
+        raise Stop(f"{args.head} is no commit in this repository; fetch it, or name another")
+    if args.fact == "merged":
+        parents = git("rev-list", "--parents", "-n", "1", head).split()[1:]
+        if len(parents) != 2:
+            raise Stop(f"{args.head} is no merge of {target}: it has {len(parents)} parents, and a merge has two")
+        done = state_tool("journal", "--kind", "integration.merged", "--subject", c.delivery, "--data", json.dumps(
+            {"target": target, "targetHead": parents[1], "head": head, "conflicts": list(args.conflict or [])}))
+    elif args.fact == "round":
+        verdicts = {}
+        for said in args.verdict:
+            lens, _, verdict = said.partition("=")
+            if not lens or verdict not in ("approve", "changes"):
+                raise Stop(f"--verdict {said} is not LENS=approve or LENS=changes")
+            verdicts[lens] = verdict
+        counts = args.findings.split(",")
+        if len(counts) != 4 or not all(n.isdigit() for n in counts):
+            raise Stop(f"--findings {args.findings} is not four counts, P0,P1,P2,P3")
+        moment = now()
+        done = state_tool("journal", "--kind", "review.round", "--subject", c.delivery, "--data", json.dumps(
+            {"round": args.round, "head": head, "verdicts": verdicts,
+             "findings": dict(zip(("P0", "P1", "P2", "P3"), map(int, counts))),
+             "startedAt": args.started or moment, "finishedAt": args.finished or moment}))
+    elif args.fact == "requested":
+        done = state_tool("journal", "--kind", "integration.requested", "--subject", c.delivery, "--data", json.dumps(
+            {"changeRequest": args.change_request, "head": head}))
+    else:
+        done = state_tool("journal", "--kind", "integration.landed", "--subject", c.delivery, "--data", json.dumps(
+            {"target": target, "head": head}))
+    print(f"recorded {args.fact} as entry {journal_id(done)} at {head[:10]}")
 
 
 def moved_head_stands(c, doc: dict, head: str, last: dict | None) -> str:
@@ -12230,6 +13764,24 @@ def lead_decide(args) -> None:
     text, why = worded(args.text, "--text"), worded(args.why, "--why")
     done = state_tool("journal", "--kind", "decision.recorded", "--text", text, "--why", why, *causes(args.because), *(["--subject", args.subject] if args.subject else []))
     print(f"recorded decision {journal_id(done)}")
+
+
+def lead_compound(args) -> None:
+    """Record the delivery's compound-learning decision, which its close waits on: a learning preserved, with where it
+    is, or none needed, with why. Refused, with nothing journalled, for a missing or empty reference or reason, and
+    while work stands open, read as the close condition reads it, so the decision follows the work."""
+    c = cfg()
+    if args.required:
+        data = {"outcome": "required", "reference": worded(args.ref, "--ref").strip()}
+    else:
+        data = {"outcome": "not-required", "why": worded(args.why, "--why")}
+    doc = load_state()
+    standing = open_work(c, doc)
+    if standing:
+        raise Stop(f"work is still open ({'; '.join(standing)}): record {DECISION_HOLD} once it is done, with every "
+                   "gap noted")
+    done = state_tool("journal", "--kind", COMPOUNDING_KIND, "--data", json.dumps(data))
+    print(f"recorded {DECISION_HOLD}, {data['outcome']} (journal entry {journal_id(done)})")
 
 
 def lead_block(args) -> None:
@@ -12540,12 +14092,14 @@ def show_config(args) -> None:
         ("branchPattern", c.branch_pattern), ("laneCheckout", c.lane_pattern), ("deliveries", c.deliveries),
         ("tracker.issueUrl", c.issue_url), ("forge", json.dumps(c.forge)), ("review.bound", c.bound),
         ("review.lenses", ", ".join(f"{k} ({v[1]}; use: {' and '.join(c.lens_use[k])})" for k, v in c.lenses.items())),
+        *([("review.lenses on request", on_request_text(c))] if c.on_request else []),
         ("review.prepare", json.dumps(c.prepare)),
         ("gates", "; ".join(f"{g['id']}: {' '.join(g['argv'])}" for g in c.gates)),
         ("neverTouch", ", ".join(c.never_touch)), ("inApp", "declared" if c.in_app else "none"),
     ]
     keys = ["remote", "workDirectory", "stateDirectory", "branchPattern", "laneCheckout", "deliveries", "tracker.issueUrl",
-            "forge", "review.bound", "review.lenses", "review.prepare", "gates", "neverTouch", "inApp"]
+            "forge", "review.bound", "review.lenses", *(["review.lenses"] if c.on_request else []), "review.prepare",
+            "gates", "neverTouch", "inApp"]
     if c.delivery:
         rows += [("delivery", c.delivery), ("baseBranch", c.base_branch), ("state", c.state),
                  ("stories", len(c.stories)), ("lanes", len(c.lanes))]
@@ -12860,8 +14414,21 @@ class Doctor:
 
     def review_lenses(self):
         """Each declared lens on its own line: its use and where it was declared."""
-        return "ok", [(f"lens {lens}", f"{', '.join(self.c.lens_use[lens])}, from {self.c.lens_origin[lens]}")
-                      for lens in self.c.lenses]
+        # With --delivery, each story's brief lenses too: a story entry naming any other lens is wrong here, by name.
+        key = self.args.doctor_delivery or self.args.delivery
+        path = self.c.deliveries / f"{key}.json" if key else None
+        if path is not None and path.is_file():
+            try:
+                for story_key, story in (json.loads(path.read_text()).get("stories") or {}).items():
+                    story_brief_lenses(self.c.story_lenses, story_key, story)
+            except (ValueError, AttributeError):
+                pass  # the delivery file's own row says what is wrong with it
+            except Stop as error:
+                return "wrong", f"{error}; fix: name only declared story lenses in its lenses"
+        asked = lambda lens: ", on request" if lens in self.c.on_request else ""
+        return "ok", [*((f"lens {lens}", f"{', '.join(self.c.lens_use[lens])}{asked(lens)}, from {self.c.lens_origin[lens]}")
+                        for lens in self.c.lenses),
+                      *([("lenses on request", on_request_text(self.c))] if self.c.on_request else [])]
 
     def release(self) -> Path:
         """The generation the checks read: the configured release, or the one this tool runs from."""
@@ -13414,7 +14981,10 @@ class Doctor:
     def story_readiness(self):
         d = self.delivery
         if not tracker_conf(d)["transitions"].get("start"):
-            return "ok", "lanes make no start move, so there is no readiness to check"
+            refining = [] if (d.state / "state.json").exists() else [
+                line for key in d.stories if (line := refine_outcome(d, key)) is not None]
+            return "ok", ("lanes make no start move, so there is no readiness to check"
+                          + (f"; at the plan's approval: {'; '.join(refining)}" if refining else ""))
         if (d.state / "state.json").exists():
             doc = shown_record(d.release, d.state)
             waiting = [e["subject"] for e in doc["state"].get("planned", []) if e.get("stage") == "planned"]
@@ -13423,13 +14993,18 @@ class Doctor:
         found = {key: story_readiness(d, key) for key in waiting if key in d.stories}
         unready = [line for state, line in found.values() if state == "not-ready"]
         unchecked = [line for state, line in found.values() if state == "not-checked"]
+        # Before lead-init, what its plan's approval will do to each story, as lead-init says it.
+        refining = [] if (d.state / "state.json").exists() else [
+            line for key in waiting if key in d.stories and (line := refine_outcome(d, key)) is not None]
+        said = f"; at the plan's approval: {'; '.join(refining)}" if refining else ""
         if unready:
             # A warning: lead-assign refuses these, and --force overrides it.
-            return "warn", "; ".join(unready + unchecked) + "; fix: have each item made ready before its lane starts"
+            return "warn", ("; ".join(unready + unchecked) + "; fix: have each item made ready before its lane starts"
+                            + said)
         if unchecked:
-            return self.not_applicable("; ".join(unchecked))
-        return "ok", (f"each of the {len(found)} stories still planned is offered its first start move"
-                      if found else "no story is still waiting to start")
+            return self.not_applicable("; ".join(unchecked) + said)
+        return "ok", (f"each of the {len(found)} stories still planned is ready for its next start move"
+                      if found else "no story is still waiting to start") + said
 
     def story_summaries(self):
         d = self.delivery
@@ -13594,6 +15169,14 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--lenses", help="at round 1: the story's lenses, comma-separated, the mandated pair among them; "
                    "fixed for the story (default: every declared story lens)")
     p.add_argument("--lenses-reason", help="with --lenses: why the story's review takes these lenses")
+    p = command(sub, "note-gap", help="journal friction as it happens: a workflow, repo or host gap")
+    p.add_argument("--class", dest="cls", required=True, choices=gaps.CLASSES)
+    p.add_argument("--text", required=True); p.add_argument("--why", required=True)
+    p.add_argument("--subject", help="the story it is on (default: the lane's story, or the delivery's key for the lead)")
+    p.add_argument("--evidence", help="a file: the command's output, or the script you wrote (required for workflow)")
+    p.add_argument("--command", dest="gap_command", help="the command and arguments involved")
+    p.add_argument("--same-as", type=int, help="the journal id of the open gap this note repeats")
+    p.set_defaults(fn=note_gap)
     p = command(sub, "review-reduce"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
     p.set_defaults(fn=review_reduce)
     p = command(sub, "plan-review", help="review the plan before it is approved: prepare, reduce or end a round")
@@ -13612,6 +15195,8 @@ def main(argv: list[str] | None = None) -> None:
     q = command(review_commands, "check", help="validate plan-review-evidence/1 records, hand-written or written by a review")
     q.add_argument("records", nargs="+", metavar="RECORD"); q.set_defaults(fn=plan_review_check)
     p = command(sub, "gate"); p.add_argument("key"); p.set_defaults(fn=gate)
+    p = command(sub, "claims-check", help="what your committed change still needs claimed, with the lead's request for each")
+    p.add_argument("key"); p.set_defaults(fn=claims_check)
     p = command(sub, "build"); p.add_argument("key", nargs="?"); p.set_defaults(fn=build)
     p = command(sub, "app-check"); p.add_argument("key"); p.add_argument("name")
     p.add_argument("--mode", choices=("hold", "fail", "loaded"), required=True)
@@ -13725,15 +15310,25 @@ def main(argv: list[str] | None = None) -> None:
     action.add_argument("--region", metavar="PATH", help="grant a span in a committed text file")
     action.add_argument("--revoke-region", metavar="PATH", help="remove a region claim by its exact coordinates")
     action.add_argument("--claim", metavar="PATTERN", help="claim whole files on the base for this delivery's peers")
+    action.add_argument("--carve", metavar="PATH", help="recompute a file's region claims in one write, from --give")
+    p.add_argument("--give", action="append", metavar="LANE:START-END[@KEY]",
+                   help="with --carve: lines at --base to give a lane, for one of its stories after @")
+    p.add_argument("--story", metavar="KEY", help="with --region: the story of the lane the claim is for, released when it lands")
     p.add_argument("--lane"); p.add_argument("--from", dest="source")
     p.add_argument("--base", metavar="COMMIT")
+    p.add_argument("--around", metavar="TEXT", help="with --region: the block of the one line at --base holding TEXT, "
+                   "in place of --start and --end")
+    p.add_argument("--insert", choices=("before", "after"),
+                   help="with --region: widen the span one unclaimed line past that edge, for an insertion there")
     p.add_argument("--start", type=int, metavar="LINE", help="first owned line, starting at 1")
     p.add_argument("--end", type=int, metavar="LINE", help="first line after the owned span")
     p.set_defaults(fn=lead_own)
+    p = command(sub, "lead-claims", help="whether the queue would accept each story's ownership after syncing it")
+    p.add_argument("keys", nargs="*"); p.set_defaults(fn=lead_claims)
     p = command(sub, "lead-assign"); p.add_argument("keys", nargs="+"); p.add_argument("--lane", required=True)
     p.add_argument("--title", required=True); p.add_argument("--note")
     p.add_argument("--force", action="store_true",
-                   help="assign a story whose tracker item doesn't offer the first start move")
+                   help="assign a story whose tracker item doesn't offer its next start move")
     p.set_defaults(fn=lead_assign)
     p = command(sub, "lead-accept"); p.add_argument("key", nargs="?"); p.add_argument("--accept-blocked", action="append")
     p.add_argument("--requeue", metavar="KEY", help="re-queue a stopped candidate you resolved, with no new hand-off")
@@ -13764,6 +15359,24 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=lead_carry_review)
     p = command(sub, "lead-suite", help="run the binding's fullHealth at a commit, in a detached checkout of its own")
     p.add_argument("--at", help="the commit to run at; the base head on the remote when absent")
+    q = command(sub, "lead-integrate", help="journal a fact of the integration step under the delivery's own key")
+    facts = q.add_subparsers(dest="fact", required=True)
+    one = facts.add_parser("merged", help="the target merged into the integration candidate at --head")
+    one.add_argument("--head", required=True, help="the merge commit, whose second parent is the target's head")
+    one.add_argument("--conflict", action="append", help="a path whose conflict was resolved by hand; repeat for each")
+    one = facts.add_parser("round", help="an integration review round on the candidate at --head")
+    one.add_argument("--round", type=int, required=True, help="the round's number, from 1")
+    one.add_argument("--head", required=True, help="the candidate the round read")
+    one.add_argument("--verdict", action="append", required=True, help="LENS=approve or LENS=changes; one each lens")
+    one.add_argument("--findings", required=True, help="the round's finding counts, P0,P1,P2,P3")
+    one.add_argument("--started", help="when the round started; now when absent")
+    one.add_argument("--finished", help="when the round finished; now when absent")
+    one = facts.add_parser("requested", help="the change request into the target, opened or moved to --head")
+    one.add_argument("--change-request", required=True, help="the change request's address")
+    one.add_argument("--head", required=True, help="the head it was opened at")
+    one = facts.add_parser("landed", help="the change request into the target merged")
+    one.add_argument("--head", required=True, help="the target's new head")
+    q.set_defaults(fn=lead_integrate)
     p.add_argument("extra", nargs=argparse.REMAINDER, help="after --, arguments appended to the fullHealth argv")
     p.set_defaults(fn=lead_suite)
     p = command(sub, "lead-decide", help="record a decision and why it was made")
@@ -13772,6 +15385,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--because", help="earlier journal ids it was decided because of, comma-separated")
     p.add_argument("--subject", help="the story it is about, whose ticket it posts on; the epic when absent")
     p.set_defaults(fn=lead_decide)
+    p = command(sub, "lead-finish", help="mark a finish line the record can't prove met, with its evidence")
+    p.add_argument("line", help="the finish line's id")
+    p.add_argument("--evidence", required=True, help="what shows it met, in the lead's words, or @FILE to read them")
+    p.set_defaults(fn=lead_finish)
     p = command(sub, "lead-block", help="record a blocker, which lead-resolve resolves")
     p.add_argument("--text", required=True, help="what blocks the work, in the lead's words")
     p.add_argument("--because", help="earlier journal ids it is blocked because of, comma-separated")
@@ -13809,8 +15426,9 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "lead-plan", help="record a change to the approved plan, or a reason for one")
     plan_commands = p.add_subparsers(dest="action", required=True)
     q = command(plan_commands, "change", help="edit and commit the delivery file, recording before and after")
-    q.add_argument("--kind", required=True, choices=["added", "removed", "relaxed", "changed", "finish"])
+    q.add_argument("--kind", required=True, choices=["added", "removed", "relaxed", "changed", "finish", "lenses"])
     q.add_argument("--subjects", nargs="*", default=[]); q.add_argument("--criterion"); q.add_argument("--text")
+    q.add_argument("--lenses", help="lenses: the story's brief lenses, comma-separated; '' for none")
     q.add_argument("--finish", help="finish: the line's id"); q.add_argument("--covers", help="finish: its covers, as JSON")
     q.add_argument("--label", help="finish: a new line's label"); q.add_argument("--why", required=True)
     q.add_argument("--by", default="lead"); q.add_argument("--ref"); q.add_argument("--title")
@@ -13822,7 +15440,19 @@ def main(argv: list[str] | None = None) -> None:
     q.set_defaults(fn=lead_plan)
     q = command(plan_commands, "why", help="give a recorded change its reason")
     q.add_argument("change"); q.add_argument("--why", required=True); q.set_defaults(fn=lead_plan)
-    p = command(sub, "lead-close"); p.set_defaults(fn=lead_close)
+    p = command(sub, "lead-compound", help="record the compound-learning decision the close waits on")
+    decided = p.add_mutually_exclusive_group(required=True)
+    decided.add_argument("--required", action="store_true", help="a learning was preserved: give --ref")
+    decided.add_argument("--not-required", action="store_true", help="no new learning: give --why")
+    p.add_argument("--ref", help="with --required: where the learning is, such as a solution note's path")
+    p.add_argument("--why", help="with --not-required: why no learning needs preserving")
+    p.set_defaults(fn=lead_compound)
+    p = command(sub, "lead-close", help="close the delivery by hand, once delivery.closed is journalled")
+    p.add_argument("--without-compounding", metavar="WHY",
+                   help="close with the compound-learning decision recorded as skipped, for this reason")
+    p.set_defaults(fn=lead_close)
+    p = command(sub, "lead-retire", help="remove the lead's checkout once the close's archive holds everything in it")
+    p.set_defaults(fn=lead_retire)
     p = command(sub, "view", help="serve the record's live view, or an archived copy's, without a checkout")
     p.add_argument("--archive", type=Path, help="a copy of the record, such as the supervisor's latest")
     p.add_argument("--port", type=int, default=0, help="the port; 0 picks a free one")

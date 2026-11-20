@@ -737,6 +737,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_lane_changes",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_lane_changes.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_lane_changes.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_lane_rows",
         "argv": [
           ".venv/bin/python",
@@ -1025,6 +1043,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_ownership_lock_race",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_ownership_lock_race.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_ownership_lock_race.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_product_descriptors",
         "argv": [
           ".venv/bin/python",
@@ -1182,6 +1218,42 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_receipt.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_region_claims",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_region_claims.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_region_claims.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_region_grants",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_region_grants.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_region_grants.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600
@@ -1417,6 +1489,42 @@
         "timeoutSeconds": 5400
       },
       {
+        "id": "tests.test_run_delivery_compounding",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_compounding.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_compounding.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_run_delivery_finish",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_finish.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_finish.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_run_delivery_hooks",
         "argv": [
           ".venv/bin/python",
@@ -1489,6 +1597,42 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_run_delivery_gaps",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_gaps.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_gaps.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_run_delivery_lens_request",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_lens_request.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_lens_request.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_run_delivery_pr_review",
         "argv": [
           ".venv/bin/python",
@@ -1556,6 +1700,24 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_run_delivery_tracker.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_run_delivery_tool_commits",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_tool_commits.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_tool_commits.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600

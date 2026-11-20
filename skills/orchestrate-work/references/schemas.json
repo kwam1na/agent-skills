@@ -311,6 +311,27 @@
             "description": "Set by the lead. true makes every lane hand-off wait as pending until the lead accepts it; absent or false, a hand-off is accepted as it is made.",
             "type": "boolean"
           },
+          "integration": {
+            "description": "Set by lead-init only when the delivery declares an integrationTarget: the integration base its stories land on, the target it rejoins, and the remote both are fetched from. A record without it is a delivery with no integration step.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "base",
+              "target",
+              "remote"
+            ],
+            "properties": {
+              "base": {
+                "$ref": "#/$defs/name"
+              },
+              "target": {
+                "$ref": "#/$defs/name"
+              },
+              "remote": {
+                "$ref": "#/$defs/name"
+              }
+            }
+          },
           "sources": {
             "description": "Written by serve's refresh: per source (tracker, forge and siblings), whether the record observes it, has a stale read of it (and when it was last read), or does not observe it because the binding declares no command. Changes only when a source's status does.",
             "type": "object",
@@ -1180,9 +1201,36 @@
             "end": {
               "type": "integer",
               "minimum": 2
+            },
+            "story": {
+              "description": "The story of the claim's lane it is for: released when that story lands. A claim without one is the lane's.",
+              "$ref": "#/$defs/name"
+            },
+            "regrant": {
+              "description": "Set when a landing left the claim unable to map to the merge, and it was neither the landed story's nor carried: why, and the merge. A regrant to its lane and story, or its revocation, clears it.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reason",
+                "merge"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "merge": {
+                  "$ref": "#/$defs/commit"
+                }
+              }
             }
           }
         }
+      },
+      "regionsSettled": {
+        "description": "The id of the last candidate.merged whose region claims were settled: 0 before any.",
+        "type": "integer",
+        "minimum": 0
       },
       "planned": {
         "description": "Work the lead knows is under way but has not handed to the queue. Optional; the lead owns it.",
@@ -3631,7 +3679,7 @@
               "minLength": 1
             },
             "offeredTransitions": {
-              "description": "Tracker snapshots only, optional: the names of the moves the tracker offers from that status, each once. Readiness before assignment reads whether the first configured start move is among them; without this field it isn't checked.",
+              "description": "Tracker snapshots only, optional: the names of the moves the tracker offers from that status, each once. Readiness before assignment walks the configured start moves, counting a move whose configured target is the status as made, and reads whether the first move not yet made is among them. An item with a status and without this field is on a tracker that restricts no move, so that move reads as offered; with neither, readiness isn't checked.",
               "type": "array",
               "items": {
                 "type": "string",

@@ -28,6 +28,8 @@ SCHEMA_FILE = SKILL / "references/schemas.json"
 VECTORS = ROOT / "tests/fixtures/journal-kinds/vectors.json"
 HEAD = "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
 BASE_HEAD = "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+ROUND = {"round": 1, "startedAt": "2026-11-18T10:00:00Z", "finishedAt": "2026-11-18T10:20:00Z",
+         "verdicts": {"lens.outcome-correctness": "approve"}, "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}
 
 
 def _load(name: str):
@@ -53,8 +55,9 @@ words_tool = state_tool.journal_words
 TABLE = {
     "record.started": ("H", "note", "base", "", "epic: Delivery started"),
     "story.added": ("H", "decision", "*title* *why*", "", "epic: Story added"),
+    "story.approved": ("S", "note", "*title* plan review?", "", "ticket: Plan approved"),
     "lane.assigned": ("S", "note", "*title* *note?*", "", "ticket: Started"),
-    "review.round": ("S", "note", "round startedAt finishedAt verdicts findings refused? restarts?", "answers:review.started", "-"),
+    "review.round": ("S", "note", "round head? startedAt finishedAt verdicts findings refused? restarts?", "answers:review.started", "-"),
     "review.started": ("S", "note", "round head lenses restart moved? *why?*", "", "-"),
     "review.lens.returned": ("B", "note", "round lens verdict findings", "", "-"),
     "review.recorded": ("B", "note", "digest candidateRef", "", "-"),
@@ -86,10 +89,17 @@ TABLE = {
     "base.verified": ("S", "note", "source head after?", "", "-"),
     "base.flaky": ("S", "problem", "source head after? failing", "", "-"),
     "base.moved": ("S", "note", "from to merged *why*", "", "epic: Delivery base updated"),
+    "integration.merged": ("S", "note", "target targetHead head conflicts", "", "-"),
+    "integration.suite": ("S", "note", "head result seconds budgetSeconds?", "", "-"),
+    "integration.requested": ("S", "ready", "changeRequest head", "", "-"),
+    "integration.landed": ("S", "landed", "target head", "", "-"),
     "base.published": ("B", "note", "base from", "", "-"),
     "base.merge.authorized": ("S", "decision", "reviewed baseCommits token by?", "", "-"),
     "ownership.granted": ("B", "note", "path span? base? movedFrom?", "", "-"),
     "ownership.revoked": ("B", "note", "path span? base? movedFrom?", "", "-"),
+    "ownership.released": ("B", "note", "path span base merge", "", "-"),
+    "ownership.carried": ("B", "note", "path from to was base story? inFlight?", "", "-"),
+    "ownership.carved": ("B", "note", "path base removed added", "", "-"),
     "ownership.claimed": ("B", "note", "path base", "", "-"),
     "plan.updated": ("B", "note", "updated changed", "", "-"),
     "cleanup.done": ("B", "note", "base changeRequest? head?", "", "-"),
@@ -109,6 +119,7 @@ TABLE = {
     "serving.held": ("H", "problem", "*why*", "", "epic: Serving is held"),
     "deferral.breached": ("H", "problem", "finding *title*", "", "ticket: Deferred note still open"),
     "blocker.recorded": ("H", "problem", "*text*", "opens", "ticket-or-epic: Blocked"),
+    "gap.noted": ("S", "note", "class *text* *why* by release? generation? command? evidence? occurrenceOf?", "", "-"),
     "blocker.resolved": ("H", "landed", "*why*", "answers:blocker.recorded,deferral.breached",
                          "ticket-or-epic: Blocker resolved"),
     "decision.recorded": ("H", "decision", "*text* *why*", "", "ticket-or-epic: Decision"),
@@ -118,7 +129,8 @@ TABLE = {
     "story.unheld": ("S", "note", "", "answers:story.held", "ticket: Waiting"),
     "release.started": ("H", "note", "head", "", "-"),
     "release.finished": ("H", "landed", "head failedAt?", "cause", "epic: Released"),
-    "finish.met": ("H", "landed", "finish", "", "epic: Finish line met"),
+    "finish.met": ("H", "landed", "finish evidence? by?", "", "epic: Finish line met"),
+    "compounding.recorded": ("H", "decision", "outcome reference? *why?*", "", "epic: Compounding decided"),
     "hook.held": ("S", "note", "hook verdict lanes? pieces?", "", "-"),
     "peer.merged": ("S", "note", "peer head files", "", "-"),
     "delivery.closed": ("H", "landed", "skipped?", "", "epic: Delivery closed"),
@@ -429,6 +441,13 @@ class JournalFactsTests(unittest.TestCase):
                          {"id": 1, "kind": "candidate.merged", "lane": None, "subject": "APP-12", "data": merged})
         self.assertNotIn("summary", entry)
 
+    def test_a_plan_approval_names_its_plan(self) -> None:
+        approved = {"title": "Keep facts in the journal", "plan": "docs/plans/facts.md"}
+        self.refused("story.approved", {"title": approved["title"]}, "/data: missing plan", subject="APP-12")
+        self.refused("story.approved", {**approved, "review": ""}, "/data/review", subject="APP-12")
+        entry = self.append("story.approved", {**approved, "review": "docs/plans/facts.review.json"}, subject="APP-12")
+        self.assertEqual(entry["data"]["review"], "docs/plans/facts.review.json")
+
     def test_a_reserved_kind_is_refused_with_the_reservations_own_error(self) -> None:
         self.refused("x.weighed", {"finish": "acs"}, "x.weighed is reserved", code="kind_reserved")
         # Read back from a journal, the entry is named as reserved, not as unknown.
@@ -449,6 +468,10 @@ class JournalFactsTests(unittest.TestCase):
             ("candidate.handed", {"head": HEAD, "changeRequest": "", "rounds": 1, "checks": []},
              "/data/changeRequest: shorter than 1",
              {"head": HEAD, "changeRequest": "pr-12", "rounds": 1, "checks": []}),
+            # An integration review round names the candidate it read by its full commit, or no head at all.
+            ("review.round", {**ROUND, "head": HEAD[:10]}, "/data/head: does not match", {**ROUND, "head": HEAD}),
+            ("integration.suite", {"head": HEAD, "result": "timed-out", "seconds": 3}, "/data/result: not one of the allowed values",
+             {"head": HEAD, "result": "over-budget", "seconds": 3, "budgetSeconds": 2}),
         ]
         for kind, wrong, expected, right in cases:
             with self.subTest(kind=kind, wrong=wrong):

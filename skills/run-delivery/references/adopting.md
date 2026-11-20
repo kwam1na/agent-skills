@@ -338,6 +338,11 @@ Write the approved plan, with one heading per story:
 - Scenarios: the page shows the greeting.
 ```
 
+When a lens is broad, or costly, and only some stories call for it, put a broad lens on request with `"default": false`
+(`config.md`, "Review lenses"): no story runs it unless its lane names it in `--lenses` or the plan asks for
+it, with a `Lenses:` sentence in the story's section, such as ``Lenses: `lens.data`.``, which `lead-setup` drafts
+into the story's entry.
+
 Review a plan before it is approved, with or without a delivery. Give it a `reviewSlug` in its front matter, so its
 review survives a rename, commit it, and run `plan-review prepare` with the lenses that review it:
 
@@ -457,12 +462,14 @@ brief:
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-assign <story-key> --lane lane-1 --title "Lane 1"
 ```
 
-Before it assigns anything, `lead-assign` checks that each story's tracker item offers the first start move the
-configuration names, as the kept tracker snapshot reads it. A story that isn't ready is refused, naming its status and
-the move that isn't offered, and nothing is written; `--force` assigns it anyway. Neither `lead-assign` nor
-`doctor --delivery`, which warns of the same stories, moves the item. Only a snapshot that lists each item's offered
-moves can say (the Jira snapshot does; Linear's doesn't), so otherwise both commands print that readiness wasn't
-checked, and why.
+Before it assigns anything, `lead-assign` checks that each story's tracker item offers the first start move not yet
+made, as the kept tracker snapshot reads it. The start moves are walked as the tracker publisher walks them: a move
+whose `targets` entry is the item's status is already made, and an item with every move made is ready. A story that
+isn't ready is refused, naming its status and the move that isn't offered, and nothing is written; `--force` assigns
+it anyway. Neither `lead-assign` nor `doctor --delivery`, which warns of the same stories, moves the item. The Jira
+snapshot lists each item's status and offered moves. Linear's lists the status alone, since Linear restricts no move,
+so a Linear item's next move reads as offered. A snapshot that names neither can't say, so both commands print that
+readiness wasn't checked, and why.
 
 Once the delivery has started, change the plan's criteria and finish lines only through `lead-plan change`. It records
 what the plan said before and after and why, edits the delivery file, and commits it; it never pushes, and it refuses
@@ -644,14 +651,26 @@ When a lane has no story left, tell it so; it sets its focus `done`, as its brie
 python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir .orchestration/state focus --lane lane-1 --text "<story-key> merged; nothing left" --state done
 ```
 
+The close also waits on your compound-learning decision. Note gaps as they happen. When the last story lands, write up
+the friction stub, run `$compound-learning` and record its decision; a note it preserves rides the integration change
+request and is reviewed with it. Then the close. Once nothing else holds the close, the supervisor writes the friction
+stub to the flow log's `<delivery-key>.friction.md`, and "Needs you" names it. It keeps what you write under "What was
+hard" and rewrites the rest on each pass. Record the decision once the stories are done:
+
+```text example outline
+run_delivery.py lead-compound --required --ref docs/solutions/<category>/<slug>.md
+run_delivery.py lead-compound --not-required --why "<why nothing new needs preserving>"
+```
+
 When every story is merged or removed, every merged story's checkout is cleaned up, every finish line is met, every
-lane is idle or done, and nothing in "Needs you" holds it, the supervisor closes the delivery itself, in order: `fullHealth` once per base head (skipped when the
+lane is idle or done, the decision is recorded, and nothing in "Needs you" holds it, the supervisor closes the delivery
+itself, in order: `fullHealth` once per base head (skipped when the
 base declares the `focused` posture, and already run at that head when the delivery merged anything, since the
 supervisor runs it after each merge or batch), a follow-up for
-each deferred finding, `delivery.closed` and then a wait until the tracker has every update, the archive, a friction
-note stub beside
-it for your `compound-learning` pass, and then it stops. There is nothing to run for the close. `lead-close` is for
-closing early, or with the supervisor down. With the lead's checkout gone, the archived copy still serves the live
+each deferred finding, `delivery.closed` and then a wait until the tracker has every update, and the archive, which
+holds the friction stub, and then it stops. `closed.json` names the archived stub. There is nothing else to run for the
+close. `lead-close` is for closing early, or with the supervisor down. It refuses while no decision stands, and
+`lead-close --without-compounding "<why>"` records the decision as skipped. With the lead's checkout gone, the archived copy still serves the live
 view:
 
 ```text example outline
@@ -745,6 +764,14 @@ The run-delivery configuration names the forge, the tracker's moves and the pipe
   "review": {"pr": {"author": "<the pipeline's reviewer>", "waitSeconds": 1800}}
 }
 ```
+
+A team that refines its tickets before anyone starts them sets `transitions.refine` to the moves that refine a ticket,
+in its own names, with a `targets` entry for the last one, such as `"refine": ["Accept"]` and
+`"targets": {"Accept": "Accepted"}`. Then the plan's approval is what refines the delivery's stories: `lead-init`
+journals a `story.approved` on each story, the publisher makes the refine moves on its ticket and posts that the plan
+holding it was approved for delivery, and a story added later is refined the same way. A ticket already refined is left
+as it is, and one in a status the move isn't offered from is left to people. Leave `refine` out when people refine
+tickets themselves, or when the start moves already cover it.
 
 With `"reviewWhen": "pipeline-green"`, a lane's `pr-review <story-key> --wait` makes the review move once the pipeline
 is green at the change request's head, and `lead-accept` requires the pipeline's review current there, triaged by the
@@ -849,8 +876,9 @@ No command calls a host's own interface. What the workflow can't do for you:
   own session. The lead starts each with what `lead-assign` prints. When the host can't start or message sessions, no
   lane starts: the lead records the blocker and brings it to the operator, who may choose to deliver the stories one at a time
   through `$execute-work`.
-- **Archiving lane sessions.** The close-out archives the record, never a session; the friction note lists archiving
-  them as yours.
+- **Archiving lane sessions.** The close-out archives the record, never a session. The lead ends or archives each lane
+  session it started, where its host lets it, and names any it can't to the operator; `lead-close` and the friction note
+  say so.
 - **Queued lead messages.** A lane's message waits until the lead's session reads it. The record doesn't wait: a lane
   that is blocked or waits on the lead holds the close, and every lead command names it, from the supervisor's next
   pass after it says so in its focus; a hand-off is in the queue as soon as it is made.
@@ -1028,11 +1056,11 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
 - **`is missing (lead-setup writes it)`**: the delivery file doesn't exist yet. `lead-setup` drafts it.
 - **`stories without a lane`**: give each story a lane listed in `lanes`.
 - **`lanes own the same files`**: make each lane's `owns` disjoint, so no file belongs to two lanes.
-- **`isn't offered; refine it first`**: the story's tracker item is in a status its first start move isn't offered
-  from, as the tracker snapshot reads it, so its lane can't start it. Have the item made ready (in the tracker, by
+- **`isn't offered; refine it first`**: the story's tracker item is in a status its first start move not yet made
+  isn't offered from, as the tracker snapshot reads it, so its lane can't start it. Have the item made ready (in the tracker, by
   whoever owns that status), then assign it. `lead-assign` refuses the story until then, and `--force` assigns it
-  anyway. Neither command moves the item. A snapshot that doesn't list a story's offered moves, or no snapshot at all,
-  leaves readiness unchecked, and both commands say so.
+  anyway. Neither command moves the item. A snapshot that names neither a story's status nor its offered moves, or no
+  snapshot at all, leaves readiness unchecked, and both commands say so.
 - **``has no `## Summary`; its card will show none``**: the story's tracker ticket has no `## Summary` section, so its
   card on the live view shows no summary. Add a one-paragraph `## Summary` to the ticket. `lead-setup` notes it while
   it drafts the delivery file, and `doctor --delivery` reports it as `warn` from the kept tracker snapshot, which

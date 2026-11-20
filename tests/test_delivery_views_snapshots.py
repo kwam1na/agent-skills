@@ -709,6 +709,30 @@ class LinearTests(SnapshotCase):
         self.assertEqual(transport.methods, ["POST", "POST"])
         self.assertTrue(all(headers["Content-Type"] == "application/json" for _, headers in transport.requests))
 
+    def test_each_item_s_status_is_its_state_s_own_name_and_no_move_is_listed(self) -> None:
+        pages = copy.deepcopy(LINEAR)
+        names = {}
+        for name in ("page-1", "page-2"):
+            for number, node in enumerate(pages[name]["data"]["issue"]["children"]["nodes"]):
+                node["state"]["name"] = f"Column {name[-1]}.{number}"
+                names.setdefault(node["identifier"], node["state"]["name"])  # a child listed twice is kept as first listed
+        transport = Transport((GRAPHQL, 200, pages["page-1"]), (GRAPHQL, 200, pages["page-2"]))
+        code, out, _ = self.run_kind(LINEAR_ARGS, transport, LINEAR_ENV)
+        self.assertEqual(code, 0)
+        document = self.checked(out, parent="ENG-100")
+        self.assertEqual({item["subject"]: item["status"] for item in document["items"]}, names)
+        self.assertFalse(any("offeredTransitions" in item for item in document["items"]))
+        # Only the status is new: every other member is what the recorded answer gives.
+        self.assertEqual([{k: v for k, v in item.items() if k != "status"} for item in document["items"]],
+                         CAPTURED["tracker"]["items"])
+        self.assertIn("state { type name }", json.loads(transport.bodies[0])["query"].split("children")[1])
+        for bad in ("", 7):
+            with self.subTest(name=bad):
+                pages["page-1"]["data"]["issue"]["children"]["nodes"][0]["state"]["name"] = bad
+                code, _, err = self.run_kind(LINEAR_ARGS, Transport((GRAPHQL, 200, pages["page-1"])), LINEAR_ENV)
+                self.assertNotEqual(code, 0)
+                self.failed(err, "ENG-101", "state name")
+
     def test_the_parent_s_own_state_is_emitted_completed_while_its_children_are_started(self) -> None:
         pages = copy.deepcopy(LINEAR)
         pages["page-1"]["data"]["issue"]["state"] = {"type": "completed"}

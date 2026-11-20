@@ -1,0 +1,129 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3630",
+  "headline": "V26-3630: draw the epic's post on the line",
+  "plan": "docs/plans/2026-11-18-epic-post-on-the-line.md",
+  "laneBrief": "docs/plans/2026-11-18-epic-post-on-the-line.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-18-epic-post-on-the-line.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/delivery-views/assets/line-map.js",
+        "skills/delivery-views/assets/line-map.css",
+        "skills/delivery-views/SKILL.md",
+        "catalog.json",
+        "tests/delivery_views_page/line-map-epic-post.test.mjs",
+        "tests/delivery_views_page/line-map-siblings.test.mjs"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3630": {
+      "title": "Draw the epic's post on the line, with sibling repositories turning in",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "c1",
+          "text": "With no siblings, the line is unchanged byte for byte. Its width stays 176px, and its labels and counts are the same."
+        },
+        {
+          "id": "c2",
+          "text": "With siblings under the same parent, the epic's post is drawn past this repository's post. Each drawn sibling turns in solid once all of its stories have landed, and dashed before that."
+        },
+        {
+          "id": "c3",
+          "text": "At most two siblings are drawn, picked by the rule in decision 1. A \"+N more\" chip shows the rest, and the epic's count covers all of them."
+        },
+        {
+          "id": "c4",
+          "text": "An unreadable sibling turns the epic's line and post neutral and dashed, with words naming it. No `--held` or `--wait` colour is used."
+        },
+        {
+          "id": "c5",
+          "text": "A sibling under another parent draws nothing on the line and appears in the chapter."
+        },
+        {
+          "id": "c6",
+          "text": "The drawing's `aria-label` names the epic's count and any unreadable sibling."
+        },
+        {
+          "id": "c7",
+          "text": "Page-behaviour tests in `tests/test_delivery_views_page.py` cover each state, in light and dark."
+        },
+        {
+          "id": "c8",
+          "text": "The delivery-views catalog entry and \"What the views show of siblings\" in its SKILL.md describe the epic's post, the sibling rows, the chip and the \"Also linked\" row."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "story",
+      "label": "The story",
+      "text": "V26-3630 lands on main through the merge queue",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the base head after the landing, inside tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-18"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The operator approves this plan before `lead-setup`.",
+      "state": "done",
+      "who": "Kwamina"
+    },
+    {
+      "id": "approval-2",
+      "text": "The operator grants the lane `push` and `draftPullRequests`.",
+      "state": "done",
+      "who": "Kwamina"
+    }
+  ],
+  "outOfScope": [
+    "The hosted page, which stays with V26-3605. The public projection drops `across` and `state.siblings`, so the hosted line stays as it is.",
+    "Stops, detail panels or links for a sibling's stories on the line. The chapter keeps them.",
+    "Any change to the record, `with_across` or the sibling reads.",
+    "New colour tokens.",
+    "The line's scroll position on a phone. jsdom has no layout to test it in, and it isn't changed."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "stateDirectory": ".orchestration/deliveries/V26-3630/state",
+  "outcome": {
+    "summary": "The line shows how far the whole epic has come, not only this repository.",
+    "text": "Past this repository's finish line, the main line runs on to a post for the epic, with up to two sibling repositories turning in, an unreadable sibling drawn neutral, and a line unchanged when there are no siblings."
+  }
+}

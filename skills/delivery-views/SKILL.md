@@ -86,11 +86,38 @@ page follows every record write; opened as a file, it shows the record as it
 was rendered. A history renderer declared in the same binding (`render.py
 history`) is linked from its footer.
 
+A piece's detail panel says where the story is before it lands, in one state
+line with a dot: "Being built", "In review, round N", "Fixing review
+findings", "Reviewed, getting ready to hand off", "Waiting for the lead to
+accept" or "Being checked before it lands", worked out from the record and its
+journal. The dot is green while the story's lane moves it, amber while it waits
+on something and grey while the merge queue checks it. Before hand-off the
+panel says how the review ended, from the recorded reports: the round it was
+approved on, and its notes fixed, deferred to a follow-up or still open. While
+the story's lane is on it, the lane's own words follow, with how long ago they
+were set. A landed or stopped piece shows none of these. The panel leaves a
+unit's proofs to the plan chapter, and the review's count of notes raised to the
+recorded reports.
+
 What happened tells the delivery's story at three depths, one row for each beat: its
 time, its mark, its sentence and its tone's word. A row opens to nothing; the ticket,
 the commit, in full or cut short, and the change request its sentence names are
 links, and they lead to the evidence. Only a run of bookkeeping folds, listing its
 entries.
+
+When the record has region claims, so lanes share files by lines, "Who's doing
+what" offers "Who holds which files", closed by default. It reads
+`lane-changes.json`, which each supervisor pass writes beside the record from
+every lane's pushed branch, as run-delivery's configuration reference describes.
+It shows the delivery's claimed files grouped by area, the folder under the
+repository root they sit in, each in its lane's colour, solid where its lane has
+changed it and hollow where it hasn't, and each shared file split by its lanes'
+line stretches. Clicking a shared file opens its reading: a ruler of the file with
+each lane's stretches and changes, a change outside its lane's span marked, and
+per lane the functions it changed with their sizes. A lane whose branch can't be
+read is said so, and none of its files is drawn as changed. Before any pass has
+read the branches, or with a file that can't be read, the view says so. With no
+region claims the page has no such view, and a published cut carries none.
 
 A piece whose queue or planned element names a `runId` shows that run in its
 detail: its review rounds as a track, and a card for the picked round. With
@@ -253,13 +280,14 @@ A criterion is **proven**; a finish line is **met**, as the record says.
 A journal `delivery.closed` entry makes the page read the delivery as closed,
 until a lane is assigned, a candidate is handed or a check starts after it. Now
 says so and says when, with no warning about silence, though a lost connection
-still shows. It says "Delivered." only when every piece and every live plan unit
-landed; proofs and finish lines keep their own counts beside it. What's left stops
+still shows. Under the delivery's name, its count line says "Every piece landed"
+only when every piece and every live plan unit landed; proofs and finish lines keep
+their own counts beside it. What's left stops
 counting down once nothing is left to land, and counts plan units that never reached
 the line. Lanes read as finished whatever the record last said they waited on, an
 unlanded stop reads "Not landed" and stops pulsing, and leftover holds, leases and
 stale sources no longer show. The progress bar and dots use the same count as the
-headline, and a piece the plan removed isn't counted. Now and the plan call what
+count line, and a piece the plan removed isn't counted. Now and the plan call what
 remains left open at close rather than asking for anything. The close is journaled
 before the supervisor stops, so its Needs you box still shows while a running,
 current list holds the close, and otherwise doesn't show.
@@ -1019,15 +1047,42 @@ print those words. A record with no siblings draws exactly as before.
   "couldn't be read", "stale", "needs a compatible snapshot" or "delivers
   another epic". A sibling no read has reached says "never read". A sibling of
   another epic shows no stories. The line map adds the chapter after What's
-  left, the Markdown view and the built-in page after Planned.
-- **The headline.** Until every one of this delivery's own stories has landed
+  left, the Markdown view and the built-in page after Planned. In the line
+  map's chapter a sibling of another epic sits outside the fold, under an "Also
+  linked" row after the epic's own groups, with its outcome, and the chapter's
+  title counts only the epic's own.
+- **The epic's post.** With a same-epic sibling, the line map's main line runs
+  on past this repository's "Finish line" post, which keeps its place and
+  counts, to a second post for the epic. Its label, "Epic", and its count, "L/T
+  landed" across this repository's pieces and every same-epic sibling's
+  stories, stack above it. At most two siblings get a row under the lanes, with
+  their name and "L of T landed" and no stops, and turn in at the epic's post
+  from below: first those holding a story this repository waits on, then the
+  furthest behind, by the lowest share landed, then the most open. The rest
+  fold into a "+N more" chip by the post, whose accessible name lists them. A
+  sibling's turn is solid once it has stories and all of them have landed, and
+  dashed before, a fresh sibling with no stories included. The epic's line and post are solid only once every piece here and
+  every sibling story has landed and every sibling is fresh.
+- **An unreadable sibling.** A same-epic sibling that isn't fresh turns in
+  dotted, and its row reads "Never read" or "Couldn't be read since <at>". The
+  epic's line and post go dashed, the label reads "Epic ?", and under it goes
+  the sibling's name, or "N can't be read". Every stroke of the epic's post is
+  the neutral edge colour, never a warning colour. The drawing's accessible
+  name adds the epic's count across its repositories, each sibling that can't
+  be read and how many are folded. A sibling of another epic draws nothing on
+  the line and counts for nothing there. With no same-epic sibling the line is
+  drawn exactly as before.
+- **The done count.** Until every one of this delivery's own stories has landed
   it is unchanged. Once they have, a same-epic sibling with open stories in its
   last kept read, one never read, or one not fresh adds its sentence, and the
   views say "This repository's part is done." with those sentences in place of
-  a done headline: "<name> has N open." ("..., couldn't be read since <at>."
+  a done count: "<name> has N open." ("..., couldn't be read since <at>."
   when it isn't fresh), "<name> couldn't be read (never read).", or "<name>
-  couldn't be read since <at>.". Every same-epic sibling fresh with everything
-  landed leaves the usual done headline. The delivery still closes by itself.
+  couldn't be read since <at>.". The line map shows the first as the count under
+  the delivery's name, without its full stop, and the siblings' sentences below
+  it; the Markdown view and the built-in page say them as they are. Every
+  same-epic sibling fresh with everything landed leaves the usual done count.
+  The delivery still closes by itself.
 - **Elsewhere.** An outside child a drawn sibling's stories hold appears in that
   sibling's group; the rest stay under "Elsewhere in KEY", which the Markdown
   view and the built-in page now draw too.

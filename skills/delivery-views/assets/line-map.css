@@ -50,6 +50,42 @@
 .theme-switch button[aria-pressed="true"] { background: var(--well); color: var(--ink); box-shadow: var(--shadow-press); }
 .theme-switch button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .theme-switch svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* The corner: whose checkout drew this page, joined to the theme switch as one quiet sheet. The address is set in mono
+   so it reads as an identity rather than prose; the domain steps back so the person leads. */
+.corner { position: fixed; top: 14px; right: 14px; z-index: 20; display: flex; align-items: center; gap: 4px; padding: 3px;
+  border-radius: 10px; background: var(--lift); box-shadow: 0 2px 6px rgba(20, 23, 25, .06), 0 12px 28px -12px rgba(20, 23, 25, .2), 0 0 0 1px color-mix(in oklab, var(--edge) 18%, transparent); }
+.corner .theme-switch { position: static; padding: 0; background: none; box-shadow: none; }
+.operator { position: relative; display: flex; align-items: center; min-width: 0; height: 26px; padding: 0 10px; border-right: 1px solid var(--hair); margin-right: 1px; }
+/* The icon is the phone's stand-in for the address; on a wider page the address shows itself and the icon steps aside. */
+.operator-mark { display: none; flex: none; width: 26px; height: 26px; place-items: center; padding: 0; border: 0; border-radius: 7px;
+  background: none; color: var(--faint); cursor: pointer; }
+.operator-mark:hover, .operator-mark[aria-expanded="true"] { color: var(--ink); }
+.operator-mark[aria-expanded="true"] { background: var(--well); box-shadow: var(--shadow-press); }
+.operator-mark:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.operator-mark svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.operator-email { min-width: 0; max-width: 28ch; display: flex; font-family: var(--mono); font-size: 11.5px; line-height: 16px; letter-spacing: -0.01em; white-space: nowrap; }
+.operator-local { color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
+.operator-domain { flex: none; color: var(--faint); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* On a phone the icon alone stands for the person; a tap lifts the address out beneath the corner as a small sheet,
+   right-aligned with the corner (the theme switch beside it is a fixed 71px), its tail pointing back at the icon. */
+@media (max-width: 560px) {
+  .operator { padding: 0; }
+  .operator-mark { display: grid; }
+  .operator-email { position: absolute; top: calc(100% + 11px); right: -71px; max-width: calc(100vw - 28px); padding: 8px 12px;
+    border-radius: 10px; background: var(--lift); box-shadow: var(--shadow-sheet);
+    opacity: 0; visibility: hidden; transform: translateY(-4px); transition: opacity var(--quick) var(--ease), transform var(--quick) var(--ease), visibility 0s linear var(--quick); }
+  .operator::after { content: ""; position: absolute; top: calc(100% + 6px); left: 8px; width: 10px; height: 10px; z-index: 1;
+    background: var(--lift); transform: translateY(-4px) rotate(45deg); border-radius: 2px 0 0 0;
+    box-shadow: -1px -1px 0 0 color-mix(in oklab, var(--edge) 22%, transparent);
+    opacity: 0; visibility: hidden; transition: opacity var(--quick) var(--ease), transform var(--quick) var(--ease), visibility 0s linear var(--quick); }
+  .operator.open .operator-email, .operator.open::after { opacity: 1; visibility: visible; transition-delay: 0s; }
+  .operator.open .operator-email { transform: none; }
+  .operator.open::after { transform: rotate(45deg); }
+}
+@media (max-width: 560px) and (prefers-reduced-motion: reduce) {
+  .operator-email, .operator::after { transition: none; }
+}
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 /* Keyboard focus is one ring everywhere; a row the page moves focus to is tinted instead, since nothing was typed. */
@@ -64,7 +100,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .chapter + .chapter { border-top: 1px solid var(--hair); }
 .chapter-now { min-height: 82vh; display: grid; align-content: center; }
 .inner { width: 100%; max-width: 980px; margin-inline: auto; display: grid; gap: 24px; }
-.kicker { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; }
+.kicker { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .title { margin: 0; font-family: var(--display); font-weight: 500; font-size: clamp(28px, 4.2vw, 44px); line-height: 1.1; letter-spacing: -0.02em; max-width: 24ch; }
 .chapter-now .title { font-size: clamp(38px, 6vw, 64px); font-weight: 300; line-height: 1.04; max-width: 17ch; text-wrap: balance; }
 .title b { font-weight: 500; }
@@ -241,9 +277,13 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .lines::-webkit-scrollbar { display: none; }
 /* The rows keep 16px of room above and below inside the scroll area, so a stop's glow and pulse and the last row's labels
    are never clipped; scrolling sideways (on a phone) never brings a vertical scroll with it. */
-/* The track's least width: the lane-name column and its gap (220 + 24, or 104 + 12 on a phone) and the merge's 176
-   (MERGE_WIDTH in line-map.js), plus 46 for each stop of the longest lane, so stops never crowd under their keys. */
-.lines-track { position: relative; display: grid; gap: 20px; padding: 16px 176px 16px 0; min-width: calc(420px + var(--most, 1) * 46px); }
+/* The track's least width: the lane-name column and its gap (220 + 24, or 104 + 12 on a phone) and the merge's width,
+   plus 46 for each stop of the longest lane, so stops never crowd under their keys. The drawing sets the merge's width,
+   --merge-width (176, 304 with the epic's post, or 478 with the integration step), and the room above the line,
+   --merge-top (16, or more for the epic's words), on the track, so the padding, the least width and the drawing's place
+   all follow the one number. */
+.lines-track { position: relative; display: grid; gap: 20px; padding-top: var(--merge-top); padding-right: var(--merge-width); padding-bottom: 16px; padding-left: 0;
+  min-width: calc(244px + var(--merge-width) + var(--most, 1) * 46px); }
 .line { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; height: 64px; }
 /* The lane's name stays pinned at the left while its row scrolls, so a lane is named wherever the reader has scrolled to. */
 .line .name { position: sticky; left: 0; z-index: 2; align-self: stretch; padding: 3px 12px 10px 0; margin-bottom: -10px; font-size: 12px; line-height: 16px; color: var(--faint); overflow: hidden;
@@ -255,7 +295,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .stops::before { content: ""; position: absolute; left: 0; right: 0; top: 22px; height: 2.5px; border-radius: 2px;
   background: linear-gradient(90deg, var(--c) var(--solid, 0%), color-mix(in oklab, var(--c) 30%, transparent) var(--solid, 0%)); }
 .seg { position: relative; flex: 0 0 calc(100% / var(--most, 1)); height: 64px; display: grid; place-items: center; min-width: 0; }
-.line-merge { position: absolute; top: 16px; right: 0; overflow: visible; }
+.line-merge { position: absolute; top: var(--merge-top); right: 0; overflow: visible; }
 .mg-trunk { fill: none; stroke: var(--ink); stroke-width: 4; stroke-linecap: round; }
 .mg-trunk.open { stroke: color-mix(in oklab, var(--ink) 30%, transparent); }
 .mg-turn { fill: none; stroke: var(--c); stroke-width: 2.5; stroke-linecap: round; }
@@ -272,6 +312,47 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .mg-post { stroke: var(--ink); stroke-width: 3; stroke-linecap: round; }
 .mg-label { font: 550 13px var(--text); fill: var(--ink); }
 .mg-count { font: 500 11px var(--mono); fill: var(--faint); }
+/* The integration step: the main line runs on through four stops and bends into the target, drawn beneath it. Its width,
+   478 (REJOIN_WIDTH in line-map.js), reaches the track as --merge-width like every merge's. */
+.lines-track.rejoining { padding-bottom: 74px; }
+.mg-target { fill: none; stroke: var(--edge); stroke-width: 4; stroke-linecap: round; }
+.mg-step { fill: var(--paper); stroke: color-mix(in oklab, var(--ink) 30%, transparent); stroke-width: 2; }
+.mg-step.filled { fill: var(--ink); stroke: var(--ink); }
+.mg-step.danger { stroke: var(--held); stroke-width: 3; }
+.mg-step.warning { stroke: var(--wait); stroke-width: 3; }
+.mg-step.next { stroke: var(--l1); stroke-width: 3; }
+.mg-step-label { font: 500 10px var(--text); fill: var(--soft); }
+.mg-base, .mg-target-label { font-size: 11px; fill: var(--soft); }
+.title-beat { color: var(--faint); }
+.rejoin { margin: 18px 0 6px; }
+.rejoin-title { font: 600 14px var(--text); margin: 0 0 8px; }
+.rejoin-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rj-row { display: grid; grid-template-columns: 96px 1fr; gap: 12px; font: 400 13px var(--text); color: var(--ink); }
+.rj-name { color: var(--soft); }
+.rj-head { font: 500 12px var(--mono); }
+.rj-head.struck { color: var(--faint); }
+.rj-dots { display: inline-flex; gap: 3px; vertical-align: middle; }
+.rj-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.rj-dot.approve { background: var(--landed); }
+.rj-dot.changes { background: var(--wait); }
+/* The epic's post: past this repository's finish line the main line runs on to it, and sibling repositories turn in from
+   rows under the lanes. Every stroke of it is neutral: dashed while work is open, dotted for a sibling that can't be read,
+   solid once everything has landed. No warning colour, since a sibling out of reach is not trouble here. */
+.line.sibling .name b { font-weight: 500; color: var(--soft); }
+.line.sibling .name span { color: var(--faint); }
+.mg-sib { fill: none; stroke: var(--edge); stroke-width: 2.5; stroke-linecap: round; }
+.mg-sib.open { stroke: var(--edge); stroke-dasharray: 5 5; }
+.mg-sib.unread { stroke: var(--edge); stroke-dasharray: .5 5; }
+.mg-epic { fill: none; stroke: var(--edge); stroke-width: 4; stroke-linecap: round; }
+.mg-epic.open { stroke: var(--edge); stroke-dasharray: 8 6; }
+.mg-epic.unread { stroke: var(--edge); stroke-width: 2.5; stroke-dasharray: 8 6; }
+.mg-epic-post { stroke: var(--edge); stroke-width: 3; stroke-linecap: round; }
+.mg-epic-post.open { stroke: var(--edge); stroke-dasharray: 4 5; }
+.mg-epic-post.unread { stroke: var(--edge); stroke-dasharray: 4 5; }
+.mg-epic-join { fill: var(--edge); }
+.mg-label.unread { fill: var(--soft); }
+.more-chip { position: absolute; right: 0; top: calc(var(--merge-top) + var(--chip-y)); display: inline-flex; align-items: center; height: 22px;
+  padding: 0 9px; border-radius: 11px; font: 500 11px var(--mono); color: var(--soft); background: color-mix(in oklab, var(--edge) 14%, transparent); }
 /* A stop: an 18px mark in its lane's hue. Circles fill as the piece goes; a hollow diamond waits on the lead; a triangle is stopped. */
 .stop-btn { position: absolute; top: 14px; z-index: 1; width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--c);
   background: var(--paper); cursor: pointer; padding: 0; transition: transform .15s var(--ease); }
@@ -294,9 +375,22 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .stop-btn:focus-visible { box-shadow: 0 0 0 3px var(--paper), 0 0 0 5px var(--ink); }
 .stop-label { position: absolute; top: 40px; font: 450 11px/14px var(--mono); color: var(--soft); white-space: nowrap; text-align: center; }
 /* What one stop carries, on its own sheet; its owner and timeline take the lane's hue. */
-.detail { min-height: 58px; padding: 22px 24px; border-radius: 14px; background: var(--lift); box-shadow: var(--shadow-sheet); display: grid; gap: 10px; }
+.detail { min-height: 58px; padding: 28px 30px 24px; border-radius: 14px; background: var(--lift); box-shadow: var(--shadow-sheet); display: grid; gap: 16px; }
 .detail .d1 { font-size: 17px; line-height: 24px; font-weight: 550; }
-.detail .d-owner { margin-bottom: -6px; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--c, var(--soft)); }
+.detail .d-owner { margin-bottom: -10px; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--c, var(--soft)); }
+/* The owner, title and meta line stay one group; the meta line is quiet. */
+.detail .d-meta { margin-top: -10px; color: var(--faint); font-size: 13px; }
+/* Where the story is: a state line with its dot, then how the review ended or the lane's own words. */
+.detail .d-state { margin: 8px 0 6px; display: grid; gap: 4px; }
+.detail .d-now { display: flex; align-items: center; gap: 8px; font-size: 15px; line-height: 22px; font-weight: 500; color: var(--ink); }
+.detail .d-now::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--dot, var(--landed)); flex: none; }
+.detail .d-said { margin-left: 15px; color: var(--soft); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.detail .d-said time { color: var(--faint); font-variant-numeric: tabular-nums; }
+.detail .d-said.d-lane { color: var(--faint); font-size: 12px; line-height: 18px; }
+.detail .d-state.is-moving { --dot: var(--landed); }
+.detail .d-state.is-waiting { --dot: var(--wait); }
+.detail .d-state.is-checked { --dot: var(--edge); }
+.detail .d-wait { font-size: 13px; line-height: 20px; }
 .detail .d-owner.is-none { color: var(--faint); }
 .detail .d2 { color: var(--soft); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
 .d-stage { color: var(--ink); }
@@ -424,6 +518,19 @@ a.issue-link { color: inherit; cursor: pointer; }
 .issue-card b { display: block; font: 450 12px/16px var(--mono); color: var(--soft); margin-bottom: 4px; }
 .issue-card .ic-t { font-size: 14px; font-weight: 550; margin-bottom: 4px; }
 .issue-card .ic-s { color: var(--soft); }
+/* A delivery's span, from the kicker: its two ends on a short line, a hollow mark for the start and a solid one for the
+   close, as the line map's own stops are drawn; the run sits on the line between them. */
+.when { position: relative; display: grid; grid-template-columns: 9px auto; column-gap: 12px; min-width: 196px; }
+/* One rule joins the marks, from the start's centre to the close's: an end is two fixed lines, so the close's centre
+   sits 28.5px above the card's foot. A run still going trails off below the start, dashed. */
+.when::before { content: ""; position: absolute; left: 3.75px; width: 1.5px; top: 8.5px; bottom: 28.5px; background: var(--hair); }
+.when.open::before { bottom: 0; background: repeating-linear-gradient(to bottom, var(--edge) 0 3px, transparent 3px 6px); }
+.when-dot { position: relative; width: 9px; height: 9px; margin-top: 4px; border-radius: 50%; border: 1.5px solid var(--ink); background: var(--lift); }
+.when-dot.close { background: var(--ink); }
+.when-end { display: grid; gap: 1px; }
+.when-word { font-size: 11.5px; line-height: 16px; font-weight: 500; color: var(--faint); }
+.when-local { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--ink); }
+.when-took { padding: 10px 0; font-size: 12px; line-height: 16px; color: var(--soft); }
 
 /* Who: each lane session on its own card. */
 .people { display: grid; gap: 12px; }
@@ -443,6 +550,32 @@ a.issue-link { color: inherit; cursor: pointer; }
 .chip.blocked { background: var(--held-wash); color: var(--held); }
 .person .on { font: 400 12px/16px var(--mono); color: var(--faint); max-width: 100%; overflow-wrap: anywhere; text-align: right; }
 .person .on.waiting { color: var(--wait); }
+/* Who holds which files: a fold under the lanes, each claimed file in its lane's colour, solid where changed. */
+.files-fold { margin-top: 16px; border-top: 1px solid var(--hair); padding: 12px 0 0; }
+.files-fold > summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--soft); }
+.files-fold > summary::-webkit-details-marker { display: none; }
+.files-body { display: grid; gap: 14px; padding-top: 12px; }
+.files-area h4, .file-reading h4 { margin: 0 0 6px; font: 500 12px/16px var(--mono); color: var(--faint); overflow-wrap: anywhere; }
+.files-shelf { display: flex; flex-wrap: wrap; gap: 6px; }
+.file { display: inline-flex; align-items: center; gap: 8px; min-height: 26px; max-width: 100%; padding: 0 10px; border-radius: 6px;
+  font: 400 12px/16px var(--mono); overflow-wrap: anywhere; border: 1.5px solid var(--c); background: transparent; color: var(--ink); }
+.file.whole.solid { background: var(--c); color: var(--on-ink); }
+.file.unread { border-style: dashed; color: var(--faint); }
+.file.shared { cursor: pointer; padding: 4px 10px; flex-direction: column; align-items: stretch; border-color: var(--hair); }
+.file.shared.open { border-color: var(--ink); }
+.file-split { position: relative; display: block; height: 8px; min-width: 120px; border-radius: 3px; background: var(--well); }
+.file-split .stretch { position: absolute; top: 0; bottom: 0; border: 1.5px solid var(--c); border-radius: 3px; box-sizing: border-box; }
+.file-split .stretch.solid { background: var(--c); }
+.file-split .stretch.unread, .ruler .stretch.regrant, .file-split .stretch.regrant { border-style: dashed; }
+.files-unread { margin: 0; font-size: 13px; color: var(--wait); overflow-wrap: anywhere; }
+.file-reading { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 4px 16px; }
+.file-reading h4 { grid-column: 1 / -1; }
+.ruler { position: relative; min-height: 160px; border-radius: 4px; background: var(--well); }
+.ruler .stretch { position: absolute; left: 0; width: 10px; border: 1.5px solid var(--c); border-radius: 3px; box-sizing: border-box; }
+.ruler .tick { position: absolute; left: 14px; width: 12px; min-height: 2px; background: var(--c); border-radius: 1px; }
+.ruler .tick.out { background: var(--held); }
+.file-lanes { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; align-content: start; font-size: 13px; color: var(--soft); }
+.file-lanes b { color: var(--c); font-weight: 600; }
 .leases { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 14px; color: var(--soft); }
 .leases span b { color: var(--ink); font-weight: 600; font-family: var(--mono); font-size: 13px; }
 
@@ -662,10 +795,10 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
   .checking { padding: 18px 16px; border-radius: 12px; }
   .ck-run, .ck-fails li { margin: 0 -6px; }
   .rail { display: none; }
-  .lines-track { min-width: calc(292px + var(--most, 1) * 46px); }
+  .lines-track { min-width: calc(116px + var(--merge-width) + var(--most, 1) * 46px); }
   .line { grid-template-columns: 104px minmax(0, 1fr); gap: 12px; }
   .person { grid-template-columns: 20px minmax(0, 1fr); padding: 14px 16px; }
-  .detail { padding: 18px 16px; border-radius: 12px; }
+  .detail { padding: 22px 18px 20px; border-radius: 12px; gap: 14px; }
   .person .st { grid-column: 2; justify-items: start; }
   .person .on { text-align: left; }
   .beat { grid-template-columns: 18px minmax(0, 1fr); }
@@ -683,6 +816,7 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 /* Under the outcome, how much is proven, linked to the plan, and how often the plan changed, on one quiet line. */
 .plan-now-line { display: block; margin-top: 6px; font-size: 14px; color: var(--soft); }
 .plan-now-line .plan-now-link { display: inline; margin: 0; }
+.plan-now-line .now-count { font-weight: 500; color: var(--ink); }
 .plan-now-link:hover, .plan-now-link:focus-visible { color: var(--ink); text-decoration-color: currentColor; }
 .plan-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; max-width: none; }
 /* The plan on the page is older than the record's: said in a quiet line under the headline, with the one thing to do. */

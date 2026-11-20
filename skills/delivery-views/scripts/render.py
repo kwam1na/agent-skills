@@ -45,6 +45,7 @@ import importlib.util
 import json
 import math
 import re
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -1117,6 +1118,83 @@ def read_needs_block(state_directory: Path) -> dict | None:
 # The page
 
 
+# What each lane has pushed, as the supervisor's branch read wrote it beside the record: per lane its story, branch
+# and head, or why the branch can't be read, and per changed file what the lane holds of it and each change; and, when
+# lanes share files by lines, the delivery's claimed files with each claim's stretch. Only read here, for the files view.
+
+LANE_CHANGES_FILE = "lane-changes.json"
+LANE_CHANGES_SPEC = "delivery-lane-changes/1"
+LANE_CHANGES_LIMIT_BYTES = 1024 * 1024
+LANE_FILES = 400
+LANE_CHANGES = 100
+LANE_HOLDS = ("file", "span", "shared", "none")
+
+
+def _count(value: object) -> int | None:
+    return value if type(value) is int and value >= 0 else None
+
+
+def _lane_read(read: dict, cut) -> dict:
+    """One lane's read as the page draws it: its names, and why it can't be read or what it changed."""
+    shown = {name: cut(read[name]) for name in ("story", "branch", "head", "readAt") if isinstance(read.get(name), str)}
+    if "unreadable" in read:
+        return {**shown, "unreadable": cut(str(read["unreadable"]))}
+    files = []
+    for entry in read.get("files") if isinstance(read.get("files"), list) else []:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str) or entry.get("holds") not in LANE_HOLDS:
+            continue
+        changes = []
+        for change in entry.get("changes") if isinstance(entry.get("changes"), list) else []:
+            numbers = {name: _count(change.get(name)) for name in ("start", "added", "removed")} if isinstance(change, dict) else {}
+            if not numbers or None in numbers.values() or type(change.get("inside")) is not bool:
+                continue
+            changes.append({**numbers, "inside": change["inside"],
+                            **({"name": cut(change["name"])} if isinstance(change.get("name"), str) else {})})
+        files.append({"path": cut(entry["path"]), "holds": entry["holds"], "changes": changes[:LANE_CHANGES]})
+    return {**shown, "files": files[:LANE_FILES]}
+
+
+def _claimed_file(entry: object, cut) -> dict | None:
+    if not isinstance(entry, dict) or not isinstance(entry.get("path"), str) or _count(entry.get("lines")) is None:
+        return None
+    shown = {"path": cut(entry["path"]), "lines": entry["lines"]}
+    if isinstance(entry.get("spans"), list):
+        spans = [{"lane": cut(span["lane"]), "start": span["start"], "end": span["end"], **({"regrant": True} if span.get("regrant") is True else {})}
+                 for span in entry["spans"] if isinstance(span, dict) and isinstance(span.get("lane"), str)
+                 and _count(span.get("start")) and _count(span.get("end")) and span["start"] < span["end"]]
+        return {**shown, "spans": spans}
+    if isinstance(entry.get("lanes"), list):
+        return {**shown, "lanes": [cut(lane) for lane in entry["lanes"] if isinstance(lane, str)]}
+    return None
+
+
+def read_lane_changes_block(state_directory: Path) -> dict | None:
+    """The page's files view block: None when no pass wrote lane-changes.json, {"unreadable": True} for one that can't
+    be trusted, or the reads and claimed files as written, bounded and cut to their share."""
+    path = state_directory / LANE_CHANGES_FILE
+    if not path.exists() and not path.is_symlink():
+        return None
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > LANE_CHANGES_LIMIT_BYTES:
+            raise ValueError("not a bounded regular file")
+        written = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(written, dict) or written.get("spec") != LANE_CHANGES_SPEC or not isinstance(written.get("lanes"), dict):
+            raise ValueError("not a lane changes file")
+        if not isinstance(written.get("at"), str) or not _MOMENT.match(written["at"]):
+            raise ValueError("its time is not readable")
+    except (OSError, UnicodeError, ValueError):
+        return {"unreadable": True}
+    cut = lambda value: value if len(value) <= NEEDS_TEXT else value[:NEEDS_TEXT - 1] + "…"
+    block = {"at": written["at"], "lanes": {cut(lane): _lane_read(read, cut) for lane, read in written["lanes"].items()
+                                           if isinstance(read, dict)}}
+    if isinstance(written.get("files"), list):
+        block["files"] = [shown for shown in (_claimed_file(entry, cut) for entry in written["files"][:LANE_FILES]) if shown]
+        more = _count(written.get("more")) or 0
+        if more or len(written["files"]) > LANE_FILES:
+            block["more"] = more + max(0, len(written["files"]) - LANE_FILES)
+    return block
+
+
 def with_story(document: dict, plan: object) -> dict:
     """The record with its story: the one the wrapper told, or, for a record given without one, the narrator's now."""
     if isinstance(document.get("story"), dict):
@@ -1197,8 +1275,61 @@ def left_open(document: dict) -> dict | None:
         return None
 
 
+# The integration facts that name the integration's head, in journal order; integration.landed ends it and names the
+# target's. A review round is one only under the delivery's own key.
+INTEGRATION_HEADS = ("integration.merged", "integration.suite", "integration.requested")
+DRIFT_TIMEOUT_SECONDS = 5
+
+
+def integration_head(document: dict) -> str | None:
+    """The integration's current head: the newest head an integration fact names, or the base head before any."""
+    state = document.get("state") if _is_object(document.get("state")) else {}
+    meta = state.get("meta") if _is_object(state.get("meta")) else {}
+    key = meta.get("trackerParent")
+    head = meta.get("baseHead") if isinstance(meta.get("baseHead"), str) else None
+    for entry in document.get("journal") if isinstance(document.get("journal"), list) else ():
+        if not _is_object(entry) or not _is_object(entry.get("data")):
+            continue
+        if entry.get("kind") in INTEGRATION_HEADS or (entry.get("kind") == "review.round" and key is not None
+                                                      and entry.get("subject") == key):
+            named = entry["data"].get("head")
+            head = named if isinstance(named, str) else head
+    return head
+
+
+def integration_drift(document: dict, repository: Path | None = None) -> dict | None:
+    """How far the integration's target moved while it worked, ``moved``, and how far its current head is behind the
+    target, ``behind``, each a count of commits on the remote-tracking ref in the repository the renderer runs in. None
+    for a record without an integration, and whenever git can't say: absent, slow, missing a ref, or failing."""
+    state = document.get("state") if _is_object(document.get("state")) else {}
+    meta = state.get("meta") if _is_object(state.get("meta")) else {}
+    integration = meta.get("integration")
+    if not _is_object(integration) or not all(isinstance(integration.get(name), str) and integration[name]
+                                              for name in ("target", "remote")):
+        return None
+    started = next((entry["data"]["base"].get("head") for entry in document.get("journal") or []
+                    if _is_object(entry) and entry.get("kind") == "record.started" and _is_object(entry.get("data"))
+                    and _is_object(entry["data"].get("base"))), None)
+    current = integration_head(document)
+    target = f"refs/remotes/{integration['remote']}/{integration['target']}"
+    counts = []
+    for since in (started, current):
+        if not isinstance(since, str) or not re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", since):
+            return None
+        try:
+            done = subprocess.run(["git", "rev-list", "--count", f"{since}..{target}", "--"], cwd=repository,
+                                  capture_output=True, text=True, timeout=DRIFT_TIMEOUT_SECONDS)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if done.returncode != 0 or not done.stdout.strip().isdigit():
+            return None
+        counts.append(int(done.stdout.strip()))
+    return {"moved": counts[0], "behind": counts[1]}
+
+
 def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
-                  plan: dict | None = None, needs: dict | None = None, story: bool = True) -> dict:
+                  plan: dict | None = None, needs: dict | None = None, story: bool = True,
+                  files: dict | None = None, repository: Path | None = None) -> dict:
     """The shared bounded view data; local HTML and public projection consume the same cut. Without ``story``, the
     record is not narrated: a cut that publishes no story tells none."""
     reviews = native_review_summaries(document)
@@ -1235,15 +1366,24 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
     }
     data = {"document": document, "runs": runs, "reviews": reviews, "view": view,
             "links": page_links(document, runs, config, reviews), "plan": plan, "needs": needs}
+    if files is not None:
+        # Only the local page reads the lanes' branches: a cut made without them publishes none.
+        data["files"] = files
     if story:
         # What a closed delivery left open goes with the story too: the published cut tells none.
         data["leftOpen"] = left_open(document)
+        # How far the target moved goes with the story: it is read from this repository, and the published cut has none.
+        drift = integration_drift(document, repository)
+        if drift is not None:
+            data["integration"] = {"drift": drift}
     return data
 
 
 def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
-                    plan: dict | None = None, needs: dict | None = None) -> str:
-    data = line_map_data(document, runs, config, theme_key=theme_key, history=history, plan=plan, needs=needs)
+                    plan: dict | None = None, needs: dict | None = None, files: dict | None = None,
+                    operator: str | None = None) -> str:
+    data = line_map_data(document, runs, config, theme_key=theme_key, history=history, plan=plan, needs=needs,
+                         files=files)
     document, runs, reviews, view = (data[key] for key in ("document", "runs", "reviews", "view"))
     return "\n".join([
         "<!doctype html>",
@@ -1258,7 +1398,7 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
         f"<style>\n{_asset('line-map.css')}{_asset('run-summary.css')}</style>",
         "</head>",
         "<body>",
-        THEME_SWITCH,
+        corner(operator),
         '<main id="app" data-source="embedded"></main>',
         f'<script type="application/json" id="delivery-state">{embed(document)}</script>',
         f'<script type="application/json" id="delivery-runs">{embed(runs)}</script>',
@@ -1267,8 +1407,11 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
         f'<script type="application/json" id="delivery-view">{embed(view)}</script>',
         *([f'<script type="application/json" id="delivery-plan">{embed(plan)}</script>'] if plan is not None else []),
         *([f'<script type="application/json" id="delivery-needs">{embed(needs)}</script>'] if needs is not None else []),
+        *([f'<script type="application/json" id="delivery-files">{embed(files)}</script>'] if files is not None else []),
         *([f'<script type="application/json" id="delivery-left-open">{embed(data["leftOpen"])}</script>']
           if data.get("leftOpen") is not None else []),
+        *([f'<script type="application/json" id="delivery-integration">{embed(data["integration"])}</script>']
+          if data.get("integration") is not None else []),
         f"<script>\n{_asset('run-summary.js')}{_asset('line-map.js')}</script>",
         "</body>",
         "</html>",
@@ -1279,6 +1422,38 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
 def _asset(name: str) -> str:
     """One of the skill's page assets, inlined into the page as it is."""
     return (ASSETS / name).read_text(encoding="utf-8")
+
+
+def checkout_operator(root: Path) -> str | None:
+    """The checkout's git identity, for the local page's corner; the hosted page never reads it."""
+    try:
+        found = subprocess.run(["git", "config", "user.email"], cwd=root, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    email = found.stdout.strip() if found.returncode == 0 else ""
+    return email if 0 < len(email) <= 254 and "@" in email and not any(c.isspace() for c in email) else None
+
+
+def corner(operator: str | None) -> str:
+    """The page's top-right corner: the theme switch, joined by whose checkout drew the page when that is known."""
+    if not operator:
+        return THEME_SWITCH
+    local, _, domain = operator.partition("@")
+    return ("<div class=\"corner\">"
+            "<div class=\"operator\">"
+            "<button type=\"button\" class=\"operator-mark\" aria-expanded=\"false\" aria-controls=\"operator-email\""
+            " aria-label=\"Whose checkout drew this page\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">"
+            "<path d=\"M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0\"/><path d=\"M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2\"/>"
+            "</svg></button>"
+            f"<span class=\"operator-email\" id=\"operator-email\" title=\"Drawn from {_html_attribute(operator)}'s checkout\">"
+            "<span class=\"visually-hidden\">Drawn from the checkout of </span>"
+            f"<span class=\"operator-local\">{_html_text(local)}</span>"
+            f"<span class=\"operator-domain\">@{_html_text(domain)}</span></span></div>"
+            f"{THEME_SWITCH}</div>")
+
+
+def _html_attribute(value: str) -> str:
+    return _html_text(value).replace('"', "&quot;").replace("'", "&#39;")
 
 
 def _html_text(value: str) -> str:
@@ -1314,7 +1489,9 @@ def line_map(arguments: argparse.Namespace) -> int:
                            theme_key=views_common.theme_key(inputs.state_directory),
                            history=_renderer_output(inputs.binding, "history"),
                            plan=read_plan_block(inputs.state_directory, document),
-                           needs=read_needs_block(inputs.state_directory))
+                           needs=read_needs_block(inputs.state_directory),
+                           files=read_lane_changes_block(inputs.state_directory),
+                           operator=checkout_operator(inputs.root))
     sys.stdout.write(page)
     return 0
 

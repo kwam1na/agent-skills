@@ -1,0 +1,277 @@
+{
+  "state": {
+    "version": 3,
+    "meta": {
+      "headline": "Fixture delivery",
+      "updatedAt": "2026-10-30T11:59:00Z",
+      "trackerParent": "APP-10",
+      "baseHead": "01b202080242b13102d3605a03640f8303f4beac",
+      "integration": {
+        "base": "integrate/app",
+        "target": "main",
+        "remote": "origin"
+      }
+    },
+    "lanes": [
+      {
+        "id": "lane-1",
+        "title": "Lane one",
+        "focus": "",
+        "state": "working",
+        "waitingOn": null,
+        "since": "2026-10-30T06:00:00Z"
+      }
+    ],
+    "queue": [
+      {
+        "order": 1,
+        "subject": "A",
+        "title": "Work A",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "0000034e0000083900000d240000120f000016fa",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 2,
+        "subject": "B",
+        "title": "Work B",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "000003510000083d00000d290000121500001701",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      }
+    ],
+    "planned": [],
+    "finish": [],
+    "followups": [],
+    "leases": []
+  },
+  "journal": [
+    {
+      "id": 1,
+      "at": "2026-10-30T06:00:00Z",
+      "kind": "record.started",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "base": {
+          "ref": "integrate/app",
+          "head": "3776123149f2c6bd5c6f7b496eec2fd58168e461"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "at": "2026-10-30T06:10:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "A",
+      "data": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:10:00Z",
+        "finishedAt": "2026-10-30T06:10:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 3,
+      "at": "2026-10-30T06:11:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "A",
+      "data": {
+        "head": "0000034e0000083900000d240000120f000016fa",
+        "checks": []
+      }
+    },
+    {
+      "id": 4,
+      "at": "2026-10-30T06:12:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "A",
+      "data": {
+        "head": "0000034e0000083900000d240000120f000016fa"
+      }
+    },
+    {
+      "id": 5,
+      "at": "2026-10-30T06:20:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "B",
+      "data": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:20:00Z",
+        "finishedAt": "2026-10-30T06:20:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 6,
+      "at": "2026-10-30T06:21:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "B",
+      "data": {
+        "head": "000003510000083d00000d290000121500001701",
+        "checks": []
+      }
+    },
+    {
+      "id": 7,
+      "at": "2026-10-30T06:22:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "B",
+      "data": {
+        "head": "000003510000083d00000d290000121500001701"
+      }
+    },
+    {
+      "id": 8,
+      "at": "2026-10-30T06:40:00Z",
+      "kind": "integration.merged",
+      "lane": null,
+      "subject": "APP-10",
+      "data": {
+        "target": "main",
+        "targetHead": "d6c70cd573b414ed10a11d05ad8e251d4a7b2d35",
+        "head": "7b0d126c4ebc1c61226b2656f61a304bc9c93a40",
+        "conflicts": []
+      }
+    },
+    {
+      "id": 9,
+      "at": "2026-10-30T06:50:00Z",
+      "kind": "integration.suite",
+      "lane": null,
+      "subject": "APP-10",
+      "data": {
+        "head": "7b0d126c4ebc1c61226b2656f61a304bc9c93a40",
+        "result": "failed",
+        "seconds": 905
+      }
+    },
+    {
+      "id": 10,
+      "at": "2026-10-30T07:00:00Z",
+      "kind": "integration.suite",
+      "lane": null,
+      "subject": "APP-10",
+      "data": {
+        "head": "340ac48d4563b48d56bca48d6815948d796e848d",
+        "result": "passed",
+        "seconds": 1242
+      }
+    },
+    {
+      "id": 11,
+      "at": "2026-10-30T07:10:00Z",
+      "kind": "review.round",
+      "lane": null,
+      "subject": "APP-10",
+      "data": {
+        "round": 1,
+        "startedAt": "2026-10-30T07:10:00Z",
+        "finishedAt": "2026-10-30T07:10:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "changes"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        },
+        "head": "340ac48d4563b48d56bca48d6815948d796e848d"
+      }
+    },
+    {
+      "id": 12,
+      "at": "2026-10-30T07:20:00Z",
+      "kind": "integration.merged",
+      "lane": null,
+      "subject": "APP-10",
+      "data": {
+        "target": "main",
+        "targetHead": "27cd983c351224214256b0064f9b3beb5cdfc7d0",
+        "head": "7e7c6e96a8a5ec99d2cf6a9cfcf8e89f272266a2",
+        "conflicts": [
+          "src/app.py"
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "at": "2026-10-30T07:30:00Z",
+      "kind": "integration.suite",
+      "lane": null,
+      "subject": "APP-10",
+      "data": {
+        "head": "7e7c6e96a8a5ec99d2cf6a9cfcf8e89f272266a2",
+        "result": "over-budget",
+        "seconds": 1384,
+        "budgetSeconds": 1260
+      }
+    },
+    {
+      "id": 14,
+      "at": "2026-10-30T07:40:00Z",
+      "kind": "review.round",
+      "lane": null,
+      "subject": "APP-10",
+      "data": {
+        "round": 2,
+        "startedAt": "2026-10-30T07:40:00Z",
+        "finishedAt": "2026-10-30T07:40:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        },
+        "head": "7e7c6e96a8a5ec99d2cf6a9cfcf8e89f272266a2"
+      }
+    }
+  ],
+  "stats": {},
+  "estimates": {},
+  "status": {
+    "source": "derived",
+    "text": ""
+  },
+  "focus": {}
+}
