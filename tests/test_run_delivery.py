@@ -7076,6 +7076,141 @@ class LiveLeadChangesTests(unittest.TestCase):
         command = sh("ps", "-p", str(after["pid"]), "-o", "command=").stdout
         self.assertIn(str(self.release.generation), command)
 
+    def test_a_lane_records_its_check_runs_and_the_queue_reuses_one_at_the_same_tree(self) -> None:
+        """`check` keeps what run-checks prints; a gate named by id leaves a runner record and an inline gate a checkout
+        record; the hand-off carries each check's latest record and shows each --checks id as recorded or named only;
+        and a queue run from the main checkout, under another TMPDIR and PATH, reuses the lane's record."""
+        from tests.test_run_delivery_supervisor import hand_off, kinds, record, supervised
+
+        fx = Fixture(self.release.generation, self.release.receipt)
+        self.addCleanup(fx.close)
+        supervised(fx)
+        m = fx.main
+        py = [sys.executable, "-B", "tools/check.py"]
+        entry = lambda name: {"id": name, "argv": py, "cwd": ".", "reasons": ["the fixture's"], "prerequisites": []}
+        binding_path = m / ".agents/orchestration.json"
+        binding = json.loads(binding_path.read_text())
+        binding.update(alwaysRun=[{**entry("always"), "argv": ["true"]}],
+                       selection={"lead": True, "catalogue": [entry("unit"), entry("other")]})
+        binding["reusableChecks"] = ["check"]  # the queue at this base reuses only the checks its binding lists
+        binding_path.write_text(json.dumps(binding, indent=2) + "\n")
+        conf_path = m / ".agents/run-delivery.json"
+        conf = json.loads(conf_path.read_text())
+        conf["gates"] = ["check", {"id": "lint", "argv": ["sh", "-c", "test -f src/app.txt"]}]
+        conf_path.write_text(json.dumps(conf, indent=2) + "\n")
+        commit(m, "FX-1: gates by id and a catalogue")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        self.assertEqual(fx.flow("lead-init", cwd=m)[0], 0)
+        (fx.tmp / "lane-temp").mkdir()
+        (fx.tmp / "lane-bin").mkdir()
+        lane_env = {**fx.env, "TMPDIR": str(fx.tmp / "lane-temp"),
+                    "PATH": f"{fx.tmp / 'lane-bin'}{os.pathsep}{fx.env['PATH']}"}
+        seen: dict = {}
+
+        def before(wt: Path, url: str) -> None:
+            review = wt / ".orchestration/review/FX-2"
+            seen.update(wt=wt, head=sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip(),
+                        gates=json.loads((review / "gates.json").read_text()))
+            code, out = fx.flow("check", "FX-2", "check,unit", cwd=wt, env=lane_env)
+            self.assertEqual(code, 0, out)
+            seen.update(out=out, kept=[json.loads(line) for line in (review / "checks.jsonl").read_text().splitlines()])
+            printed = sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/merge_queue.py", "--repo", wt,
+                         "--remote", "origin", "--base", "feature/FX-1", "run-checks", "--head", seen["head"], "--checks",
+                         "check,unit", cwd=wt, env=lane_env)
+            seen["printed"] = json.loads(printed.stdout)
+
+        out = hand_off(fx, "FX-2", "lane-1", checks="unit,other", before=before)
+        head, kept = seen["head"], seen["kept"]
+        timeless = lambda r: {k: v for k, v in r.items() if k not in ("at", "seconds")}
+        with self.subTest("check keeps what run-checks prints, at HEAD, and says each check's median and the prepare"):
+            self.assertEqual([timeless(r) for r in kept], [timeless(r) for r in seen["printed"]])
+            self.assertEqual({(r["check"], r["head"], r["where"], r["result"]) for r in kept},
+                             {("check", head, "runner", "passed"), ("unit", head, "runner", "passed")})
+            self.assertTrue(all({"environment", "host", "definition", "tree"} <= set(r) for r in kept), kept)
+            self.assertIn(f"check check passed in {kept[0]['seconds']}s at {head[:10]} (runner); no median yet", seen["out"])
+            self.assertRegex(seen["out"], r"prepare and checkout: \d+s of the run's \d+s")
+        with self.subTest("a gate named by id leaves a runner record, an inline gate a checkout record"):
+            results = {r["id"]: r for r in seen["gates"]["results"]}
+            self.assertEqual(list(results), ["check", "lint"])
+            self.assertEqual((results["check"]["record"]["where"], results["check"]["record"]["head"],
+                              results["check"]["record"]["result"]), ("runner", head, "passed"))
+            self.assertEqual(set(results["lint"]["record"]),
+                             {"check", "definition", "head", "tree", "result", "seconds", "at", "where"})
+            self.assertEqual(results["lint"]["record"]["where"], "checkout")
+        with self.subTest("the hand-off carries the latest record of each check, and shows each --checks id"):
+            self.assertIn(f"- checks run: unit, other\n- checks run, as recorded: unit recorded at {head[:10]}: passed; "
+                          "other named only\n", out)
+            self.assertIn(f"- check records: check passed at {head[:10]} (runner); unit passed at {head[:10]} (runner)", out)
+            item = next(i for i in record(fx)["state"]["queue"] if i["subject"] == "FX-2")
+            fields = ("check", "definition", "head", "tree", "result", "where", "environment", "host", "seconds", "at")
+            self.assertEqual([{k: v for k, v in e.items() if k != "recordedAt"} for e in item["evidence"]],
+                             [{k: r[k] for k in fields} for r in kept])
+        with self.subTest("a queue run from the main checkout at the same tree reuses the lane's record"):
+            code, accepted = fx.flow("lead-accept", "FX-2", "--full-suite", cwd=m)
+            self.assertEqual(code, 0, accepted)
+            argv = [sys.executable, "-B", str(fx.release / "skills/orchestrate-work/scripts/merge_queue.py"),
+                    "--repo", str(m), "--state", str(fx.tmp / "record"), "--remote", "origin", "--base", "feature/FX-1"]
+            self.assertEqual(json.loads(sh(*argv, "sync", "FX-2", cwd=m, env=fx.env).stdout)["outcome"], "synced")
+            checked = sh(*argv, "check", "FX-2", cwd=m, env=fx.env, check=False)
+            self.assertEqual(json.loads(checked.stdout)["outcome"], "checked", checked.stdout + checked.stderr)
+            reused = kinds(fx, "check.reused")
+            self.assertEqual([e["data"]["check"] for e in reused], ["check"], reused)
+        with self.subTest("the latest record at the head or its nearest ancestor, whatever its result"):
+            wt = seen["wt"]
+            parent = sh("git", "rev-parse", "HEAD^", cwd=wt).stdout.strip()
+            sh("git", "checkout", "-q", "-b", "side", parent, cwd=wt)
+            (wt / "side.txt").write_text("side\n")
+            commit(wt, "a commit the head doesn't hold")
+            side = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+            sh("git", "checkout", "-q", "feature/FX-2", cwd=wt)
+            made = lambda name, at, result, commit_: {**kept[0], "check": name, "head": commit_, "result": result,
+                                                      "at": at, "log": "kept"}
+            lines = [made("unit", "2026-01-01T00:00:01Z", "passed", head),
+                     made("unit", "2026-01-01T00:00:01.5Z", "failed", head),
+                     made("check", "2026-01-01T00:00:09Z", "passed", side),
+                     made("check", "2026-01-01T00:00:02Z", "failed", parent),
+                     made("other", "2026-01-01T00:00:01Z", "passed", head),
+                     made("other", "2026-01-01T00:00:02Z", "skipped", head),
+                     made("always", "2026-01-01T00:00:01Z", "failed", head),
+                     made("always", "2026-01-01T00:00:05Z", "passed", parent),
+                     made("lint", "2026-01-01T00:00:02Z", "passed", head)]
+            (wt / ".orchestration/review/FX-3").mkdir(parents=True, exist_ok=True)
+            (wt / ".orchestration/review/FX-3/checks.jsonl").write_text("".join(json.dumps(r) + "\n" for r in lines))
+            found = fx.call("handoff_records", "FX-3", head, cwd=wt, delivery="FX-1")
+            self.assertEqual({name: (r["result"], r["head"]) for name, r in found.items()},
+                             {"unit": ("failed", head), "check": ("failed", parent), "always": ("failed", head)})
+            self.assertNotIn("log", found["unit"])
+        with self.subTest("a failing run: check exits 1, and gate stops on a failed id gate or inline gate"):
+            wt, review = seen["wt"], seen["wt"] / ".orchestration/review/FX-2"
+            code, said = fx.flow("check", "FX-2", "always", cwd=wt, env=lane_env)
+            self.assertEqual(code, 0, said)
+            self.assertRegex(said, r"check always passed in [\d.]+s at \w+ \(runner\); median \d+s\n")
+            sh("git", "rm", "-q", "src/app.txt", cwd=wt)
+            commit(wt, "lint fails")
+            code, said = fx.flow("gate", "FX-2", cwd=wt)
+            self.assertEqual(code, 1, said)
+            results = {r["id"]: r for r in json.loads((review / "gates.json").read_text())["results"]}
+            self.assertEqual((results["check"]["exit"], results["lint"]["exit"] != 0), (0, True), results)
+            self.assertEqual((results["lint"]["record"]["result"], results["lint"]["record"]["where"]),
+                             ("failed", "checkout"))
+            (wt / "tools/check.py").write_text("raise SystemExit(1)\n")
+            commit(wt, "the check fails")
+            failed = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+            code, said = fx.flow("check", "FX-2", "check", cwd=wt, env=lane_env)
+            self.assertEqual(code, 1, said)
+            last = json.loads((review / "checks.jsonl").read_text().splitlines()[-1])
+            self.assertEqual((last["check"], last["head"], last["result"], last["where"]),
+                             ("check", failed, "failed", "runner"))
+            self.assertIn("its output: ", said)
+            code, said = fx.flow("gate", "FX-2", cwd=wt)
+            self.assertEqual(code, 1, said)
+            results = json.loads((review / "gates.json").read_text())["results"]
+            self.assertEqual([(r["id"], r["exit"], r["record"]["result"], r["record"]["where"]) for r in results],
+                             [("check", 1, "failed", "runner")], "the gates stop at the failed id gate")
+            self.assertEqual({n: r["result"] for n, r in fx.call("handoff_records", "FX-2", failed, cwd=wt,
+                                                                delivery="FX-1").items()},
+                             {"check": "failed", "unit": "passed", "always": "passed"})
+
     def held_check(self, failures: list[str]):
         from tests.test_run_delivery_supervisor import hand_off, record, supervised
 
@@ -8655,6 +8790,53 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         if expect_code is not None:
             expect(code == expect_code, f"doctor exited {code}, not {expect_code}:\n{out}")
         return out
+
+    def test_the_gates_row_resolves_gates_named_by_id_and_programs_the_prepare_steps_make(self) -> None:
+        """A gate may name a binding check by id; doctor reports an id the binding doesn't define. An untracked relative
+        program, such as .venv/bin/python, is one the prepare steps make, so a fresh clone without it passes."""
+        fx = self.fixture()
+        m = fx.main
+        if (m / "harness.config.ts").exists():  # its preparationCommands are checked against the gates; not here
+            sh("git", "rm", "-q", "harness.config.ts", cwd=m)
+        binding = doctor_binding()
+        binding["alwaysRun"] = [{"id": "always", "argv": ["true"], "cwd": ".", "reasons": ["every candidate"],
+                                 "prerequisites": []}]
+        conf_path = m / ".agents/run-delivery.json"
+        conf = json.loads(conf_path.read_text())
+
+        def doctor_with(gates: list, prepare: list) -> tuple[tuple[str, str], str]:
+            (m / ".agents/orchestration.json").write_text(json.dumps({**binding, "prepare": prepare}, indent=2))
+            conf_path.write_text(json.dumps({**conf, "gates": gates}, indent=2))
+            commit(m, "FX-1: the gates")
+            sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+            out = self.doctor(fx, "--offline")
+            return doctor_lines(out)["gates"], out
+
+        venv = {"id": "venv", "argv": [".venv/bin/python", "-c", "pass"]}
+        self.assertFalse((m / ".venv").exists())
+        row, out = doctor_with(["lint", "nosuch"], [["true"]])
+        self.assertEqual(row, ("wrong", "the gates name checks the binding doesn't define: nosuch; fix: name a "
+                                        "selection.catalogue, alwaysRun or fallback id, or correct run-delivery.json gates"),
+                         out)
+        code, said = fx.flow("gate", "FX-2", cwd=m)
+        self.assertEqual(code, 2, said)
+        self.assertIn("the gates name checks the binding doesn't define: nosuch", said)
+        row, out = doctor_with(["lint", venv], [["true"]])
+        self.assertEqual(row, ("ok", "2 gate(s): lint, venv; run through run-checks: lint; made by the prepare steps: "
+                                     ".venv/bin/python"), out)
+        self.assertNotIn("gates", failing(out), out)
+        row, out = doctor_with(["lint", venv], [])
+        self.assertEqual(row, ("wrong", "these don't resolve: gate venv (.venv/bin/python); fix: install them, or "
+                                        "correct the binding"), out)
+        # A binding of fallback checks only: gates that name them by id still run through run-checks.
+        binding["alwaysRun"] = []
+        row, out = doctor_with(["lint", "test"], [["true"]])
+        self.assertEqual(row, ("ok", "2 gate(s): lint, test; run through run-checks: lint, test"), out)
+        code, out = fx.flow("gate", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        results = json.loads((m / ".orchestration/review/FX-2/gates.json").read_text())["results"]
+        self.assertEqual([(r["id"], r["record"]["where"], r["record"]["result"]) for r in results],
+                         [("lint", "runner", "passed"), ("test", "runner", "passed")])
 
     def test_doctor_names_a_reasonless_added_change_until_lead_plan_why_records_one(self) -> None:
         fx = self.fixture()
