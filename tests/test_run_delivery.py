@@ -10781,20 +10781,6 @@ class RunDeliveryRenderHalvesTests(unittest.TestCase):
                 self.assertTrue((record / "home.html").is_file())
 
 
-class RunDeliveryContinuousIntegrationTests(unittest.TestCase):
-    def test_posix_runners_install_what_the_video_and_harness_cases_need(self) -> None:
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertRegex(workflow, r"(?m)^      - uses: actions/setup-node@v4\n"
-                                   r"        with:\n          node-version: \"22\.6\.0\"$")
-        self.assertRegex(workflow, r"(?m)^        if: runner\.os == 'Linux'\n        run: .*apt-get install -y ffmpeg$")
-        self.assertRegex(workflow, r"(?m)^        if: runner\.os == 'macOS'\n        run: brew install ffmpeg$")
-        self.assertNotIn("Windows", workflow)
-        # Both are in place before the suite runs.
-        self.assertLess(workflow.index("install -y ffmpeg"), workflow.index("scripts/run-tests.py"))
-        self.assertLess(workflow.index("brew install ffmpeg"), workflow.index("scripts/run-tests.py"))
-
-
-@unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class DeliveryPostureReaderTests(unittest.TestCase):
     """The one reader of `.agents/delivery-posture.json`, against every vector the harness's resolver also runs."""
 

@@ -354,8 +354,8 @@ test passed and the run went over it. That does not hold the release: the tag's
 annotation says the run went over.
 
 CI on `main` informs. It blocks neither a merge nor a release, so a red run there is
-for whoever merges to read and fix. Its macOS job runs on pushes to `main`, and on a
-change request with the `full-matrix` label.
+for whoever merges to read and fix. It runs only `cut-release`, which builds a release
+the way the release job does, and no tests.
 
 Windows is not validated: CI does not run it, and the fixes made for it are unproven.
 
