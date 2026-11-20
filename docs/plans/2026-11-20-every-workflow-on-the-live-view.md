@@ -408,3 +408,7 @@ Lane 2, tier 2, after V26-3668. Added mid-delivery: The operator chose the refin
 ### V26-3690. End a story's setbacks when it lands, and tell each setback once in a grouped ledger
 
 Lane 1, tier 3, not blocked. Added mid-delivery: The operator chose study A from Setback Studies on 2026-11-20: What happened read as a wall of repeated setbacks, twelve of them stale stops of two stories that had landed (gaps 156 and 157).
+
+### V26-3691. Draw setbacks as one ledger in What happened, not repeated under every chapter
+
+Lane 2, tier 2, after V26-3686 and V26-3690. Added mid-delivery: The operator chose study A from Setback Studies on 2026-11-20; this is its view half, drawn from V26-3690's ledger.

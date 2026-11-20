@@ -176,6 +176,21 @@
           "text": "A stop on a story that later lands is told as ended at that landing; stops with the same story and reason are one ledger row with their count and span; a chapter names only the rows that opened or ended in it; and the story document validates against the updated story.schema.json, with the headline's setback counts read from the ledger."
         }
       ]
+    },
+    "V26-3691": {
+      "title": "Draw setbacks as one ledger in What happened, not repeated under every chapter",
+      "lane": "lane-2",
+      "why": "The operator chose study A from Setback Studies on 2026-11-20; this is its view half, drawn from V26-3690's ledger.",
+      "criteria": [
+        {
+          "id": "v26-3691-1",
+          "text": "What happened draws one Setbacks ledger above the chapters with each setback once, grouped by story and reason, standing rows first; no chapter repeats an earlier setback; with nothing standing it says Nothing is stopped now; chapter lines link to their rows; and the hosted page builds and renders the ledger without unpublished facts."
+        }
+      ],
+      "after": [
+        "V26-3686",
+        "V26-3690"
+      ]
     }
   },
   "finish": [
