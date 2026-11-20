@@ -2008,7 +2008,7 @@ def review_prepare(args) -> None:
     state_tool("focus", "--lane", lane, "--text", f"{key} review round {n}", "--state", "reviewing", check=False)
     print(f"{key} round {n}: candidate {candidate[:10]}, tree {tree[:10]}" + (f" (restart {len(restarts)})" if restarts else ""))
     print(f"lenses: {lenses_text(lenses, reason, requested)}")
-    for line in guard_lines(c, key, repo(), candidate):  # shown, never run here
+    for line in guard_lines(key, repo(), candidate):  # shown, never run here
         print(line)
     print()
     if n == 1 and not restarts:
@@ -3256,8 +3256,9 @@ def gate_guards(c, key: str, head: str, tree: str) -> tuple[dict, bool]:
     return {"ids": ids, "reused": sorted(reused), "records": [*reused.values(), *records]}, passed
 
 
-def guard_lines(c, key: str, root: Path, head: str) -> list[str]:
+def guard_lines(key: str, root: Path, head: str) -> list[str]:
     """Each guard's record at `head` from the lane's last gate run, or its recorded skip, as a lead or lane reads it."""
+    c = cfg()
     ids = guard_ids(c.binding)
     if not ids:
         return []
@@ -5576,7 +5577,7 @@ def handoff(args) -> None:
     if when and when != "pipeline-green" or when == "pipeline-green" and pr_line:
         # A review move a refused call left owed is retried here, at the latest.
         review_move(c, key, when, last=True)
-    guarded = guard_lines(c, key, repo(), head)
+    guarded = guard_lines(key, repo(), head)
     post = f"hand-off: {args.pr}, head {head[:10]}, {len(rounds)} review round(s); {validation}." + "".join(
         f" {line[0].upper() + line[1:]}." for line in guarded if line.startswith("guards skipped"))
     if base_merge:
@@ -9444,7 +9445,10 @@ def reuse_lines(item: dict, ids: list[str], granted: list[str] | set[str] = ()) 
                 lines.append(f"check {name}: no record in the hand-off, so it runs; {median}")
                 continue
             own = runner.own_paths(base_head, [entry["head"], head]) if name in granted else None
-            reasons = record_reasons(runner, entry, name, tree, binding, own) if tree else ["the handed head isn't here"]
+            # The queue refuses a record without its facts, so the lead is told so too, in the queue's words.
+            missing = [field for field in ("where", "environment", "host") if field not in entry]
+            reasons = ([f"the record is missing its {', '.join(missing)} facts"] if missing else []) + (
+                record_reasons(runner, entry, name, tree, binding, own) if tree else ["the handed head isn't here"])
             said = (f"its record at {entry['head'][:10]} applies at the handed head"
                     + (" under the grant" if name in granted else "") + ", unless the queue's facts differ"
                     if not reasons else f"runs: {'; '.join(reasons)}")
@@ -9473,11 +9477,12 @@ def accept_story(c, args) -> None:
     if (args.checks is not None or args.full_suite) and not lead_selects(c):
         raise Stop("the binding doesn't enable lead selection (selection.lead), so the queue selects the checks: "
                    "accept with neither --checks nor --full-suite")
-    if args.reuse is not None and args.checks is None:
+    reuse, why = getattr(args, "reuse", None), getattr(args, "why", None)
+    if reuse is not None and args.checks is None:
         raise Stop("--reuse goes with --checks: the grant lives in the lead's selection at the handed head")
-    if args.reuse is not None and not (args.why or "").strip():
+    if reuse is not None and not (why or "").strip():
         raise Stop("--reuse needs --why, why that reuse is safe, which select journals as the lead's decision")
-    if args.why and args.reuse is None:
+    if why and reuse is None:
         raise Stop("--why goes with --reuse")
     if args.full_suite and provider_selects(c):
         raise Stop("the binding names a provider, so a candidate with no lead selection runs the provider's answer, "
@@ -9624,11 +9629,11 @@ def accept_story(c, args) -> None:
     shown = chosen if chosen is not None else proposal if proposal is not None else (
         fallback_ids(c) if args.full_suite else [])
     if shown and not merged:
-        granted = {name.strip() for name in (args.reuse or "").split(",") if name.strip()}
+        granted = {name.strip() for name in (reuse or "").split(",") if name.strip()}
         for line in reuse_lines(item, shown, granted):
             print(f"  {line}")
     if lane_root.exists():
-        for line in guard_lines(c, key, lane_root, head):  # shown, never run here
+        for line in guard_lines(key, lane_root, head):  # shown, never run here
             print(f"  {line}")
         _, gate_problems = gates_summary(key, lane_root, head)
         problems += gate_problems
@@ -9676,7 +9681,7 @@ def accept_story(c, args) -> None:
         listed = [added[name] if name in added else name for name in chosen]
         done = state_tool("select", "--subject", key, "--binding", str(c.binding_path), "--head", head, "--checks",
                           json.dumps(listed), "--reason", reason,
-                          *(["--reuse", args.reuse, "--why", args.why.strip()] if args.reuse is not None else []),
+                          *(["--reuse", reuse, "--why", why.strip()] if reuse is not None else []),
                           check=False)
         answer = json.loads(done.stdout or "{}") if done.stdout.strip().startswith("{") else {}
         if done.returncode != 0:

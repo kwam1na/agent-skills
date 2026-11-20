@@ -7254,6 +7254,11 @@ class LiveLeadChangesTests(unittest.TestCase):
             self.assertEqual((gates["passed"], gates["results"], [(r["check"], r["result"], r["where"])
                                                                    for r in gates["guards"]["records"]]),
                              (False, [], [("guard", "failed", "runner")]))
+            code, out = fx.flow("gate", "FX-3", cwd=wt)  # a failed record at this tree doesn't apply: it runs again
+            self.assertEqual(code, 1, out)
+            self.assertIn("guard guard: guard failed in", out)
+            self.assertNotIn("reused", out)
+            self.assertEqual(json.loads((review / "gates.json").read_text())["guards"]["reused"], [])
         with self.subTest("a second gate at the same tree reuses the guard's pass"):
             (wt / "src/two.txt").write_text("two\n")
             commit(wt, "FX-3: two")
@@ -7272,6 +7277,14 @@ class LiveLeadChangesTests(unittest.TestCase):
             code, out = fx.flow("review-prepare", "FX-3", "--round", "1", cwd=wt)
             self.assertEqual(code, 0, out)
             self.assertIn(f"guards: guard passed at {first['head'][:10]} (reused)\n", out)
+            carried = fx.call("handoff_records", "FX-3", first["head"], cwd=wt, delivery="FX-1")
+            self.assertEqual({k: v for k, v in carried["guard"].items()},
+                             {k: v for k, v in first.items() if k != "log"}, "a guard's gate record is hand-off evidence")
+            (wt / "src/two-more.txt").write_text("more\n")
+            commit(wt, "FX-3: no gate run here")
+            later = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+            self.assertEqual(fx.call("guard_lines", "FX-3", wt, later, cwd=wt, delivery="FX-1"),
+                             [f"guards: no gate run at {later[:10]}"])
         with self.subTest("--skip-guards without --why, or --why alone, is a usage error"):
             for argv, said in ((["--skip-guards"], "--skip-guards needs --why"), (["--why", "x"], "--why goes with")):
                 code, out = fx.flow("gate", "FX-3", *argv, cwd=wt)
@@ -7315,8 +7328,8 @@ class LiveLeadChangesTests(unittest.TestCase):
                                                                                 if e["check"] == "check")]},
                             ["unit", "check", "guard"], cwd=m, delivery="FX-1")
             self.assertEqual(lines, ["check unit: runs: the lane's run failed; no median yet",
-                                     "check check: runs: it ran in the lane's own checkout, not the way the queue runs "
-                                     "it; no median yet",
+                                     "check check: runs: the record is missing its environment, host facts; it ran in "
+                                     "the lane's own checkout, not the way the queue runs it; no median yet",
                                      "check guard: no record in the hand-off, so it runs; no median yet"])
         with self.subTest("--reuse needs --checks and --why, and records the grant through select"):
             for argv, said in ((["--reuse", "unit", "--why", "w"], "--reuse goes with --checks"),
@@ -7368,6 +7381,29 @@ class LiveLeadChangesTests(unittest.TestCase):
             decision = kinds(fx, "decision.recorded")[-1]["data"]
             self.assertEqual(decision, {"text": f"published {merged[:12]} to feature/FX-1 without running the guards guard",
                                         "why": "the lead fixes the guard next"})
+        with self.subTest("lead-accept's applies line keeps the grant's bound across a base merge, as the queue does"):
+            lane = m / "lanes/FX-2"
+            sh("git", "fetch", "-q", "origin", cwd=lane)
+            sh("git", "-c", "user.name=Lane", "-c", "user.email=lane@example.test", "merge", "-q", "--no-ff", "-m",
+               "FX-2: merge the base", "origin/feature/FX-1", cwd=lane)
+            merge = sh("git", "rev-parse", "HEAD", cwd=lane).stdout.strip()
+            unit = {**next(e for e in item["evidence"] if e["check"] == "unit")}
+            unit.pop("recordedAt", None)
+            answer = lambda at, granted: fx.call("reuse_lines", {"head": at, "evidence": [unit]}, ["unit"], granted,
+                                                 cwd=m, delivery="FX-1")[0]
+            self.assertTrue(answer(merge, ["unit"]).startswith(f"check unit: its record at {head[:10]} applies at the "
+                                                              "handed head under the grant"), answer(merge, ["unit"]))
+            self.assertTrue(answer(merge, []).startswith("check unit: runs: "), answer(merge, []))
+            (lane / "src/one.txt").write_text("one, again\n")
+            commit(lane, "FX-2: a change inside the candidate's diff, after the record")
+            after = sh("git", "rev-parse", "HEAD", cwd=lane).stdout.strip()
+            said = answer(after, ["unit"])
+            self.assertTrue(said.startswith("check unit: runs: ") and "src/one.txt" in said, said)
+        with self.subTest("a hand-off record without its facts is shown as the queue sees it"):
+            bare = {k: unit[k] for k in ("check", "definition", "head", "tree", "result")}
+            said = fx.call("reuse_lines", {"head": head, "evidence": [bare]}, ["unit"], cwd=m, delivery="FX-1")[0]
+            self.assertTrue(said.startswith("check unit: runs: the record is missing its where, environment, host facts"),
+                            said)
 
     def held_check(self, failures: list[str]):
         from tests.test_run_delivery_supervisor import hand_off, record, supervised
