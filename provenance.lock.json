@@ -542,7 +542,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/machine.py",
-          "sha256": "8ae466259cecac2a648f6b9e688d528a5b7b0c16d018c4317909f0ceb5bbd079"
+          "sha256": "8904fcb4abcf219856ae9c86470ed0866852aba1add1e7bb1b5ef14b3d5412c1"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",

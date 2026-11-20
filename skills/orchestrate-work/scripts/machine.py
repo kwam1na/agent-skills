@@ -34,6 +34,7 @@ import json
 import math
 import os
 import re
+import shlex
 import signal
 import statistics
 import subprocess
@@ -339,6 +340,7 @@ class Claim:
         while not self.poll():
             if deadline is not None and self.ledger.clock() >= deadline:
                 self._give_up()
+                continue
             self.ledger.pause(self, deadline)
 
     def resize(self, slots: int) -> None:
@@ -403,7 +405,13 @@ class Claim:
         waited = ledger.clock() - self._wait_started
         holders: list[dict] = []
         with contextlib.suppress(LedgerUnavailable), ledger.locked():
-            holders = [claim for claim in ledger.live() if claim["state"] == "running"]
+            live = ledger.live()
+            mine = next((claim for claim in live if claim["id"] == self.id), None)
+            if mine is not None and mine["state"] == "running":
+                # Admitted by another agent since the last poll: that decision stands.
+                self.record = mine
+                return
+            holders = [claim for claim in live if claim["state"] == "running"]
             ledger.history({"event": "gave-up", **_identity(self.record), "waitedSeconds": round(waited, 3),
                             "holders": [claim["id"] for claim in holders]})
         self.release()
@@ -829,7 +837,9 @@ def _run(ledger: Ledger, arguments: argparse.Namespace) -> int:
     if not argv:
         raise SystemExit("machine.py run: give the command after --")
     label = arguments.label or Path(argv[0]).name
-    subject = arguments.subject or label
+    # An unlabelled run is measured as its whole command line, so two commands that share an interpreter never
+    # share one cost entry.
+    subject = arguments.subject or arguments.label or shlex.join(argv)
     repository = arguments.repository or repository_identity()
     try:
         claim = ledger.acquire(arguments.kind, subject, label=label, slots=arguments.slots,

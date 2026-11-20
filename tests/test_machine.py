@@ -8,10 +8,13 @@ import io
 import json
 import os
 import re
+import shlex
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -139,6 +142,8 @@ class AdmissionTests(LedgerCase):
         large = self.request(3, "large")
         small = self.request(1, "small")
         self.assertFalse(large.poll())
+        self.assertIn("2 slots are free now; a run of at most 2 would start at once.", self.err.getvalue())
+        self.err.seek(0)
         self.err.truncate(0)
         self.assertFalse(small.poll())
         self.assertIn("1 waiter ahead", self.err.getvalue())
@@ -172,6 +177,10 @@ class AdmissionTests(LedgerCase):
             machine.main(["run", "--now", "--", "true"], ledger=self.ledger)
         self.assertEqual(stopped.exception.code, 2)
         self.assertIn("--now needs --why", said.getvalue())
+        with contextlib.redirect_stderr(io.StringIO()) as said, self.assertRaises(SystemExit) as stopped:
+            machine.main(["run", "--why", "w", "--", "true"], ledger=self.ledger)
+        self.assertEqual(stopped.exception.code, 2)
+        self.assertIn("--why goes with --now", said.getvalue())
 
     def test_a_claim_whose_lock_nobody_holds_is_removed_whatever_its_pid(self) -> None:
         record = self._written(os.getpid())
@@ -186,6 +195,15 @@ class AdmissionTests(LedgerCase):
         self.assertEqual(reading["used"], 3)
         self.assertEqual([claim["id"] for claim in reading["running"]], [record["id"]])
         self.assertTrue(self.ledger.claim_path(record["id"]).exists())
+
+    def test_a_nested_claim_ignores_an_ancestor_whose_lock_nobody_holds(self) -> None:
+        record = self._written(os.getpid())
+        with mock.patch.dict(os.environ, {machine.CLAIM_VARIABLE: record["id"]}):
+            own = self.request(4, "own")
+        self.assertIsNotNone(own.record)
+        self.assertEqual(own.record["admittedBy"], "capacity")
+        self.assertNotIn("running under claim", self.err.getvalue())
+        self.assertFalse(self.ledger.claim_path(record["id"]).exists())
 
     def _written(self, pid: int) -> dict:
         (self.directory / "claims").mkdir(parents=True, exist_ok=True)
@@ -261,7 +279,7 @@ class AdmissionTests(LedgerCase):
         self.assertEqual(code, 75)
         self.assertFalse(marker.exists())
         self.assertGreaterEqual(self.clock() - began, 5)
-        self.assertLess(self.clock() - began, 7)
+        self.assertLess(self.clock() - began, 5.5)
         self.assertIn("gave up after", self.err.getvalue())
         self.assertIn("held by suite (delivery V26-1, 4 slots", self.err.getvalue())
         gave_up = [entry for entry in self.history() if entry["event"] == "gave-up"]
@@ -279,6 +297,9 @@ class AdmissionTests(LedgerCase):
         with mock.patch.object(self.ledger, "names", with_a_vanished_claim):
             late = self.request(1, "probe")
             self.assertFalse(late.poll())
+            reading = self.ledger.reading()
+        self.assertEqual(reading["used"], 4)
+        self.assertNotIn("b" * 32, [claim["id"] for claim in reading["running"]])
         self.assertNotIn("unavailable", self.err.getvalue())
 
     def test_a_held_ledger_lock_delays_a_claim_without_making_it_unavailable(self) -> None:
@@ -289,7 +310,9 @@ class AdmissionTests(LedgerCase):
         releaser = threading.Timer(0.3, fcntl.flock, (descriptor, fcntl.LOCK_UN))
         releaser.start()
         self.addCleanup(releaser.cancel)
-        late = self.request(1, "probe")
+        # Each try at the lock is shorter than the hold, so only a retried timeout gets the claim in.
+        with mock.patch.object(machine, "LEDGER_TRY_SECONDS", 0.1):
+            late = self.request(1, "probe")
         self.assertFalse(late.poll())
         self.assertEqual(late.record["state"], "waiting")
         self.assertNotIn("unavailable", self.err.getvalue())
@@ -305,6 +328,42 @@ class AdmissionTests(LedgerCase):
         self.assertNotIn("unavailable", reading)
         self.assertEqual(reading["used"], 4)
         self.assertNotIn("unavailable", self.err.getvalue())
+
+    def test_a_held_claim_that_states_no_slots_counts_one_and_cannot_be_admitted(self) -> None:
+        (self.directory / "claims").mkdir(parents=True, exist_ok=True)
+        broken = self.directory / "claims" / ("d" * 32 + ".json")
+        broken.write_text("{}", encoding="utf-8")
+        self.hold(broken)
+        self.assertEqual(self.ledger.reading()["used"], 1)
+        self.assertEqual(machine.main(["admit", "d" * 32, "--why", "y"], ledger=self.ledger), 1)
+        self.assertIn("no live claim", self.err.getvalue())
+
+    def test_a_capped_wait_admitted_at_its_deadline_keeps_the_admission(self) -> None:
+        self.request(4, "suite")
+        late = self.request(1, "probe")
+        self.assertFalse(late.poll())
+        self.ledger.admit(late.id, "y")
+        self.clock.sleep(10)
+        late._give_up()
+        self.assertTrue(late.admitted)
+        self.assertEqual(late.record["admittedBy"], "admit")
+        self.assertEqual([entry for entry in self.history() if entry["event"] == "gave-up"], [])
+        self.assertIn(late.id, self.files())
+
+    def test_a_waiter_wakes_when_a_claim_is_released_before_its_poll(self) -> None:
+        holder = self.request(4, "suite")
+        late = self.request(1, "probe")
+        self.assertFalse(late.poll())
+
+        def released_soon(seconds: float) -> None:
+            self.clock.sleep(seconds)
+            holder.release()
+
+        self.ledger.sleep = released_soon
+        began = self.clock()
+        self.ledger.pause(late, None)
+        self.assertLessEqual(self.clock() - began, 0.2)
+        self.assertTrue(late.poll())
 
     def test_history_keeps_its_last_thousand_entries(self) -> None:
         with self.ledger.locked():
@@ -367,6 +426,25 @@ class EstimateTests(LedgerCase):
         claim = self.request(1, "probe", repository="repo")
         self.assertEqual((claim.record["slots"], claim.record["estimate"]["from"]), (2, "measured"))
         self.assertShapes()
+
+    def test_costs_are_kept_apart_by_repository(self) -> None:
+        for _ in range(5):
+            self.ledger.record_cost("a", "check", "turn", run(100, 400))
+        self.assertEqual(self.ledger.estimate("a", "check", "turn")["from"], "measured")
+        self.assertEqual(self.ledger.estimate("b", "check", "turn"), {"seconds": None, "slots": 1, "from": "none"})
+
+    def test_measured_slots_never_fall_below_one(self) -> None:
+        self.assertEqual(machine.estimate_from([{"seconds": 10, "cpuSeconds": 0.0}], 3, 4)["slots"], 1)
+
+    def test_unlabelled_runs_with_one_interpreter_keep_separate_costs(self) -> None:
+        first = [sys.executable, "-c", "pass"]
+        second = [sys.executable, "-c", "x = 1"]
+        with mock.patch.object(machine, "repository_identity", return_value=None):
+            for argv in (first, second):
+                self.assertEqual(machine.main(["run", "--", *argv], ledger=self.ledger), 0)
+        subjects = sorted(entry["subject"] for entry in self.ledger.costs()["entries"])
+        self.assertEqual(subjects, sorted([shlex.join(first), shlex.join(second)]))
+        self.assertEqual(self.ledger.estimate(None, "run", shlex.join([sys.executable, "-c", "y = 2"]))["from"], "none")
 
     def test_measured_slots_are_clamped_to_capacity(self) -> None:
         self.set_capacity(2)
@@ -537,6 +615,45 @@ class ProcessTests(LedgerCase):
         ending("interrupted", interrupted)
         failed = [entry for entry in self.ledger.costs()["entries"] if entry["subject"] in ("failing", "timed-out")]
         self.assertEqual(sorted(item["result"] for entry in failed for item in entry["failed"]), ["failed", "timedOut"])
+
+    def test_run_exits_with_its_childs_exit_code(self) -> None:
+        done = self.command("run", "--", sys.executable, "-c", "raise SystemExit(3)")
+        self.assertEqual(done.returncode, 3, done.stderr)
+        self.assertEqual(self.files(), [])
+
+    def test_a_terminated_run_stops_its_argv_and_releases_its_claim(self) -> None:
+        recorded = self.root / "child-pid"
+        runner = subprocess.Popen(
+            [sys.executable, "-B", str(MACHINE), "run", "--label", "stopped", "--", sys.executable, "-c",
+             f"import os, time; open({str(recorded)!r}, 'w').write(str(os.getpid())); time.sleep(60)"],
+            cwd=self.root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(runner.wait)
+        self.addCleanup(runner.kill)
+        deadline = time.monotonic() + 30
+        while not (recorded.exists() and recorded.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        child = int(recorded.read_text())
+        self.assertEqual(len(self.files()), 1)
+        runner.terminate()
+        self.assertEqual(runner.wait(30), 128 + signal.SIGTERM)
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            survived = False
+        else:
+            # Checked at once, so the pid this test recorded can't yet name another process.
+            survived = True
+            os.kill(child, signal.SIGKILL)
+        self.assertFalse(survived, "the terminated runner stopped its argv")
+        self.assertEqual(self.files(), [])
+
+    def test_a_timed_out_run_that_ignores_sigterm_is_killed(self) -> None:
+        ignoring = ("import signal, sys, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                    "sys.stdout.write('ready'); sys.stdout.flush(); time.sleep(60)")
+        with mock.patch.object(machine, "STOP_GRACE_SECONDS", 0.2):
+            measured = machine.measured_run([sys.executable, "-c", ignoring], timeout=1.0,
+                                            stdout=subprocess.DEVNULL)
+        self.assertEqual((measured.result, measured.returncode), ("timedOut", -signal.SIGKILL))
 
     def test_an_unusable_machine_directory_runs_argv_unclaimed_and_says_so(self) -> None:
         blocked = self.root / "not-a-directory"
