@@ -1280,6 +1280,7 @@ class LiveClient:
         self.events: list[dict] = []
         # Each event: runs, with its data and when it came.
         self.runs: list[tuple[dict, float]] = []
+        self.keepalives = 0
         self.lock = threading.Lock()
         self.response = None
 
@@ -1308,6 +1309,9 @@ class LiveClient:
                 elif line.startswith("data: ") and event == "document":
                     with self.lock:
                         self.events.append(json.loads(line[len("data: "):]))
+                elif line == ": keepalive":
+                    with self.lock:
+                        self.keepalives += 1
                 elif line.startswith("data: ") and event == "runs":
                     with self.lock:
                         self.runs.append((json.loads(line[len("data: "):]), time.monotonic()))
@@ -1955,6 +1959,9 @@ if mode == "fail":
     sys.exit(4)
 if mode == "slow":
     time.sleep(30)
+if mode == "relative":
+    import os
+    store = os.path.relpath(store)
 print(json.dumps({"spec": "run-inventory/1", "runsDir": store, "runs": []}))
 """
 
@@ -1967,6 +1974,7 @@ if (typeof Native !== "function") { console.log(JSON.stringify({ missing: "Event
 const page = await (await fetch(url + "view/runs.html")).text();
 const runs = [];
 let subscribed = 0;
+const statuses = [];
 const dom = new JSDOM(page, { url, runScripts: "dangerously", beforeParse(window) {
   window.EventSource = function (address) {
     const source = new Native(new URL(address, url));
@@ -1977,11 +1985,12 @@ const dom = new JSDOM(page, { url, runScripts: "dangerously", beforeParse(window
 } });
 const store = dom.window.deliveryStateStore;
 store.subscribe(() => { subscribed += 1; });
+store.onStatus((connected) => { statuses.push(connected); });
 store.onRuns((said) => {
   runs.push(said);
   console.log(JSON.stringify({ runs: said, subscribed }));
   if (runs.length === Number(wanted)) {
-    console.log(JSON.stringify({ done: runs, subscribed }));
+    console.log(JSON.stringify({ done: runs, subscribed, statuses }));
     process.exit(0);
   }
 });
@@ -2005,9 +2014,9 @@ class LiveRunsTests(DeliveryStateFixture):
         (self.store / "run-1").mkdir(parents=True)
         (self.store / "run-1" / "events.jsonl").write_text('{"kind":"run.started"}\n', encoding="utf-8")
 
-    def serve(self, directory: Path, *extra: str) -> tuple[subprocess.Popen, str]:
+    def serve(self, directory: Path, *extra: str, cwd: Path | None = None) -> tuple[subprocess.Popen, str]:
         process = subprocess.Popen([sys.executable, "-B", str(WRAPPER), "live", "--dir", str(directory), *extra],
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
         self.addCleanup(LiveTests.stop, self, process)
         announced = json.loads(process.stdout.readline())
         self.assertTrue(announced["ok"], announced)
@@ -2034,7 +2043,8 @@ class LiveRunsTests(DeliveryStateFixture):
     def config_with_runs(self, mode: str = "ok", home: bool = True, timeout: int = 10) -> str:
         inventory = [*python_argv(INVENTORY, self.tools, "inventory"), str(self.store), str(self.counter("inventory")),
                      mode]
-        config = {"directory": "state", "renderers": [self.runs_page(), self.record_page()], "publishers": [],
+        builtin = {"id": "page", "builtin": "static-page", "output": "page.html"}
+        config = {"directory": "state", "renderers": [self.runs_page(), self.record_page(), builtin], "publishers": [],
                   "liveRuns": {"renderer": "runs", "inventory": {"argv": inventory, "timeoutSeconds": timeout}}}
         return json.dumps({**config, **({"liveHome": "record"} if home else {})})
 
@@ -2065,7 +2075,13 @@ class LiveRunsTests(DeliveryStateFixture):
         self.assertEqual(given["flag"], "watched")
         # The other views are given the same document; a built-in view, which draws only a record, is not run.
         self.assertIn(b"delivery-state-absent/1 flag=watched", self.eventually(client, "view/record.html", bool))
+        self.assertFalse((self.empty / "page.html").exists())
         self.assertEqual(client.get("document")[0], 503)
+        # An open stream with nothing to send waits: keepalives only, never a tight loop.
+        client.listen()
+        time.sleep(2 * render_state.LIVE_POLL_SECONDS)
+        self.assertLessEqual(client.keepalives, 2)
+        self.assertEqual((client.events, client.runs), ([], []))
         # Its own entry, under this repository's common directory, naming what it serves.
         entry = self.own_entries()[process.pid]
         self.assertEqual((entry["host"], entry["stateDirectory"], entry["liveRuns"]),
@@ -2077,6 +2093,17 @@ class LiveRunsTests(DeliveryStateFixture):
         # A record appears: liveHome takes the front page back, drawn from it.
         shutil.copytree(self.state_dir, self.empty, dirs_exist_ok=True)
         self.eventually(client, "", lambda page: b"flag=watched" in page and b"delivery-state-absent" not in page)
+        self.assertEqual(client.get("document")[0], 200)
+        # The record goes: the runs page is the front page again, and there is no document to serve.
+        for name in ("state.json", "journal.jsonl"):
+            (self.empty / name).unlink()
+        self.eventually(client, "", lambda page: b'id="said"' in page)
+        self.assertEqual(client.get("document")[0], 503)
+
+    def test_a_relative_store_is_read_from_the_servers_own_folder(self) -> None:
+        _, url = self.serve(self.empty, "--state-config", self.config_with_runs("relative"), cwd=self.root)
+        page = self.eventually(self.client(url), "", lambda page: b'id="said"' in page)
+        self.assertEqual(self.said(page)["flag"], "watched")
 
     def watch_the_store(self, directory: Path, recorded: bool) -> None:
         _, url = self.serve(directory, "--state-config", self.config_with_runs())
@@ -2145,7 +2172,9 @@ class LiveRunsTests(DeliveryStateFixture):
         self.assertEqual(browser.wait(10), 0)
         reader.join(5)
         done = next(line for line in lines if "done" in line)
-        self.assertEqual(done, {"done": [{"generation": 1}, {"generation": 2}], "subscribed": 1})
+        # Each event, the document and both runs, says the stream is up.
+        self.assertEqual(done, {"done": [{"generation": 1}, {"generation": 2}], "subscribed": 1,
+                                "statuses": [True, True, True]})
 
     def test_without_live_runs_the_store_is_never_read_and_nothing_is_rendered_for_it(self) -> None:
         config = json.loads(self.config_with_runs())
@@ -2206,9 +2235,13 @@ class LiveRunsTests(DeliveryStateFixture):
         said = json.dumps({"server": "render_state.py live", "pid": pid, "repository": str(self.root / "elsewhere")})
 
         class Answer(http.server.BaseHTTPRequestHandler):
+            # As a live server answers, so only what it says, not how, keeps it out.
+            protocol_version = "HTTP/1.1"
+
             def do_GET(self) -> None:  # noqa: N802 - the base class's name
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(said)))
                 self.end_headers()
                 self.wfile.write(said.encode("ascii"))
 
@@ -2245,9 +2278,10 @@ class LiveRunsTests(DeliveryStateFixture):
         self.assertNotIn("existing", said)
         self.assertIsNone(process.poll())
         self.assertIn(process.pid, self.own_entries())
-        # Now a verified one is there: a second start names it and exits, starting nothing.
+        # Now a verified one is there: a second start names it and exits, starting nothing, even from a worktree
+        # whose state directory does not exist.
         before = set(self.own_entries())
-        second, named = self.if_absent(self.empty)
+        second, named = self.if_absent(self.root / "not made")
         self.assertEqual(second.wait(10), 0)
         self.assertEqual((named["live"], named["pid"], named["existing"]),
                          (said["live"], process.pid, True))
@@ -2284,16 +2318,21 @@ class LiveRunsTests(DeliveryStateFixture):
         self.assertEqual(self.own_entries(), {})
 
     def test_stop_never_signals_an_entry_that_fails_verification(self) -> None:
-        silent, stranger = self.sleeper(), self.sleeper()
+        silent, stranger, reused = self.sleeper(), self.sleeper(), self.sleeper()
         self.entry(silent.pid, self.free_port(), self.empty)
         self.entry(stranger.pid, self.stranger(stranger.pid), self.empty)
+        # A PID reused while its port went to this repository's own live server: the server answers with its PID.
+        server, url = self.serve(self.empty)
+        self.entry(reused.pid, int(url.rsplit(":", 1)[1].rstrip("/")), self.empty)
         stopped = run([sys.executable, "-B", str(WRAPPER), "live", "--dir", str(self.empty), "--stop"])
-        self.assertEqual((stopped.returncode, json.loads(stopped.stdout)["stopped"]), (0, []))
+        self.assertEqual(stopped.returncode, 0, stopped.stdout)
+        self.assertEqual([entry["pid"] for entry in json.loads(stopped.stdout)["stopped"]], [server.pid])
+        self.assertEqual(server.wait(10), 128 + signal.SIGTERM)
         time.sleep(0.2)
-        self.assertIsNone(silent.poll())
-        self.assertIsNone(stranger.poll())
-        self.assertEqual(set(self.own_entries()), {silent.pid, stranger.pid})
-        for process in (silent, stranger):
+        for process in (silent, stranger, reused):
+            self.assertIsNone(process.poll())
+        self.assertEqual(set(self.own_entries()), {silent.pid, stranger.pid, reused.pid})
+        for process in (silent, stranger, reused):
             os.kill(process.pid, signal.SIGKILL)
             process.wait(10)
 

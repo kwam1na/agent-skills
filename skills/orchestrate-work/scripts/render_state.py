@@ -2154,8 +2154,8 @@ def runs_directory(declared: dict) -> Path | None:
         return None
     if not isinstance(named, str) or not named:
         return None
-    folder = Path(named)
-    folder = folder if folder.is_absolute() else Path.cwd() / folder
+    # A relative store is the server's own folder's: it never changes folder, so this is where it stays.
+    folder = Path(named).absolute()
     try:
         os.listdir(folder)
     except OSError:
@@ -2553,7 +2553,11 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
                       help="stop each verified live server this state directory started, and nothing else")
     args = parser.parse_args(argv)
     # The entries live with the repository the record belongs to, so a state folder outside any repository has none.
-    common = _common_directory(args.repo if args.repo is not None else args.dir)
+    # From the nearest folder that exists: a worktree may not have made its state directory yet.
+    near = args.dir.absolute()
+    while not near.is_dir() and near.parent != near:
+        near = near.parent
+    common = _common_directory(args.repo if args.repo is not None else near)
     if args.stop:
         return stop_live(args.dir, common)
     if _is_wildcard(args.host):
@@ -2566,12 +2570,7 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
         parse_config(config)
     except ConfigError as error:
         return 2, {"ok": False, "code": "config_invalid", "error": str(error)}
-    try:
-        show(args.dir)
-    except StateError as error:
-        # No record is not an error: an existing state directory without one is served, its views told so.
-        if not (error.code == "state_missing" and args.dir.is_dir()):
-            return 2, {"ok": False, "code": error.code, "error": str(error)}
+    # A verified server is named whatever this checkout's state directory holds, or whether it exists.
     if args.if_absent:
         found = verified_entries(common)
         found.sort(key=lambda entry: not entry.get("liveRuns"))
@@ -2581,6 +2580,12 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
             sys.stdout.buffer.write((json.dumps(said, ensure_ascii=True, separators=(",", ":")) + "\n").encode("ascii"))
             sys.stdout.flush()
             return 0, None
+    try:
+        show(args.dir)
+    except StateError as error:
+        # No record is not an error: an existing state directory without one is served, its views told so.
+        if not (error.code == "state_missing" and args.dir.is_dir()):
+            return 2, {"ok": False, "code": error.code, "error": str(error)}
 
     flags = _live_flags(args.dir, config, args.binding is not None or args.state_config is not None)
 

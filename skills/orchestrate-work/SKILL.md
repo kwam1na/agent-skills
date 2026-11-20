@@ -483,7 +483,8 @@ says so: in the line it prints and at the top of that page.
   runs and its address answers `/health` as a live server of this repository
   with that PID. `live --if-absent` prints the address of a verified entry,
   preferring one with `liveRuns`, as `{"ok":true,"live":"<address>","pid":N,"existing":true}`,
-  and exits 0; with none, it serves as `live` does. `live --stop` signals the
+  and exits 0, even from a worktree that has no state directory yet; with
+  none, it serves as `live` does. `live --stop` signals the
   PID of each verified entry the given state directory started, waits for its
   entry to go, and says which it stopped; an entry that fails verification is
   left alone, its PID never signalled.
