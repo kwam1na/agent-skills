@@ -569,3 +569,7 @@ Criteria:
 ### V26-3693. Serve the hosted page in the same fonts as the local live view
 
 Lane 4, tier 1, not blocked. Added mid-delivery: The operator added it on 2026-11-20: the hosted page falls back to Georgia and the system sans because its policy and asset build carry none of the local view's fonts.
+
+### V26-3692. Show a delivery's integration step on its hosted page
+
+Lane 4, tier 1, after V26-3693. Added mid-delivery: The operator added it on 2026-11-20 after finding this delivery's own hosted page omits its integrate/shared-machine-capacity base: the hosted snapshot schema drops meta.integration and the integration facts.
