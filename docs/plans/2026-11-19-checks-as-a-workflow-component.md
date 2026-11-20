@@ -44,10 +44,10 @@ The parts a model of checks needs already exist, but nothing joins them:
 - **Cost.** `meta.checkHistory` keeps each check's last five passing durations. Nothing outside the queue's progress
   view reads them.
 
-This repository's `durable-text` lane gate is a stopgap for the missing guard run. Its `catalogue` gate runs the
-3-second `StandingBinding` class, so a lane meets the catalogue check before the queue does. A pin in
-`tests/test_own_deliveries.py` (`StandingBinding.test_every_lane_gate_runs_the_catalogue_and_durable_text_guards`)
-holds both in place. No `selection.readers` entry here is `complete`, and the binding sets no `selection.unread`.
+This repository's `catalogue` lane gate runs the 3-second `StandingBinding` class, so a lane meets the catalogue
+check before the queue does. A pin in `tests/test_own_deliveries.py`
+(`StandingBinding.test_every_lane_gate_runs_the_catalogue_guard`) holds it in place. The ticket-id corpus check, and
+the `durable-text` lane gate that stood in for its guard run, were removed on main after this plan was approved. No `selection.readers` entry here is `complete`, and the binding sets no `selection.unread`.
 
 The paired TypeScript harness has no queue, carry or reuse code. A search of `product-runtime/` and
 `agent-delivery-harness/packages` finds none. This plan changes Python only.
@@ -77,7 +77,7 @@ The paired TypeScript harness has no queue, carry or reuse code. A search of `pr
 3. A V26-3614-shaped candidate, whose base merge brought in only paths outside its own diff, reuses its seven passes
    when the lead accepts it with a reuse grant and a reason. The reuse is journaled as `check.reused`, with `because`
    naming the lead's `decision.recorded` entry.
-4. `gate` runs the binding's guards first by default, and this repository's stopgap `durable-text` gate is gone.
+4. `gate` runs the binding's guards first by default.
 5. Apart from Decisions 4 and 13, settings that set none of the new fields behave as before. Every existing test
    passes unchanged, apart from the pins listed under Stories.
 6. The full suite passes on macOS with Python 3.11 within `tests/suite-budget.json`.
@@ -228,7 +228,10 @@ The paired TypeScript harness has no queue, carry or reuse code. A search of `pr
 
 ## Amendments made during delivery
 
-None yet.
+- **After approval, before setup.** Main removed the ticket-id corpus check, its `durable-text` lane gate and that
+  gate's pin (a47e3bff). V26-3664 no longer removes the gate or replaces the pin, finish line 4 no longer names it,
+  and Scenario 19's rejected diff comes from a fixture guard rather than that check. Nothing else changes, and the
+  guards stay `tests.test_linear_qualification` and `tests.test_registry`.
 
 ## Out of scope
 
@@ -330,8 +333,8 @@ A conflict in that file alone is resolved as `AGENTS.md` says.
 18. **Gate by id.** A `gates` entry `"validate-registry"` runs through `run-checks` and leaves a record, and an inline
     gate leaves a `where: checkout` record. `doctor` reports an unknown id, and a fresh clone with no `.venv` passes
     `doctor` (V26-3662).
-19. **Guards at gate.** A diff that `tests.test_linear_qualification` rejects fails `gate`, naming the guard, before
-    the repository's gates run. At the same tree, a second `gate` reuses the guard pass. `--skip-guards --why`
+19. **Guards at gate.** In a fixture binding, a diff its guard rejects fails `gate`, naming the guard, before the
+    repository's gates run. At the same tree, a second `gate` reuses the guard pass. `--skip-guards --why`
     records the skip and its reason under `guards`, the hand-off shows them, and `gates_summary` still passes.
     `--skip-guards` without `--why` is a usage error (V26-3664).
 20. **`lead-push`.** Each case is one row (V26-3664):
@@ -423,14 +426,12 @@ Lane 2, tier 2, after V26-3661 and V26-3662. Test-first. Files: `skills/run-deli
   each guard's record at the head.
 - `lead-accept --reuse <ids> --why <text>` passes the grant to `select`, and its proposal shows Scenario 21's facts.
 - This repository:
-  - removes the `durable-text` gate, which `gate`'s run of the `tests.test_linear_qualification` guard covers;
   - keeps the `catalogue` gate, which runs one 3-second class. The queue joins `tests.test_own_deliveries` through a
     reader rather than as a guard, and making it a guard would add a 31-second median to every candidate;
   - sets `reuse.tools` to `git`, `node` and `npm`.
 
-  `GUARDS` in `tests/test_own_deliveries.py` doesn't change. The pin
-  `StandingBinding.test_every_lane_gate_runs_the_catalogue_and_durable_text_guards` is replaced by one that pins the
-  `catalogue` gate and the absence of `durable-text`.
+  `GUARDS` in `tests/test_own_deliveries.py` and the pin
+  `StandingBinding.test_every_lane_gate_runs_the_catalogue_guard` don't change.
 - No fixed rule replaces the agent's judgement. Every default here has a `--why` override, and only `lead-push`
   refuses.
 
