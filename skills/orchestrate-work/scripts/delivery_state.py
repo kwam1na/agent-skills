@@ -2372,7 +2372,30 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
         if problems:
             raise StateError("select_invalid", "; ".join(problems))
 
-    def change(state: dict, journal: list[dict]) -> tuple[dict, list[dict]]:
+    def grant_problems(state: dict, journal: list[dict]) -> str | None:
+        """Why the reuse grant can't be recorded for the subject's hand-off at ``head``, if it can't."""
+        handed = handed_item(state, journal, subject)
+        if handed is None or handed["head"] != head:
+            return None  # the selection itself is refused, with its own reason
+        recorded = {entry["check"] for entry in handed.get("evidence", [])}
+        unrecorded = [name for name in reuse or [] if name not in recorded]
+        if unrecorded:
+            return f"{subject}'s hand-off at {head} carries no record of {', '.join(unrecorded)}, so there is nothing to reuse"
+        return None
+
+    decision = None
+    if reuse is not None:
+        current = read_state(directory)
+        problem = grant_problems(current, read_journal(directory))
+        if problem:
+            raise StateError("select_invalid", problem)
+        lane = next((entry.get("lane") for entry in current["queue"] if entry["subject"] == subject), None)
+        # Journaled first, so the selection can name the entry the grant is.
+        decision = append_journal(directory, kind="decision.recorded", subject=subject, lane=lane, data={
+            "text": f"Reuse the lane's records of {', '.join(reuse)} for {subject} at {head}, counting what it "
+                    "doesn't change as unread", "why": why})["id"]
+
+    def change(state: dict) -> dict:
         item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
         if item is None:
             raise StateError("subject_unknown", f"{subject} is not queued")
@@ -2380,34 +2403,28 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
             if "leadSelection" not in item:
                 raise StateError("select_invalid", f"{subject} has no lead selection to clear")
             item.pop("leadSelection")
-            return copy.deepcopy(item), [{"kind": "check.selection.cleared", "subject": subject,
-                                          "lane": item.get("lane"), "data": {}}]
+            return copy.deepcopy(item)
         if item["stage"] in ("merging", "merged"):
             raise StateError("select_invalid", f"{subject} is {item['stage']}")
         # A hand-off waiting to end a failed run is reviewed at its own head, which the row takes once it is accepted.
-        handed = handed_item(state, journal, subject)
-        reviewed = handed["head"]  # type: ignore[index]
+        journal = read_journal(directory)
+        reviewed = handed_item(state, journal, subject)["head"]  # type: ignore[index]
         if head != reviewed:
             raise StateError("select_invalid", f"{subject}'s reviewed head is {reviewed}, not {head}")
         item["leadSelection"] = {"head": head, "checks": copy.deepcopy(checks), "reason": reason, "recordedAt": now()}
-        entries = []
-        if reuse is not None:
-            recorded = {entry["check"] for entry in handed.get("evidence", [])}  # type: ignore[union-attr]
-            unrecorded = [name for name in reuse if name not in recorded]
-            if unrecorded:
-                raise StateError("select_invalid", f"{subject}'s hand-off at {head} carries no record of "
-                                                   f"{', '.join(unrecorded)}, so there is nothing to reuse")
-            # The decision is the entry this write appends first, so the selection can name it.
-            item["leadSelection"]["reuse"] = {"checks": list(reuse), "why": why, "decision": len(journal) + 1}
-            entries.append({"kind": "decision.recorded", "subject": subject, "lane": item.get("lane"), "data": {
-                "text": f"Reuse the lane's records of {', '.join(reuse)} for {subject} at {head}, counting what it "
-                        "doesn't change as unread", "why": why}})
-        entries.append({"kind": "check.selected", "subject": subject, "lane": item.get("lane"), "data": {
-            "head": head, "checks": [check["id"] for check in checks], "why": reason,  # type: ignore[union-attr]
-            "added": [{"id": entry["id"], "why": entry["why"]} for entry in added or []]}})
-        return copy.deepcopy(item), entries
+        if decision is not None:
+            problem = grant_problems(state, journal)
+            if problem:
+                raise StateError("select_invalid", problem)
+            item["leadSelection"]["reuse"] = {"checks": list(reuse), "why": why, "decision": decision}  # type: ignore[arg-type]
+        return copy.deepcopy(item)
 
-    _, item, _ = _locked_write(directory, change)
+    _, item = _tool_write(directory, change)
+    facts = {} if clearing else {
+        "head": head, "checks": [check["id"] for check in checks], "why": reason,  # type: ignore[union-attr]
+        "added": [{"id": entry["id"], "why": entry["why"]} for entry in added or []]}
+    append_journal(directory, kind="check.selection.cleared" if clearing else "check.selected", subject=subject,
+                   lane=item.get("lane"), data=facts)  # type: ignore[union-attr]
     return item  # type: ignore[return-value]
 
 
