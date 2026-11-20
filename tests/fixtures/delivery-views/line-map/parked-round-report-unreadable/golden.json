@@ -464,7 +464,8 @@
               "head": "Getting started",
               "line": "Payments lane picked up V26-2358.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c2",
@@ -484,7 +485,8 @@
               "head": "V26-2358 landed",
               "line": "1h 21m after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c3",
@@ -516,7 +518,11 @@
               "head": "Finishing",
               "line": "V26-2360, V26-2361, V26-2362, V26-2363, V26-2364, V26-2365 and V26-2366 are still to land.",
               "standing": []
-            }
+            },
+            "setbacks": [
+              "s1",
+              "s2"
+            ]
           }
         ],
         "beats": [
@@ -808,6 +814,7 @@
             "closedAt": null,
             "cost": null,
             "state": "open",
+            "endedBy": null,
             "entries": [
               6
             ],
@@ -834,6 +841,7 @@
             "closedAt": null,
             "cost": null,
             "state": "open",
+            "endedBy": null,
             "entries": [
               8
             ],
@@ -848,6 +856,62 @@
             "words": {
               "head": "A setback: work was blocked on V26-2365",
               "line": "Backend is blocked on the dev backend lease. It still stands."
+            }
+          }
+        ],
+        "ledger": [
+          {
+            "id": "s1",
+            "subject": "V26-2365",
+            "kind": "blocker.recorded",
+            "reason": null,
+            "threads": [
+              "t2"
+            ],
+            "count": 1,
+            "firstOpenedAt": "2026-10-22T04:50:00Z",
+            "lastOpenedAt": "2026-10-22T04:50:00Z",
+            "state": "open",
+            "since": "2026-10-22T04:50:00Z",
+            "endedAt": null,
+            "endedBy": null,
+            "ending": null,
+            "cost": null,
+            "waitingOn": null,
+            "chapters": {
+              "opened": "c3",
+              "ended": null
+            },
+            "words": {
+              "head": "Work was blocked on V26-2365.",
+              "line": "It still stands."
+            }
+          },
+          {
+            "id": "s2",
+            "subject": "V26-2360",
+            "kind": "candidate.stopped",
+            "reason": "check_failed",
+            "threads": [
+              "t1"
+            ],
+            "count": 1,
+            "firstOpenedAt": "2026-10-22T04:44:00Z",
+            "lastOpenedAt": "2026-10-22T04:44:00Z",
+            "state": "open",
+            "since": "2026-10-22T04:44:00Z",
+            "endedAt": null,
+            "endedBy": null,
+            "ending": null,
+            "cost": null,
+            "waitingOn": null,
+            "chapters": {
+              "opened": "c3",
+              "ended": null
+            },
+            "words": {
+              "head": "V26-2360 was stopped.",
+              "line": "It still stands."
             }
           }
         ],

@@ -300,7 +300,8 @@
               "head": "Getting started",
               "line": "",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c2",
@@ -320,7 +321,8 @@
               "head": "PAY-1 landed",
               "line": "",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c3",
@@ -344,7 +346,8 @@
               "head": "PAY-2 landed",
               "line": "",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c4",
@@ -368,7 +371,8 @@
               "head": "PAY-3 landed",
               "line": "",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c5",
@@ -390,7 +394,8 @@
               "head": "Finishing",
               "line": "PAY-4 is still to land.",
               "standing": []
-            }
+            },
+            "setbacks": []
           }
         ],
         "beats": [
@@ -652,6 +657,7 @@
           }
         ],
         "threads": [],
+        "ledger": [],
         "tones": [
           {
             "tone": "landed",

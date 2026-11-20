@@ -321,7 +321,8 @@
               "head": "Getting started",
               "line": "",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c2",
@@ -341,7 +342,8 @@
               "head": "A landed",
               "line": "",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c3",
@@ -365,7 +367,8 @@
               "head": "B landed",
               "line": "",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c4",
@@ -397,7 +400,8 @@
               "head": "Finishing",
               "line": "",
               "standing": []
-            }
+            },
+            "setbacks": []
           }
         ],
         "beats": [
@@ -728,6 +732,7 @@
           }
         ],
         "threads": [],
+        "ledger": [],
         "tones": [
           {
             "tone": "landed",

@@ -1632,7 +1632,8 @@
               "head": "Getting started",
               "line": "Four lanes picked up V26-2821, V26-2822, V26-2823, V26-2826, V26-2831 and V26-2825.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c2",
@@ -1652,7 +1653,8 @@
               "head": "V26-2823 landed",
               "line": "1h 7m after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c3",
@@ -1676,7 +1678,8 @@
               "head": "V26-2822 landed",
               "line": "1h 8m after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c4",
@@ -1696,7 +1699,8 @@
               "head": "V26-2826 landed",
               "line": "1h 9m after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c5",
@@ -1722,7 +1726,8 @@
               "head": "V26-2831 landed",
               "line": "1h 2m after it was picked up, after 3 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c6",
@@ -1752,7 +1757,8 @@
               "head": "V26-2824 landed",
               "line": "7m 16s after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c7",
@@ -1778,7 +1784,8 @@
               "head": "V26-2825 landed",
               "line": "28m after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c8",
@@ -1809,7 +1816,8 @@
               "head": "V26-2832 landed",
               "line": "10m after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c9",
@@ -1839,7 +1847,8 @@
               "head": "V26-2827 landed",
               "line": "16m after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c10",
@@ -1868,7 +1877,8 @@
               "head": "Finished",
               "line": "Every finish line was met. V26-2821 never landed.",
               "standing": []
-            }
+            },
+            "setbacks": []
           }
         ],
         "beats": [
@@ -3545,6 +3555,7 @@
           }
         ],
         "threads": [],
+        "ledger": [],
         "tones": [
           {
             "tone": "landed",
