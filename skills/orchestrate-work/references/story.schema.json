@@ -92,7 +92,7 @@
         "entries": {"$ref": "#/$defs/entryIds"},
         "beats": {"type": "array", "items": {"$ref": "#/$defs/beatId"}},
         "setbacks": {"description": "The ledger rows that opened or ended inside this chapter.", "type": "array", "items": {"$ref": "#/$defs/ledgerRowId"}},
-        "standing": {"description": "For each ledger row that opened in an earlier chapter and ended inside this one, the thread that ended it last. Nothing still standing from an earlier chapter is carried into a later one.", "type": "array", "items": {"$ref": "#/$defs/threadId"}},
+        "standing": {"description": "For each ledger row that opened in an earlier chapter and ended inside this one, the thread that ended it last. A row that opened inside this chapter is told here by its own beats, so it is not listed, and nothing still standing from an earlier chapter is carried into a later one.", "type": "array", "items": {"$ref": "#/$defs/threadId"}},
         "notLanded": {"description": "For a closed delivery's last chapter, the pieces that never landed.", "$ref": "#/$defs/subjects"},
         "words": {
           "type": "object",

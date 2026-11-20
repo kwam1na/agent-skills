@@ -534,7 +534,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/story.schema.json",
-          "sha256": "617d5b7df79229cea18a750efa5c85ac3810f8240a8d28e94b8c8f74dc123079"
+          "sha256": "182f55034a5d8b8a4766a7e05e2a78715e81ac160a4d4e2404f6ab1339ba5fcd"
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
