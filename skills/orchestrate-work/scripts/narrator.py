@@ -138,11 +138,12 @@ def narrate(journal: list, state: dict | None = None, plan: dict | None = None, 
         # The rows that opened or ended inside it; and, of those, the ones that ended here after opening earlier, told
         # once by the thread that ended last. Nothing still standing from an earlier chapter is carried into it.
         chapter["setbacks"] = [row["id"] for row in ledger if chapter["id"] in (row["chapters"]["opened"], row["chapters"]["ended"])]
+        # The ending thread itself has to have opened earlier: one that opened here is told here by its own beat.
         chapter["standing"] = [row["lastThread"] for row in ledger if row["chapters"]["ended"] == chapter["id"]
-                               and _chapter_index(row["chapters"]["opened"]) < index]
+                               and row["lastOpenedIn"] < index]
         _word_chapter(chapter, chapters, index, by_id, threads, pieces, landed, titles, state, closed, registry)
     for row in ledger:
-        del row["lastThread"]
+        del row["lastThread"], row["lastOpenedIn"]
     for chapter in chapters:
         del chapter["first"]
     return {
@@ -354,10 +355,12 @@ def _ledger(threads: list[dict], by_id: dict, chapters: list[dict], chapter_of: 
             # The time the row's setbacks held something up, counted once where copies overlap.
             "cost": _covered(held) if last else None,
             "waitingOn": _waiting_on(subject, state) if standing else None,
+            # A stop journalled after its story's landing ends, as its closedAt does, in its own chapter, not the landing's.
             "chapters": {"opened": chapters[chapter_of[opened[0]["opening"]]]["id"],
-                         "ended": chapters[chapter_of[last["closing"]]]["id"] if last else None},
+                         "ended": chapters[max(chapter_of[last["closing"]], chapter_of[last["opening"]])]["id"] if last else None},
             "words": {"head": _sentence(head), "line": _row_line(last, subject, state if standing else None)},
             "lastThread": last["id"] if last else opened[-1]["id"],
+            "lastOpenedIn": chapter_of[(last or opened[-1])["opening"]],
         })
     rows.sort(key=lambda row: (row["state"] != "open", -_seconds(row["firstOpenedAt"])))
     for index, row in enumerate(rows, 1):
@@ -395,10 +398,6 @@ def _waiting_on(subject: str | None, state: dict | None) -> str | None:
     row = next((entry for entry in state.get("lanes") or [] if isinstance(entry, dict) and entry.get("id") == lane), None)
     waiting = row.get("waitingOn") if row else None
     return waiting if isinstance(waiting, str) and waiting else None
-
-
-def _chapter_index(chapter_id: str) -> int:
-    return int(chapter_id[1:]) - 1
 
 
 def _cause(opening: dict, by_id: dict, registry: dict) -> list[int]:
