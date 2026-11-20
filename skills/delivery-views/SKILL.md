@@ -195,9 +195,10 @@ the run store and serves it as the front page while there is no record:
   are the run's current activity and next step, and each unresolved wait with
   its reason and next action. Only a wait on a human with no `wait.resolved` of
   the same `waitId` says "Needs you".
-- Ended runs follow, newest first, and link to the history. A run that a later
-  `run.started` names as its `displacedRunId` is listed with them, marked "Left
-  open, replaced", never under "Now".
+- Ended runs follow, newest first, and link to the history. A run left open that a
+  later run's start displaced, the runtime recording it as that run's
+  `displacedRunId`, is listed with them, marked "Left open, replaced", never
+  under "Now".
 - Each run opens a panel of its gates (`command`, outcome, duration),
   decisions, blockers, change request, review rounds through the run summary,
   and result with its cost unit and coverage. A run bound to a piece of the
