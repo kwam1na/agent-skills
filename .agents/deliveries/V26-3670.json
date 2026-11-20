@@ -165,6 +165,17 @@
       "after": [
         "V26-3668"
       ]
+    },
+    "V26-3690": {
+      "title": "End a story's setbacks when it lands, and tell each setback once in a grouped ledger",
+      "lane": "lane-1",
+      "why": "The operator chose study A from Setback Studies on 2026-11-20: What happened read as a wall of repeated setbacks, twelve of them stale stops of two stories that had landed (gaps 156 and 157).",
+      "criteria": [
+        {
+          "id": "v26-3690-1",
+          "text": "A stop on a story that later lands is told as ended at that landing; stops with the same story and reason are one ledger row with their count and span; a chapter names only the rows that opened or ended in it; and the story document validates against the updated story.schema.json, with the headline's setback counts read from the ledger."
+        }
+      ]
     }
   },
   "finish": [

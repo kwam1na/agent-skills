@@ -404,3 +404,7 @@ Lane 1, tier 3, not blocked. Added mid-delivery: The merge queue refused to reco
 ### V26-3686. Draw every story as a tick on the line where the lanes rejoin main
 
 Lane 2, tier 2, after V26-3668. Added mid-delivery: The operator chose the refined study B from the Line Merge Studies mockups on 2026-11-20: the merge section stops scaling past a few stories, and its rejoin steps were drawn twice.
+
+### V26-3690. End a story's setbacks when it lands, and tell each setback once in a grouped ledger
+
+Lane 1, tier 3, not blocked. Added mid-delivery: The operator chose study A from Setback Studies on 2026-11-20: What happened read as a wall of repeated setbacks, twelve of them stale stops of two stories that had landed (gaps 156 and 157).
