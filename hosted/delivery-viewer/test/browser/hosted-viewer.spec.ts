@@ -325,6 +325,119 @@ test("polling preserves keyboard selection, folds, viewport and mobile line posi
   });
 });
 
+/** The weight CSS font matching picks for `wanted` among faces at `weights` (CSS Fonts 4, font-weight matching). */
+function matchWeight(wanted: number, weights: number[]) {
+  const all = [...new Set(weights)].sort((a, b) => a - b);
+  if (all.includes(wanted)) return wanted;
+  const below = all.filter((w) => w < wanted).reverse();
+  const above = all.filter((w) => w > wanted);
+  if (wanted >= 400 && wanted <= 500) {
+    const near = above.filter((w) => w <= 500);
+    return [...near, ...below, ...above.filter((w) => w > 500)][0];
+  }
+  return (wanted < 400 ? [...below, ...above] : [...above, ...below])[0];
+}
+
+test("renders in the local view's fonts from its own origin, with the hosting status in the live line", async ({
+  page,
+  context,
+}) => {
+  const id = randomBytes(32).toString("hex");
+  await publish(id, fixture());
+  const requested: string[] = [];
+  context.on("request", (request) => requested.push(request.url()));
+  const response = await page.goto(`${origin}/d/${id}`);
+  // Today's policy, with font-src 'self' in place of font-src 'none'.
+  expect(response!.headers()["content-security-policy"]).toBe(
+    "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'none'; connect-src 'self'; img-src 'none'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  );
+  await expect(page.locator(".fact.since[data-hosting='current']")).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
+  const loaded = await page.evaluate(() =>
+    [...document.fonts]
+      .filter((face) => face.status === "loaded")
+      .map((face) => `${face.family.replace(/"/g, "")} ${face.style} ${face.weight}`),
+  );
+  for (const family of ["Newsreader", "Geist", "Geist Mono"])
+    expect(loaded.some((face) => face.startsWith(`${family} normal `))).toBe(true);
+  // What the local view's stylesheet asks for, and what the browser drew with.
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("DOM.enable");
+  await cdp.send("CSS.enable");
+  // For each family, the first heading or text the stylesheet sets in it, with words of its own on screen.
+  for (const [within, family] of [
+    ["h1", "Newsreader"],
+    ["#app", "Geist"],
+    ["#app", "Geist Mono"],
+  ] as const) {
+    const computed = await page.evaluate(
+      ([within, family]) => {
+        const nodes = [...document.querySelectorAll(`${within}, ${within} *`)];
+        const node = nodes.find((node) => {
+          const style = getComputedStyle(node);
+          const own = [...node.childNodes].some(
+            (child) => child.nodeType === Node.TEXT_NODE && child.textContent!.trim(),
+          );
+          return (
+            own &&
+            node.getClientRects().length > 0 &&
+            style.visibility === "visible" &&
+            style.fontFamily.split(",")[0].replace(/"/g, "").trim() === family
+          );
+        });
+        if (!node) return null;
+        node.setAttribute("data-font-probe", family);
+        const style = getComputedStyle(node);
+        return { weight: style.fontWeight, style: style.fontStyle };
+      },
+      [within, family] as const,
+    );
+    expect(computed, `an element drawn in ${family}`).not.toBeNull();
+    // The stylesheet is the local view's, so these are its values. Each is drawn from the face CSS font matching picks
+    // among the weights the local link requests, as Google Fonts serves them: one face per weight.
+    const served = await page.evaluate(
+      ([family, style]) =>
+        [...document.fonts]
+          .filter((face) => face.family.replace(/"/g, "") === family && face.style === style)
+          .map((face) => Number(face.weight)),
+      [family, computed!.style] as const,
+    );
+    expect(loaded).toContain(
+      `${family} ${computed!.style} ${matchWeight(Number(computed!.weight), served)}`,
+    );
+    const { root } = await cdp.send("DOM.getDocument", { depth: -1 });
+    const { nodeId } = await cdp.send("DOM.querySelector", {
+      nodeId: root.nodeId,
+      selector: `[data-font-probe="${family}"]`,
+    });
+    const { fonts } = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
+    expect(fonts.length).toBeGreaterThan(0);
+    expect(fonts.every((font) => font.isCustomFont)).toBe(true);
+    // A variable face reports its instance, as "Newsreader 16pt" for an optical size.
+    expect(
+      fonts.every((font) => font.familyName === family || font.familyName.startsWith(`${family} `)),
+    ).toBe(true);
+    if (family === "Geist")
+      expect(fonts.some((font) => font.familyName.startsWith("Geist Mono"))).toBe(false);
+  }
+  // No strip: the live line carries the times, on hover and on focus.
+  expect(await page.locator(".hosting-strip, aside").count()).toBe(0);
+  await expect(page.locator("#hosting-status")).toHaveClass(/hosted-announce/);
+  const handle = page.locator('.fact.since [data-tab="hosting"]');
+  await expect(page.locator("#hosting-times")).toBeHidden();
+  await handle.hover();
+  await expect(page.locator("#hosting-times")).toBeVisible();
+  await expect(page.locator("#hosting-times")).toContainText("Revision 1.1");
+  await page.mouse.move(0, 0);
+  await expect(page.locator("#hosting-times")).toBeHidden();
+  await handle.focus();
+  await expect(page.locator("#hosting-times")).toBeVisible();
+  // Nothing left the hosted origin.
+  expect(requested.length).toBeGreaterThan(4);
+  expect(requested.filter((url) => !url.startsWith(origin + "/"))).toEqual([]);
+  expect(requested.some((url) => url.endsWith(".woff2"))).toBe(true);
+});
+
 test("retains readable progress on pointer loss, incompatibility and publisher disconnection", async ({
   page,
 }) => {
@@ -346,9 +459,15 @@ test("retains readable progress on pointer loss, incompatibility and publisher d
   await expect(page.locator("#hosting-status")).toContainText(
     "Update unavailable",
   );
+  // Said where a reader sees it without interaction: in the hero's live line.
+  await expect(page.locator(".fact.since .hosted-words")).toBeVisible();
+  await expect(page.locator(".fact.since .hosted-words")).toHaveText(
+    "Update unavailable · showing the last saved progress",
+  );
   await expect(page.locator("#app")).toContainText("Saved progress");
   await page.unroute(`**/d/${id}/snapshots/${next.digest}`);
   await expect(page.locator("#app")).toContainText("Recovered progress");
+  await expect(page.locator(".fact.since .hosted-words")).toHaveCount(0);
   await page.route(`**/d/${id}/current`, async (route) => {
     const response = await route.fetch();
     const meta = await response.json();
@@ -371,6 +490,10 @@ test("retains readable progress on pointer loss, incompatibility and publisher d
     });
   });
   await expect(page.locator("#hosting-status")).toContainText("stale");
+  await expect(page.locator(".fact.since .hosted-words")).toBeVisible();
+  await expect(page.locator(".fact.since .hosted-words")).toContainText(
+    "Progress is stale",
+  );
   await expect(page.locator("#app")).toContainText("Recovered progress");
   body.document.journal.push({
     id: 2,
@@ -390,6 +513,10 @@ test("retains readable progress on pointer loss, incompatibility and publisher d
   await expect(page.locator("#hosting-status")).toContainText(
     "Saved completed delivery",
   );
+  await expect(page.locator(".fact.since .hosted-words")).toBeVisible();
+  await expect(page.locator(".fact.since .hosted-words")).toHaveText(
+    "Saved completed delivery · connection unavailable",
+  );
   await expect(page.locator("#app")).toContainText("closed");
 });
 
@@ -406,10 +533,16 @@ test("asset failure stays explicit across later successful data polls", async ({
   await expect(page.locator("#hosting-status")).toContainText(
     "Viewer assets unavailable",
   );
+  // The page's own words say it; the region announces without repeating it on screen.
+  await expect(page.locator("#app")).toHaveText(
+    "Viewer assets unavailable. Reload this page to retry.",
+  );
+  await expect(page.locator("#hosting-status")).toHaveClass(/hosted-announce/);
   await page.waitForTimeout(5500);
   await expect(page.locator("#hosting-status")).toContainText(
     "Viewer assets unavailable",
   );
+  await expect(page.locator("#hosting-status")).toHaveClass(/hosted-announce/);
   await page.unroute(`**${built.paths.rendererPath}`);
   await page.reload();
   await expect(page.locator("#app")).toContainText("Delivery");
@@ -455,7 +588,17 @@ test("first render uses the newest coherent projection after a delayed renderer 
   });
   try {
     await page.goto(`${origin}/d/${id}`, { waitUntil: "domcontentloaded" });
-    await expect(page.locator("#hosting-times")).toContainText("Revision 1.1");
+    // The renderer is held, so no live line is drawn yet; the viewer still follows the revisions.
+    const sequence = () =>
+      page.evaluate(
+        () =>
+          (
+            Reflect.get(window, "deliveryStateStore") as
+              | { status(): { receipt: { sequence: number } | null } }
+              | undefined
+          )?.status().receipt?.sequence,
+      );
+    await expect.poll(sequence).toBe(1);
     body.document.state.meta.headline = "Latest startup document";
     body.plan.plan.outcome.summary = "Latest startup plan";
     body.needs.items[0].text = "Latest startup needs";
@@ -463,9 +606,10 @@ test("first render uses the newest coherent projection after a delayed renderer 
     body.runs["run-1"].roundDetail[0].raised[0].summary =
       "Latest startup run finding";
     await publish(id, body, 2);
-    await expect(page.locator("#hosting-times")).toContainText("Revision 1.2");
+    await expect.poll(sequence).toBe(2);
     release();
     await expect(page.locator("#app")).toContainText("Latest startup document");
+    await expect(page.locator("#hosting-times")).toContainText("Revision 1.2");
     await expect(page.locator("#plan")).toContainText("Latest startup plan");
     await expect(page.locator("#now")).toContainText("Latest startup needs");
     await expect(page.locator("#detail")).toContainText(

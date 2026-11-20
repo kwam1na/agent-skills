@@ -611,7 +611,7 @@ function seedDOM(window: JSDOM["window"], body: PublicProjection) {
 }
 function testDOM() {
   const dom = new JSDOM(
-    '<!doctype html><body><p id="hosting-status"></p><p id="hosting-times"></p><main id="app"></main><script data-renderer="/assets/renderer.js"></script></body>',
+    '<!doctype html><body><p id="hosting-status" class="hosting-status hosted-announce" role="status" aria-live="polite">Loading hosted progress…</p><main id="app"></main><script data-renderer="/assets/renderer.js"></script></body>',
     {
       url: `https://service.test/d/${publicId}`,
       runScripts: "outside-only",
@@ -1077,5 +1077,190 @@ describe("immutable tuple confirmations", () => {
       sourceConfirmedAt: 1000100,
       serverNow: 1000100,
     });
+  });
+});
+
+describe("the hosting status in the hero's live line", () => {
+  type Built = { renderer: string; viewer: string; shell: string };
+  const built = () =>
+    JSON.parse(
+      readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8"),
+    ) as Built;
+  type Served = Awaited<ReturnType<typeof revision>> | Error;
+  /** The viewer and, when `draw`, the renderer on one page, served whatever `served.now` holds at each request. */
+  async function hostedPage(served: { now: Served }, draw = true) {
+    const assets = built();
+    const dom = testDOM();
+    Object.assign(dom.window, {
+      fetch: async (url: string) => {
+        const now = served.now;
+        if (now instanceof Error) throw now;
+        return url.endsWith("/current")
+          ? Response.json(now.meta)
+          : new Response(now.bytes, {
+              headers: { "Content-Type": "application/json" },
+            });
+      },
+    });
+    dom.window.eval(assets.viewer);
+    const document = dom.window.document;
+    // The viewer hands its store to the renderer once it holds data.
+    if (draw)
+      await vi.waitFor(() =>
+        expect(Reflect.get(dom.window, "deliveryStateStore")).toBeDefined(),
+      );
+    const store = Reflect.get(dom.window, "deliveryStateStore") as ReturnType<
+      typeof createViewStore
+    >;
+    if (draw) {
+      dom.window.eval(assets.renderer);
+      await vi.waitFor(() =>
+        expect(document.querySelector(".fact.since[data-hosting]")).not.toBeNull(),
+      );
+    }
+    return { dom, store, document };
+  }
+  const line = (document: Document) =>
+    document.querySelector<HTMLElement>(".fact.since")!;
+  const status = (document: Document) =>
+    document.getElementById("hosting-status")!;
+  function close(dom: JSDOM) {
+    dom.window.dispatchEvent(new dom.window.Event("pagehide"));
+    dom.window.close();
+  }
+  it("draws no strip, and a current publication shows only as the live line, its times on hover or focus", async () => {
+    expect(built().shell).not.toMatch(/hosting-strip|hosting-times|<aside/);
+    const served = { now: (await revision(1, auxiliaryProjection("old"))) as Served };
+    const { dom, document } = await hostedPage(served, false);
+    try {
+      await vi.waitFor(() =>
+        expect(Reflect.get(dom.window, "deliveryStateStore")).toBeDefined(),
+      );
+      const store = Reflect.get(dom.window, "deliveryStateStore") as ReturnType<
+        typeof createViewStore
+      >;
+      // Before the line is drawn the status is said on its own; drawing the line alone, with no status change between
+      // (the store's own tick is a second away), puts it out of sight.
+      expect(status(document).classList.contains("hosted-announce")).toBe(false);
+      dom.window.eval(built().renderer);
+      expect(document.querySelector(".fact.since[data-hosting]")).not.toBeNull();
+      await Promise.resolve();
+      expect(status(document).classList.contains("hosted-announce")).toBe(true);
+      await store.poll();
+      expect(store.status().kind).toBe("current");
+      const fact = line(document);
+      expect(fact.dataset.hosting).toBe("current");
+      expect(fact.querySelector(".hosted-words")).toBeNull();
+      const handle = fact.querySelector<HTMLElement>('[data-tab="hosting"]')!;
+      expect(handle.textContent).toBe("Live");
+      expect(handle.getAttribute("tabindex")).toBe("0");
+      expect(handle.getAttribute("aria-describedby")).toBe("hosting-times");
+      const tip = document.getElementById("hosting-times")!;
+      expect(tip.getAttribute("role")).toBe("tooltip");
+      expect(tip.textContent).toMatch(/^Source confirmed .+ · Published .+ · Revision 1\.1$/);
+      expect(tip.previousElementSibling).toBe(handle);
+      expect(status(document).textContent).toBe("Progress confirmed");
+      expect(status(document).getAttribute("aria-live")).toBe("polite");
+      expect(status(document).classList.contains("hosted-announce")).toBe(true);
+      expect(document.querySelectorAll(".hosting-strip, aside, #hosting-times")).toHaveLength(1);
+    } finally {
+      close(dom);
+    }
+  });
+  it.each([
+    ["stale", "Progress is stale · publisher contact lost"],
+    ["unavailable", "Update unavailable · showing the last saved progress"],
+    ["incompatible", "Incompatible update · showing the last saved progress"],
+  ])("says a %s publication in the live line without interaction, and announces it", async (kind, words) => {
+    const body = auxiliaryProjection("old");
+    const served = { now: (await revision(1, body)) as Served };
+    const { dom, store, document } = await hostedPage(served);
+    try {
+      await store.poll();
+      const handle = line(document).querySelector<HTMLElement>('[data-tab="hosting"]')!;
+      handle.focus();
+      expect(document.activeElement).toBe(handle);
+      if (kind === "stale") served.now = await revision(2, body, 1120000);
+      else if (kind === "unavailable") served.now = Error("offline");
+      else {
+        const next = await revision(2, body);
+        next.meta.rendererVersion = "delivery-line-map/0";
+        served.now = next;
+      }
+      await store.poll();
+      expect(store.status().kind).toBe(kind);
+      const fact = line(document);
+      await vi.waitFor(() => expect(fact.isConnected && fact.dataset.hosting).toBe(kind));
+      const said = fact.querySelector(".hosted-words")!;
+      expect(said.textContent).toBe(words);
+      expect(said.getAttribute("aria-hidden")).toBe("true");
+      expect(status(document).textContent).toBe(words);
+      expect(status(document).dataset.state).toBe(kind);
+      expect(status(document).getAttribute("role")).toBe("status");
+      expect(document.getElementById("hosting-times")!.textContent).toContain(
+        kind === "stale" ? "Revision 1.2" : "Revision 1.1",
+      );
+      // The renderer redraws the line as the connection drops; keyboard focus comes back to its label.
+      expect((document.activeElement as HTMLElement).dataset.tab).toBe("hosting");
+      expect(document.activeElement!.isConnected).toBe(true);
+      // Back to current: the words go, and the line is quiet again.
+      served.now = await revision(3, body);
+      await store.poll();
+      await vi.waitFor(() => expect(line(document).dataset.hosting).toBe("current"));
+      expect(line(document).querySelector(".hosted-words")).toBeNull();
+    } finally {
+      close(dom);
+    }
+  });
+  it("keeps a completed delivery's saved and retained publication quiet in its closed line until its connection fails", async () => {
+    const body = auxiliaryProjection("old");
+    body.document.journal.push({
+      id: body.document.journal.length + 1,
+      at: "2026-11-15T00:01:00Z",
+      kind: "delivery.closed",
+      lane: null,
+      subject: null,
+    });
+    const served = { now: (await revision(1, body, 9999999)) as Served };
+    const { dom, store, document } = await hostedPage(served);
+    try {
+      await store.poll();
+      expect(store.status().kind).toBe("retained");
+      await vi.waitFor(() => expect(line(document).dataset.hosting).toBe("retained"));
+      expect(line(document).classList.contains("closed")).toBe(true);
+      expect(line(document).querySelector(".hosted-words")).toBeNull();
+      expect(document.getElementById("hosting-times")!.textContent).toContain("Revision 1.1");
+      expect(status(document).textContent).toBe("Completed delivery · saved and retained");
+      // A lost connection is said in the line, though the saved delivery stays readable.
+      served.now = Error("offline");
+      await store.poll();
+      expect(store.status().kind).toBe("retained");
+      await vi.waitFor(() =>
+        expect(line(document).querySelector(".hosted-words")?.textContent).toBe(
+          "Saved completed delivery · connection unavailable",
+        ),
+      );
+      expect(status(document).textContent).toBe("Saved completed delivery · connection unavailable");
+    } finally {
+      close(dom);
+    }
+  });
+  it("says the status on its own, in the page's column, only before any live line is drawn", async () => {
+    const served = { now: Error("offline") as Served };
+    const { dom, store, document } = await hostedPage(served, false);
+    try {
+      // While loading, the page's own loading words say it; the region only announces.
+      expect(status(document).textContent).toBe("Loading hosted progress…");
+      expect(status(document).classList.contains("hosted-announce")).toBe(true);
+      expect(store).toBeUndefined();
+      await vi.waitFor(() =>
+        expect(status(document).textContent).toBe("Hosted progress unavailable"),
+      );
+      expect(status(document).dataset.state).toBe("unavailable");
+      expect(status(document).classList.contains("hosted-announce")).toBe(false);
+      expect(document.querySelector(".fact.since")).toBeNull();
+    } finally {
+      close(dom);
+    }
   });
 });

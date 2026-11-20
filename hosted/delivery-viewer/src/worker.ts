@@ -3,6 +3,10 @@ import { timingSafeEqual } from 'node:crypto';
 import { unwrap, digest, identifier, integer, object, exact, parse, projection, readBytes, MAX_BYTES, KEY, REPOSITORY, RENDERER, fail, json, errorResponse, headers, type Commit } from './protocol';
 import { DeliveryObject, type Session } from './delivery-object';
 export { DeliveryObject };
+// Binary assets (the fonts) are generated as base64; each is decoded once, when the worker starts.
+const bodies = new Map<string, Uint8Array<ArrayBuffer>>();
+for (const [path, asset] of Object.entries(assets))
+  if (asset.encoding === 'base64') bodies.set(path, Uint8Array.from(atob(asset.body), (c) => c.charCodeAt(0)));
 
 async function authenticate(request: Request, env: Env, repo: string) {
   const header = request.headers.get('Authorization');
@@ -59,13 +63,13 @@ export default {
       }
       if (request.method === 'GET' && Object.hasOwn(assets,url.pathname)) {
         const asset=assets[url.pathname];
-        return new Response(asset.body,{headers:{...headers,'Content-Type':asset.type,'Cache-Control':'public, max-age=31536000, immutable'}});
+        return new Response(bodies.get(url.pathname) ?? asset.body,{headers:{...headers,'Content-Type':asset.type,'Cache-Control':'public, max-age=31536000, immutable'}});
       }
       const page=/^\/d\/([a-f0-9]{64})$/.exec(url.pathname);
       if(page&&request.method==='GET'){
         unwrap(await env.DELIVERIES.getByName(page[1]).current());
         return new Response(shell,{headers:{...headers,'Content-Type':'text/html; charset=utf-8',
-          'Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'none'; connect-src 'self'; img-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"}});
+          'Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'none'; connect-src 'self'; img-src 'none'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"}});
       }
       const read = /^\/d\/([a-f0-9]{64})\/(current|snapshots\/([a-f0-9]{64}))$/.exec(url.pathname);
       if (read && request.method === 'GET') {
