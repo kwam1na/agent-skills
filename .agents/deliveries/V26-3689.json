@@ -1,0 +1,214 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3689",
+  "headline": "V26-3689: shared-machine capacity, so heavy runs claim from one machine ledger with measured costs and wait when it is full",
+  "baseBranch": "integrate/shared-machine-capacity",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-20-shared-machine-capacity.md",
+  "laneBrief": "docs/plans/2026-11-20-shared-machine-capacity.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-20-shared-machine-capacity.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions",
+      "Units and order",
+      "Execution posture and sensors",
+      "Scenarios"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/orchestrate-work/scripts/machine.py",
+        "skills/orchestrate-work/references/schemas.json",
+        "tests/test_machine.py",
+        "tests/__init__.py",
+        "profiles/*",
+        "tests/test_orchestration_adopter.py",
+        "skills/orchestrate-work/scripts/merge_queue.py",
+        "tests/test_merge_queue.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/run-delivery/scripts/run_delivery.py",
+        "skills/run-delivery/SKILL.md",
+        "skills/run-delivery/references/*",
+        "tests/test_run_delivery.py",
+        "tests/test_run_delivery_supervisor.py"
+      ]
+    },
+    "lane-3": {
+      "owns": [
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "skills/orchestrate-work/scripts/render_state.py",
+        "skills/orchestrate-work/SKILL.md",
+        "skills/orchestrate-work/references/orchestration-guide.md",
+        "docs/own-deliveries.md",
+        "tests/test_lead_wait.py",
+        "tests/test_orchestration_render.py"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3680": {
+      "title": "Keep a machine ledger of claims, measured costs and a capacity",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3680-1",
+          "text": "Plan Scenarios 1 to 9d, 14a to 14d, 17, 18, 20, 21, 23 to 24c and 25 pass."
+        },
+        {
+          "id": "v26-3680-2",
+          "text": "status prints capacity and live pressure, and no admission reads load."
+        },
+        {
+          "id": "v26-3680-3",
+          "text": "A claim whose process is dead is removed on the next read. A claim whose lock is held is kept, whatever its pid says."
+        },
+        {
+          "id": "v26-3680-4",
+          "text": "A run through the real runner records non-null cpuSeconds, including its grandchild, and the next claim of that kind is measured."
+        },
+        {
+          "id": "v26-3680-5",
+          "text": "No test reads or writes the real machine directory."
+        },
+        {
+          "id": "v26-3680-6",
+          "text": "No fixed rule replaces the agent's judgement: every default can be stepped off with a recorded reason."
+        }
+      ]
+    },
+    "V26-3681": {
+      "title": "Claim for the queue's turn before the merge slot",
+      "lane": "lane-1",
+      "after": [
+        "V26-3680"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3681-1",
+          "text": "Plan Scenarios 10, 11a to 11d, 22, 26 and 31 to 33 pass."
+        },
+        {
+          "id": "v26-3681-2",
+          "text": "No code path waits on capacity while holding a merge slot. A claim from another process, a child of the slot holder included, waits as usual."
+        },
+        {
+          "id": "v26-3681-3",
+          "text": "A check whose own argv claims runs under the turn's claim, in the runner's ledger, with no wait. Its environment digest and its record's names are unchanged."
+        },
+        {
+          "id": "v26-3681-4",
+          "text": "Existing queue tests pass unchanged, with capacity left at the default and each test's own empty ledger."
+        },
+        {
+          "id": "v26-3681-5",
+          "text": "No fixed rule replaces the agent's judgement."
+        }
+      ]
+    },
+    "V26-3682": {
+      "title": "Claim for fullHealth, lead-suite and any heavy run, and name the claim in the briefs",
+      "lane": "lane-2",
+      "after": [
+        "V26-3680"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3682-1",
+          "text": "Plan Scenarios 12, 13, 19 and 27 to 30 pass."
+        },
+        {
+          "id": "v26-3682-2",
+          "text": "A claim without --now waits behind a queue turn's claim, names it, and starts once the turn's claim is released."
+        },
+        {
+          "id": "v26-3682-3",
+          "text": "A second supervisor pass while fullHealth waits starts no second run, and the ledger holds exactly one fullHealth claim."
+        },
+        {
+          "id": "v26-3682-4",
+          "text": "Two pins cover the brief text: a corpus pin holds the sentence naming claim and --now --why, and an absence pin finds no scheduling rule in either brief, checking \"only one\", \"one at a time\", \"never overlap\", \"must wait\", \"wait for\", \"do not run\", \"avoid running\" and \"before running\" and their synonyms."
+        },
+        {
+          "id": "v26-3682-5",
+          "text": "No fixed rule replaces the agent's judgement."
+        }
+      ]
+    },
+    "V26-3683": {
+      "title": "Show the machine in the lead's wait and the delivery views",
+      "lane": "lane-3",
+      "after": [
+        "V26-3680"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3683-1",
+          "text": "Plan Scenarios 15a, 15b and 16a to 16c pass."
+        },
+        {
+          "id": "v26-3683-2",
+          "text": "Existing render snapshots are unchanged when the machine directory is empty."
+        },
+        {
+          "id": "v26-3683-3",
+          "text": "Every output-pinning test in tests/test_lead_wait.py and tests/test_orchestration_render.py reads its own machine directory with an explicit capacity."
+        },
+        {
+          "id": "v26-3683-4",
+          "text": "No fixed rule replaces the agent's judgement."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "V26-3680, V26-3681, V26-3682 and V26-3683 land on integrate/shared-machine-capacity through its merge queue, meeting plan finish lines 1 to 6",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration head, with --workers 4 --budget tests/suite-budget.json, inside the budget, and no test reads or writes the real machine directory (plan finish line 7)",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide's integration review says, and the operator merges it into main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-20"
+  },
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}
