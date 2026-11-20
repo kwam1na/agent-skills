@@ -1,8 +1,8 @@
 {
   "reviewEvidence": {
     "native-sync": {
-      "candidateRef": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7",
-      "digest": "9c03a4d37a200b8df9d34f1c1bf09c3eadcb81dc0ac73ac24067c3489b0e4208",
+      "candidateRef": "1087d2c133625139c9446ff28d761bf226136926",
+      "digest": "655500360efb1057189f96a795f17abe966df81c59a2e6998cb3a986efa073c7",
       "outcomes": [
         {
           "round": 1,
@@ -13,20 +13,20 @@
               "state": "obtained",
               "binding": {
                 "subjectRef": "native-sync",
-                "candidateRef": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7",
+                "candidateRef": "1087d2c133625139c9446ff28d761bf226136926",
                 "round": 1
               },
               "result": {
                 "schemaVersion": "review-lens-result/1",
                 "lensId": "lens.outcome-correctness",
                 "subjectRef": "native-sync",
-                "candidateRef": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7",
+                "candidateRef": "1087d2c133625139c9446ff28d761bf226136926",
                 "round": 1,
                 "outcome": "aligned",
                 "findings": [],
                 "resolvedFindings": [],
                 "evidence": {
-                  "startCommit": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7"
+                  "startCommit": "1087d2c133625139c9446ff28d761bf226136926"
                 }
               }
             },
@@ -35,20 +35,20 @@
               "state": "obtained",
               "binding": {
                 "subjectRef": "native-sync",
-                "candidateRef": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7",
+                "candidateRef": "1087d2c133625139c9446ff28d761bf226136926",
                 "round": 1
               },
               "result": {
                 "schemaVersion": "review-lens-result/1",
                 "lensId": "lens.adversarial-testing",
                 "subjectRef": "native-sync",
-                "candidateRef": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7",
+                "candidateRef": "1087d2c133625139c9446ff28d761bf226136926",
                 "round": 1,
                 "outcome": "aligned",
                 "findings": [],
                 "resolvedFindings": [],
                 "evidence": {
-                  "startCommit": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7"
+                  "startCommit": "1087d2c133625139c9446ff28d761bf226136926"
                 }
               }
             }
@@ -63,20 +63,20 @@
               "state": "obtained",
               "binding": {
                 "subjectRef": "native-sync",
-                "candidateRef": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7",
+                "candidateRef": "1087d2c133625139c9446ff28d761bf226136926",
                 "round": 2
               },
               "result": {
                 "schemaVersion": "review-lens-result/1",
                 "lensId": "lens.outcome-correctness",
                 "subjectRef": "native-sync",
-                "candidateRef": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7",
+                "candidateRef": "1087d2c133625139c9446ff28d761bf226136926",
                 "round": 2,
                 "outcome": "aligned",
                 "findings": [],
                 "resolvedFindings": [],
                 "evidence": {
-                  "startCommit": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7"
+                  "startCommit": "1087d2c133625139c9446ff28d761bf226136926"
                 }
               }
             },
@@ -85,20 +85,20 @@
               "state": "obtained",
               "binding": {
                 "subjectRef": "native-sync",
-                "candidateRef": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7",
+                "candidateRef": "1087d2c133625139c9446ff28d761bf226136926",
                 "round": 2
               },
               "result": {
                 "schemaVersion": "review-lens-result/1",
                 "lensId": "lens.adversarial-testing",
                 "subjectRef": "native-sync",
-                "candidateRef": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7",
+                "candidateRef": "1087d2c133625139c9446ff28d761bf226136926",
                 "round": 2,
                 "outcome": "aligned",
                 "findings": [],
                 "resolvedFindings": [],
                 "evidence": {
-                  "startCommit": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7"
+                  "startCommit": "1087d2c133625139c9446ff28d761bf226136926"
                 }
               }
             }
@@ -121,7 +121,7 @@
       {
         "focus": "",
         "id": "lane-1",
-        "since": "2026-11-16T23:24:59.660401Z",
+        "since": "2026-11-20T07:16:53.205030Z",
         "state": "handed",
         "title": "Lane 1",
         "waitingOn": null
@@ -129,7 +129,7 @@
       {
         "focus": "",
         "id": "lane-2",
-        "since": "2026-11-16T23:24:59.874065Z",
+        "since": "2026-11-20T07:16:53.451435Z",
         "state": "handed",
         "title": "Lane 2",
         "waitingOn": null
@@ -144,14 +144,14 @@
       },
       "headline": "Fixture delivery",
       "releasedHead": null,
-      "updatedAt": "2026-11-16T23:24:59.874079Z"
+      "updatedAt": "2026-11-20T07:16:53.451465Z"
     },
     "planned": [],
     "queue": [
       {
         "changeRequest": "#1",
         "checks": [],
-        "head": "11d6a90ad0b843aee302c72838562a262799c0de",
+        "head": "490ec5e1e32c0a7f4737fa7cddb8da1f3abb8def",
         "lane": "lane-1",
         "leadInputs": [],
         "order": 1,
@@ -165,7 +165,7 @@
       {
         "changeRequest": "#2",
         "checks": [],
-        "head": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7",
+        "head": "1087d2c133625139c9446ff28d761bf226136926",
         "lane": "lane-2",
         "leadInputs": [],
         "order": 2,
@@ -182,7 +182,7 @@
   },
   "journal": [
     {
-      "at": "2026-11-16T23:24:59.652692Z",
+      "at": "2026-11-20T07:16:53.191044Z",
       "data": {
         "findings": {
           "P0": 0,
@@ -190,9 +190,9 @@
           "P2": 0,
           "P3": 0
         },
-        "finishedAt": "2026-11-16T23:24:59.649711Z",
+        "finishedAt": "2026-11-20T07:16:53.186971Z",
         "round": 1,
-        "startedAt": "2026-11-16T23:24:59.649711Z",
+        "startedAt": "2026-11-20T07:16:53.186971Z",
         "verdicts": {
           "lens.adversarial-testing": "changes",
           "lens.outcome-correctness": "changes"
@@ -204,7 +204,7 @@
       "subject": "journal-sync"
     },
     {
-      "at": "2026-11-16T23:24:59.657579Z",
+      "at": "2026-11-20T07:16:53.196644Z",
       "data": {
         "findings": {
           "P0": 0,
@@ -212,9 +212,9 @@
           "P2": 0,
           "P3": 0
         },
-        "finishedAt": "2026-11-16T23:24:59.654885Z",
+        "finishedAt": "2026-11-20T07:16:53.193524Z",
         "round": 2,
-        "startedAt": "2026-11-16T23:24:59.654885Z",
+        "startedAt": "2026-11-20T07:16:53.193524Z",
         "verdicts": {
           "lens.adversarial-testing": "approve",
           "lens.outcome-correctness": "approve"
@@ -226,11 +226,11 @@
       "subject": "journal-sync"
     },
     {
-      "at": "2026-11-16T23:24:59.663359Z",
+      "at": "2026-11-20T07:16:53.208758Z",
       "data": {
         "changeRequest": "#1",
         "checks": [],
-        "head": "11d6a90ad0b843aee302c72838562a262799c0de",
+        "head": "490ec5e1e32c0a7f4737fa7cddb8da1f3abb8def",
         "rounds": 2
       },
       "id": 3,
@@ -239,7 +239,7 @@
       "subject": "journal-sync"
     },
     {
-      "at": "2026-11-16T23:24:59.862860Z",
+      "at": "2026-11-20T07:16:53.440834Z",
       "data": {
         "findings": {
           "P0": 0,
@@ -247,9 +247,9 @@
           "P2": 0,
           "P3": 0
         },
-        "finishedAt": "2026-11-16T23:24:59.859584Z",
+        "finishedAt": "2026-11-20T07:16:53.437149Z",
         "round": 1,
-        "startedAt": "2026-11-16T23:24:59.859584Z",
+        "startedAt": "2026-11-20T07:16:53.437149Z",
         "verdicts": {
           "lens.adversarial-testing": "changes",
           "lens.outcome-correctness": "changes"
@@ -261,7 +261,7 @@
       "subject": "native-sync"
     },
     {
-      "at": "2026-11-16T23:24:59.871226Z",
+      "at": "2026-11-20T07:16:53.445376Z",
       "data": {
         "findings": {
           "P0": 0,
@@ -269,9 +269,9 @@
           "P2": 0,
           "P3": 0
         },
-        "finishedAt": "2026-11-16T23:24:59.868602Z",
+        "finishedAt": "2026-11-20T07:16:53.442253Z",
         "round": 2,
-        "startedAt": "2026-11-16T23:24:59.868602Z",
+        "startedAt": "2026-11-20T07:16:53.442253Z",
         "verdicts": {
           "lens.adversarial-testing": "approve",
           "lens.outcome-correctness": "approve"
@@ -283,11 +283,11 @@
       "subject": "native-sync"
     },
     {
-      "at": "2026-11-16T23:24:59.877000Z",
+      "at": "2026-11-20T07:16:53.455116Z",
       "data": {
         "changeRequest": "#2",
         "checks": [],
-        "head": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7",
+        "head": "1087d2c133625139c9446ff28d761bf226136926",
         "rounds": 2
       },
       "id": 6,
@@ -296,10 +296,10 @@
       "subject": "native-sync"
     },
     {
-      "at": "2026-11-16T23:24:59.884014Z",
+      "at": "2026-11-20T07:16:53.463248Z",
       "data": {
-        "candidateRef": "8320acc9b44b8f0d5c7da4a690bdb5d4e58ad1e7",
-        "digest": "9c03a4d37a200b8df9d34f1c1bf09c3eadcb81dc0ac73ac24067c3489b0e4208"
+        "candidateRef": "1087d2c133625139c9446ff28d761bf226136926",
+        "digest": "655500360efb1057189f96a795f17abe966df81c59a2e6998cb3a986efa073c7"
       },
       "id": 7,
       "kind": "review.recorded",
@@ -310,7 +310,7 @@
   "stats": {
     "journal-sync": {
       "assignedAt": null,
-      "handedAt": "2026-11-16T23:24:59.663359Z",
+      "handedAt": "2026-11-20T07:16:53.208758Z",
       "checkStartedAt": null,
       "endedAt": null,
       "outcome": null,
@@ -334,7 +334,7 @@
     },
     "native-sync": {
       "assignedAt": null,
-      "handedAt": "2026-11-16T23:24:59.877000Z",
+      "handedAt": "2026-11-20T07:16:53.455116Z",
       "checkStartedAt": null,
       "endedAt": null,
       "outcome": null,
