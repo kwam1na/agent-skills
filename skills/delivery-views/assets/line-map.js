@@ -4189,13 +4189,21 @@
     }, "depth"), choice("Show", FILTERS, storyFilter, function (picked) { storyFilter = picked; }, "tab"));
     var beats = Object.create(null);
     story.beats.forEach(function (beat) { if (isObject(beat)) { beats[text(beat.id)] = beat; } });
+    // The setbacks, each told once in the ledger above the chapters, by row id.
+    var ledger = Array.isArray(story.ledger) ? story.ledger.filter(function (row) { return isObject(row) && text(row.id); }) : null;
+    var rows = Object.create(null);
+    (ledger || []).forEach(function (row) { rows[text(row.id)] = row; });
     var ol = el("ol", "story");
     story.chapters.slice().reverse().forEach(function (chapter) {
       if (!isObject(chapter) || !isObject(chapter.words)) { return; }
       var shownBeats = list(chapter.beats).map(function (name) { return beats[text(name)]; })
         .filter(function (beat) { return beatShown(beat, depth, storyFilter); }).reverse();
-      var standing = list(chapter.words.standing).filter(isObject);
-      if (storyFilter !== "all" && !shownBeats.length && !(storyFilter === "problems" && standing.length) && !(storyFilter === "landed" && chapter.form === "landing")) { return; }
+      // With a ledger, a chapter names each setback that opened or ended in it, once, linked to its row; a story told
+      // before the ledger keeps the standing lines it carried.
+      var setbacks = ledger ? list(chapter.setbacks).map(function (name) { return rows[text(name)]; }).filter(Boolean) : [];
+      var standing = ledger ? [] : list(chapter.words.standing).filter(isObject);
+      var showsSetbacks = storyFilter === "all" || storyFilter === "problems";
+      if (storyFilter !== "all" && !shownBeats.length && !(storyFilter === "problems" && (standing.length || setbacks.length)) && !(storyFilter === "landed" && chapter.form === "landing")) { return; }
       var li = el("li", "chapter-of is-" + text(chapter.form));
       li.setAttribute("data-chapter", text(chapter.id));
       var heading = add(el("div", "chapter-head"), add.apply(null, [el("h3")].concat(linked(chapter.words.head))), timeOf(chapter.at));
@@ -4207,6 +4215,7 @@
         li.appendChild(add.apply(null, [el("p", "chapter-standing" + (carried.until ? " is-ended" : ""))].concat(linked(carried.text),
           [carried.until ? ", until " + (clock(carried.until) || "a time unknown") + "." : ""])));
       });
+      if (showsSetbacks) { setbacks.forEach(function (row) { li.appendChild(setbackLine(row, chapter)); }); }
       if (shownBeats.length) {
         var ul = el("ul", "beats");
         shownBeats.forEach(function (beat) { ul.appendChild(beatRow(doc, story, beat, prev.story && !prev.story[beatKey(beat)] && !reduced(), depth)); });
@@ -4219,12 +4228,89 @@
     var digest = isObject(story.digest.words) ? story.digest.words : { head: "", line: "" };
     // A part the story doesn't hold, a digest line or a legend, is left out rather than drawn as nothing.
     inner.replaceChildren();
+    var say = ledger ? ledgerSay(ledger, story.digest) : text(digest.line);
     add(inner, el("div", "kicker", "What happened"), el("h2", "title", text(digest.head)),
-      text(digest.line) ? el("p", "say", text(digest.line)) : null, storyLegend(story, depth), switches, ol);
+      say ? el("p", "say", say) : null, storyLegend(story, depth), switches,
+      ledger && ledger.length && (storyFilter === "all" || storyFilter === "problems") ? setbackLedger(ledger) : null, ol);
     // Depth changes density in place: the chapter eases from the height it had, on the shared fold's motion.
     runEaseHeight(inner, from);
   }
   function beatKey(beat) { return text(beat.form) + ":" + list(beat.entries).join(","); }
+  var NUMBER_WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+  function numberWord(count) { return count < NUMBER_WORDS.length ? NUMBER_WORDS[count] : String(count); }
+  function capital(words) { return words.charAt(0).toUpperCase() + words.slice(1); }
+  /**
+   * What happened in one line, read from the ledger: whether anything is stopped now, how many setbacks are over and what
+   * they cost, then the lead's decisions. Copies of one setback are one row, so one setback is counted once.
+   */
+  function ledgerSay(ledger, digest) {
+    var open = ledger.filter(function (row) { return row.state === "open"; });
+    var over = ledger.filter(function (row) { return row.state !== "open"; });
+    var parts = [];
+    if (!ledger.length) { parts.push("No setbacks."); }
+    else if (open.length) { parts.push(capital(numberWord(open.length)) + (open.length === 1 ? " setback stands now." : " setbacks stand now.")); }
+    else { parts.push("Nothing is stopped now."); }
+    if (over.length) {
+      var costs = over.filter(function (row) { return typeof row.cost === "number" && row.cost > 0; }).map(function (row) { return duration(row.cost); });
+      parts.push(capital(numberWord(over.length)) + (over.length === 1 ? " is over" : " are over") +
+        (costs.length ? ", costing " + spokenList(costs) : "") + ".");
+    }
+    var decisions = typeof digest.decisions === "number" ? digest.decisions : 0;
+    if (decisions) { parts.push("The lead made " + numberWord(decisions) + (decisions === 1 ? " decision." : " decisions.")); }
+    return parts.join(" ");
+  }
+  /** When a row's setbacks happened: one instant, or the first and the last of several. */
+  function rowSpan(row) {
+    var first = clock(row.firstOpenedAt) || "a time unknown";
+    return row.count > 1 && text(row.lastOpenedAt) && row.lastOpenedAt !== row.firstOpenedAt ? first + "–" + (clock(row.lastOpenedAt) || "a time unknown") : first;
+  }
+  /**
+   * The ledger: every setback once, grouped by story and reason, the ones still standing first, tinted, with since when
+   * and who they wait on; the ended ones after, muted, with what ended them, when, and what they cost. Each row can take
+   * focus, and a chapter's line about it leads to it.
+   */
+  function setbackLedger(ledger) {
+    var box = add(el("section", "setback-ledger"), el("h3", "ledger-title", "Setbacks"));
+    box.setAttribute("aria-label", "Setbacks");
+    var ul = el("ul", "ledger-rows");
+    ledger.forEach(function (row) {
+      var open = row.state === "open";
+      var li = el("li", "ledger-row " + (open ? "is-open" : "is-closed"));
+      li.id = "setback-" + text(row.id);
+      li.setAttribute("data-row", text(row.id));
+      li.setAttribute("tabindex", "0");
+      var words = isObject(row.words) ? row.words : {};
+      var what = add(el("div", "ledger-what"), add.apply(null, [el("b")].concat(linked(words.head))), el("span", "ledger-line", text(words.line)));
+      var when = open
+        ? "since " + (clock(row.since) || "a time unknown") + (text(row.waitingOn) ? " · waits on " + text(row.waitingOn) : "")
+        : "ended " + (clock(row.endedAt) || "at a time unknown") + (typeof row.cost === "number" && row.cost > 0 ? " · cost " + duration(row.cost) : "");
+      var meta = add(el("div", "ledger-when"), el("span", "ledger-span", rowSpan(row)), el("span", "ledger-state", when));
+      add(li, glyph("stop"), what, meta);
+      ul.appendChild(li);
+    });
+    return add(box, ul);
+  }
+  /**
+   * A chapter's line about one setback: what it was, and whether it opened here, ended here, or still stands, linked to
+   * its row in the ledger. Following the link moves focus to the row.
+   */
+  function setbackLine(row, chapter) {
+    var words = isObject(row.words) ? row.words : {};
+    var chapters = isObject(row.chapters) ? row.chapters : {};
+    var here = text(chapter.id);
+    var state = row.state === "open" ? "still stands" : chapters.ended === here && chapters.opened === here ? "over" :
+      chapters.ended === here ? "ended here" : "opened here, ended later";
+    var link = el("a", "setback-link", text(words.head).replace(/\.$/, "") + " · " + state);
+    link.setAttribute("href", "#setback-" + text(row.id));
+    link.addEventListener("click", function (event) {
+      var target = document.getElementById("setback-" + text(row.id));
+      if (!target) { return; }
+      event.preventDefault();
+      target.focus();
+      if (typeof target.scrollIntoView === "function") { target.scrollIntoView({ block: "nearest" }); }
+    });
+    return add(el("p", "chapter-setback" + (row.state === "open" ? " is-open" : "")), glyph("stop"), link);
+  }
   /** A small group of buttons choosing one of its options, drawn again on a pick. */
   function choice(label, options, current, pick, data) {
     var group = el("div", "tabs" + (data === "depth" ? " depth" : " filter"));

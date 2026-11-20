@@ -662,6 +662,25 @@ a.issue-link { color: inherit; cursor: pointer; }
 .chapter-when { margin: 0; font-size: 13px; color: var(--faint); }
 .chapter-standing { margin: 0; font-size: 13px; color: var(--held); overflow-wrap: anywhere; }
 .chapter-standing.is-ended { color: var(--faint); }
+/* The setbacks ledger: every setback once, above the chapters. One still standing is tinted in the stop colour; one that
+   is over is muted. A chapter's line about a setback leads to its row. */
+.setback-ledger { margin: 4px 0 18px; padding: 6px 0; background: var(--lift); border: 1px solid var(--hair); border-radius: 10px; }
+.ledger-title { margin: 8px 16px 4px; font: 600 12px var(--text); color: var(--faint); letter-spacing: .02em; }
+.ledger-rows { list-style: none; margin: 0; padding: 0; }
+.ledger-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 4px 12px; padding: 9px 16px; align-items: start; outline: none; }
+.ledger-row + .ledger-row { border-top: 1px solid var(--hair); }
+.ledger-row.is-open { background: var(--held-wash); }
+.ledger-row.is-closed .g.stop svg path { fill: none; stroke: var(--faint); stroke-width: 1.4; }
+.ledger-row:focus-visible, .ledger-row:focus { box-shadow: inset 0 0 0 2px var(--ink); }
+.ledger-what { min-width: 0; overflow-wrap: anywhere; }
+.ledger-what b { font-weight: 600; }
+.ledger-line { display: block; color: var(--soft); font-size: 13px; }
+.ledger-when { display: grid; justify-items: end; gap: 2px; font: 500 11px var(--mono); color: var(--faint); text-align: right; white-space: nowrap; }
+.ledger-row.is-open .ledger-state { color: var(--held); }
+.chapter-setback { display: flex; gap: 8px; align-items: baseline; margin: 0; font-size: 13px; color: var(--soft); overflow-wrap: anywhere; }
+.chapter-setback .setback-link { color: inherit; }
+.chapter-setback.is-open .setback-link { color: var(--held); }
+.chapter-setback:not(.is-open) .g.stop svg path { fill: none; stroke: var(--faint); stroke-width: 1.4; }
 .beats { margin-top: 6px; border-top: 1px solid var(--hair); }
 .beat { position: relative; display: grid; grid-template-columns: 96px 18px minmax(0, 1fr); gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--hair); align-items: baseline; }
 .beat time { display: grid; justify-items: end; gap: 2px; }
