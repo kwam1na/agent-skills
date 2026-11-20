@@ -71,11 +71,24 @@ SAFE_ERRORS = ERRORS | frozenset(('sidecar_unsafe sidecar_unreadable sidecar_ove
  'owner_stop_timeout status_corrupt source_missing retry_corrupt owner_start_failed owner_start_timeout '
  'not_configured request_oversize configuration_or_source_invalid confirmation_invalid receipt_mismatch configuration_changed sequence_reconcile '
  'terminal_corrupt terminal_unfinished terminal_source_changed terminal_expired final_publication_pending owner_elsewhere').split())
+# A projection refusal names its own bounded code, never the refused value, so a status can say which rule refused a cut.
+PROJECTION_ERRORS = frozenset(('snapshot.byte_bound snapshot.configured_secret snapshot.const snapshot.credential_field '
+ 'snapshot.duplicate snapshot.enum snapshot.json snapshot.key snapshot.list_bound snapshot.local_path snapshot.number_bound '
+ 'snapshot.object_bound snapshot.pattern snapshot.projection snapshot.schema snapshot.structure snapshot.text_bound '
+ 'snapshot.type snapshot.unknown_field snapshot.unregistered_kind snapshot.unrelated_evidence snapshot.unsafe_link '
+ 'source.byte_bound source.changed source.deadline source.path').split())
+SAFE_ERRORS |= PROJECTION_ERRORS
 
 class PublishError(RuntimeError):
     def __init__(self, code, *, transient=False):
         self.code, self.transient = code, transient
         super().__init__(code)
+
+
+def refused(error):
+    """A retried source refusal, named by the projection's own code where it has a known one."""
+    code=str(error) if isinstance(error,public.ProjectionError) else None
+    return PublishError(code if code in PROJECTION_ERRORS else 'source_unavailable',transient=True)
 
 
 def integer(value, minimum=0):
@@ -337,8 +350,8 @@ class Publisher:
         # body is re-collected before any snapshot/confirmation request.
         self.guard()
         try:value=collect();public.validate(value,secret_values=self.secrets)
-        except (public.ProjectionError,views.ConfigError,views.RunUnavailable,OSError,ValueError):
-            raise PublishError('source_unavailable',transient=True) from None
+        except (public.ProjectionError,views.ConfigError,views.RunUnavailable,OSError,ValueError) as error:
+            raise refused(error) from None
         self.guard()
         data=public.encode(value);digest=hashlib.sha256(data).hexdigest();d=self.identity
         previous=d['receipt']
@@ -713,8 +726,12 @@ def child_collect(arguments,inputs,source=None):
     if getattr(arguments,'archive_root',None):argv.extend(['--archive-root',arguments.archive_root])
     if getattr(arguments,'record_root',None):argv.extend(['--record-root',arguments.record_root])
     scrub=set(inputs.config['scrubEnv'])|{inputs.config['hosted']['tokenEnv']}
-    try:return views.run_json(argv,timeout=CAPTURE_SECONDS,scrub=list(scrub),cwd=inputs.root,limit=public.MAX_BYTES,process_registry=CHILDREN,cancelled=CANCELLED)
+    try:answer=views.run_json(argv,timeout=CAPTURE_SECONDS,scrub=list(scrub),cwd=inputs.root,limit=public.MAX_BYTES,process_registry=CHILDREN,cancelled=CANCELLED)
     except views.RunUnavailable:raise PublishError('source_unavailable',transient=True) from None
+    # The child answers a refused cut with the projection's code alone.
+    if isinstance(answer,dict) and set(answer)=={'refused'}:
+        raise refused(public.ProjectionError(answer['refused']) if isinstance(answer['refused'],str) else None)
+    return answer
 
 
 def child_transport(arguments,inputs):
@@ -1084,7 +1101,7 @@ def watch(arguments,inputs):
                         resume=False;attempt=0;schedule.completed(time.monotonic())
                         if alive():atomic(directory/STATUS,{'spec':'hosted-delivery-status/1',**result})
                 except (PublishError,public.ProjectionError,views.ConfigError,render.review_state.StateError,OSError) as error:
-                    code=error.code if isinstance(error,PublishError) else 'source_unavailable'
+                    code=error.code if isinstance(error,PublishError) else refused(error).code
                     transient=error.transient if isinstance(error,PublishError) else True
                     if alive():atomic(directory/STATUS,{'spec':'hosted-delivery-status/1','state':'retrying' if transient else 'failed','code':code})
                     if transient:retry_at=time.monotonic()+retry_delay(attempt);attempt+=1
@@ -1173,7 +1190,9 @@ def main(argv=None):
         directory=inputs.state_directory
         if not directory.is_dir():raise PublishError('source_path')
         if inputs.config['hosted'] is None:raise PublishError('not_configured')
-        if arguments.operation=='collect':answer=collect(inputs,arguments)
+        if arguments.operation=='collect':
+            try:answer=collect(inputs,arguments)
+            except public.ProjectionError as error:answer={'refused':str(error)}
         elif arguments.operation=='request':
             try:
                 raw=sys.stdin.buffer.read(24*1024*1024+1)
