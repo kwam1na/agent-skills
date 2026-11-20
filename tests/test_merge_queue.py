@@ -2782,7 +2782,8 @@ class WorkRootSafetyTests(MergeQueueTestCase):
                 env, facts, dropped = runner.check_environment()
                 self.assertNotIn("MQ_DROPPED", env)
                 self.assertIn("MQ_DROPPED", dropped)
-                self.assertEqual(facts["names"], sorted(env))
+                # The record names all the check received, but for the runner-owned machine names it leaves out.
+                self.assertEqual(facts["names"], sorted(name for name in env if name not in queue.MACHINE_NAMES))
                 # Listed in inherit, it reaches the check, which passes.
                 runner.binding = {**runner.binding, "inherit": ["MQ_DROPPED"]}
                 self.assertEqual(runner.run_one(check, checkout, context).returncode, 0)
@@ -9195,7 +9196,8 @@ class MachineClaimQueueTests(MergeQueueTestCase):
     def probe_adopter(self, mode: str = "normal", **binding: object) -> tuple[Adopter, Path]:
         """An adopter whose always-run check is the ledger probe, with the probe's output file."""
         out = self.directory / "probe.json"
-        probe = {"id": "probe", "argv": [PY, "-c", LEDGER_PROBE, str(SCRIPTS), str(out)], "cwd": ".",
+        # -B: a check's declared environment doesn't carry PYTHONDONTWRITEBYTECODE, and the probe imports a script.
+        probe = {"id": "probe", "argv": [PY, "-B", "-c", LEDGER_PROBE, str(SCRIPTS), str(out)], "cwd": ".",
                  "reasons": ["probe"], "prerequisites": []}
         return self.adopter({"alwaysRun": [probe], "fallback": [check_entry("fallback")], **binding}, mode), out
 
@@ -9246,6 +9248,15 @@ class MachineClaimQueueTests(MergeQueueTestCase):
         [admitted] = self.admissions()
         self.assertEqual((admitted["claim"], admitted["admittedBy"]), (waiting["id"], "capacity"))
         self.assertEqual(self.claim_files(), [])
+        # Each check's cost is kept under its own id, measured with its CPU, and nothing under the turn.
+        identity = queue.machine.repository_identity(adopter.operator)
+        costs = {entry["subject"]: entry for entry in self.ledger().costs()["entries"]
+                 if (entry["repository"], entry["kind"]) == (identity, "check")}
+        self.assertEqual(sorted(costs), ["always", "unit"])
+        for entry in costs.values():
+            [passed] = entry["passed"]
+            self.assertIsNotNone(passed["cpuSeconds"])
+            self.assertGreater(passed["cpuSeconds"], 0)
 
     def test_the_turns_claim_before_the_slot_is_the_lead_selections_largest_times_the_parallel_checks(self) -> None:
         self.capacity(8)
@@ -9357,6 +9368,12 @@ class MachineClaimQueueTests(MergeQueueTestCase):
             env, claimed, _ = runner.check_environment()
         self.assertEqual(claimed, bare)
         self.assertEqual(check["environment"], bare)
+        # A binding that declares a machine name in its own environment records the same names and digest.
+        declaring = {**adopter.binding, "environment": {**adopter.binding["environment"],
+                                                        "AGENT_SKILLS_MACHINE_DIR": "/declared"}}
+        runner.binding = declaring
+        self.assertEqual(runner.check_environment()[1], bare)
+        runner.binding = adopter.binding
         self.assertEqual({name: env[name] for name in queue.MACHINE_NAMES},
                          {"AGENT_SKILLS_MACHINE_CLAIM": "0" * 32, "AGENT_SKILLS_MACHINE_DIR": str(self.machine_directory),
                           "XDG_STATE_HOME": str(self.directory / "xdg")})
