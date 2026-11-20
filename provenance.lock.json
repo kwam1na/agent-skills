@@ -534,7 +534,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/story.schema.json",
-          "sha256": "e0294c91e4a8917ffa8e945c13d1fa12cdad948e19900129f323c10e2ee1128f"
+          "sha256": "617d5b7df79229cea18a750efa5c85ac3810f8240a8d28e94b8c8f74dc123079"
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
@@ -554,7 +554,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/narrator.py",
-          "sha256": "7e2486b86113d95ff9373b9b660d0607e9bddb5e38932036c5361209290347ad"
+          "sha256": "5d1d4bee87dd9cc7f29518ff6435f79c40ebfa703ea5e5cfcf68267796608c08"
         },
         {
           "path": "skills/orchestrate-work/scripts/region_ownership.py",

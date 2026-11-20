@@ -191,13 +191,23 @@ class FixtureTests(unittest.TestCase):
                 entries = {entry["id"]: entry for entry in journal}
                 for thread in story["threads"]:
                     if thread["state"] == "closed":
-                        self.assertEqual(thread["cost"], round(instant(entries[thread["closing"]]) - instant(entries[thread["opening"]])))
+                        # It ends at its closing entry, or, for a stop journalled after its story's landing happened, at
+                        # its own opening, so no cost runs backwards.
+                        ended = max(instant(entries[thread["closing"]]), instant(entries[thread["opening"]]))
+                        self.assertEqual(narrator._seconds(thread["closedAt"]), ended)
+                        self.assertEqual(thread["cost"], round(ended - instant(entries[thread["opening"]])))
                     else:
                         self.assertIsNone(thread["closing"])
                         self.assertIsNone(thread["cost"])
                         self.assertIsNone(thread["closedAt"])
                 digest = story["digest"]
-                self.assertEqual(digest["setbacks"]["cost"], sum(thread["cost"] for thread in story["threads"] if thread["state"] == "closed"))
+                # Counted by the ledger: a row's cost covers its threads' spans, each overlap once.
+                self.assertEqual(digest["setbacks"]["cost"], sum(row["cost"] for row in story["ledger"] if row["state"] == "closed"))
+                for row in story["ledger"]:
+                    costs = [thread["cost"] for thread in story["threads"] if thread["id"] in row["threads"]]
+                    if row["state"] == "closed":
+                        self.assertLessEqual(max(costs), row["cost"])
+                        self.assertLessEqual(row["cost"], sum(costs))
                 if story["state"] == "open":
                     self.assertIsNone(digest["closedAt"])
                     self.assertIsNone(digest["took"])
@@ -241,10 +251,26 @@ class FixtureTests(unittest.TestCase):
     def test_the_schema_refuses_a_story_with_a_missing_or_an_unknown_member(self) -> None:
         story, _ = told("standing-break")
         self.assertTrue(story["digest"]["setbacks"]["standing"])
+        # A chapter's line for a setback opened earlier and ended inside it: B, stopped before A landed, ends at its own.
+        journal = Journal()
+        journal.started()
+        journal.add(5, "candidate.stopped", {"reason": "interrupted", "detail": "interrupted"}, subject="B")
+        journal.add(10, "candidate.merged", {"head": "c" * 40}, subject="A")
+        journal.add(20, "candidate.merged", {"head": "d" * 40}, subject="B")
+        carried = journal.told()
+        self.assertTrue(carried["chapters"][2]["words"]["standing"])
+        changes = []
+        for name, reach in {"carried setback": lambda s: s["chapters"][2]["words"]["standing"][0]}.items():
+            for change in (lambda s, reach=reach: reach(s).update(summary="A sentence"), lambda s, reach=reach: reach(s).pop(next(iter(reach(s))))):
+                broken = copy.deepcopy(carried)
+                change(broken)
+                with self.subTest(change=name):
+                    self.assertTrue(list(SCHEMA.iter_errors(broken)))
         objects = {"story": lambda s: s, "digest": lambda s: s["digest"], "digest words": lambda s: s["digest"]["words"],
                    "setbacks": lambda s: s["digest"]["setbacks"], "standing": lambda s: s["digest"]["setbacks"]["standing"][0],
                    "chapter": lambda s: s["chapters"][0], "chapter words": lambda s: s["chapters"][0]["words"],
-                   "carried setback": lambda s: s["chapters"][1]["words"]["standing"][0],
+                   "ledger row": lambda s: s["ledger"][0], "ledger row chapters": lambda s: s["ledger"][0]["chapters"],
+                   "ledger row words": lambda s: s["ledger"][0]["words"],
                    "beat": lambda s: s["beats"][0], "beat words": lambda s: s["beats"][0]["words"], "thread": lambda s: s["threads"][0],
                    "thread words": lambda s: s["threads"][0]["words"], "thread parts": lambda s: s["threads"][0]["told"]}
         changes = []
@@ -254,6 +280,10 @@ class FixtureTests(unittest.TestCase):
         changes += [("a beat of an unknown form", lambda s: s["beats"][0].update(form="card")),
                     ("an unknown altitude", lambda s: s["beats"][0].update(altitudes=["headlines"])),
                     ("a thread of an unknown state", lambda s: s["threads"][0].update(state="stuck")),
+                    ("a thread ended by something unknown", lambda s: s["threads"][0].update(endedBy="the lead")),
+                    ("a ledger row of an unknown state", lambda s: s["ledger"][0].update(state="stuck")),
+                    ("a ledger row of no threads", lambda s: s["ledger"][0].update(threads=[])),
+                    ("a chapter naming an unknown row", lambda s: s["chapters"][0]["setbacks"].append("t1")),
                     ("a cost in words", lambda s: s["threads"][0].update(cost="38m")),
                     ("a story of an unknown state", lambda s: s.update(state="paused"))]
         self.assertEqual(sum(1 for name, _ in changes if "missing" in name), len(objects))
@@ -344,15 +374,19 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(story["digest"]["words"]["head"], "Nothing has landed yet.")
         self.assertEqual((story["state"], story["threads"]), ("open", []))
 
-    def test_standing_break_is_an_open_thread_counted_as_standing_and_named_in_every_later_chapter(self) -> None:
+    def test_standing_break_is_an_open_thread_counted_as_standing_and_told_once_not_in_every_later_chapter(self) -> None:
         story, journal = told("standing-break")
         brk = journal[by_kind(journal, "base.broken")[0] - 1]
         [thread] = story["threads"]
         self.assertEqual((thread["state"], thread["openedAt"], thread["closing"], thread["cost"]), ("open", brk["at"], None, None))
         self.assertEqual(story["digest"]["setbacks"], {"closed": 0, "cost": 0, "standing": [{"thread": thread["id"], "openedAt": brk["at"]}]})
-        self.assertEqual([chapter["standing"] for chapter in story["chapters"]], [[], [thread["id"]], [thread["id"]], [thread["id"]]])
-        self.assertEqual([chapter["words"]["standing"] for chapter in story["chapters"]],
-                         [[]] + [[{"thread": thread["id"], "text": "A setback still stands: the main line broke.", "until": None}]] * 3)
+        [row] = story["ledger"]
+        self.assertEqual((row["kind"], row["state"], row["since"], row["threads"], row["chapters"]),
+                         ("base.broken", "open", brk["at"], [thread["id"]], {"opened": "c1", "ended": None}))
+        # The ledger tells it once: only the chapter it opened in names it, and no later chapter repeats it.
+        self.assertEqual([chapter["setbacks"] for chapter in story["chapters"]], [[row["id"]], [], [], []])
+        self.assertEqual([chapter["standing"] for chapter in story["chapters"]], [[], [], [], []])
+        self.assertEqual([chapter["words"]["standing"] for chapter in story["chapters"]], [[], [], [], []])
         self.assertEqual(story["chapters"][-1]["words"]["head"], "Finishing")
         self.assertIn("still stand", story["digest"]["words"]["line"])
 
@@ -671,7 +705,9 @@ class BoundaryTests(unittest.TestCase):
         story = journal.told()
         landing_a, landing_b = story["chapters"][1:3]
         self.assertEqual(landing_a["words"]["line"], "1h after it was picked up.")
-        self.assertEqual(landing_b["standing"], [])
+        # Closed as its chapter begins: told there once, as ended, never as still standing.
+        [thread] = story["threads"]
+        self.assertEqual(landing_b["words"]["standing"], [{"thread": thread["id"], "text": "B was stopped", "until": thread["closedAt"]}])
 
     def test_a_setback_that_ends_as_its_carried_chapter_ends_is_told_as_ended(self) -> None:
         journal = Journal()
@@ -706,7 +742,7 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(story["chapters"][-1]["words"], {"head": "Finished", "line": "Every finish line was met. B never landed.", "standing": []})
         self.assertEqual(story["chapters"][0]["words"]["line"], "Lane 1 picked up A and B.")
         story, _ = told("standing-break")
-        self.assertEqual(story["chapters"][-1]["words"]["standing"][0]["text"], "A setback still stands: the main line broke.")
+        self.assertEqual(story["chapters"][-1]["words"]["standing"], [])
         self.assertEqual(story["digest"]["words"], {"head": "Two of three pieces landed so far.", "line": "One setback still stands."})
         journal, state = fixture("never-landed")
         state["finish"].append({"id": "release", "met": False, "text": "It is released"})
@@ -953,6 +989,7 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual((row["subject"], row["reason"], row["count"], row["state"], row["since"], row["endedAt"], row["endedBy"],
                           row["ending"], row["cost"]),
                          ("A", "interrupted", 1, "closed", None, journal.entries[merged - 1]["at"], merged, "landing", 20 * 60))
+        self.assertEqual(row["words"], {"head": "A was stopped.", "line": "It ended when A landed."})
         self.assertEqual(story["digest"]["setbacks"]["standing"], [])
         self.assertNotIn("still stand", story["digest"]["words"]["line"])
 
@@ -965,7 +1002,12 @@ class LedgerTests(unittest.TestCase):
         [row] = story["ledger"]
         self.assertEqual((row["subject"], row["state"], row["since"], row["endedAt"], row["cost"]),
                          ("B", "open", journal.entries[stop - 1]["at"], None, None))
+        self.assertEqual((row["waitingOn"], row["words"]), (None, {"head": "B was stopped.", "line": "It still stands."}))
         self.assertEqual(story["digest"]["words"]["line"], "One setback still stands.")
+        # Who it waits on, where the record says: the lane the stopped piece is queued in.
+        state = {"queue": [{"subject": "B", "lane": "lane-2"}], "lanes": [{"id": "lane-2", "waitingOn": "lead"}]}
+        [row] = journal.told(state=state)["ledger"]
+        self.assertEqual((row["waitingOn"], row["words"]["line"]), ("lead", "It still stands. It waits on lead."))
 
     def test_six_stops_with_one_reason_are_one_row_and_two_reasons_two(self) -> None:
         journal = Journal()
@@ -980,6 +1022,7 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual((row["count"], len(row["threads"]), row["firstOpenedAt"], row["lastOpenedAt"], row["state"]),
                          (6, 6, journal.entries[repeated[0] - 1]["at"], journal.entries[repeated[-1] - 1]["at"], "open"))
         self.assertEqual(rows[("A", "check_failed")]["count"], 1)
+        self.assertEqual(row["words"]["head"], "A was stopped 6 times.")
         self.assertEqual(story["digest"]["words"]["line"], "Two setbacks still stand.")
 
     def test_a_stop_a_hand_off_answers_keeps_that_ending_and_cost_after_its_story_lands(self) -> None:
@@ -999,11 +1042,11 @@ class LedgerTests(unittest.TestCase):
     def test_a_base_break_and_a_blocker_keep_their_own_endings_and_a_landing_ends_no_break(self) -> None:
         journal = Journal()
         journal.started()
-        broke = journal.add(5, "base.broken", {"source": "queue", "reason": "the main line failed its checks"}, lane=None)
+        broke = journal.add(5, "base.broken", {"source": "queue", "reason": "check_failed"}, lane=None)
         blocker = journal.add(6, "blocker.recorded", {"text": "The dev backend is down."}, lane=None)
         resolved = journal.add(20, "blocker.resolved", {"why": "It came back."}, lane=None, answers=[blocker])
         journal.add(30, "candidate.merged", {"head": "c" * 40}, subject="A")
-        journal.add(31, "candidate.merged", {"head": "d" * 40}, subject=None)
+        journal.add(31, "candidate.merged", {"head": "d" * 40}, subject="B")
         story = journal.told()
         self.assertValid(story)
         by_opening = {thread["opening"]: thread for thread in story["threads"]}

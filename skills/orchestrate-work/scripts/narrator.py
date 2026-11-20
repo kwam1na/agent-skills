@@ -21,6 +21,15 @@ measured to now. ``references/story.schema.json`` describes the document.
   ``because`` and ``answers``, either way and at any distance, and closes at the
   first entry that answers its opening; its cost is the time between the two.
   One with no closing is open, and carries the instant it opened and no cost.
+  A story's landing (its ``candidate.merged``, or its settlement with no change)
+  ends every thread its own stops opened that nothing answered, at the
+  landing's instant, or at the stop's own when the stop was journalled after the
+  landing happened. A stop on another story, a base break and a blocker keep
+  their own endings.
+- **The ledger.** Each setback is told once, in one row per story and reason:
+  the threads it holds, when they opened, whether it still stands and since
+  when, or when and by what it ended and what it cost. A chapter names only the
+  rows that opened or ended inside it.
 - **Beats.** A beat is one entry, except that a batch's starts are one beat, a
   run of bookkeeping is one beat, and a thread at the headline altitude is one
   beat telling its cause, its opening, what it held up and its ending. A
@@ -55,6 +64,7 @@ DECISION_KIND = "decision.recorded"
 STOP_KIND = "candidate.stopped"
 ASSIGN_KIND = "lane.assigned"
 HANDOFF_KIND = "candidate.handed"
+ACCEPT_KIND = "handoff.accepted"
 BATCH_KIND = "check.started"
 FINISH_KIND = "finish.met"
 # Kinds that name a piece of the delivery by their subject.
@@ -99,6 +109,7 @@ def narrate(journal: list, state: dict | None = None, plan: dict | None = None, 
     pieces = _pieces(entries, state, plan)
     titles = _titles(entries, state, plan)
     threads, member_of = _threads(entries, by_id, registry)
+    _end_at_landings(threads, by_id, _landings(entries, state))
     chapters = _chapters(entries, closed)
     finishes = _finishes(state, plan)
 
@@ -122,20 +133,26 @@ def narrate(journal: list, state: dict | None = None, plan: dict | None = None, 
         chapter["beats"] = [beat["id"] for beat in made]
 
     landed = list(dict.fromkeys(entry["subject"] for entry in entries if entry["kind"] == MERGE_KIND and entry["subject"]))
+    ledger = _ledger(threads, by_id, chapters, chapter_of, state, registry)
     for index, chapter in enumerate(chapters):
-        begins = _seconds(_instant(by_id[chapters[index - 1]["entries"][-1]])) if index else None
-        chapter["standing"] = [thread["id"] for thread in threads if begins is not None and chapter_of[thread["opening"]] < index
-                               and (thread["closedAt"] is None or _seconds(thread["closedAt"]) > begins)]
+        # The rows that opened or ended inside it; and, of those, the ones that ended here after opening earlier, told
+        # once by the thread that ended last. Nothing still standing from an earlier chapter is carried into it.
+        chapter["setbacks"] = [row["id"] for row in ledger if chapter["id"] in (row["chapters"]["opened"], row["chapters"]["ended"])]
+        chapter["standing"] = [row["lastThread"] for row in ledger if row["chapters"]["ended"] == chapter["id"]
+                               and _chapter_index(row["chapters"]["opened"]) < index]
         _word_chapter(chapter, chapters, index, by_id, threads, pieces, landed, titles, state, closed, registry)
+    for row in ledger:
+        del row["lastThread"]
     for chapter in chapters:
         del chapter["first"]
     return {
         "schemaVersion": SPEC,
         "state": "closed" if closed else "open",
-        "digest": _digest(entries, threads, pieces, landed, closed),
+        "digest": _digest(entries, threads, ledger, pieces, landed, closed),
         "chapters": chapters,
         "beats": beats,
         "threads": threads,
+        "ledger": ledger,
         # What each tone means to a reader, in the order a legend lists them, as the registry words them.
         "tones": [{"tone": tone, "word": word} for tone, word in registry["tones"].items()],
     }
@@ -261,12 +278,127 @@ def _threads(entries: list[dict], by_id: dict, registry: dict) -> tuple[list[dic
             "closedAt": _instant(closing) if closing else None,
             "cost": _between(opened, _instant(closing)) if closing else None,
             "state": "closed" if closing else "open",
+            "endedBy": "answer" if closing else None,
             "entries": [item["id"] for item in members],
             "cause": _cause(entry, by_id, registry),
             "heldUp": list(dict.fromkeys(item["subject"] for item in members
                                          if item["kind"] == STOP_KIND and item["id"] != entry["id"] and item["subject"])),
         })
     return threads, member_of
+
+
+def _landings(entries: list[dict], state: dict | None) -> dict:
+    """Each story's landing: its first ``candidate.merged``, or its settlement with no change, which is the lead's
+    acceptance marked settled, or a no-change hand-off the record holds as settled without one."""
+    settled = set()
+    if isinstance(state, dict):
+        settled = {item.get("subject") for item in state.get("planned") or [] if isinstance(item, dict) and item.get("stage") == "settled"}
+    landings: dict = {}
+    for entry in entries:
+        subject = entry["subject"] if isinstance(entry.get("subject"), str) and entry["subject"] else None
+        if subject is None:
+            continue
+        if (entry["kind"] == MERGE_KIND or (entry["kind"] == ACCEPT_KIND and entry["data"].get("settled") is True)
+                or (entry["kind"] == HANDOFF_KIND and entry["data"].get("noChange") is True and subject in settled)):
+            landings.setdefault(subject, entry)
+    return landings
+
+
+def _end_at_landings(threads: list[dict], by_id: dict, landings: dict) -> None:
+    """A landing ends every thread its own story's stops opened that nothing answered.
+
+    It ends at the landing's instant, or at the stop's own when the queue journalled the stop after the landing
+    happened, as a run interrupted mid-merge does before a reconcile finds the merge: that stop held nothing up."""
+    for thread in threads:
+        opening = by_id[thread["opening"]]
+        landing = landings.get(opening.get("subject"))
+        if thread["state"] != "open" or opening["kind"] != STOP_KIND or landing is None:
+            continue
+        ended = max(_instant(landing), thread["openedAt"], key=_seconds)
+        thread.update(closing=landing["id"], closedAt=ended, cost=_between(thread["openedAt"], ended), state="closed",
+                      endedBy="landing")
+
+
+def _ledger(threads: list[dict], by_id: dict, chapters: list[dict], chapter_of: dict, state: dict | None,
+            registry: dict) -> list[dict]:
+    """Each setback once: one row per story, kind and reason, standing rows first, each part newest first."""
+    groups: dict = {}
+    for thread in threads:
+        opening = by_id[thread["opening"]]
+        reason = opening["data"].get("reason")
+        key = (opening.get("subject") or None, opening["kind"], reason if isinstance(reason, str) else None)
+        groups.setdefault(key, []).append(thread)
+    rows = []
+    for (subject, kind, reason), held in groups.items():
+        opened = sorted(held, key=lambda thread: (_seconds(thread["openedAt"]), thread["opening"]))
+        standing = [thread for thread in opened if thread["state"] == "open"]
+        last = None if standing else max(held, key=lambda thread: (_seconds(thread["closedAt"]), thread["closing"]))
+        first = by_id[opened[0]["opening"]]
+        head = _said(first, registry)["head"]
+        if len(held) > 1:
+            head = f"{head} {journal_words.show(len(held), 'count', 'time')}"
+        rows.append({
+            "id": None,
+            "subject": subject,
+            "kind": kind,
+            "reason": reason,
+            "threads": [thread["id"] for thread in opened],
+            "count": len(held),
+            "firstOpenedAt": opened[0]["openedAt"],
+            "lastOpenedAt": opened[-1]["openedAt"],
+            "state": "open" if standing else "closed",
+            "since": standing[0]["openedAt"] if standing else None,
+            "endedAt": last["closedAt"] if last else None,
+            "endedBy": last["closing"] if last else None,
+            "ending": last["endedBy"] if last else None,
+            # The time the row's setbacks held something up, counted once where copies overlap.
+            "cost": _covered(held) if last else None,
+            "waitingOn": _waiting_on(subject, state) if standing else None,
+            "chapters": {"opened": chapters[chapter_of[opened[0]["opening"]]]["id"],
+                         "ended": chapters[chapter_of[last["closing"]]]["id"] if last else None},
+            "words": {"head": _sentence(head), "line": _row_line(last, subject, state if standing else None)},
+            "lastThread": last["id"] if last else opened[-1]["id"],
+        })
+    rows.sort(key=lambda row: (row["state"] != "open", -_seconds(row["firstOpenedAt"])))
+    for index, row in enumerate(rows, 1):
+        row["id"] = f"s{index}"
+    return rows
+
+
+def _row_line(last: dict | None, subject: str | None, state: dict | None) -> str:
+    """How a row ended, in its last thread's words, or that it still stands and who it waits on."""
+    if last is not None:
+        return last["told"]["ending"]
+    waiting = _waiting_on(subject, state)
+    return "It still stands." + (f" It waits on {waiting}." if waiting else "")
+
+
+def _covered(threads: list[dict]) -> int:
+    """The seconds the threads' spans cover together, each overlap counted once."""
+    spans = sorted((_seconds(thread["openedAt"]), _seconds(thread["closedAt"])) for thread in threads)
+    total, reach = 0.0, None
+    for start, end in spans:
+        if reach is None or start > reach:
+            total += end - start
+            reach = end
+        elif end > reach:
+            total += end - reach
+            reach = end
+    return round(total)
+
+
+def _waiting_on(subject: str | None, state: dict | None) -> str | None:
+    """Who a standing setback waits on, where the record says: the waitingOn of the lane the stopped piece is queued in."""
+    if not subject or not isinstance(state, dict):
+        return None
+    lane = next((item.get("lane") for item in state.get("queue") or [] if isinstance(item, dict) and item.get("subject") == subject), None)
+    row = next((entry for entry in state.get("lanes") or [] if isinstance(entry, dict) and entry.get("id") == lane), None)
+    waiting = row.get("waitingOn") if row else None
+    return waiting if isinstance(waiting, str) and waiting else None
+
+
+def _chapter_index(chapter_id: str) -> int:
+    return int(chapter_id[1:]) - 1
 
 
 def _cause(opening: dict, by_id: dict, registry: dict) -> list[int]:
@@ -412,7 +544,7 @@ def _thread_beat(thread: dict, by_id: dict, registry: dict) -> dict:
     stops = [entry for entry in (by_id[name] for name in thread["entries"])
              if entry["kind"] == STOP_KIND and entry["id"] != opening["id"] and entry["subject"] in thread["heldUp"]]
     told = set(thread["cause"]) | {opening["id"]} | {entry["id"] for entry in stops}
-    if thread["closing"] is not None:
+    if thread["closing"] is not None and thread["endedBy"] == "answer":
         told.add(thread["closing"])
     said = _said(opening, registry)
     # Its parts, each a sentence of its own, for a view to set apart; and the same parts as one line.
@@ -437,16 +569,11 @@ def _thread_beat(thread: dict, by_id: dict, registry: dict) -> dict:
 def _word_chapter(chapter: dict, chapters: list[dict], index: int, by_id: dict, threads: list[dict], pieces: list[str],
                   landed: list[str], titles: dict, state: dict | None, closed: bool, registry: dict) -> None:
     held = [by_id[name] for name in chapter["entries"]]
-    # A setback opened in an earlier chapter: still standing at this chapter's end, or ended inside it, with when.
-    ends = _seconds(_instant(held[-1]))
+    # A setback opened in an earlier chapter and ended inside this one, told once, with when it ended.
     standing = []
     for name in chapter["standing"]:
         thread = next(t for t in threads if t["id"] == name)
-        opened = _said(by_id[thread["opening"]], registry)["head"]
-        if thread["closedAt"] is not None and _seconds(thread["closedAt"]) <= ends:
-            standing.append({"thread": name, "text": opened, "until": thread["closedAt"]})
-        else:
-            standing.append({"thread": name, "text": _sentence("A setback still stands: " + _lower(opened)), "until": None})
+        standing.append({"thread": name, "text": _said(by_id[thread["opening"]], registry)["head"], "until": thread["closedAt"]})
     if chapter["form"] == "landing":
         merge = held[-1]
         chapter["pieceTitle"] = titles.get(merge["subject"])
@@ -490,15 +617,17 @@ def _word_chapter(chapter: dict, chapters: list[dict], index: int, by_id: dict, 
     chapter["words"] = {"head": "Finished" if closed else "Finishing", "line": " ".join(parts), "standing": standing}
 
 
-def _digest(entries: list[dict], threads: list[dict], pieces: list[str], landed: list[str], closed: bool) -> dict:
+def _digest(entries: list[dict], threads: list[dict], ledger: list[dict], pieces: list[str], landed: list[str], closed: bool) -> dict:
     started = _instant(entries[0]) if entries else None
     closing = [entry for entry in entries if entry["kind"] == CLOSE_KIND] if closed else []
     closed_at = _instant(closing[-1]) if closing else None
     took = _between(started, closed_at) if closed_at else None
-    done = [thread for thread in threads if thread["state"] == "closed"]
+    # Counted by the ledger's rows: copies of one setback are one setback.
+    done = [row for row in ledger if row["state"] == "closed"]
+    open_rows = [row for row in ledger if row["state"] == "open"]
     standing = [{"thread": thread["id"], "openedAt": thread["openedAt"]} for thread in threads if thread["state"] == "open"]
     decisions = sum(1 for entry in entries if entry["kind"] == DECISION_KIND)
-    cost = sum(thread["cost"] for thread in done)
+    cost = sum(row["cost"] for row in done)
     if not landed:
         head = "Nothing landed." if closed else "Nothing has landed yet."
     else:
@@ -508,8 +637,8 @@ def _digest(entries: list[dict], threads: list[dict], pieces: list[str], landed:
     line = []
     if done:
         line.append(f"{_number(len(done)).capitalize()} {'setback' if len(done) == 1 else 'setbacks'} cost {journal_words.duration(cost)}.")
-    if standing:
-        line.append(f"{_number(len(standing)).capitalize()} {'setback still stands' if len(standing) == 1 else 'setbacks still stand'}.")
+    if open_rows:
+        line.append(f"{_number(len(open_rows)).capitalize()} {'setback still stands' if len(open_rows) == 1 else 'setbacks still stand'}.")
     if not threads:
         line.append("No setbacks.")
     if decisions:
