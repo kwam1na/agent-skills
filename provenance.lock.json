@@ -522,7 +522,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "4f0a1f68eae657d023a4bc7a5d7a739689fac492de0bd48483242e91120e9440"
+          "sha256": "9fd7a480eb98d0699ed1d4435901f4bd067bf5f29da569a311a2f35308468979"
         },
         {
           "path": "skills/orchestrate-work/references/story.schema.json",
@@ -539,6 +539,10 @@
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
           "sha256": "4690ddaafc8a62bcadbc8bf6b10d5f546fe6b5d943b5f4cf26049b4278fe229b"
+        },
+        {
+          "path": "skills/orchestrate-work/scripts/machine.py",
+          "sha256": "8ae466259cecac2a648f6b9e688d528a5b7b0c16d018c4317909f0ceb5bbd079"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
