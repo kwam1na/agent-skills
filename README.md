@@ -342,7 +342,9 @@ never latest, so download one by naming its tag. See
 [product generations](docs/product-generation.md#releases).
 
 A release rests on whoever tags. Before tagging, they run the full suite locally on
-macOS with Python 3.11, and it must pass. The publish command cannot verify that run:
+macOS with Python 3.11, and it must pass. A flaky test does not hold a release: a
+failure in a test the release doesn't change, which passes when rerun on its own at the
+tagged commit, is named in the tag's annotation. The publish command cannot verify that run:
 
 ```bash
 uv python install 3.11

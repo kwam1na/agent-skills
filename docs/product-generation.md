@@ -208,7 +208,9 @@ The publish command reads no CI result and runs no suite. A release rests on who
 before tagging, they run the full suite locally on macOS with Python 3.11, as
 [`AGENTS.md`](../AGENTS.md) describes, and it must pass. The publish command cannot
 verify it. A run that passes every test and goes over the suite's time budget does not hold
-the release; the tag's annotation says it went over.
+the release; the tag's annotation says it went over. A flaky test does not hold a release
+either: a failure in a test the release doesn't change, which passes when rerun on its own at
+the tagged commit, is named in the annotation with its passing rerun.
 
 CI on `main` informs. It does not block a merge, because `main` is unprotected, and it
 does not block a release, because the publish command does not read it. A merge can
