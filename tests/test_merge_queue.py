@@ -191,7 +191,9 @@ if args[:1] == ["--hang-once"]:
         time.sleep(0.1)
     sys.exit(0)
 if args[:1] == ["--lead-writes"]:
-    # The lead edits another queue item while this check runs.
+    # The lead edits another queue item while this check runs. The state tool is the skill's own, so nothing is
+    # compiled beside it: the check's declared environment carries no PYTHONDONTWRITEBYTECODE.
+    sys.dont_write_bytecode = True
     sys.path.insert(0, os.environ["MQ_SCRIPTS"])
     import delivery_state
     directory = pathlib.Path(os.environ["MQ_STATE"])
