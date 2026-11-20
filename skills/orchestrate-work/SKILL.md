@@ -326,6 +326,15 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   evidence shows it passing, under the same definition: it is recorded as
   reused, with the head of the lane's run, and journaled as `check.reused`.
   Every other check still runs, and the merge stays pinned to the synced head.
+  A check and a `prepare` step run in a declared environment: a fixed
+  baseline (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG`,
+  `LC_*`), the binding's `inherit` names, its `environment` and the check's
+  profile; a failed run's output names what was dropped. Each check's queue
+  row carries its run's `environment` (names and a digest, never a value) and
+  `host` (platform and tool digests). `run-checks --head <commit> --checks
+  <ids>`, which needs no `--state`, runs checks the same way from any
+  checkout, in its own `workRoot/runs` folder beside a serving queue, and
+  prints a record of each run for a lane's hand-off.
   When the binding sets `selection.lead` and the lead recorded a selection for
   the candidate's reviewed head with the state tool's `select` command, the
   runner checks it with the lead's checks plus `alwaysRun` instead of the

@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import os
+import platform
 import re
 import shutil
 import signal
@@ -211,6 +212,12 @@ if args[:1] == ["--no-material"]:
     sys.exit(5 if pathlib.Path(".lease-material").exists() else 0)
 if args[:1] == ["--always-fail"]:
     sys.exit(1)
+if args[:1] == ["--env"]:
+    # Says which of the named variables it got, and fails without the first.
+    import json
+    with open(os.environ["MQ_LOG"] + ".env", "a") as seen:
+        seen.write(json.dumps({variable: variable in os.environ for variable in args[1:]}) + "\\n")
+    sys.exit(0 if args[1] in os.environ else 1)
 import hashlib
 built = pathlib.Path(os.environ["MQ_LOG"] + ".built-" + hashlib.sha256(str(pathlib.Path.cwd()).encode()).hexdigest()[:16])
 if args[:1] == ["--build"]:
@@ -2717,6 +2724,78 @@ class WorkRootSafetyTests(MergeQueueTestCase):
         self.assertEqual(declared["HOME"], str(self.directory / "binding-home"))
         self.assertEqual(declared["GIT_CONFIG_GLOBAL"], str(self.directory / "binding-global"))
 
+    def test_a_check_gets_only_its_declared_environment_and_the_runners_own_steps_keep_theirs(self) -> None:
+        adopter = self.adopter({"postSync": [], "alwaysRun": [check_entry("envcheck", "--env", "MQ_DROPPED", "LC_ALL")]})
+        trace = self.directory / "trace.json"
+        planted = {"MQ_DROPPED": "dropped-value-5e1d", "LC_ALL": "C", "GIT_TRACE2_EVENT": str(trace)}
+        seen = Path(f"{adopter.log}.env")
+        with mock.patch.dict(os.environ, planted):
+            runner = adopter.runner()
+            base = runner.load()
+            runner.start()
+            try:
+                context = runner.context(None, base).with_values(treeSha=runner.tree(base))
+                checkout = runner.checkout(base, "env", context=context)
+                [check] = runner.binding["alwaysRun"]
+                completed = runner.run_one(check, checkout, context)
+                # Outside the baseline it never reaches the check, whose failure names it; a baseline name does.
+                self.assertEqual(completed.returncode, 1)
+                self.assertEqual(json.loads(seen.read_text().splitlines()[-1]), {"MQ_DROPPED": False, "LC_ALL": True})
+                self.assertIn("MQ_DROPPED", completed.stdout)
+                self.assertIn("inherit", completed.stdout)
+                self.assertNotIn(planted["MQ_DROPPED"], completed.stdout + completed.stderr)
+                # The runner's own fetch got it all, and its own steps still do.
+                self.assertIn('"event":"start"', trace.read_text())
+                self.assertEqual(runner.environment()["MQ_DROPPED"], planted["MQ_DROPPED"])
+                env, facts, dropped = runner.check_environment()
+                self.assertNotIn("MQ_DROPPED", env)
+                self.assertIn("MQ_DROPPED", dropped)
+                self.assertEqual(facts["names"], sorted(env))
+                # Listed in inherit, it reaches the check, which passes.
+                runner.binding = {**runner.binding, "inherit": ["MQ_DROPPED"]}
+                self.assertEqual(runner.run_one(check, checkout, context).returncode, 0)
+                self.assertEqual(json.loads(seen.read_text().splitlines()[-1]), {"MQ_DROPPED": True, "LC_ALL": True})
+                listed = runner.check_environment()[1]["digest"]
+                # The digest follows what decides the run, and not where or by whom it happens.
+                digests = {"listed": listed}
+                for name, changes in (("another inherited value", {"MQ_DROPPED": "other"}),
+                                      ("another locale", {"LC_ALL": "en_US.UTF-8"}),
+                                      ("a new locale name", {"LC_TIME": "C"}),
+                                      ("another LANG", {"LANG": "fr_FR.UTF-8"})):
+                    with self.subTest(name), mock.patch.dict(os.environ, changes):
+                        found = runner.check_environment()[1]["digest"]
+                        self.assertNotIn(found, digests.values())
+                        digests[name] = found
+                for name in ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR"):
+                    with self.subTest(name), mock.patch.dict(os.environ, {name: str(self.directory / "elsewhere")}):
+                        self.assertEqual(runner.check_environment()[1]["digest"], listed)
+                with mock.patch.dict(os.environ, {"MQ_UNLISTED": "1"}):
+                    self.assertEqual(runner.check_environment()[1]["digest"], listed)
+                # Two names swapping their values is another environment; a workRoot value is the same one anywhere.
+                runner.binding = {**runner.binding, "environment": {**runner.binding["environment"], "MQ_A": "1", "MQ_B": "2"}}
+                before = runner.check_environment()[1]["digest"]
+                runner.binding = {**runner.binding, "environment": {**runner.binding["environment"], "MQ_A": "2", "MQ_B": "1"}}
+                self.assertNotEqual(runner.check_environment()[1]["digest"], before)
+                where = {"MQ_WHERE": "{workRoot}", "MQ_TREE": "{treeSha}"}
+                here = runner.check_environment(where, context)
+                there = runner.check_environment(where, context.with_values(workRoot=str(self.directory / "other")))
+                self.assertEqual(here[1]["digest"], there[1]["digest"])
+                self.assertEqual(here[0]["MQ_WHERE"], str(runner.work_root))
+                self.assertNotEqual(runner.check_environment(where, context.with_values(treeSha="0" * 40))[1]["digest"],
+                                    here[1]["digest"])
+            finally:
+                runner.remove_checkouts()
+        # A binding can't inherit what would move the git a check runs, nor list a name twice.
+        binding = copy.deepcopy(adopter.binding)
+        for listed, problem in ((["GIT_DIR"], "must not be inherited"), (["MQ_X", "MQ_X"], "unique"),
+                                (["GIT_CONFIG_KEY_0"], "must not be inherited")):
+            with self.subTest(inherit=listed):
+                self.assertTrue([error for error in queue.binding_errors({**binding, "inherit": listed})
+                                 if error.startswith("/inherit") and problem in error])
+        self.assertTrue([error for error in queue.binding_errors({**binding, "reuse": {"tools": ["git", "git"]}})
+                         if error.startswith("/reuse/tools")])
+        self.assertEqual(queue.binding_errors({**binding, "inherit": ["MQ_X"], "reuse": {"tools": ["git", "npm"]}}), [])
+
     def test_a_windows_junction_counts_as_a_link(self) -> None:
         folder = self.directory / "plain"
         folder.mkdir()
@@ -3074,7 +3153,9 @@ class LiveCheckStateTests(MergeQueueTestCase):
 
     def test_a_lead_write_to_another_item_during_a_check_is_kept(self) -> None:
         lead_writes = check_entry("lead-writes", "--lead-writes")
-        adopter = self.snapshot_adopter("fail", {"fallback": [lead_writes], "alwaysRun": [check_entry("after")]})
+        # The check reads the state tool's folder from the queue's own environment, which reaches it once listed.
+        adopter = self.snapshot_adopter("fail", {"fallback": [lead_writes], "alwaysRun": [check_entry("after")],
+                                                 "inherit": ["MQ_SCRIPTS"]})
         self.candidate(adopter)
         adopter.enqueue("other", adopter.tip("main"))
         with mock.patch.dict(os.environ, {"MQ_SCRIPTS": str(SCRIPTS)}):
@@ -7279,9 +7360,17 @@ class ReusedCheckTests(MergeQueueTestCase):
         state_tool.patch(adopter.state, writer="lead", version=state["version"],
                          changes={"lanes": lanes, "planned": planned})
         if evidence is None:
-            evidence = [queue.evidence(adopter.lane, remote="origin", base="main", check="full", head=checked or head)]
+            evidence = [self.recorded(adopter, "full", checked or head)]
         state_tool.handoff(adopter.state, lane="lane-1", subject=subject, head=head, change_request="cr",
                            evidence=evidence)
+
+    @staticmethod
+    def recorded(adopter: Adopter, check: str, head: str) -> dict:
+        """The five fields of a lane's run-checks record of ``check`` at ``head``, without running it."""
+        binding = json.loads(adopter.show(head, ".agents/orchestration.json"))
+        [found] = [entry for entry in [*binding["alwaysRun"], *binding["fallback"]] if entry["id"] == check]
+        return {"check": check, "definition": queue.check_definition(found, binding), "head": head,
+                "tree": run("rev-parse", f"{head}^{{tree}}", cwd=adopter.lane), "result": "passed"}
 
     def runs(self, adopter: Adopter, name: str) -> int:
         return sum(1 for line in adopter.log_lines() if line.split()[:2] == ["check", name])
@@ -7345,24 +7434,24 @@ class ReusedCheckTests(MergeQueueTestCase):
             self.hand_off(adopter, "feature", later, checked=head)
 
         def other_definition(adopter: Adopter, head: str) -> None:
-            found = queue.evidence(adopter.lane, remote="origin", base="main", check="full", head=head)
+            found = self.recorded(adopter, "full", head)
             self.hand_off(adopter, "feature", head, evidence=[{**found, "definition": "sha256:" + "0" * 64}])
 
         def failing(adopter: Adopter, head: str) -> None:
-            found = queue.evidence(adopter.lane, remote="origin", base="main", check="full", head=head)
+            found = self.recorded(adopter, "full", head)
             self.hand_off(adopter, "feature", head, evidence=[{**found, "result": "failed"}])
 
         def missing(adopter: Adopter, head: str) -> None:
             self.hand_off(adopter, "feature", head, evidence=[])
 
         def another_check(adopter: Adopter, head: str) -> None:
-            found = queue.evidence(adopter.lane, remote="origin", base="main", check="full", head=head)
+            found = self.recorded(adopter, "full", head)
             self.hand_off(adopter, "feature", head, evidence=[{**found, "check": "always"}])
 
         def forged_tree(adopter: Adopter, head: str) -> None:
             # The recorded tree is the synced one, but the head it names has another tree.
             base = run("rev-parse", "origin/main", cwd=adopter.lane)
-            found = queue.evidence(adopter.lane, remote="origin", base="main", check="full", head=head)
+            found = self.recorded(adopter, "full", head)
             self.hand_off(adopter, "feature", head, evidence=[{**found, "head": base}])
 
         def changed_in_head(adopter: Adopter, head: str) -> None:
@@ -7412,8 +7501,6 @@ class ReusedCheckTests(MergeQueueTestCase):
                 self.fresh()
                 adopter = self.adopter(changes)
                 head = adopter.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
-                with self.assertRaises(queue.Stop):
-                    queue.evidence(adopter.lane, remote="origin", base="main", check="full", head=head)
                 self.hand_off(adopter, "feature", head, evidence=self.written_evidence(adopter, head))
                 self.run_queue(adopter, "feature")
                 self.assertEqual(self.runs(adopter, "full"), 1)
@@ -7499,25 +7586,91 @@ class ReusedCheckTests(MergeQueueTestCase):
         found = runner.reusable(members, [full], second_tree)
         self.assertEqual(found["full"]["subject"], "second")
 
-    def test_the_evidence_command_prints_evidence_or_says_why_not(self) -> None:
-        adopter = self.reusing()
+    def run_checks_command(self, repository: Path, *args: str, env: dict | None = None) -> tuple[int, object, bytes]:
+        """run-checks as a lane runs it: its exit, what it printed, and every byte it said."""
+        done = subprocess.run([PY, "-B", str(SCRIPTS / "merge_queue.py"), "--repo", str(repository), "--remote",
+                               "origin", "--base", "main", "run-checks", *args], capture_output=True, check=False, env=env)
+        return done.returncode, json.loads(done.stdout), done.stdout + done.stderr
+
+    @staticmethod
+    def digest_of(program: str) -> str:
+        return "sha256:" + hashlib.sha256(Path(os.path.realpath(program)).read_bytes()).hexdigest()
+
+    def test_run_checks_records_each_run_as_the_queue_runs_it_and_never_a_value(self) -> None:
+        sentinel = "mq-sentinel-7f3a9c"
+        # always's profile gives it the head, which a run at a commit has no value for.
+        adopter = self.reusing(alwaysRun=[check_entry("always", environmentProfile="default"), check_entry("full")],
+                               fallback=[check_entry("fallback", "--env", "MQ_PLANTED")], reuse={"tools": ["git"]})
         head = adopter.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
-        script = SCRIPTS / "merge_queue.py"
-
-        def command(*args: str) -> tuple[int, dict]:
-            done = subprocess.run([sys.executable, "-B", str(script), "--repo", str(adopter.lane), "--remote", "origin",
-                                   "--base", "main", "evidence", *args], capture_output=True, check=False)
-            return done.returncode, json.loads(done.stdout)
-
-        code, found = command("--check", "full", "--head", head)
-        self.assertEqual(code, 0, found)
-        self.assertEqual(found, queue.evidence(adopter.lane, remote="origin", base="main", check="full", head=head))
-        self.assertEqual(found["tree"], run("rev-parse", f"{head}^{{tree}}", cwd=adopter.lane))
+        journal = state_tool.read_journal(adopter.state)
+        code, records, said = self.run_checks_command(adopter.lane, "--head", head, "--checks", "full,fallback",
+                                                      env={**os.environ, "MQ_PLANTED": sentinel})
+        self.assertEqual(code, 1, records)
+        binding = json.loads(adopter.show(head, ".agents/orchestration.json"))
+        checks = {check["id"]: check for check in [*binding["alwaysRun"], *binding["fallback"]]}
+        tree = run("rev-parse", f"{head}^{{tree}}", cwd=adopter.lane)
+        uname = platform.uname()
+        self.assertEqual([record["check"] for record in records], ["full", "fallback"])
+        for record, result in zip(records, ("passed", "failed")):
+            with self.subTest(record["check"]):
+                self.assertEqual({key: record[key] for key in ("definition", "head", "tree", "result", "where")},
+                                 {"definition": queue.check_definition(checks[record["check"]], binding), "head": head,
+                                  "tree": tree, "result": result, "where": "runner"})
+                self.assertGreaterEqual(record["seconds"], 0)
+                self.assertEqual(state_tool.evidence_errors([{key: value for key, value in record.items() if key != "log"}]), [])
+                names = record["environment"]["names"]
+                self.assertTrue({"PATH", "HOME", "MQ_LOG", "MQ_REMOTE", "GIT_AUTHOR_NAME"} <= set(names), names)
+                self.assertNotIn("MQ_PLANTED", names)
+                self.assertRegex(record["environment"]["digest"], r"^sha256:[0-9a-f]{64}$")
+                self.assertEqual(record["host"], {"platform": f"{uname.system} {uname.release} {uname.machine}",
+                                                  "tools": {PY: self.digest_of(PY), "git": self.digest_of(shutil.which("git"))}})
+        full, fallback = records
+        self.assertEqual(full["environment"], fallback["environment"])
+        # The failure keeps its output, which names the inherited variable it was not given, never its value.
+        self.assertNotIn("log", full)
+        log = Path(fallback["log"])
+        self.assertTrue(queue.within(log, adopter.work / "runs" / "logs"), log)
+        self.assertIn("MQ_PLANTED", log.read_text())
+        self.assertEqual(json.loads(Path(str(adopter.log) + ".env").read_text().splitlines()[-1]), {"MQ_PLANTED": False})
+        for words in (said, log.read_bytes()):
+            self.assertNotIn(sentinel.encode(), words)
+        # Listed in inherit, it reaches the check, which passes: its value is digested, never recorded.
+        listing = {**binding, "inherit": ["MQ_PLANTED"]}
+        listed = adopter.lane_commit("listing", {".agents/orchestration.json": json.dumps(listing, indent=2) + "\n"},
+                                     start=head)
+        code, [passing], said = self.run_checks_command(adopter.lane, "--head", listed, "--checks", "fallback",
+                                                        env={**os.environ, "MQ_PLANTED": sentinel})
+        self.assertEqual((code, passing["result"]), (0, "passed"), passing)
+        self.assertIn("MQ_PLANTED", passing["environment"]["names"])
+        self.assertNotEqual(passing["environment"]["digest"], fallback["environment"]["digest"])
+        self.assertNotIn(sentinel.encode(), said)
+        # It removed what it made, and wrote no delivery state: only the failure's log is left.
+        self.assertEqual([path.name for path in (adopter.work / "runs").iterdir()], ["logs"])
+        self.assertEqual(run("worktree", "list", "--porcelain", cwd=adopter.lane).count("worktree "), 1)
+        self.assertEqual(state_tool.read_journal(adopter.state), journal)
+        # A passing record goes into a hand-off as it is printed, facts and all, and the queue reuses it.
+        self.hand_off(adopter, "feature", head, evidence=[full])
+        self.assertEqual({key: value for key, value in adopter.item("feature")["evidence"][0].items() if key != "recordedAt"},
+                         full)
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
+        self.assertEqual(self.runs(adopter, "full"), 1)
+        for args, reason, words in ((("--head", head, "--checks", "always"), "binding_invalid", "{head}"),
+                                    (("--head", head, "--checks", "full,nothing"), "check_unknown", "nothing"),
+                                    (("--head", "0" * 40, "--checks", "full"), "ref_invalid", "0" * 40)):
+            with self.subTest(args):
+                code, refused, _ = self.run_checks_command(adopter.lane, *args)
+                self.assertEqual((code, refused["reason"]), (1, reason), refused)
+                self.assertIn(words, refused["detail"])
+                # Pasted into a hand-off, the refusal is reported as run-checks'.
+                with self.assertRaises(state_tool.StateError) as caught:
+                    self.hand_off(adopter, "other", head, evidence=[refused])
+                self.assertIn("run-checks refused", str(caught.exception))
         # A git failure is reported, not raised.
-        with mock.patch.object(queue.Runner, "evidence", side_effect=RuntimeError("boom")), \
+        with mock.patch.object(queue.Runner, "run_records", side_effect=RuntimeError("boom")), \
              mock.patch.object(sys, "stdout", new=io.TextIOWrapper(io.BytesIO())) as captured:
             code = queue.main(["--repo", str(adopter.lane), "--remote", "origin", "--base", "main",
-                               "evidence", "--check", "full", "--head", head])
+                               "run-checks", "--checks", "full", "--head", head])
             captured.flush()
             printed = json.loads(captured.buffer.getvalue())
         self.assertEqual((code, printed), (1, {"reason": "git_failed", "detail": "boom"}))
@@ -7525,17 +7678,70 @@ class ReusedCheckTests(MergeQueueTestCase):
         with self.assertRaises(SystemExit) as stopped, contextlib.redirect_stderr(io.StringIO()):
             queue.main(["--remote", "origin", "--base", "main", "run", "x"])
         self.assertEqual(stopped.exception.code, 2)
-        code, failed = command("--check", "full", "--head", head, "--result", "failed")
-        self.assertEqual((code, failed["result"]), (0, "failed"))
-        for args, reason in ((("--check", "always", "--head", head), "binding_invalid"),
-                             (("--check", "full", "--head", "0" * 40), "ref_invalid")):
-            with self.subTest(args):
-                code, refused = command(*args)
-                self.assertEqual((code, refused["reason"]), (1, reason))
-                # Pasted into a hand-off, the refusal is reported as the evidence command's.
-                with self.assertRaises(state_tool.StateError) as caught:
-                    self.hand_off(adopter, "feature", head, evidence=[refused])
-                self.assertIn("the evidence command refused", str(caught.exception))
+
+    def test_run_checks_from_another_checkout_has_the_queues_facts(self) -> None:
+        adopter = self.reusing(reuse={"tools": ["git"]})
+        head = adopter.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
+        adopter.enqueue("feature", head)
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
+        # Each check the queue ran carries its run's facts, on the row and in the result alike.
+        rows = {row["id"]: row for row in adopter.item("feature")["checks"]}
+        entries = {entry["id"]: entry for entry in self.check_document(results)["checks"]}
+        for name in ("full", "always"):
+            self.assertEqual({key: rows[name][key] for key in ("environment", "host")},
+                             {key: entries[name][key] for key in ("environment", "host")})
+        second = self.directory / "second"
+        run("worktree", "add", "--detach", "--quiet", str(second), head, cwd=adopter.operator)
+        elsewhere, empty = self.directory / "elsewhere-tmp", self.directory / "empty-bin"
+        elsewhere.mkdir()
+        empty.mkdir()
+        moved = {**os.environ, "TMPDIR": str(elsewhere), "PATH": f"{empty}{os.pathsep}{os.environ['PATH']}"}
+        code, [record], _ = self.run_checks_command(second, "--head", head, "--checks", "full", env=moved)
+        self.assertEqual(code, 0, record)
+        self.assertEqual((record["environment"]["digest"], record["host"]),
+                         (rows["full"]["environment"]["digest"], rows["full"]["host"]))
+        self.assertIn("TMPDIR", record["environment"]["names"])
+
+    def test_run_checks_runs_beside_a_queue_serving_the_same_repository(self) -> None:
+        adopter = self.reusing(fallback=[check_entry("fallback", "--hang-once")])
+        head = adopter.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
+        adopter.enqueue("feature", head)
+        run("fetch", "--quiet", "origin", cwd=adopter.operator)
+        hang, started = Path(f"{adopter.log}.hang"), Path(f"{adopter.log}.started")
+        hang.write_text("")
+        ran: list = []
+
+        def lane() -> None:
+            try:
+                ran.append(queue.run_checks(adopter.operator, remote="origin", base="main", head=head, checks=["fallback"]))
+            except Exception as error:  # noqa: BLE001 - the test reads it
+                ran.append(error)
+
+        thread = threading.Thread(target=lane)
+        thread.start()
+        self.addCleanup(thread.join, 60)
+        self.addCleanup(hang.unlink, missing_ok=True)
+        deadline = time.monotonic() + 30
+        while not started.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(started.exists(), ran)
+        seen: list = []
+
+        def held(runner: "queue.Runner", subject: str) -> None:
+            # The queue has just cleared workRoot/checkouts, and run-checks' check is still running in its own.
+            if not seen:
+                live = [path for path in (adopter.work / "runs").iterdir() if (path / "checkout").is_dir()]
+                seen.append((len(live), thread.is_alive(), list((adopter.work / "checkouts").iterdir())))
+                hang.unlink()
+
+        results = self.run_queue(adopter, "feature", seams={"after_start": held})
+        thread.join(60)
+        self.assertEqual(seen, [(1, True, [])])
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
+        [records] = ran
+        self.assertEqual([(record["check"], record["result"]) for record in records], [("fallback", "passed")])
+        self.assertEqual(list((adopter.work / "runs").iterdir()), [])
 
     def test_the_binding_reuses_only_its_own_checks(self) -> None:
         adopter = self.reusing()
@@ -7683,10 +7889,10 @@ class SlotDoingTests(MergeQueueTestCase):
 
     def test_each_queue_command_says_what_it_holds_the_slot_for(self) -> None:
         self.assertEqual({command: queue.slot_doing(command, ["a", "b"]) for command in ("run", "batch", "check", "merge",
-                                                                                         "release", "evidence")},
+                                                                                         "release", "run-checks")},
                          {"run": {"what": "check", "subject": "a"}, "batch": {"what": "check", "subject": "a"},
                           "check": {"what": "check", "subject": "a"}, "merge": {"what": "merge", "subject": "a"},
-                          "release": {"what": "release"}, "evidence": None})
+                          "release": {"what": "release"}, "run-checks": None})
         self.assertIsNone(queue.slot_doing("run", []))
 
     def test_a_holder_file_whose_process_is_gone_holds_nothing_and_a_waiter_is_told_once(self) -> None:
