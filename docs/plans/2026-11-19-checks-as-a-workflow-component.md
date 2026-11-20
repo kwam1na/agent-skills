@@ -154,10 +154,13 @@ The paired TypeScript harness has no queue, carry or reuse code. A search of `pr
    - The grant lives in `leadSelection`, so it is void at any other handed head, as a lead selection already is. A new
      hand-off needs a new grant.
    - A grant may name only a check the hand-off carries a record for. `select` rejects any other id as invalid input.
-   - For a granted id, `applies` compares paths as usual, minus one exemption. A differing path outside the
-     candidate's own diff since the record's head (`git diff --name-only --no-renames <record head> <handed head>`) is
-     treated as unread. A differing path inside that diff counts as usual. So with an unknown read set, any lane
-     change after the record makes the check run.
+   - For a granted id, `applies` compares paths as usual, minus one exemption. The candidate's own diff is what it
+     changes against the base it was handed on, the notion `carry_plan` already uses: `git diff --name-only
+     --no-renames $(git merge-base <base head> <handed head>) <handed head>`. A path that differs between the
+     record's tree and the handed tree, and is outside that diff, came from the base (through the lane's own base
+     merge or the queue's sync), and is treated as unread. A differing path inside that diff is one the candidate
+     changed after the record, and counts as usual. So with an unknown read set, any lane change after the record to a
+     path the candidate changes makes the check run, while a base merge alone doesn't.
    - Every other condition in Decision 3 still holds. A granted record made in the lane's own checkout, under another
      definition, environment or host, with missing facts, or that failed, still runs.
    - When the queue reuses a granted record, `check.reused`'s `because` names the decision.
@@ -211,8 +214,8 @@ The paired TypeScript harness has no queue, carry or reuse code. A search of `pr
     - the names the binding lists in `inherit`;
     - the binding's `environment`, the profile, the git identity and the hooks directory, as today.
 
-    The digest is a sha256 over the sorted values of `LANG`, every `LC_*`, every `inherit` name, the binding's
-    `environment` and the profile. Values that depend on where or by whom the run happens are passed to the check but
+    The digest is a sha256 over the sorted `name=value` pairs of `LANG`, every `LC_*`, every `inherit` name, the
+    binding's `environment` and the profile, so two names swapping values changes it. Values that depend on where or by whom the run happens are passed to the check but
     left out of the digest: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL` and `TMPDIR`, plus the runner-owned git identity
     and hooks directory, and anything derived from `--repo` or `workRoot`. `PATH`'s effect is captured by the tool
     digests instead.
@@ -280,8 +283,9 @@ A conflict in that file alone is resolved as `AGENTS.md` says.
    whose `TMPDIR` and `PATH` values differ from the queue's, produces the same environment digest and host facts as
    the queue does from the main checkout. `PATH` differs there only in entries that resolve no named tool differently
    (CHK-1).
-4. **Beside a serving queue.** `run-checks` runs from the queue's own `--repo` while a queue command starts and clears
-   `workRoot/checkouts`. Both finish, and neither removes the other's worktree (CHK-1).
+4. **Beside a serving queue.** `run-checks` runs from the queue's own `--repo`. A test seam holds a queue command
+   just after `Runner.start` has cleared `workRoot/checkouts`, while `run-checks` is live, so the overlap is certain
+   rather than timed. Both finish, and neither removes the other's worktree (CHK-1).
 5. **Widened hand-off evidence.** `handoff --evidence` accepts a record with `where`, `environment`, `host`,
    `seconds` and `at`, keeps them through `handoff.recorded` and replay, and still accepts the five-field shape
    (CHK-1).
@@ -297,18 +301,19 @@ A conflict in that file alone is resolved as `AGENTS.md` says.
     of it, so the record applies (CHK-2).
 11. **A move inside the read set, or an unknown read set with differing trees.** The check runs. The note names the
     path, or says the read set is unknown (CHK-2).
-12. **Facts differ.** One record differs from the queue's facts in an environment value, one in a tool digest, one in
-    the platform, and one has `where: checkout`. Each runs, and the note names the differing variable names, the tool
+12. **Facts differ.** One record differs from the queue's facts in an environment value, one in two variables
+    swapping values, one in a tool digest, one in the platform, and one has `where: checkout`. Each runs, and the note names the differing variable names, the tool
     names, the platform or the checkout. It never prints a value (CHK-2).
 13. **Other reasons.** A changed definition, a failed record, a prerequisite of another selected check, a binding
     file change, an excluded check (with its `why` quoted) and a `{baseHead}` placeholder each run with their own
     reason. A binding that still sets `reusableChecks` is refused, naming `reuse.exclude` (CHK-2).
 14. **Grant.** Each case is one row (CHK-2 for the queue side, CHK-4 for `lead-accept`):
-    - with an unknown read set and a base merge that brought in only paths outside the candidate's own diff,
-      `--reuse` and `--why` make the record apply, and `check.reused`'s `because` names the `decision.recorded`
-      entry;
-    - a granted record whose head is an ancestor of the handed head runs when the candidate's own commits since that
-      head changed files;
+    - the V26-3614 shape: the record's head is the lane head before a lane-side base merge, the handed head is that
+      merge commit, the merge brought in only paths outside the candidate's diff against the base, and the read set is
+      unknown. With `--reuse` and `--why` the record applies, and `check.reused`'s `because` names the
+      `decision.recorded` entry;
+    - the same shape, plus a lane commit after the record that touches a path inside the candidate's diff against the
+      base: the granted check runs, and the note names that path;
     - a grant recorded at an earlier handed head doesn't apply after a new hand-off;
     - a granted record with `where: checkout`, different facts, a changed definition or a failed result still runs.
 15. **A lane runs checks by id.** `check <key> <ids>` calls `run-checks` at HEAD and keeps the records in the story's
