@@ -7155,6 +7155,20 @@ class LeadSelectionTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(self.refused(lambda: self.grant(**changes)), "select_invalid")
                 self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), journal)
+        # A subject that isn't queued, or that is merging, is refused before the grant's decision is journaled.
+        with self.subTest("an unqueued subject"):
+            with self.assertRaises(state_tool.StateError) as caught:
+                state_tool.select_checks(self.directory, "work-none", binding=self.BINDING, head=HEAD_A,
+                                         checks=[selected_check("parser")], reason="r", reuse=["full"], why="w")
+            self.assertEqual((caught.exception.code, (self.directory / state_tool.JOURNAL_FILE).read_bytes()),
+                             ("select_invalid", journal))
+        with self.subTest("a merging subject"):
+            state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                             selector="queue[subject=work-h]", assignments={"/stage": "merging"})
+            self.assertEqual(self.refused(lambda: self.grant()), "select_invalid")
+            self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), journal)
+            state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                             selector="queue[subject=work-h]", assignments={"/stage": "queued"})
         with self.assertRaises(state_tool.StateError) as caught:
             self.grant(reuse=["full", "lint"])
         self.assertIn("no record of lint", str(caught.exception))
