@@ -196,7 +196,7 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         # The reference that replaces the unconditional start and end. Each
         # clause is the part of the kernel's rule this workflow acts on.
         "This workflow follows `$compound-delivery-kernel`'s run lifecycle"
-        " rule. Under that rule, invoked by the operator it starts the run, and"
+        " rule. Under the kernel's rule, invoked by the operator it starts the run, and"
         " invoked by another workflow in the same session it joins that"
         " workflow's run and starts none",
         "An epic lane's `$execute-work` starts its own run and binds it to its"
@@ -349,8 +349,12 @@ KERNEL_REFERENCE = "kernel"
 
 
 def sentences(text: str) -> list[str]:
-    """``text``, already whitespace-normalized, split after each full stop, colon or semicolon."""
-    return [part for part in re.split(r"(?<=[.;:])\s+", text) if part]
+    """``text``, already whitespace-normalized, split after each full stop.
+
+    A colon or semicolon does not end the sentence: "Apply the kernel's rule:
+    invoked by the operator it starts the run" defers to the kernel as one
+    sentence."""
+    return [part for part in re.split(r"(?<=\.)\s+", text) if part]
 
 
 class RunEventEmissionCorpusTests(unittest.TestCase):

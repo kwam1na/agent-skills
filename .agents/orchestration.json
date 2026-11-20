@@ -1723,6 +1723,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_run_event_acceptance",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_event_acceptance.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_event_acceptance.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_run_event_emission_corpus",
         "argv": [
           ".venv/bin/python",

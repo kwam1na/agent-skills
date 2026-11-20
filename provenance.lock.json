@@ -41,7 +41,7 @@
       "outputs": [
         {
           "path": "skills/compound-delivery-kernel/SKILL.md",
-          "sha256": "6395c9c185de9ddadba81d26c98243ece568d8d7cc66d66feb2906946006f558"
+          "sha256": "c6593a83c2afef859921e58d572346799710571d5f1179fed86799d3cea12495"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -165,7 +165,7 @@
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
-          "sha256": "f5d058a523f684eeb596013292c7e704c62954093bda966da64806643d8ea1e0"
+          "sha256": "e8bb11706524185c444a0f1cb088bfca3ab4eb8e6b8ecbdf79b54538b63ef132"
         },
         {
           "path": "skills/deliver-work/agents/openai.yaml",
@@ -279,7 +279,7 @@
       "outputs": [
         {
           "path": "skills/diagnose-work/SKILL.md",
-          "sha256": "bce0c487747c0920e9a069770340e2f5ebd16efadd18326b0646f9cf9dae9355"
+          "sha256": "9f34312a51a41907a6786f1cd7393dd2b890b8745c79e6a27ef021ffc8aceccc"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -361,7 +361,7 @@
       "outputs": [
         {
           "path": "skills/execute-work/SKILL.md",
-          "sha256": "09eb0b0737b3f0ad408c6b04ee772651bddf76651c63a54accd261151a6a3377"
+          "sha256": "0e3e0600ff456d17497e3fa7b686d46ad10bd9292bfdd6f890834fe5c007b80e"
         },
         {
           "path": "skills/execute-work/references/run-observation-contract.md",
@@ -1033,7 +1033,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "f12d2b382f3a03b05bb35cff1393a9b0308f419216fbdb0e4a08d82382d8e3fe"
+          "sha256": "1496efa223ed31c62aa51e84221564b91d616fa9882e75bf2ce5095f47a316cd"
         }
       ],
       "owner": "agent-skills-corpus",

@@ -219,16 +219,20 @@ silently, with no handoff and no blocker. What is emitted is observability, not
 evidence. No gate, approval, or finish-line decision reads it, and a refused or
 failed emission never changes a command's outcome or the delivery's result.
 
-- `run.started` before reading repository authority, naming the host and the
-  installed workflow release the delivery runs under. Reading the root
-  instruction file for the run-event declaration is capability discovery, not
-  the authority reading this point orders: it precedes `run.started`, because
-  nothing can be emitted until the delivery knows whether a command exists to
-  emit through. Everything else that file governs is read after.
-- `ticket.read` and `posture.declared` once that authority and the work item
-  have been read and the posture is chosen.
-- `decision.recorded` at every fork resolved by judgement rather than by a
-  discovered rule, naming the fork and the choice. Named forks: the branch
+This workflow follows `$compound-delivery-kernel`'s run lifecycle rule. Under
+the kernel's rule, invoked by the operator it starts the run, and invoked by
+another workflow in the same session it joins that workflow's run and starts
+none. An epic lane's `$execute-work` starts its own run and binds it to its piece with
+the delivery's `bind-run`, and does not start the live view, which the lead
+runs for the delivery. It ends the run only where it started it, as the
+kernel's rule says. It marks its stage `execute` at entry and exit, and
+`review` around each review round it obtains, nested inside `execute`.
+
+- `ticket.read` and `posture.declared` once repository authority and the work
+  item have been read and the posture is chosen.
+- `decision.recorded`, under the kernel's rule, at every fork this workflow
+  resolves by judgement rather than by a discovered rule, naming the fork and
+  the choice. Named forks: the branch
   name, whether to obtain a review round under unchanged deliverable identity,
   the checkout allocated to each lens, a skill read rather than invoked,
   a sensor considered and deliberately not run, and any value supplied by hand
@@ -238,9 +242,8 @@ failed emission never changes a command's outcome or the delivery's result.
   long it ran.
 - `pr.opened` when the change proposal is opened, bound to the candidate it
   carries.
-- `blocker.recorded` for each typed blocker raised, naming its token.
-- `run.ended` last, carrying the delivery's result category and its
-  self-reported cost, the same cost the handoff reports.
+- `blocker.recorded`, under the kernel's rule, for each typed blocker this
+  workflow raises, naming its token.
 
 This list is not the whole journal. `$obtain-review` emits `lens.selected` and
 `review.round.opened`, `$compound-learning` emits `compounding.recorded`, and
