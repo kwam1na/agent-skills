@@ -1094,13 +1094,14 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(row["cost"], 7 * 60)
 
     def test_a_row_ends_with_the_thread_that_ended_last(self) -> None:
-        # One of B's stops a hand-off answers; the other, also opened before A landed, only B's landing ends, later.
+        # Both of B's stops open before A lands. The later one a hand-off answers; the earlier one only B's landing ends,
+        # later still, so the row ends with the thread that opened first.
         journal = Journal()
         journal.started()
-        start = journal.add(1, "check.started", subject="B")
-        first = journal.stopped(5, "B", [journal.failed(4, "B", start)])
+        [late] = self.stops(journal, [3], subject="B", reason="check_failed")
+        start = journal.add(4, "check.started", subject="B")
+        first = journal.stopped(6, "B", [journal.failed(5, "B", start)])
         handed = journal.handed(8, "B", answers=[first])
-        [late] = self.stops(journal, [9], subject="B", reason="check_failed")
         journal.add(10, "candidate.merged", {"head": "c" * 40}, subject="A")
         merged = journal.add(20, "candidate.merged", {"head": "d" * 40}, subject="B")
         story = journal.told()
