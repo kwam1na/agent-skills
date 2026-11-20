@@ -960,9 +960,6 @@ class QueueJournalTests(unittest.TestCase):
         self.one_closed(journal, broken, repaired)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class LedgerTests(unittest.TestCase):
     """A landing ends its own story's stops, and the ledger tells each setback once, grouped by story and reason."""
@@ -1008,6 +1005,10 @@ class LedgerTests(unittest.TestCase):
         state = {"queue": [{"subject": "B", "lane": "lane-2"}], "lanes": [{"id": "lane-2", "waitingOn": "lead"}]}
         [row] = journal.told(state=state)["ledger"]
         self.assertEqual((row["waitingOn"], row["words"]["line"]), ("lead", "It still stands. It waits on lead."))
+        # Only a standing row waits: once B lands, its row waits on no one, whatever the record still queues.
+        journal.add(40, "candidate.merged", {"head": "e" * 40}, subject="B")
+        [row] = journal.told(state=state)["ledger"]
+        self.assertEqual((row["state"], row["waitingOn"]), ("closed", None))
 
     def test_six_stops_with_one_reason_are_one_row_and_two_reasons_two(self) -> None:
         journal = Journal()
@@ -1023,6 +1024,9 @@ class LedgerTests(unittest.TestCase):
                          (6, 6, journal.entries[repeated[0] - 1]["at"], journal.entries[repeated[-1] - 1]["at"], "open"))
         self.assertEqual(rows[("A", "check_failed")]["count"], 1)
         self.assertEqual(row["words"]["head"], "A was stopped 6 times.")
+        # A standing row stands since its oldest standing thread, and standing rows read newest first.
+        self.assertEqual(row["since"], journal.entries[repeated[0] - 1]["at"])
+        self.assertEqual([(entry["subject"], entry["reason"]) for entry in story["ledger"]], [("A", "check_failed"), ("A", "interrupted")])
         self.assertEqual(story["digest"]["words"]["line"], "Two setbacks still stand.")
 
     def test_a_stop_a_hand_off_answers_keeps_that_ending_and_cost_after_its_story_lands(self) -> None:
@@ -1053,6 +1057,60 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual((by_opening[broke]["state"], by_opening[broke]["endedBy"]), ("open", None))
         self.assertEqual((by_opening[blocker]["closing"], by_opening[blocker]["endedBy"]), (resolved, "answer"))
         self.assertEqual([row["state"] for row in story["ledger"]], ["open", "closed"])
+
+    def test_a_landing_ends_no_blocker_on_its_own_story(self) -> None:
+        journal = Journal()
+        journal.started()
+        blocker = journal.add(5, "blocker.recorded", {"text": "A's dev backend is down."}, lane=None, subject="A")
+        self.stops(journal, [10])
+        journal.add(30, "candidate.merged", {"head": "c" * 40}, subject="A")
+        story = journal.told()
+        self.assertValid(story)
+        by_opening = {thread["opening"]: thread for thread in story["threads"]}
+        self.assertEqual((by_opening[blocker]["state"], by_opening[blocker]["endedBy"], by_opening[blocker]["closing"]), ("open", None, None))
+        rows = {row["kind"]: row for row in story["ledger"]}
+        self.assertEqual((rows["blocker.recorded"]["state"], rows["candidate.stopped"]["state"]), ("open", "closed"))
+
+    def test_a_row_costs_the_time_its_stops_held_together_counting_overlaps_once(self) -> None:
+        # Two copies of one stop, open at once, then ended by the landing: 20m, not 35m.
+        journal = Journal()
+        journal.started()
+        self.stops(journal, [10, 15])
+        journal.add(30, "candidate.merged", {"head": "c" * 40}, subject="A")
+        story = journal.told()
+        [row] = story["ledger"]
+        self.assertEqual((row["cost"], story["digest"]["setbacks"]["cost"]), (20 * 60, 20 * 60))
+        self.assertEqual(story["digest"]["words"]["line"], "One setback cost 20m.")
+        # Two that never overlap: their own spans, 2m and 5m, with the gap between them not counted.
+        journal = Journal()
+        journal.started()
+        start = journal.add(1, "check.started", subject="B")
+        first = journal.stopped(10, "B", [journal.failed(9, "B", start)])
+        journal.handed(12, "B", answers=[first])
+        again = journal.add(15, "check.started", subject="B")
+        second = journal.stopped(20, "B", [journal.failed(19, "B", again)])
+        journal.handed(25, "B", answers=[second])
+        [row] = journal.told()["ledger"]
+        self.assertEqual(row["cost"], 7 * 60)
+
+    def test_a_row_ends_with_the_thread_that_ended_last(self) -> None:
+        # One of B's stops a hand-off answers; the other, also opened before A landed, only B's landing ends, later.
+        journal = Journal()
+        journal.started()
+        start = journal.add(1, "check.started", subject="B")
+        first = journal.stopped(5, "B", [journal.failed(4, "B", start)])
+        handed = journal.handed(8, "B", answers=[first])
+        [late] = self.stops(journal, [9], subject="B", reason="check_failed")
+        journal.add(10, "candidate.merged", {"head": "c" * 40}, subject="A")
+        merged = journal.add(20, "candidate.merged", {"head": "d" * 40}, subject="B")
+        story = journal.told()
+        self.assertValid(story)
+        [row] = story["ledger"]
+        ended = next(thread for thread in story["threads"] if thread["opening"] == late)
+        self.assertEqual((row["count"], row["endedAt"], row["endedBy"], row["ending"], row["chapters"]),
+                         (2, journal.entries[merged - 1]["at"], merged, "landing", {"opened": "c1", "ended": "c3"}))
+        self.assertNotEqual(row["endedBy"], handed)
+        self.assertEqual(story["chapters"][2]["standing"], [ended["id"]])
 
     def test_a_landing_ends_only_its_own_storys_stops(self) -> None:
         journal = Journal()
@@ -1089,6 +1147,14 @@ class LedgerTests(unittest.TestCase):
         self.stops(journal, [10])
         journal.add(20, "candidate.handed", {"head": "b" * 40, "checks": [], "noChange": True}, subject="A")
         journal.add(30, "handoff.accepted", {"settled": False}, lane=None, subject="A")
+        self.assertEqual(journal.told()["ledger"][0]["state"], "open")
+        # Settled with no acceptance: the record holds the planned piece as settled, and its no-change hand-off lands it.
+        journal = Journal()
+        journal.started()
+        self.stops(journal, [10])
+        handed = journal.add(20, "candidate.handed", {"head": "b" * 40, "checks": [], "noChange": True}, subject="A")
+        [row] = journal.told(state={"planned": [{"subject": "A", "stage": "settled"}]})["ledger"]
+        self.assertEqual((row["state"], row["endedBy"], row["ending"], row["cost"]), ("closed", handed, "landing", 10 * 60))
         self.assertEqual(journal.told()["ledger"][0]["state"], "open")
 
     def test_a_chapter_lists_only_the_rows_that_opened_or_ended_in_it(self) -> None:
@@ -1161,3 +1227,7 @@ class LedgerTests(unittest.TestCase):
                 self.assertLessEqual(index[row["chapters"]["opened"]], index[row["chapters"]["ended"]])
                 ended = story["chapters"][index[row["chapters"]["ended"]]]
                 self.assertLessEqual(narrator._seconds(row["endedAt"]), narrator._seconds(ended["at"]))
+
+
+if __name__ == "__main__":
+    unittest.main()
