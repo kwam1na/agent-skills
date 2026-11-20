@@ -128,6 +128,12 @@ RESERVED = (STATE_FILE, JOURNAL_FILE, CHANGES_FILE, STATE_LOCK, QUEUE_LOCK, PUBL
             RECOVERY_FILE, RECOVERY_QUARANTINE)
 DEFAULT_TIMEOUT_SECONDS = 60
 MAX_TIMEOUT_SECONDS = 600
+# How long the live server waits for the run inventory it reads once at start, when the binding gives no bound.
+INVENTORY_TIMEOUT_SECONDS = 10
+# What every live view is given on stdin while the state directory holds no record.
+ABSENT_SPEC = "delivery-state-absent/1"
+# Tells each view the live server renders, when the binding names liveRuns, whether the run store is being watched.
+RUNS_FLAG = "DELIVERY_LIVE_RUNS"
 # How much of a failing command's stderr the result keeps, in characters, and
 # the bytes held to produce it.
 ERROR_LIMIT = 500
@@ -1205,6 +1211,7 @@ _LIVE_ADAPTER = """
   "use strict";
   var listeners = [];
   var statuses = [];
+  var runs = [];
   function status(connected) { statuses.forEach(function (fn) { fn(connected); }); }
   var source = new EventSource("/events");
   source.addEventListener("document", function (event) {
@@ -1213,11 +1220,18 @@ _LIVE_ADAPTER = """
     status(true);
     listeners.forEach(function (fn) { fn(doc); });
   });
+  source.addEventListener("runs", function (event) {
+    var said;
+    try { said = JSON.parse(event.data); } catch (error) { return; }
+    status(true);
+    runs.forEach(function (fn) { fn(said); });
+  });
   source.addEventListener("error", function () { status(false); });
   globalThis.deliveryStateStore = {
     read: function () { return fetch("/document").then(function (answer) { return answer.json(); }); },
     subscribe: function (fn) { listeners.push(fn); },
-    onStatus: function (fn) { statuses.push(fn); }
+    onStatus: function (fn) { statuses.push(fn); },
+    onRuns: function (fn) { runs.push(fn); }
   };
 })();
 """.strip()
@@ -1386,6 +1400,7 @@ def parse_config(config: object) -> tuple[list[dict], list[dict]]:
     if home is not None and not any(renderer["id"] == home and renderer["argv"] is not None
                                     and renderer["output"].endswith(".html") for renderer in renderers):
         raise ConfigError("liveHome must be the id of a declared argv renderer whose output is an .html file")
+    _parse_live_runs(config.get("liveRuns"), renderers)
     publishers = []
     for index, entry in enumerate(_entries(config, "publishers")):
         where = f"publishers[{index}]"
@@ -1398,6 +1413,44 @@ def parse_config(config: object) -> tuple[list[dict], list[dict]]:
             raise ConfigError(f"{where}: unknown fields: {', '.join(unknown)}")
         publishers.append({"id": entry["id"], "argv": _argv(entry.get("argv"), where), "timeout": _timeout(entry, where)})
     return renderers, publishers
+
+
+def _parse_live_runs(value: object, renderers: list[dict]) -> dict | None:
+    """The runs page and the inventory command ``liveRuns`` declares, or None without it."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ConfigError("liveRuns must be an object with renderer and inventory")
+    unknown = sorted(set(value) - {"renderer", "inventory"})
+    if unknown:
+        raise ConfigError(f"liveRuns: unknown fields: {', '.join(unknown)}")
+    renderer = value.get("renderer")
+    # As liveHome: the page it names is served live, so it is an argv renderer's HTML view.
+    if not any(entry["id"] == renderer and entry["argv"] is not None and entry["output"].endswith(".html")
+               for entry in renderers):
+        raise ConfigError("liveRuns.renderer must be the id of a declared argv renderer whose output is an .html file")
+    inventory = value.get("inventory")
+    if not isinstance(inventory, dict):
+        raise ConfigError("liveRuns.inventory must be an object with argv")
+    unknown = sorted(set(inventory) - {"argv", "timeoutSeconds"})
+    if unknown:
+        raise ConfigError(f"liveRuns.inventory: unknown fields: {', '.join(unknown)}")
+    if "argv" not in inventory:
+        raise ConfigError("liveRuns.inventory: argv is required")
+    argv = _argv(inventory["argv"], "liveRuns.inventory")
+    timeout = _timeout({"timeoutSeconds": inventory.get("timeoutSeconds", INVENTORY_TIMEOUT_SECONDS)},
+                       "liveRuns.inventory")
+    output = next(entry["output"] for entry in renderers if entry["id"] == renderer)
+    return {"renderer": renderer, "output": output, "argv": argv, "timeout": timeout}
+
+
+def live_runs(config: object) -> dict | None:
+    """The binding's ``liveRuns``, parsed, or None when it names none or the configuration is invalid."""
+    try:
+        renderers, _ = parse_config(config)
+        return _parse_live_runs(config.get("liveRuns"), renderers) if isinstance(config, dict) else None
+    except ConfigError:
+        return None
 
 
 @dataclass
@@ -1544,7 +1597,8 @@ def _stop(process: subprocess.Popen) -> None:
         process.kill()
 
 
-def _execute(argv: list[str], document: bytes, timeout: int, *, needs_stdout: bool = False) -> Outcome:
+def _execute(argv: list[str], document: bytes, timeout: int, *, needs_stdout: bool = False,
+             env: dict[str, str] | None = None) -> Outcome:
     """Run one argv with the document on stdin, bounded in time and memory.
 
     With ``needs_stdout``, a command whose stdout is still open after it exits
@@ -1555,7 +1609,8 @@ def _execute(argv: list[str], document: bytes, timeout: int, *, needs_stdout: bo
     _defer()
     try:
         process = subprocess.Popen(
-            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **_process_group()
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env={**os.environ, **env} if env else None, **_process_group()
         )
         # The child exists but nothing stops it yet: the window a signal
         # inside Popen falls into.
@@ -1646,16 +1701,26 @@ def _render_builtin(name: str, document: bytes) -> Outcome:
     return Outcome(0, view, b"", False, False, None)
 
 
-def render(directory: Path, config: object) -> tuple[int, dict]:
+def render(directory: Path, config: object, *, absent: bool = False,
+           env: dict[str, str] | None = None) -> tuple[int, dict]:
+    """Render every view and run every publisher. With ``absent``, the live server's call while the state
+    directory holds no record, each argv view is given exactly the absent document and nothing else runs: a
+    built-in view draws only a record, and there is nothing to publish. ``env`` is added to each argv view's
+    environment."""
     try:
         renderers, publishers = parse_config(config)
     except ConfigError as error:
         return 2, {"ok": False, "code": "config_invalid", "error": str(error)}
-    try:
-        shown = with_story(show(directory), directory)
-        document = dumps(shown).encode("utf-8")
-    except StateError as error:
-        return 2, {"ok": False, "code": error.code, "error": str(error)}
+    if absent:
+        document = dumps({"spec": ABSENT_SPEC}).encode("utf-8")
+        renderers = [renderer for renderer in renderers if renderer["argv"] is not None]
+        publishers = []
+    else:
+        try:
+            shown = with_story(show(directory), directory)
+            document = dumps(shown).encode("utf-8")
+        except StateError as error:
+            return 2, {"ok": False, "code": error.code, "error": str(error)}
 
     rendered = []
     for renderer in renderers:
@@ -1663,7 +1728,7 @@ def render(directory: Path, config: object) -> tuple[int, dict]:
             outcome = _render_builtin(renderer["builtin"], document)
         else:
             argv = [part.replace("{stateDirectory}", str(directory.resolve())) for part in renderer["argv"]]
-            outcome = _execute(argv, document, renderer["timeout"], needs_stdout=True)
+            outcome = _execute(argv, document, renderer["timeout"], needs_stdout=True, env=env)
         error = outcome.error
         entry: dict = {"id": renderer["id"], "output": renderer["output"]}
         if outcome.truncated:
@@ -1847,8 +1912,8 @@ def _banner_markup(status_file: Path | None) -> str:
             f"<script>\n{_SUPERVISOR_WATCH}\n</script>\n")
 
 
-def _registry(repository: Path) -> Path | None:
-    """The folder deliveries on this machine register in, beside the repository's git common directory."""
+def _common_directory(repository: Path) -> Path | None:
+    """The repository's git common directory, shared by all its worktrees, or None outside a repository."""
     try:
         found = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=repository, capture_output=True,
                                text=True, check=False)
@@ -1857,7 +1922,13 @@ def _registry(repository: Path) -> Path | None:
     if found.returncode != 0 or not found.stdout.strip():
         return None
     common = Path(found.stdout.strip())
-    return (common if common.is_absolute() else Path(repository) / common).resolve() / "agent-skills" / "deliveries"
+    return (common if common.is_absolute() else Path(repository) / common).resolve()
+
+
+def _registry(repository: Path) -> Path | None:
+    """The folder deliveries on this machine register in, beside the repository's git common directory."""
+    common = _common_directory(repository)
+    return None if common is None else common / "agent-skills" / "deliveries"
 
 
 def _peer_words(entry: dict) -> str:
@@ -1928,7 +1999,7 @@ def peers_markup(directory: Path, repository: Path | None) -> str:
 
 
 class LiveView:
-    """The latest valid document, re-read and re-rendered when the record changes."""
+    """The latest valid document, re-read and re-rendered when the record or the run store changes."""
 
     def __init__(self, directory: Path, config: object, status_file: Path | None = None,
                  repository: Path | None = None) -> None:
@@ -1942,11 +2013,24 @@ class LiveView:
         self.generation = 0
         self.document: dict | None = None
         self.encoded = b""
-        self.fingerprint: tuple | None = None
-        self.plan_seen: tuple | None = None
+        self.fingerprint: bytes | None = None
+        self.plan_seen: object = None
+        # The binding's liveRuns, and the store its inventory named at start: None while not watched.
+        self.live_runs = live_runs(config)
+        self.runs_dir: Path | None = None
+        self.runs_generation = 0
+        self.store_seen: object = None
+        # Whether the views were last drawn with no record, so a record that goes is drawn once as absent.
+        self.absent_drawn = False
+        self.refreshed = False
         self.stopping = threading.Event()
 
-    def watch_key(self) -> tuple:
+    def watch_runs(self) -> None:
+        """Read the store's folder from the inventory, once: bounded by its timeout, and never fatal."""
+        if self.live_runs is not None:
+            self.runs_dir = runs_directory(self.live_runs)
+
+    def record_key(self) -> tuple:
         keys = []
         for name in (CHANGES_FILE, STATE_FILE, JOURNAL_FILE, PEER_WAITS_FILE, PLAN_FILE):
             if name == PLAN_FILE:
@@ -1959,6 +2043,35 @@ class LiveView:
                 keys.append(None)
         return tuple(keys)
 
+    def store_key(self) -> object:
+        """The run store as sizes and times: its folder, every folder in it and their files, never opened.
+        None without liveRuns; "unwatched" while the inventory named no store or its folder can't be read."""
+        if self.live_runs is None:
+            return None
+        if self.runs_dir is None:
+            return "unwatched"
+        try:
+            top = self.runs_dir.stat()
+        except OSError:
+            return "unwatched"
+        keys = [("", top.st_size, top.st_mtime_ns)]
+        for folder, folders, files in os.walk(self.runs_dir):
+            folders.sort()
+            for name in [*folders, *sorted(files)]:
+                path = os.path.join(folder, name)
+                try:
+                    stat = os.stat(path, follow_symlinks=False)
+                except OSError:
+                    continue  # gone between the listing and the look: the next tick sees it
+                keys.append((os.path.relpath(path, self.runs_dir), stat.st_size, stat.st_mtime_ns))
+        return tuple(keys)
+
+    def watch_key(self) -> tuple:
+        return (*self.record_key(), self.store_key())
+
+    def runs_watched(self, store: object) -> bool:
+        return store is not None and store != "unwatched"
+
     def read(self) -> dict | None:
         """The record, or None while it cannot be read: half-written, unreadable, or not yet there."""
         try:
@@ -1966,27 +2079,42 @@ class LiveView:
         except (StateError, OSError, ValueError):
             return None
 
+    def absent(self) -> bool:
+        """Whether the state directory holds no record at all, as against one caught half-written."""
+        return not (self.directory / STATE_FILE).exists()
+
     def refresh(self) -> bool | None:
-        """Publish the record if it moved, then re-render the views; None when it could not be read."""
+        """Re-render the views when the record or the run store moved, then push: the record to open pages, or
+        that the runs moved. None when a record is there but could not be read."""
         shown = self.read()
-        if shown is None:
+        absent = shown is None and self.absent()
+        if shown is None and not absent:
             return None
-        encoded = json.dumps(shown, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
+        encoded = (json.dumps(shown, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
+                   if shown is not None else None)
         # The whole document, so a record replaced at the same version still counts as moved.
-        fingerprint = encoded
-        plan = self.watch_key()[-1]
-        if fingerprint == self.fingerprint and plan == self.plan_seen:
+        record_moved = encoded != self.fingerprint if not absent else not self.absent_drawn
+        plan = self.record_key()[-1]
+        store = self.store_key()
+        store_moved = self.refreshed and store != self.store_seen
+        if self.refreshed and not record_moved and not store_moved and plan == self.plan_seen:
             return False
-        self.plan_seen = plan
-        # Pages first: they need only the record, never the rendered files, so
-        # no slow view delays them. A plan that moved alone leaves the record's pages be.
-        if fingerprint != self.fingerprint:
-            with self.changed:
-                self.document, self.encoded, self.fingerprint = shown, encoded, fingerprint
-                self.generation += 1
-                self.changed.notify_all()
+        self.refreshed, self.plan_seen, self.store_seen, self.absent_drawn = True, plan, store, absent
+        # Views first, then the pushes: a page told of a change finds the views that show it.
+        env = ({RUNS_FLAG: "watched" if self.runs_watched(store) else "unwatched"}
+               if self.live_runs is not None else None)
         with contextlib.suppress(Exception):
-            render(self.directory, _views_only(self.config))
+            render(self.directory, _views_only(self.config), absent=absent, env=env)
+        with self.changed:
+            if absent and self.document is not None:
+                # A record that went: the front page is the runs page again, and no page is sent it.
+                self.document, self.encoded, self.fingerprint = None, b"", None
+            elif record_moved and not absent:
+                self.document, self.encoded, self.fingerprint = shown, encoded, encoded
+                self.generation += 1
+            if store_moved:
+                self.runs_generation += 1
+            self.changed.notify_all()
         return True
 
     def watch(self) -> None:
@@ -1998,7 +2126,7 @@ class LiveView:
                 if key == seen:
                     continue
                 try:
-                    # Settled only once the record read cleanly; otherwise look again next tick.
+                    # Settled only once the record read cleanly, or is not there; otherwise look again next tick.
                     if self.refresh() is not None:
                         seen = key
                 except Exception:  # noqa: BLE001 - the watcher outlives any one bad read
@@ -2014,7 +2142,29 @@ class LiveView:
             self.changed.notify_all()
 
 
-def _live_handler(view: LiveView, accepts: Callable[[str], bool], flags: tuple[str, ...] = ()) -> type:
+def runs_directory(declared: dict) -> Path | None:
+    """The run store's folder, as the inventory names it in ``runsDir``: None when the inventory fails, passes its
+    timeout, prints no such folder, or names one that can't be read."""
+    outcome = _execute([*declared["argv"], "list", "--json"], b"", declared["timeout"], needs_stdout=True)
+    if outcome.error is not None or outcome.truncated:
+        return None
+    try:
+        named = json.loads(outcome.stdout.decode("utf-8")).get("runsDir")
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(named, str) or not named:
+        return None
+    folder = Path(named)
+    folder = folder if folder.is_absolute() else Path.cwd() / folder
+    try:
+        os.listdir(folder)
+    except OSError:
+        return None
+    return folder
+
+
+def _live_handler(view: LiveView, accepts: Callable[[str], bool], flags: tuple[str, ...] = (),
+                  health: dict | None = None) -> type:
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -2038,7 +2188,12 @@ def _live_handler(view: LiveView, accepts: Callable[[str], bool], flags: tuple[s
                 return
             path = self.path.split("?", 1)[0]
             home = _live_home(view.config)
-            if path in ("/", "/index.html") and home is not None:
+            with view.changed:
+                recorded = view.document is not None
+            if path in ("/", "/index.html") and not recorded and view.live_runs is not None:
+                # No record: the runs page is the front page until one reads cleanly.
+                self._view(view.live_runs["output"])
+            elif path in ("/", "/index.html") and home is not None:
                 self._view(home)
             elif path in ("/", "/index.html"):
                 with view.changed:
@@ -2056,6 +2211,9 @@ def _live_handler(view: LiveView, accepts: Callable[[str], bool], flags: tuple[s
                 self._plain(200 if encoded else 503, encoded or b"{}", "application/json")
             elif path == "/events":
                 self._events()
+            elif path == "/health":
+                self._plain(200, json.dumps(health or {}, ensure_ascii=True, sort_keys=True).encode("ascii"),
+                            "application/json")
             elif path == "/supervisor" and view.status_file is not None:
                 said = json.dumps({"banner": supervisor_banner(view.status_file)}, ensure_ascii=True)
                 self._plain(200, said.encode("ascii"), "application/json")
@@ -2098,19 +2256,28 @@ def _live_handler(view: LiveView, accepts: Callable[[str], bool], flags: tuple[s
             self.end_headers()
             self.close_connection = True
             sent = -1
+            # A page that connects reads the runs itself: it is told only of a move after it connected.
+            with view.changed:
+                runs_sent = view.runs_generation
             try:
                 while not view.stopping.is_set():
                     with view.changed:
-                        if view.generation == sent:
+                        if (view.generation == sent or not view.encoded) and view.runs_generation == runs_sent:
                             view.changed.wait(LIVE_KEEPALIVE_SECONDS)
-                        generation, encoded = view.generation, view.encoded
+                        generation, encoded, runs = view.generation, view.encoded, view.runs_generation
                     if view.stopping.is_set():
                         break
+                    said = False
                     if generation != sent and encoded:
                         # Only the latest is sent: a burst of writes reaches a page as one update.
                         self.wfile.write(b"event: document\ndata: " + encoded + b"\n\n")
-                        sent = generation
-                    else:
+                        sent, said = generation, True
+                    if runs != runs_sent:
+                        # Likewise for the runs: a burst of store writes is one move.
+                        self.wfile.write(b"event: runs\ndata: " + json.dumps({"generation": runs}).encode("ascii")
+                                         + b"\n\n")
+                        runs_sent, said = runs, True
+                    if not said:
                         self.wfile.write(b": keepalive\n\n")
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, OSError):
@@ -2239,27 +2406,110 @@ def _live_hosts(host: str, port: int) -> Callable[[str], bool]:
     return accepts
 
 
+LIVE_ENTRIES = "delivery-live"
+# What a live server's /health says it is, so a check can tell it from any other listener.
+LIVE_SERVER = "render_state.py live"
+HEALTH_TIMEOUT_SECONDS = 2.0
+STOP_WAIT_SECONDS = 10.0
+
+
+def _entries_folder(common: Path | None) -> Path | None:
+    return None if common is None else common / LIVE_ENTRIES
+
+
+def _address(host: str, port: int) -> str:
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
+HEALTH_LIMIT_BYTES = 64 * 1024
+
+
+def _health(host: str, port: int) -> object:
+    """What the listener at an address says at /health, or None when nothing answers 200 with JSON. Asked over a
+    plain socket, straight to the address: nothing the environment names stands in between."""
+    request = (f"GET /health HTTP/1.1\r\nHost: {_address(host, port)}\r\nConnection: close\r\n\r\n").encode("ascii")
+    answer = b""
+    try:
+        with socket.create_connection((host, port), timeout=HEALTH_TIMEOUT_SECONDS) as connection:
+            connection.sendall(request)
+            while len(answer) <= HEALTH_LIMIT_BYTES:
+                chunk = connection.recv(4096)
+                if not chunk:
+                    break
+                answer += chunk
+    except (OSError, UnicodeError):
+        return None
+    head, _, body = answer.partition(b"\r\n\r\n")
+    # A live server answers in HTTP/1.1, its handler's protocol.
+    if not head.startswith(b"HTTP/1.1 200 "):
+        return None
+    try:
+        return json.loads(body.decode("utf-8"))
+    except ValueError:
+        return None
+
+
+def verified_entries(common: Path | None) -> list[dict]:
+    """The live servers this repository's entries name that are still up: each entry's PID alive and its address
+    answering /health as a live server for this repository, with that PID. Any other entry is left as it is."""
+    folder = _entries_folder(common)
+    if folder is None or not folder.is_dir():
+        return []
+    verified = []
+    for path in sorted(folder.glob("*.json")):
+        try:
+            entry = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(entry, dict):
+            continue
+        pid, host, port = entry.get("pid"), entry.get("host"), entry.get("port")
+        if not (_pid_runs(pid) and isinstance(host, str) and host and isinstance(port, int)
+                and not isinstance(port, bool) and 0 < port < 65536):
+            continue
+        said = _health(host, port)
+        if not (isinstance(said, dict) and said.get("server") == LIVE_SERVER and said.get("pid") == pid
+                and said.get("repository") == str(common)):
+            continue
+        verified.append({**entry, "entry": str(path)})
+    return verified
+
+
 def serve_live(directory: Path, config: object, *, host: str, port: int, announce: Callable[[str], None],
-               flags: tuple[str, ...] = (), status_file: Path | None = None, repository: Path | None = None) -> None:
-    """Serve the live view until interrupted. Renders on every record change; never writes the record. With a
-    status file, every page carries the supervisor's banner, read from it as the page is served. With a repository,
-    the built-in page lists the other deliveries registered on this record's base and who holds its merge slot."""
+               flags: tuple[str, ...] = (), status_file: Path | None = None, repository: Path | None = None,
+               common: Path | None = None) -> None:
+    """Serve the live view until interrupted. Renders on every record change, and with liveRuns on every change of
+    the run store; never writes the record. With a status file, every page carries the supervisor's banner, read
+    from it as the page is served. With a repository, the built-in page lists the other deliveries registered on
+    this record's base and who holds its merge slot. With a git common directory, the server writes its own entry
+    under it while it serves, and removes only that entry when it stops."""
     view = LiveView(directory, config, status_file, repository)
+    view.watch_runs()
     view.refresh()
-    server = (_LiveServer6 if ":" in host else _LiveServer)((host, port), _live_handler(view, lambda header: False, flags))
+    health = {"server": LIVE_SERVER, "pid": os.getpid(), "repository": str(common) if common else None,
+              "stateDirectory": str(Path(directory).resolve()), "liveRuns": view.live_runs is not None}
+    server = (_LiveServer6 if ":" in host else _LiveServer)(
+        (host, port), _live_handler(view, lambda header: False, flags, health))
     if _is_wildcard(str(server.server_address[0])):
         # A name that only resolved to every address once bound: never serve on it.
         server.server_close()
         raise OSError("the live view serves this machine only; bind a loopback address")
     bound = server.server_address[1]
     shown_host = f"[{host}]" if ":" in host else host
-    server.RequestHandlerClass = _live_handler(view, _live_hosts(host, bound), flags)
+    server.RequestHandlerClass = _live_handler(view, _live_hosts(host, bound), flags, health)
     watcher = threading.Thread(target=view.watch, name="live-watch", daemon=True)
     serving = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.2}, name="live-serve",
                                daemon=True)
+    folder = _entries_folder(common)
+    entry = None if folder is None else folder / f"{os.getpid()}.json"
     watcher.start()
     serving.start()
     try:
+        if entry is not None:
+            with contextlib.suppress(OSError):
+                _write_atomically(entry, (json.dumps(
+                    {"pid": os.getpid(), "host": host, "port": bound, "stateDirectory": health["stateDirectory"],
+                     "liveRuns": health["liveRuns"]}, indent=2, sort_keys=True) + "\n").encode("utf-8"))
         # The address alone: a browser opens it as it is.
         announce(f"{shown_host}:{bound}")
         while serving.is_alive() and not view.stopping.is_set():
@@ -2268,6 +2518,10 @@ def serve_live(directory: Path, config: object, *, host: str, port: int, announc
             if _received:
                 raise Interrupted(_received[0])
     finally:
+        # Its own entry first, so nothing finds a server that is going.
+        if entry is not None:
+            with contextlib.suppress(OSError):
+                entry.unlink()
         view.stop()
         server.shutdown()
         server.server_close()
@@ -2288,8 +2542,20 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
     parser.add_argument("--status-file", type=Path,
                         help="the supervisor's status file, re-read on every page: a banner says when it is down")
     parser.add_argument("--repo", type=Path,
-                        help="the repository whose registry lists this record's peers on its base, on every page")
+                        help="the repository whose registry lists this record's peers on its base, on every page; "
+                             "its git common directory keeps the live servers' entries (the state directory's "
+                             "repository when absent)")
+    once = parser.add_mutually_exclusive_group()
+    once.add_argument("--if-absent", action="store_true",
+                      help="print the address of this repository's verified live server, preferring one with "
+                           "liveRuns, and exit; serve only when there is none")
+    once.add_argument("--stop", action="store_true",
+                      help="stop each verified live server this state directory started, and nothing else")
     args = parser.parse_args(argv)
+    # The entries live with the repository the record belongs to, so a state folder outside any repository has none.
+    common = _common_directory(args.repo if args.repo is not None else args.dir)
+    if args.stop:
+        return stop_live(args.dir, common)
     if _is_wildcard(args.host):
         # Every address at once would put the record in front of the network;
         # hosting it beyond this machine is the adopter's to arrange.
@@ -2303,7 +2569,18 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
     try:
         show(args.dir)
     except StateError as error:
-        return 2, {"ok": False, "code": error.code, "error": str(error)}
+        # No record is not an error: an existing state directory without one is served, its views told so.
+        if not (error.code == "state_missing" and args.dir.is_dir()):
+            return 2, {"ok": False, "code": error.code, "error": str(error)}
+    if args.if_absent:
+        found = verified_entries(common)
+        found.sort(key=lambda entry: not entry.get("liveRuns"))
+        if found:
+            said = {"ok": True, "live": _address(found[0]["host"], found[0]["port"]), "pid": found[0]["pid"],
+                    "existing": True}
+            sys.stdout.buffer.write((json.dumps(said, ensure_ascii=True, separators=(",", ":")) + "\n").encode("ascii"))
+            sys.stdout.flush()
+            return 0, None
 
     flags = _live_flags(args.dir, config, args.binding is not None or args.state_config is not None)
 
@@ -2315,14 +2592,32 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
 
     try:
         serve_live(args.dir, config, host=args.host, port=args.port, announce=announce, flags=flags,
-                   status_file=args.status_file, repository=args.repo)
+                   status_file=args.status_file, repository=args.repo, common=common)
     except OSError as error:
         return 2, {"ok": False, "code": "live_unavailable",
                    "error": f"cannot listen on {args.host}:{args.port}: {error.strerror or error}"}
     return 0, {"ok": True, "live": "stopped"}
 
 
-def _render_from_args(argv: list[str] | None) -> tuple[int, dict]:
+def stop_live(directory: Path, common: Path | None) -> tuple[int, dict]:
+    """Stop each verified live server serving this state directory, by the PID its entry records, and wait for it to
+    remove its entry. An entry that fails verification is never signalled."""
+    own = str(Path(directory).resolve())
+    stopped = []
+    for entry in verified_entries(common):
+        if entry.get("stateDirectory") != own:
+            continue
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(entry["pid"], signal.SIGTERM)
+        deadline = time.monotonic() + STOP_WAIT_SECONDS
+        while Path(entry["entry"]).exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        stopped.append({"pid": entry["pid"], "live": _address(entry["host"], entry["port"]),
+                        "entryRemoved": not Path(entry["entry"]).exists()})
+    return 0, {"ok": True, "stopped": stopped}
+
+
+def _render_from_args(argv: list[str] | None) -> tuple[int, dict | None]:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["live"]:
         return _live_from_args(argv[1:])
@@ -2344,7 +2639,8 @@ def _render_from_args(argv: list[str] | None) -> tuple[int, dict]:
 def main(argv: list[str] | None = None) -> int:
     """Render as a caller in this process would: no signal handling changes."""
     code, result = _render_from_args(argv)
-    emit(result)
+    if result is not None:
+        emit(result)
     return code
 
 
@@ -2378,7 +2674,9 @@ def _main_process(argv: list[str] | None = None) -> int:
     number = _received[0] if _received else _pending()
     if number is not None:
         code, result = _interrupted(number)
-    emit(result)
+    if result is not None:
+        # None: the command already printed all it says.
+        emit(result)
     _seam("exit")
     # Checked again here and once more in _exit: either alone catches a signal
     # held back since the block; together they leave no gap before the exit.

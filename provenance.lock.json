@@ -510,7 +510,7 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "e2f20eab9512d399d4f30a7d633f374877af836811278593924ba448629efd67"
+          "sha256": "4f658c8cfecbff6b0b2c017643188c9b13f6a1686f1942445fe9bc816d2d00fe"
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
@@ -522,7 +522,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "81394527b845c9476da7ae7a6df9718faf60fffeaad2849bed9f31ab418465e8"
+          "sha256": "f3936039a9e5289e20f59a678349c98adc3e211bfd129dab9bf2f0da22862cf4"
         },
         {
           "path": "skills/orchestrate-work/references/story.schema.json",
@@ -554,7 +554,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "d8cf69fb7abc63682075204e43fd26cb83be2d0042523979888660754416e967"
+          "sha256": "537d733567bc893604f74f3794ee84bde2c6b8afc201db0da44f102720e27387"
         }
       ],
       "owner": "delivery-agent/user-delegated",
