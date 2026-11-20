@@ -221,6 +221,9 @@ class UnitTempTests(unittest.TestCase):
 class MeasuringTests(unittest.TestCase):
     """The whole command on a small suite: real file events, per module, and the runner's verdict."""
 
+    # It waits on real file events, which a busy machine delivers too late: "file events never arrived".
+    run_quietly = True
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
