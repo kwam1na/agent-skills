@@ -4251,9 +4251,10 @@
     else if (open.length) { parts.push(capital(numberWord(open.length)) + (open.length === 1 ? " setback stands now." : " setbacks stand now.")); }
     else { parts.push("Nothing is stopped now."); }
     if (over.length) {
-      var costs = over.filter(function (row) { return typeof row.cost === "number" && row.cost > 0; }).map(function (row) { return duration(row.cost); });
+      // What the ended setbacks cost together: the question the line answers, with no figure to match to a row.
+      var cost = over.reduce(function (sum, row) { return sum + (typeof row.cost === "number" && row.cost > 0 ? row.cost : 0); }, 0);
       parts.push(capital(numberWord(over.length)) + (over.length === 1 ? " is over" : " are over") +
-        (costs.length ? ", costing " + spokenList(costs) : "") + ".");
+        (cost > 0 ? ", costing " + duration(cost) : "") + ".");
     }
     var decisions = typeof digest.decisions === "number" ? digest.decisions : 0;
     if (decisions) { parts.push("The lead made " + numberWord(decisions) + (decisions === 1 ? " decision." : " decisions.")); }

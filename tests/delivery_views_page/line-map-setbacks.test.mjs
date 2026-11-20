@@ -87,6 +87,12 @@ test("one standing setback comes first, tinted, with since when and who it waits
   expect([line.className, line.textContent]).toEqual(["chapter-setback is-open", "APP-3700 was stopped · still stands"]);
 });
 
+test("the summary says what the ended setbacks cost together, not one figure per row", async () => {
+  const ledger = THIS_DELIVERY.map((one, i) => ({ ...one, cost: [600, 240, 180][i] }));
+  const [{ app }] = await open(storied(ledger, THIS_CHAPTERS));
+  expect(app.querySelector("#happened .say").textContent).toBe("Nothing is stopped now. Three are over, costing 17m.");
+});
+
 test("a chapter's line and its ledger row are both reached from the keyboard", async () => {
   const [{ app }] = await open(storied(THIS_DELIVERY, THIS_CHAPTERS));
   // The line is an anchor with an address, so the tab order reaches it; each row is in the tab order too.
@@ -106,14 +112,38 @@ test("following a chapter's line focuses its row in the ledger", async () => {
 });
 
 test("the Setbacks filter shows the ledger and the chapters' setback lines; another filter shows neither", async () => {
-  const [, problems, decisions] = await open(storied(THIS_DELIVERY, THIS_CHAPTERS),
-    [{ click: '#happened [data-tab="problems"]' }, { click: '#happened [data-tab="decisions"]' }]);
+  const [, problems, decisions, landings] = await open(storied(THIS_DELIVERY, THIS_CHAPTERS),
+    [{ click: '#happened [data-tab="problems"]' }, { click: '#happened [data-tab="decisions"]' }, { click: '#happened [data-tab="landed"]' }]);
   expect(problems.app.querySelectorAll("#happened .ledger-row")).toHaveLength(3);
   expect(lines(problems.app).map(([name]) => name)).toEqual(["c3", "c2", "c1"]);
   // Only chapters with something to show under the filter: the finishing one has no setback line.
   expect([...problems.app.querySelectorAll("#happened .chapter-of")].map((li) => li.getAttribute("data-chapter"))).toEqual(["c3", "c2", "c1"]);
   expect(decisions.app.querySelector("#happened .setback-ledger")).toBeNull();
   expect(decisions.app.querySelectorAll("#happened .chapter-setback")).toHaveLength(0);
+  // Landings lists the landing chapters, with neither the ledger nor their setback lines.
+  expect([...landings.app.querySelectorAll("#happened .chapter-of")].map((li) => li.getAttribute("data-chapter"))).toEqual(["c3", "c2"]);
+  expect(landings.app.querySelector("#happened .setback-ledger")).toBeNull();
+  expect(landings.app.querySelectorAll("#happened .chapter-setback")).toHaveLength(0);
+});
+
+test("the summary agrees in number: several standing, one over, one decision", async () => {
+  const ledger = [
+    row("s1", { subject: "APP-1", head: "APP-1 was stopped.", line: "It still stands.", state: "open", first: "2026-11-20T20:10:00Z", since: "2026-11-20T20:10:00Z", opened: "c4" }),
+    row("s2", { subject: "APP-2", head: "APP-2 was stopped.", line: "It still stands.", state: "open", first: "2026-11-20T20:05:00Z", since: "2026-11-20T20:05:00Z", opened: "c4" }),
+    row("s3", { subject: "APP-3", head: "APP-3 was stopped.", line: "It ended.", first: "2026-11-20T19:00:00Z", endedAt: "2026-11-20T19:01:00Z", cost: 0, opened: "c3", ended: "c3" }),
+  ];
+  const [{ app }] = await open(storied(ledger, THIS_CHAPTERS, { decisions: 1 }));
+  expect(app.querySelector("#happened .say").textContent).toBe("Two setbacks stand now. One is over. The lead made one decision.");
+  // An open row that waits on no one says only since when; a repeated stop at one instant gives that instant once.
+  const shown = ledgerRows(app);
+  expect(shown[0].state).toBe("since 8:10 pm");
+  const [{ app: same }] = await open(storied([row("s1", { subject: "APP-4", head: "APP-4 was stopped 2 times.", line: "It ended.", count: 2,
+    first: "2026-11-20T19:00:00Z", last: "2026-11-20T19:00:00Z", endedAt: "2026-11-20T19:05:00Z", cost: 300, opened: "c3", ended: "c3" })], THIS_CHAPTERS));
+  expect(ledgerRows(same)[0].span).toBe("7:00 pm");
+  // One stop that ended has no span to give: its single time even when its last time is set apart.
+  const [{ app: single }] = await open(storied([row("s1", { subject: "APP-5", head: "APP-5 was stopped.", line: "It ended.", count: 1,
+    first: "2026-11-20T19:00:00Z", last: "2026-11-20T19:03:00Z", endedAt: "2026-11-20T19:05:00Z", cost: 300, opened: "c3", ended: "c3" })], THIS_CHAPTERS));
+  expect(ledgerRows(single)[0].span).toBe("7:00 pm");
 });
 
 test("a chapter shown for its decision draws no setback line under the Decisions filter, and does under All", async () => {
