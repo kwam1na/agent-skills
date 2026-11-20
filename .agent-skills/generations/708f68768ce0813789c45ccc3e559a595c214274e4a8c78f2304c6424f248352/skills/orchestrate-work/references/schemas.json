@@ -976,6 +976,14 @@
                   "nodeBelowMinimum": {
                     "description": "Set only when the runtime declares a nodeMinimum and node is below it. It explains a failure; the check's state is still what the check itself returned. Absent otherwise.",
                     "type": "boolean"
+                  },
+                  "environment": {
+                    "description": "The environment facts of the check's run. Absent on a check that didn't run, and on a row written before the runner recorded them.",
+                    "$ref": "#/$defs/runEnvironment"
+                  },
+                  "host": {
+                    "description": "The host facts of the check's run. Absent on a check that didn't run, and on a row written before the runner recorded them.",
+                    "$ref": "#/$defs/runHost"
                   }
                 }
               }
@@ -992,7 +1000,7 @@
               "const": true
             },
             "evidence": {
-              "description": "Written only by a lane's hand-off: the lane's own runs of the binding's reusable checks, each with the head and tree it ran on and its definition's digest. The runner reuses a passing run only on that tree.",
+              "description": "Written only by a lane's hand-off: the lane's own runs of checks, each with the head and tree it ran on and its definition's digest, and, from a run-checks record, where it ran, how long it took, when, and its environment and host facts. The runner reuses a passing run when its record applies to the tree it checks.",
               "type": "array",
               "items": {
                 "type": "object",
@@ -1027,6 +1035,26 @@
                   },
                   "recordedAt": {
                     "$ref": "#/$defs/timestamp"
+                  },
+                  "where": {
+                    "description": "runner for a run by run-checks or the queue; checkout for a run in the lane's own checkout.",
+                    "enum": [
+                      "runner",
+                      "checkout"
+                    ]
+                  },
+                  "environment": {
+                    "$ref": "#/$defs/runEnvironment"
+                  },
+                  "host": {
+                    "$ref": "#/$defs/runHost"
+                  },
+                  "seconds": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "at": {
+                    "$ref": "#/$defs/timestamp"
                   }
                 }
               }
@@ -1057,6 +1085,32 @@
                 },
                 "recordedAt": {
                   "$ref": "#/$defs/timestamp"
+                },
+                "reuse": {
+                  "description": "Optional, written by select --reuse: the lead's grant to reuse the hand-off's records of these checks at this head, counting a path the candidate doesn't change as unread, why, and the decision.recorded entry that journals it.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "checks",
+                    "why",
+                    "decision"
+                  ],
+                  "properties": {
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/name"
+                      }
+                    },
+                    "why": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "decision": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
                 }
               }
             },
@@ -1574,6 +1628,57 @@
             "description": "A readable name for a person, such as \"Webapp e2e (Playwright)\", shown in place of the id where the check is reported. Optional; the id stays the check's name everywhere else. The runner copies it into the delivery record, cut to 200 characters.",
             "type": "string",
             "minLength": 1
+          }
+        }
+      },
+      "runEnvironment": {
+        "description": "The environment a check ran with, as its run record says it: the names it received, sorted, and a sha256 over the sorted name=value pairs that decide the run (LANG, every LC_*, the binding's inherit names, its environment and the check's profile). No value is recorded.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "names",
+          "digest"
+        ],
+        "properties": {
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      },
+      "runHost": {
+        "description": "The host a check ran on, as its run record says it: the system, release and machine, and the sha256 of each tool it names (its program, each prepare step's, and the binding's reuse.tools) resolved on its PATH with links followed, or null for one not found.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "platform",
+          "tools"
+        ],
+        "properties": {
+          "platform": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tools": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
           }
         }
       }
@@ -2451,7 +2556,7 @@
               }
             },
             "reusedFrom": {
-              "description": "For a reused check: the candidate whose lane ran it, the head it ran on, and the tree, which is the one checked here.",
+              "description": "For a reused check: the candidate whose lane ran it, the head it ran on, and that head's tree.",
               "type": "object",
               "additionalProperties": false,
               "required": [
@@ -2486,6 +2591,14 @@
             "nodeBelowMinimum": {
               "description": "Set only when the runtime declares a nodeMinimum and node is below it. It explains a failure; the check's state is still what the check itself returned. Absent otherwise.",
               "type": "boolean"
+            },
+            "environment": {
+              "description": "The environment facts of the check's run. Absent on a check that didn't run.",
+              "$ref": "#/$defs/runEnvironment"
+            },
+            "host": {
+              "description": "The host facts of the check's run. Absent on a check that didn't run.",
+              "$ref": "#/$defs/runHost"
             }
           }
         }
@@ -2630,6 +2743,57 @@
           "release_failed",
           "interrupted"
         ]
+      },
+      "runEnvironment": {
+        "description": "The environment a check ran with, as its run record says it: the names it received, sorted, and a sha256 over the sorted name=value pairs that decide the run (LANG, every LC_*, the binding's inherit names, its environment and the check's profile). No value is recorded.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "names",
+          "digest"
+        ],
+        "properties": {
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      },
+      "runHost": {
+        "description": "The host a check ran on, as its run record says it: the system, release and machine, and the sha256 of each tool it names (its program, each prepare step's, and the binding's reuse.tools) resolved on its PATH with links followed, or null for one not found.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "platform",
+          "tools"
+        ],
+        "properties": {
+          "platform": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tools": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
       }
     }
   },
@@ -2938,6 +3102,13 @@
       },
       "environment": {
         "$ref": "#/$defs/environment"
+      },
+      "inherit": {
+        "description": "Optional. Names a check and a prepare step inherit from the runner's environment, beyond the fixed baseline every one gets: PATH, HOME, USER, LOGNAME, SHELL, TMPDIR, LANG and every LC_* name. Every other inherited name is dropped from them, and a failed run's output names what was dropped. The runner's own steps (its git, candidate, regenerators, postSync, lead inputs, provider, ready, merge, release and fullHealth) still inherit its whole environment. A listed name's value is in the run's environment digest. None when absent.",
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/name"
+        }
       },
       "ready": {
         "$ref": "#/$defs/argv"
@@ -3325,11 +3496,37 @@
           }
         }
       },
-      "reusableChecks": {
-        "description": "Optional. Ids of the binding's own checks (alwaysRun or fallback) the runner may reuse from a lane's hand-off evidence when the tree it would check is exactly the tree the lane's passing run checked, under the same definition. None when absent.",
-        "type": "array",
-        "items": {
-          "$ref": "#/$defs/name"
+      "reuse": {
+        "description": "Optional. How a lane's recorded runs are reused. Every check whose definition the tree determines is reusable by default. tools names programs every check may call, each recorded by the sha256 of the file it resolves to on the check's PATH. exclude names a check whose recorded run is never reused or carried, with why, which the queue's note quotes; without a provider each id must be one of the binding's checks.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "check",
+                "why"
+              ],
+              "properties": {
+                "check": {
+                  "$ref": "#/$defs/name"
+                },
+                "why": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -3679,7 +3876,7 @@
               "minLength": 1
             },
             "offeredTransitions": {
-              "description": "Tracker snapshots only, optional: the names of the moves the tracker offers from that status, each once. Readiness before assignment reads whether the first configured start move is among them; without this field it isn't checked.",
+              "description": "Tracker snapshots only, optional: the names of the moves the tracker offers from that status, each once. Readiness before assignment walks the configured start moves, counting a move whose configured target is the status as made, and reads whether the first move not yet made is among them. An item with a status and without this field is on a tracker that restricts no move, so that move reads as offered; with neither, readiness isn't checked.",
               "type": "array",
               "items": {
                 "type": "string",

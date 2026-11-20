@@ -100,7 +100,9 @@ checks may need no file at all.
     "lenses": { "lens.x": { "short": "x", "charter": "docs/review/x.md", "use": ["story"] } },
                                               // added; the charter is a repository file. use: plan, story or both
                                               // (the default): which reviews may take it ("Review lenses" below)
-    "use": { "lens.h": ["plan"] }             // the use of a harness.config.ts lens, whose entry can't carry one
+    "use": { "lens.h": ["plan"] },            // the use of a harness.config.ts lens, whose entry can't carry one
+    "default": { "lens.h": false }            // false puts a harness.config.ts story lens on request; a
+                                              // review.lenses entry says the same with "default": false
   },
   "tracker": {                                // optional
     "updates": "publisher",                   // publisher | manual (below); default: publisher with an adapter,
@@ -122,12 +124,15 @@ checks may need no file at all.
                                               // head; pr-open: as the PR opens; pipeline-green: pr-review makes it
                                               // once the pipeline's review is current and its checks green (needs
                                               // review.pr). Absent: nothing moves by itself, and open-pr prints it
+      "refine": ["Accept"],                   // optional: the moves that refine a story when its plan is
+                                              // approved, in order; the publisher makes them on each story's
+                                              // story.approved. Its last move needs a targets entry
       "lead": {                               // later journal kinds to the moves the publisher makes for them
         "candidate.merged": ["Complete"],     // absent, or an empty list: no move, and the update says the move
         "delivery.closed": ["Close epic"]     // belongs to people (the default)
       },
-      "targets": { "Complete": "Done" }       // the status a move leads to, for a move the tracker doesn't list
-                                              // from the ticket's status, so one already made reads as made
+      "targets": { "Accept": "Accepted",      // the status a move leads to, for a move the tracker doesn't list
+                   "Complete": "Done" }       // from the ticket's status, so one already made reads as made
     }
   },
   "harness": "ignore",                        // only to skip an unreadable harness.config.ts on purpose
@@ -136,6 +141,12 @@ checks may need no file at all.
   // Fallbacks, used only where the binding and delivery-views.json declare nothing: "remote", "workDirectory",
   // "tracker": {"issueUrl"}, "forge": {"adapter"|"argv", "repository", "tokenEnv"}, "review.prepare",
   // "gates": [{"id", "argv", "timeoutSeconds"}] (argv placeholders {base}, {key}, {delivery}).
+  // A gate may instead be a string naming a binding check by id (selection.catalogue, alwaysRun or fallback): `gate`
+  // runs it through merge_queue.py run-checks at HEAD, the way the queue does, so its record says where: runner.
+  // An inline gate runs in the lane's checkout, and its record says where: checkout, with no environment or host.
+  // `gates.json` keeps each gate's record under its result; doctor reports an id the binding doesn't define.
+  // Before them, `gate` runs the binding's `selection.guards` through run-checks, reusing a guard's pass at the same
+  // tree; `gate --skip-guards --why` skips them, and `gates.json` keeps either under `guards`.
   // A gate whose argv equals inApp.build.argv also stamps the in-app build when every gate passes.
   "cleanup": {                                // optional
     "deleteRemoteBranches": false,            // lead-cleanup deletes a merged story's remote branch only if true
@@ -178,18 +189,42 @@ both, and naming either with any other use is a conflict, as are a use that is e
 `story`, and a `review.use` entry for a lens nobody declares. `doctor` lists every declared lens on its own line with
 its use and where it was declared; `config` shows each lens's use.
 
+A story lens with `"default": false` is on request: available to every story, it runs only when the lane's `--lenses`
+or the story's brief names it. A `review.lenses` entry says so in `default`; a `harness.config.ts` lens takes it from
+`review.default`, a map of lens id to `false`, as it takes its use from `review.use`. `true` is the same as leaving it
+out. A default on a mandated lens, on a lens whose use is plan only, or on a lens nobody declares is a conflict, as is a
+default that isn't `true` or `false`, and so are `review.lenses` and `review.default` giving one lens two defaults.
+`doctor`, `config` and `lead-brief` list the lenses on request on a line of their own, each with its charter's
+purpose.
+
+A story's brief asks for a lens in its delivery-file entry: `"lenses": ["lens.data"]`, declared story lens ids only.
+`lead-setup` drafts it from a `Lenses:` sentence in the story's plan section, naming each lens in backticks, as it
+drafts files from `Files:`. It is part of the plan, frozen at `lead-init`; after that, `lead-plan change --kind lenses
+--subjects <key> --lenses <ids> --why "<why>"` changes it, `--lenses ''` removes it, and the plan chapter shows the
+change as a `changed` one from the old lenses to the new. A hand edit after `lead-init` shows there as an unrecorded
+plan change.
+
 A story's review runs the mandated pair plus the story lenses its lane chooses, at round 1:
 `review-prepare <key> --round 1 --lenses <ids> --lenses-reason "<why>"`. `--lenses` names the mandated pair too,
-each lens once, and only story lenses; the reason is required, and at most 600 characters. Without `--lenses`, round
-1 runs every declared story lens, with the reason `every declared story lens`, so with no use declared anywhere every
-declared lens runs, as before. The set and its reason are fixed at round 1, in its meta: later rounds copy them, take
-`--lenses` only when it names the same set, and refuse any other. A restart of round 1 may choose again; its restart
-entry records the set it replaced, and it discards that set's results. A story whose round 1 was prepared before lenses
-could be chosen (its meta has no reason) runs every declared lens. `review-reduce` and `handoff` refuse a round
-outside the story's set, the hand-off message names the set and its reason, and `lead-accept` prints them before its
-decisions and checks the last round against the latest round 1 start's set. The delivery file has no default set: a
-lead who wants one asks for it in the lane brief's delivery notes. `lead-brief` lists each story lens with its
-charter's purpose, the first line after the title that isn't blank or a heading, cut to 160 characters.
+each lens once, and only story lenses, on request or not; the reason is required, and at most 600 characters. Without
+`--lenses`, round 1 runs the mandated pair, every story lens not on request, and every lens the story's brief names,
+with the reason `every story lens not on request`, followed by `, and the brief's <ids>` when the brief names any.
+With no lens on request and no brief lenses, that is every declared story lens, with the reason `every declared story
+lens`, so with no use declared anywhere every declared lens runs, as before. Round 1's meta records, in `requested`,
+each lens on request in the set and who asked for it, `lane` or `brief` (a lens both name is `brief`). A round 1
+`--lenses` that leaves out a lens the story's brief names is refused, naming it. The set and its reason are fixed at
+round 1, in its meta: later rounds copy them, take `--lenses` only when it names the same set, and refuse any other.
+Once a story's round 1 is prepared, `lead-plan change --kind lenses` refuses to add a lens to its brief, naming the
+story, the lens and the fixed set, and records nothing; removing one is accepted, and a review the story missed
+belongs in a follow-up. A story whose set lacks a lens its entry names, which only a hand edit after round 1 leaves,
+is refused by `handoff` and `lead-accept`, naming the lens and its removal with `lead-plan change --kind lenses`.
+A restart of round 1 may choose again; its restart entry records the set it replaced, and it discards that set's results. A story whose
+round 1 was prepared before lenses could be chosen (its meta has no reason) runs every declared lens.
+`review-reduce` and `handoff` refuse a round outside the story's set, the hand-off message names the set, its reason
+and who asked for each lens on request, and `lead-accept` prints them before its decisions and checks the last round
+against the latest round 1 start's set. `lead-brief` lists each story lens not on request with its charter's purpose,
+the first line after the title that isn't blank or a heading, cut to 160 characters, then the lenses on request, each
+with the stories whose brief asks for it.
 
 ### Several PR reviewers
 
@@ -590,6 +625,18 @@ lead. Any other session, and a closed delivery, is neither, and both hooks allow
 - **What doctor reports.** Besides refusing a bad `hooks`, it reports as `warn`, without refusing, a host settings file
   that lacks an entry the receipt records, and a `python3` on `PATH` below 3.11, which the installed command runs.
 
+### The repository's git hooks
+
+These are not the host hooks above. run-delivery's own commits run none of the repository's git hooks: `lead-plan
+change` and `lead-plan approval`, which commit the delivery file and the plan, and `lead-sync --merge`, which merges
+the default branch and commits the prepared merge. Each runs git with `core.hooksPath` set to an empty folder,
+`run-delivery/empty-hooks` under the git common directory, as the merge queue does under `hooks: "bypass"`, and does so
+whatever the binding's `hooks` says. Every hook is skipped, `pre-commit`, `commit-msg` and a secret scanner's included,
+not only a formatter: the tool wrote the files it commits, and a merge brings in commits that already passed their
+authors' hooks. The setting is passed on the command line and never written to the repository's configuration. A
+commit a lane or the lead makes with plain git still runs every hook, and so does the operator checkout's fast-forward
+at close.
+
 ## The delivery posture
 
 `.agents/delivery-posture.json`, read from the tip of the delivery's own `<remote>/<base>` and nowhere else, decides
@@ -678,7 +725,13 @@ says, and its follow-up is still filed.
 `<delivery>.lane-starts.jsonl`, at or after the entry. It then gets the start update and the `start` moves, once per
 story: never after the ledger holds the story's start or review move, and never when the ticket carries a start
 marker from the same delivery under an earlier record. An entry whose story is handed off, merged, reassigned or
-removed before it starts gets a `skip` line. The `lead` moves are made for their kinds. Each move reads the ticket's
+removed before it starts gets a `skip` line. With `refine` set, the plan's approval refines each story:
+`lead-init` journals a `story.approved` on each planned story, in plan order, after `record.started`, and a story added
+later, by `lead-plan change --kind added` or by the registration `lead-brief`, `lead-assign` and the sweep share,
+journals one after its `story.added`. Its data is `{title, plan, review?}`, the plan's path and its review record's,
+and its update on the story's ticket says the plan holding it was approved for delivery and names both. The publisher
+makes the `refine` moves for it; without `refine` nothing journals it. The tooling assumes no move names, statuses or
+step count: `refine` names the adopter's own. The `lead` moves are made for their kinds. Each move reads the ticket's
 status first: a move whose target status the ticket already has is skipped and reported as made by someone else, and
 one the tracker doesn't offer from the current status is `handled`: shown, never retried or journalled. A move's
 target is what the tracker lists for it, or else its `targets` entry; with neither, a move not listed is `handled`.

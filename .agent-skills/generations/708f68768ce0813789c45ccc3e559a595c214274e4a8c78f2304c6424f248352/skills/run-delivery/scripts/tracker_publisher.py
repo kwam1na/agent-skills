@@ -309,7 +309,7 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
     if not isinstance(transitions, dict):
         problems.append("tracker.transitions must be an object")
         transitions = {}
-    for part in ("start", "review"):
+    for part in ("start", "review", "refine"):
         value = transitions.get(part, [])
         if not isinstance(value, list) or not all(isinstance(name, str) and name for name in value):
             problems.append(f"tracker.transitions.{part} must be a list of transition names")
@@ -322,6 +322,12 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
     targets = transitions.get("targets", {})
     if not isinstance(targets, dict) or not all(isinstance(v, str) and v for v in targets.values()):
         problems.append("tracker.transitions.targets must map transition names to the status each moves to")
+    refine = transitions.get("refine")
+    if isinstance(refine, list) and refine and all(isinstance(name, str) and name for name in refine) \
+            and isinstance(targets, dict) and refine[-1] not in targets:
+        # A refine move already made must read as made on a tracker that lists only the moves out of a status.
+        problems.append(f"tracker.transitions.refine's last move, {refine[-1]!r}, needs a tracker.transitions.targets "
+                        "entry naming the status it moves to")
     lead = transitions.get("lead", {})
     if not isinstance(lead, dict) or not all(isinstance(names, list) and all(isinstance(n, str) and n for n in names)
                                              for names in lead.values()):
@@ -341,7 +347,8 @@ def untargeted(conf: dict) -> list[str]:
         return []  # A malformed `tracker` is refused first; its moves can't be read.
     transitions = conf.get("transitions") or {}
     targets = transitions.get("targets") or {}
-    names = [*(transitions.get("start") or []), *(n for moves in (transitions.get("lead") or {}).values() for n in moves)]
+    names = [*(transitions.get("start") or []), *(transitions.get("refine") or []),
+             *(n for moves in (transitions.get("lead") or {}).values() for n in moves)]
     return sorted({name for name in names if name not in targets})
 
 
@@ -569,6 +576,8 @@ class Publisher:
         transitions = self.conf.get("transitions") or {}
         if entry["kind"] == "lane.assigned":
             return "start", list(transitions.get("start") or [])
+        if entry["kind"] == "story.approved":
+            return "refine", list(transitions.get("refine") or [])
         return "lead", list((transitions.get("lead") or {}).get(entry["kind"]) or [])
 
     def started_before(self, entry: dict, names: list[str], markers: set[str]) -> bool:
