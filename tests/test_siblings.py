@@ -1,7 +1,7 @@
 """Sibling deliveries: naming one, reading its published snapshot, and what the record keeps of the read.
 
 Every reader case runs against loopback receivers this class starts once, on port 0, which record each request's
-path and headers. The bodies are real ``hosted-delivery-snapshot/2`` projections of small records, served at the
+path and headers. The bodies are real ``hosted-delivery-snapshot/3`` snapshots of small records, served at the
 digest of their bytes, as the hosted service serves them.
 """
 
@@ -168,7 +168,7 @@ class SiblingTests(unittest.TestCase):
         data = value if isinstance(value, bytes) else public.encode(value)
         type(self).sequence += 1
         now_ms = int(time.time() * 1000)
-        meta = {"protocolVersion": "hosted-delivery-api/1", "rendererVersion": renderer or "delivery-line-map/2",
+        meta = {"protocolVersion": "hosted-delivery-api/1", "rendererVersion": renderer or hosted.RENDERER,
                 "epoch": 1, "sequence": self.sequence, "digest": digest or hashlib.sha256(data).hexdigest(),
                 "sourceFingerprint": fingerprint or (value["sourceFingerprint"] if isinstance(value, dict) else "f" * 64),
                 "publishedAt": now_ms - 1000, "sourceConfirmedAt": now_ms - 1000, "serverNow": now_ms,
@@ -323,7 +323,7 @@ class SiblingTests(unittest.TestCase):
         del stageless["document"]["state"]["queue"][0]["stage"]
         cases = {
             "digest": dict(value=data, digest="d" * 64),
-            "renderer": dict(value=merged, renderer="delivery-line-map/3"),
+            "renderer": dict(value=merged, renderer="delivery-line-map/4"),
             "fingerprint": dict(value=merged, fingerprint="e" * 64),
             "schema": dict(value=refused_schema),
             "a row with no stage": dict(value=stageless),
@@ -654,7 +654,9 @@ class SiblingTests(unittest.TestCase):
 
     # -- scenario 12 -----------------------------------------------------------------------------------------------
 
-    def test_the_hosted_projection_of_a_record_with_siblings_carries_none(self) -> None:
+    def test_the_hosted_snapshot_of_a_record_with_siblings_carries_them_without_their_hosted_links(self) -> None:
+        # The hosted page shows what the local live view shows. A sibling's hosted link grants read access to that
+        # delivery, a credential under that ruling, so it is the one thing about a sibling the snapshot leaves out.
         self.serve(body("merged"))
         self.reconcile(self.read())
         document = {"state": state_tool.read_state(self.record), "journal": state_tool.read_journal(self.record)}
@@ -664,23 +666,28 @@ class SiblingTests(unittest.TestCase):
                                                                              STATE_SCRIPTS / "render_state.py")
         document = render_state.with_across(document)
         self.assertIn("SIB-1", document["across"]["held"])
-        # A tracker that links every key, so a sibling's story would be linked if anything let it through.
         tracker = {"name": "Tracker", "issueUrl": "https://tracker.test/issue/{key}"}
         value = public.project(document, {}, config(tracker=tracker), source_fingerprint="1" * 64)
         public.validate(value)
-        self.assertNotIn("across", value["document"])
-        self.assertNotIn("SIB-1", value["links"]["issues"])
-        self.assertIn(PARENT, value["links"]["issues"], "the tracker links what the hosted page does draw")
-        self.assertEqual(value["schemaVersion"], "hosted-delivery-snapshot/2")
-        self.assertNotIn("siblings", value["document"]["state"])
+        self.assertEqual(value["schemaVersion"], "hosted-delivery-snapshot/3")
+        local = public.render.line_map_data(document, {}, config(tracker=tracker), theme_key="hosted-delivery",
+                                            history=None)
+        self.assertEqual(value["links"], local["links"])
+        self.assertIn(PARENT, value["links"]["issues"])
+        self.assertEqual(value["document"]["across"]["held"], {"SIB-1": "mobile"})
+        [group] = value["document"]["across"]["groups"]
+        self.assertEqual((group["name"], [story["subject"] for story in group["stories"]]), ("mobile", ["SIB-1"]))
+        self.assertNotIn("link", group)
+        [sibling] = value["document"]["state"]["siblings"]
+        self.assertEqual(sibling["name"], "mobile")
+        self.assertNotIn("link", sibling)
         text = json.dumps(value)
-        for private in (self.link, self.public_id, "SIB-1"):
-            self.assertNotIn(private, text)
-        kinds = [entry["kind"] for entry in value["document"]["journal"]]
-        self.assertIn("sibling.landed", kinds)
-        for entry in value["document"]["journal"]:
-            self.assertNotIn("data", entry)
-
+        for capability in (self.link, self.public_id):
+            self.assertNotIn(capability, text)
+        added = next(entry for entry in value["document"]["journal"] if entry["kind"] == "sibling.added")
+        self.assertEqual(added["data"], {"sibling": "mobile"})
+        landed = next(entry for entry in value["document"]["journal"] if entry["kind"] == "sibling.landed")
+        self.assertEqual(landed["data"]["subject"], "SIB-1")
 
 if __name__ == "__main__":
     unittest.main()
