@@ -8548,6 +8548,46 @@ class CheckCatalogueQueueTests(MergeQueueTestCase):
         self.assertEqual(selection["lead"]["members"][0]["checks"], ["focused", "guard-setup", "guard"])
         self.assertEqual(sorted(self.ran(adopter)), ["always", "focused", "guard", "guard-setup"])
 
+    def history(self, adopter: Adopter, seconds: dict[str, list[int]]) -> None:
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="runner", version=current["version"], assignments={
+            "/meta/checkHistory": {"checks": {name: {"seconds": runs, "flakes": 0} for name, runs in seconds.items()},
+                                   "runs": []}})
+
+    def test_guards_start_first_then_the_longest_checks_and_a_failing_guard_ends_the_run(self) -> None:
+        # The guard comes with its prerequisite; then lib, the longest by median, then focused, then always, which has
+        # no history. A passing run records what it always did: every check, passed.
+        adopter = self.catalogue_adopter()
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        self.select_tool(adopter, "feature", "focused,lib")
+        self.history(adopter, {"focused": [4, 6, 5], "lib": [40, 60, 50], "guard": [1]})
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(self.ran(adopter), ["guard-setup", "guard", "lib", "focused", "always"])
+        checked = next(r.document() for r in results if r.document()["subcommand"] == "check")
+        self.assertEqual({entry["id"]: entry["state"] for entry in checked["checks"]},
+                         dict.fromkeys(["guard-setup", "guard", "lib", "focused", "always"], "passed"))
+        # The selection's own order is the lead's, as before; only the start order follows role and cost.
+        self.assertEqual(checked["selection"]["checks"], ["focused", "lib", "guard-setup", "guard", "always"])
+        for name, parallel in (("one at a time", {}), ("in parallel", {"parallelChecks": 4})):
+            with self.subTest(name):
+                self.fresh()
+                catalogue = [check_entry("focused", "src/app.txt", parallelSafe=True),
+                             check_entry("guard", "--always-fail", prerequisites=["guard-setup"], parallelSafe=True),
+                             check_entry("guard-setup", parallelSafe=True), check_entry("lib", "src/lib.txt", parallelSafe=True)]
+                adopter = self.adopter({**parallel, "alwaysRun": [check_entry("always", parallelSafe=True)],
+                                        "selection": {"lead": True, "catalogue": catalogue, "guards": ["guard"]}})
+                self.candidate(adopter, {"src/app.txt": "app two\n"})
+                self.select_tool(adopter, "feature", "focused,lib")
+                results = self.run_queue(adopter, "feature")
+                self.assertStopped(results, "base_broken")
+                # Nothing but the guard and its prerequisite ran, on the candidate or on the base.
+                self.assertEqual(set(self.ran(adopter)), {"guard-setup", "guard"})
+                checked = next(r.document() for r in results if r.document()["subcommand"] == "check")
+                states = {entry["id"]: entry["state"] for entry in checked["checks"]}
+                self.assertEqual(states, {"guard-setup": "passed", "guard": "failed", "lib": "skipped",
+                                          "focused": "skipped", "always": "skipped"})
+
     def test_a_selection_recorded_before_the_binding_named_a_guard_still_runs_the_guard(self) -> None:
         adopter = self.catalogue_adopter()
         self.candidate(adopter, {"src/app.txt": "app two\n"})

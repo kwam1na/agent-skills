@@ -1558,8 +1558,12 @@ need?", in format `affected-checks/1`.
   that reports work to a person should give it a display name like this
   beside its stable id. A check marked `parallelSafe` may run at the same time
   as other such checks, up to the binding's `parallelChecks`; mark only checks
-  that share nothing a concurrent run could disturb. The runner starts checks
-  in order and still honours prerequisites.
+  that share nothing a concurrent run could disturb. The runner starts the
+  binding's guards first, with the checks they need, then the rest longest
+  first by their median in `meta.checkHistory`, those with no history last,
+  and still honours prerequisites. Nothing else starts while a guard is
+  unfinished, and once one fails the rest are skipped, unrun. The order changes
+  when a check starts, never which checks run; the selection keeps its own.
 - The runner refuses the output as malformed when an argv is not a non-empty
   list of strings, a `cwd` resolves outside the checkout, ids repeat, a
   prerequisite names an unselected check, the prerequisites form a cycle, or
@@ -1673,6 +1677,8 @@ or a selection that leaves it out.
   guard the lead names itself is selected once; a full entry of the same id
   defined differently is refused. The runner adds, with a note, any guard a
   recorded selection lacks, such as one recorded before the binding named it.
+  A run starts its guards first, and a failing guard ends it before any other
+  check starts.
 - **Readers.** `selection.readers` is a list of `{paths, checks}`: when the
   candidate's diff from the base changes a path matching one of `paths` (a
   rename counts both of its paths), its `checks`, catalogue ids, join the
