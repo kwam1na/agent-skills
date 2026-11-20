@@ -5,7 +5,7 @@ import { closeSync, cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSy
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { JSDOM } from "jsdom";
+import { JSDOM, VirtualConsole } from "jsdom";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const RENDER = path.join(ROOT, "skills", "delivery-views", "scripts", "render.py");
@@ -123,19 +123,21 @@ export const RUNS_RENDERERS = [
 ];
 
 /**
- * Renders `render.py runs` in a throwaway repository whose runs command replays `runsCommands`, with `now` as the
- * page's as-of time and `watched` as what the live server says of the run store. Fails on a non-zero exit.
+ * Renders `render.py runs` (or the `view` given) in a throwaway repository whose runs command replays `runsCommands`,
+ * with `now` as the page's as-of time and `watched` as what the live server says of the run store. Fails on a non-zero
+ * exit.
  */
-export function renderRunsPage(document, { runsCommands, now = "2026-11-20T10:00:00Z", watched = null, renderers = RUNS_RENDERERS } = {}) {
+export function renderRunsPage(document, { runsCommands, now = "2026-11-20T10:00:00Z", watched = null, renderers = RUNS_RENDERERS,
+  view = "runs" } = {}) {
   const root = repository({ config: { spec: "delivery-views-config/1", runs: REPLAYED_RUNS }, runsCommands, renderers });
   try {
     const env = { ...process.env };
     delete env.DELIVERY_LIVE_RUNS;
     if (watched) env.DELIVERY_LIVE_RUNS = watched;
-    const result = runSync(PYTHON, ["-B", RENDER, "runs", "--config", ".agents/delivery-views.json",
-      "--binding", ".agents/orchestration.json", "--now", now],
+    const result = runSync(PYTHON, ["-B", RENDER, view, "--config", ".agents/delivery-views.json",
+      "--binding", ".agents/orchestration.json", ...(view === "line-map" ? [] : ["--now", now])],
       { cwd: root, env, input: JSON.stringify(document), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-    if (result.status !== 0) throw new Error(`render.py runs exited ${result.status}: ${result.stderr}`);
+    if (result.status !== 0) throw new Error(`render.py ${view} exited ${result.status}: ${result.stderr}`);
     return result.stdout;
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -216,8 +218,19 @@ export async function openPage(page, scenario = {}) {
   let clock = 0;
   const fetched = [];
   const fetchOptions = [];
+  // jsdom can't navigate: a page that reloads itself reports it, and the result's `navigations` counts each.
+  const navigations = [];
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.sendTo(console, { omitJSDOMErrors: true });
+  virtualConsole.on("jsdomError", (error) => {
+    if (/^Not implemented: navigation/.test(error.message)) navigations.push(error.message);
+    else console.error(error);
+  });
   const dom = new JSDOM(page, {
-    ...(scenario.rendered ? { url: VIEW_ADDRESS } : {}),
+    virtualConsole,
+    // `address` opens the page somewhere other than its own view, as the live server's front page; `fetchAt` is then
+    // where the server answers with `rendered`.
+    ...(scenario.rendered ? { url: scenario.address ?? VIEW_ADDRESS } : {}),
     runScripts: "dangerously",
     beforeParse(window) {
       if (scenario.now) window.Date.now = () => Date.parse(scenario.now);
@@ -285,7 +298,7 @@ export async function openPage(page, scenario = {}) {
         window.fetch = (url, options) => {
           // With the server's adapter too, its document is still read where it lives.
           if (url === "/document" && scenario.server) return fromServer(url, options);
-          if (url !== VIEW_ADDRESS) return Promise.reject(new Error("unexpected fetch " + url));
+          if (url !== (scenario.fetchAt ?? VIEW_ADDRESS)) return Promise.reject(new Error("unexpected fetch " + url));
           fetched.push(url);
           fetchOptions.push(options);
           const answer = typeof scenario.rendered === "function" ? scenario.rendered() : scenario.rendered;
@@ -362,7 +375,7 @@ export async function openPage(page, scenario = {}) {
   const scrollY = dom.window.scrollY;
   const storedTheme = (() => { try { return { ...dom.window.localStorage }; } catch { return null; } })();
   dom.window.close();
-  return Object.assign(snapshots, { storage: storedTheme, animations, fetched, fetchOptions, scrollY });
+  return Object.assign(snapshots, { storage: storedTheme, animations, fetched, fetchOptions, scrollY, navigations });
 }
 
 const TOOLS = path.join(ROOT, "tests", "delivery_views_page", "page_tools.py");

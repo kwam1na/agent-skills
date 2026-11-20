@@ -89,6 +89,12 @@ test("the detail panel draws the gates, decisions, blockers, change request, rou
   assert.equal(panel.querySelector(".history-link a").getAttribute("href"), "delivery-history.html");
 });
 
+test("a displaced run's panel says it has no result, never that it is still running", async () => {
+  const [shown] = await openPage(PAGE);
+  assert.equal(runNode(shown.app, LEFT_OPEN).querySelector(".result").textContent, "No result recorded.");
+  assert.equal(runNode(shown.app, INSIDE_PLAN).querySelector(".result").textContent, "Still running.");
+});
+
 test("a page told the store isn't watched says so", async () => {
   const [shown] = await openPage(renderRunsPage(ABSENT, { runsCommands: COMMANDS, watched: "unwatched" }));
   assert.match(shown.app.querySelector(".unwatched").textContent, /^Runs aren't being watched/);
@@ -103,11 +109,36 @@ test("through the injected adapter, a runs event re-fetches the page and the ope
     payload: { command: "scripts/run-tests.py", outcome: "pass", durationMs: 2500 } });
   const after = served(renderRunsPage(ABSENT, { runsCommands: { ...COMMANDS, [`runs show ${INSIDE_PLAN} --json`]: JSON.stringify(show) } }));
   const gates = (snapshot) => [...runNode(snapshot.app, INSIDE_PLAN).querySelectorAll(".gate code")].map((node) => node.textContent);
-  const [, opened, pushed] = await openPage(before, { server: { document: {} }, rendered: after,
-    steps: [{ click: "[data-run] > .run-head", index: 0 }, { runs: RUNS_EVENT, wait: 50 }] });
+  // Opened at the front page, as the live server serves it while there is no record: once a record reads, "/" is the line
+  // map, so the page reads itself again from its own view, and nothing answers anywhere else.
+  const result = await openPage(before, { server: { document: {} }, rendered: after, address: "http://localhost/",
+    fetchAt: "/view/runs.html", steps: [{ click: "[data-run] > .run-head", index: 0 }, { runs: RUNS_EVENT, wait: 50 }] });
+  const [, opened, pushed] = result;
   assert.deepEqual(gates(opened), ["scripts/validate-registry.py"]);
   assert.equal(runNode(pushed.app, INSIDE_PLAN).querySelector(".run-detail").hasAttribute("hidden"), false);
   assert.deepEqual(gates(pushed), ["scripts/validate-registry.py", "scripts/run-tests.py"]);
+  assert.deepEqual(result.fetched, ["/view/runs.html"]);
+});
+
+test("a pushed record re-fetches the runs page too, so a run's piece follows the record", async () => {
+  const result = await openPage(served(PAGE), { server: { document: {} }, rendered: served(PAGE), address: "http://localhost/",
+    fetchAt: "/view/runs.html", steps: [{ event: { state: {} }, wait: 50 }] });
+  assert.deepEqual(result.fetched, ["/view/runs.html"]);
+});
+
+test("with no record, the line map and history say so, link the runs page's view when served, and reload on a record", async () => {
+  const pages = ["line-map", "history"].map((view) => renderRunsPage(ABSENT, { runsCommands: COMMANDS, view }));
+  for (const page of pages) {
+    const [file] = await openPage(page, { store: null });
+    assert.equal(file.app.querySelector("h1").textContent, "No delivery is under way.");
+    assert.equal(file.app.querySelector("#runs-link").getAttribute("href"), "runs.html");
+    const opened = await openPage(served(page), { server: { document: {} }, rendered: page, steps: [{ wait: 5 }, { event: { state: {} } }] });
+    const [servedAt, waited] = opened;
+    assert.equal(servedAt.app.querySelector("#runs-link").getAttribute("href"), "/view/runs.html");
+    assert.equal(waited.app.querySelector("h1").textContent, "No delivery is under way.");
+    // One reload in all: the pushed record's.
+    assert.equal(opened.navigations.length, 1);
+  }
 });
 
 test("the runs golden pins the page whole", async () => {

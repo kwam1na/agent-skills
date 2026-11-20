@@ -56,6 +56,19 @@ test("the line map link is the binding's line-map output as a file and its /view
   assert.deepEqual([...served.app.querySelectorAll(".kicker a")].map((link) => link.getAttribute("href")), ["/view/line-map.html"]);
 });
 
+test("the history links the binding's runs page beside the line map, as a file and when served", async () => {
+  const renderers = [
+    { id: "line-map", argv: ["python3", "-B", "render.py", "line-map"], output: "line-map.html", timeoutSeconds: 30 },
+    { id: "runs", argv: ["python3", "-B", "render.py", "runs"], output: "views/all runs.html", timeoutSeconds: 60 },
+  ];
+  const page = renderHistoryPage({}, { config: { spec: "delivery-views-config/1" }, renderers });
+  const [file] = await openPage(page);
+  const [served] = await openPage(page, { rendered: page });
+  assert.deepEqual([...file.app.querySelectorAll(".kicker a")].map((link) => [link.textContent, link.getAttribute("href")]),
+    [["Back to the line map", "line-map.html"], ["The runs", "views/all%20runs.html"]]);
+  assert.equal(served.app.querySelectorAll(".kicker a")[1].getAttribute("href"), "/view/views/all%20runs.html");
+});
+
 test("a line map output in a folder keeps its separators, as a file and when served", async () => {
   const renderers = [
     { id: "line-map", argv: ["python3", "-B", "render.py", "line-map"], output: "views/line map.html", timeoutSeconds: 30 },

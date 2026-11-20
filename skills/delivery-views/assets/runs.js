@@ -110,7 +110,7 @@
     }
     var result = isObject(run.result) ? run.result : null;
     var resultNode = el("p", "result");
-    if (!result) { resultNode.textContent = run.open === true ? "Still running." : "No result recorded."; }
+    if (!result) { resultNode.textContent = run.open === true && run.section === "now" ? "Still running." : "No result recorded."; }
     else {
       var cost = typeof result.total === "number" ? result.total + " " + (text(result.unit) || "units") : "cost unreported";
       resultNode.textContent = (text(result.result) || "ended") + " · " + cost + " · coverage " + (text(result.coverage) || "unreported");
@@ -187,7 +187,9 @@
 
   function refetch() {
     if (!served || typeof fetch !== "function") { return; }
-    fetch(location.href, { cache: "no-store" }).then(function (answer) { return answer.text(); }).then(function (body) {
+    // Its own address, never the one it was opened at: served as the front page while there was no record, the front
+    // page becomes the line map once a record reads, and this page would never find itself there again.
+    fetch(text(VIEW.own) ? "/view/" + VIEW.own.split("/").map(encodeURIComponent).join("/") : location.href, { cache: "no-store" }).then(function (answer) { return answer.text(); }).then(function (body) {
       var found = /<script type="application\/json" id="delivery-run-page">([^<]*)<\/script>/.exec(body);
       var seen = /<script type="application\/json" id="delivery-run-page-view">([^<]*)<\/script>/.exec(body);
       if (!found) { return; }

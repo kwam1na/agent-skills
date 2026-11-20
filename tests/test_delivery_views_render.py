@@ -1266,7 +1266,8 @@ class RunsPageTests(unittest.TestCase):
         cls.root = Path(cls.folder.name)
         cls.runs = Runs(cls.root)
         cls.runs.answer(CAPTURED)
-        document = {"state": {"queue": [{"subject": "V26-0001", "runId": ENDED}], "planned": []}}
+        document = {"state": {"queue": [{"subject": "V26-0001", "runId": ENDED}],
+                              "planned": [{"subject": "PAY-101", "runId": AGENT}]}}
         cls.page = render.collect_run_page(document, config(cls.runs), cls.root, cls.root / "cache.json",
                                            time.monotonic() + FAR)
         cls.by_id = {entry["runId"]: entry for entry in cls.page["runs"]}
@@ -1298,6 +1299,7 @@ class RunsPageTests(unittest.TestCase):
         self.assertEqual([round_["round"] for round_ in ended["summary"]["roundDetail"]], [1])
         self.assertEqual((ended["ticket"], ended["piece"]), ("V26-0001", "V26-0001"))
         agent = self.by_id[AGENT]
+        self.assertEqual(agent["piece"], "PAY-101")
         self.assertEqual((agent["stages"], agent["currentStage"], agent["activity"]["nextStep"]),
                          (["diagnose"], "diagnose", "Trace the failing assertion."))
         self.assertEqual(agent["waits"], [{"waitId": "reproduction", "waitingOn": "agent", "owner": "claude-code",
@@ -1338,14 +1340,39 @@ class RunsPageTests(unittest.TestCase):
     def test_a_run_whose_view_fails_or_passes_the_deadline_is_unavailable_and_the_others_render(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             runs = Runs(Path(folder))
-            runs.answer({**CAPTURED, f"runs view {AGENT} --json": None,
+            runs.answer({**CAPTURED, f"runs view {AGENT} --json": None, f"runs show {PARTIAL} --json": None,
                          f"runs view {REVIEW_AGAIN} --json": {"sleep": 30, "then": CAPTURED[f"runs view {REVIEW_AGAIN} --json"]}})
             page = render.collect_run_page(ABSENT, config(runs), Path(folder), Path(folder) / "cache.json", time.monotonic() + 5)
         shown = {entry["runId"]: entry for entry in page["runs"]}
-        self.assertTrue(shown[AGENT]["unavailable"] and shown[REVIEW_AGAIN]["unavailable"])
+        self.assertTrue(shown[AGENT]["unavailable"] and shown[REVIEW_AGAIN]["unavailable"] and shown[PARTIAL]["unavailable"])
         self.assertEqual((shown[AGENT]["section"], shown[REVIEW_AGAIN]["open"]), ("now", True))
         self.assertEqual(sorted(run_id for run_id, entry in shown.items() if not entry.get("unavailable")),
-                         sorted([INSIDE_PLAN, EXECUTE_AGAIN, ENDED, LEFT_OPEN, PARTIAL]))
+                         sorted([INSIDE_PLAN, EXECUTE_AGAIN, ENDED, LEFT_OPEN]))
+
+    def test_a_run_that_grew_is_read_again_and_an_unchanged_one_comes_from_the_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            runs = Runs(root)
+            runs.answer(CAPTURED)
+            # The runs page's own cache, beside the line map's, which holds another shape.
+            cache = views_common.runs_cache_path(root / "state").with_name("runs-page.json")
+            render.collect_run_page(ABSENT, config(runs), root, cache, time.monotonic() + FAR)
+            show = json.loads(CAPTURED[f"runs show {INSIDE_PLAN} --json"])
+            show["events"].append({"seq": 17, "kind": "gate.reported", "at": "2026-11-20T08:00:03Z",
+                                   "payload": {"command": "scripts/run-tests.py", "outcome": "pass", "durationMs": 2500}})
+            listed = json.loads(CAPTURED["runs list --json"])
+            for row in listed["runs"]:
+                row["bytes"] += 200 if row["runId"] == INSIDE_PLAN else 0
+            runs.answer({**CAPTURED, "runs list --json": json.dumps(listed), f"runs show {INSIDE_PLAN} --json": json.dumps(show)})
+            again = {entry["runId"]: entry for entry in
+                     render.collect_run_page(ABSENT, config(runs), root, cache, time.monotonic() + FAR)["runs"]}
+            asked = runs.calls()
+        self.assertEqual([gate["command"] for gate in again[INSIDE_PLAN]["gates"]],
+                         ["scripts/validate-registry.py", "scripts/run-tests.py"])
+        self.assertEqual(sorted(call for call in asked if not call.startswith("runs list")),
+                         sorted([f"runs show {INSIDE_PLAN} --json", f"runs view {INSIDE_PLAN} --json"]))
+        self.assertEqual(again[ENDED]["gates"], self.by_id[ENDED]["gates"])
+        self.assertFalse(views_common.runs_cache_path(root / "state").exists())
 
     def test_over_the_budget_the_oldest_ended_runs_give_up_their_details_first(self) -> None:
         size = len(render.embed(self.page).encode("utf-8"))
@@ -1374,6 +1401,9 @@ class RunsPageTests(unittest.TestCase):
                                       input=json.dumps(ABSENT).encode("utf-8"), capture_output=True, timeout=120)
                 self.assertEqual(done.returncode, 0, done.stderr)
                 pages[name] = done.stdout.decode("utf-8")
+            cached = sorted(path.name for path in (Path(folder) / "state" / ".cache" / "delivery-views").iterdir())
+        # The runs page keeps its own cache: the line map's holds another shape.
+        self.assertEqual(cached, ["runs-page.json"])
         listed = [entry["runId"] for entry in block(pages["runs"], "delivery-run-page")["runs"]]
         self.assertEqual(sorted(listed), sorted(self.by_id))
         for name in ("line-map", "history"):
@@ -1395,6 +1425,13 @@ class RunsPageTests(unittest.TestCase):
         shown = render.run_of_events(exported)
         self.assertEqual((shown["stages"], shown["currentStage"]), (["execute", "review"], "execute"))
         self.assertEqual(shown["activity"]["activityId"], "command-0002")
+        # Once the verify and the lens end, the run is doing what it did before them: execute, and its next step.
+        events = exported["events"]
+        events[0]["payload"]["nextStep"] = "Build it."
+        events.extend([observed(6, "command-0002", "verify", "completed"), observed(7, "review-lens-outcome", "review", "completed")])
+        self.assertEqual(render.run_of_events(exported)["activity"],
+                         {"activityId": "stage-execute", "phase": "execute", "state": "running", "nextStep": "Build it.",
+                          "at": "2026-11-20T09:00:01Z"})
 
 
 class LiveRunsPageTests(unittest.TestCase):

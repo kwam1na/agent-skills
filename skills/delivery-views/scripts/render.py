@@ -965,7 +965,8 @@ def run_of_events(exported: object) -> dict | None:
                     key=lambda event: _count(event.get("seq")) or 0)
     stages: list[str] = []
     entered: list[str] = []
-    activity = None
+    # Each activity still open, by id, in the order it last moved: the current one is the last.
+    running: dict[str, dict] = {}
     waits: dict[str, dict] = {}
     gates, decisions, blockers = [], [], []
     change, result, displaces = None, None, None
@@ -983,11 +984,16 @@ def run_of_events(exported: object) -> dict | None:
                 if state not in ENDED_STATES:
                     # The innermost stage open is the current one; one entered again is innermost again.
                     entered.append(stage)
+            named = _text(payload.get("activityId")) or ""
             if state in ("queued", "running", "waiting"):
-                activity = {"activityId": _text(payload.get("activityId")), "phase": _text(payload.get("phase")),
-                            "state": state, "nextStep": _text(payload.get("nextStep")), "at": _text(event.get("at"))}
-            elif activity is not None and activity["activityId"] == _text(payload.get("activityId")):
-                activity = None
+                previous = running.pop(named, None)
+                # A later state that names no next step keeps the one it had.
+                step = _text(payload.get("nextStep")) or (previous or {}).get("nextStep")
+                running[named] = {"activityId": _text(payload.get("activityId")), "phase": _text(payload.get("phase")),
+                                  "state": state, "nextStep": step, "at": _text(event.get("at"))}
+            else:
+                # An activity that ended hands back to the one it ran inside, still open.
+                running.pop(named, None)
         elif kind == "wait.started" and _text(payload.get("waitId")):
             waits[payload["waitId"]] = {"waitId": payload["waitId"], "waitingOn": _text(payload.get("waitingOn")),
                                         "reason": _text(payload.get("reason")), "nextAction": _text(payload.get("nextAction")),
@@ -1010,7 +1016,7 @@ def run_of_events(exported: object) -> dict | None:
     shown_waits = [{**wait, "needsYou": wait["waitingOn"] == "human"} for wait in waits.values()]
     return {"runId": summary["runId"], "ticket": summary["ticket"], "startedAt": summary["startedAt"],
             "lastAt": summary["lastAt"], "stages": stages, "currentStage": entered[-1] if entered else None,
-            "activity": activity, "waits": shown_waits, "needsYou": any(wait["needsYou"] for wait in shown_waits),
+            "activity": list(running.values())[-1] if running else None, "waits": shown_waits, "needsYou": any(wait["needsYou"] for wait in shown_waits),
             "gates": gates, "decisions": decisions, "blockers": blockers, "changeRequest": change, "result": result,
             "displaces": displaces}
 
@@ -1118,9 +1124,10 @@ def _page_head(title: str, styles: str) -> list[str]:
 
 
 def render_runs(page: dict, config: dict, *, line_map: str | None, history: str | None, watched: str | None,
-                as_of: str) -> str:
-    """The runs page. ``watched`` is what the live server said of the run store: watched, unwatched, or None."""
-    view = {"lineMap": line_map, "history": history, "runs": config["runs"] is not None, "asOf": as_of,
+                as_of: str, own: str | None = None) -> str:
+    """The runs page. ``watched`` is what the live server said of the run store: watched, unwatched, or None. ``own``
+    is this page's own output, which a live page reads itself again from, wherever it was opened."""
+    view = {"lineMap": line_map, "history": history, "own": own, "runs": config["runs"] is not None, "asOf": as_of,
             "watched": watched if watched in ("watched", "unwatched") else None, "lenses": config["lenses"],
             "links": page_links({}, {}, config) | {"changes": {
                 entry["changeRequest"]: link for entry in page["runs"] if _text(entry.get("changeRequest"))
@@ -1798,7 +1805,8 @@ def runs(arguments: argparse.Namespace) -> int:
     sys.stdout.write(render_runs(run_page_within_budget(collected), inputs.config,
                                  line_map=_renderer_output(inputs.binding, "line-map"),
                                  history=_renderer_output(inputs.binding, "history"),
-                                 watched=os.environ.get(RUNS_FLAG), as_of=as_of))
+                                 watched=os.environ.get(RUNS_FLAG), as_of=as_of,
+                                 own=_renderer_output(inputs.binding, "runs")))
     return 0
 
 

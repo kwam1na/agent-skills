@@ -230,7 +230,7 @@
         },
         {
           "path": "skills/delivery-views/assets/runs.js",
-          "sha256": "aa0bbe91882a8dfd5bb1311fc522f4d2c7bdc67b8b5969acde634c1efff2792d"
+          "sha256": "16ba57788ba654280fef93d9b659d31a0df50922c2eab9c40b016b2943c879a4"
         },
         {
           "path": "skills/delivery-views/references/delivery-plan.schema.json",
@@ -250,7 +250,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "212857c7d2766362c2e7e4a0832fd54aba0c267906bdb64ba22d98d255d05544"
+          "sha256": "215c40042a5570891745a8aa60680196fa23b8a5e1169ed45013f279a44fe21a"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
