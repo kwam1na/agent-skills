@@ -522,7 +522,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "9fd7a480eb98d0699ed1d4435901f4bd067bf5f29da569a311a2f35308468979"
+          "sha256": "2c96a476fd44d0745fab0d82fbf00f83ea7187a58217445e9ccee06a2168c0d3"
         },
         {
           "path": "skills/orchestrate-work/references/story.schema.json",
