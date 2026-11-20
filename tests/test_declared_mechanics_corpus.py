@@ -118,7 +118,7 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "On Windows, which is not validated (see above), use `.venv\\Scripts\\python.exe`",
         "on a commit merged to the default branch, usually a merge commit",
         "CI does not block a release either: the release workflow reads no CI result",
-        "Its macOS job runs on a push there, and with a `full-matrix` label on a change request",
+        "CI runs only `cut-release`, on every change request and on each push to the default branch",
         "Stop only processes you started, by the pid you recorded, and never by"
         " pattern with `pkill` or `killall`",
         "resolves, in this repository, to the commit whose tree carries the"

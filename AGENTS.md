@@ -40,9 +40,9 @@ id does; an adopter verifies the final's own. See `docs/product-generation.md`.
 The default branch is unprotected, and CI on it informs rather than blocks. A merge
 can land on red, and it falls to whoever merges to read the result and fix what it
 shows. CI does not block a release either: the release workflow reads no CI result,
-so pushing a tag publishes whatever CI says about its commit. CI's Ubuntu job and
-`cut-release` run on every change request and on each push to the default branch. Its
-macOS job runs on a push there, and with a `full-matrix` label on a change request.
+so pushing a tag publishes whatever CI says about its commit. CI runs only
+`cut-release`, on every change request and on each push to the default branch. It runs
+no tests, so the full local suite before a tag is the only run of them.
 
 Before tagging, run the full suite locally on macOS with Python 3.11. A release rests
 on that run passing. Nothing else checks it, in CI or in the release job, so it rests

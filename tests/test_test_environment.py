@@ -131,7 +131,6 @@ class PinnedPythonTests(unittest.TestCase):
         self.assertIn(f'requires-python = ">={pin}"', (self.REPOSITORY / "pyproject.toml").read_text(encoding="utf-8"))
         workflows = self.REPOSITORY / ".github/workflows"
         ci = (workflows / "ci.yml").read_text(encoding="utf-8")
-        self.assertIn(f'python-version: ["{pin}"]', ci)
         versions = re.findall(r'python-version: "([^"]+)"', ci + (workflows / "release.yml").read_text(encoding="utf-8"))
         self.assertTrue(versions)
         self.assertEqual(set(versions), {pin})

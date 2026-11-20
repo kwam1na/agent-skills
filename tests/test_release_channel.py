@@ -442,12 +442,12 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn('python-version: "3.11"', ci.split("\n  cut-release:\n", 1)[1])
         self.assertIn('python -m pip install -e ".[test]"', ci.split("\n  cut-release:\n", 1)[1])
 
-    def test_ci_still_defines_the_validate_matrix_and_cut_release(self) -> None:
+    def test_ci_runs_only_cut_release_and_no_tests(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        systems = json.loads(re.search(r"\) && '(\[[^']*\])' \|\| '", workflow).group(1))
-        self.assertEqual(systems, ["ubuntu-latest", "macos-latest"])
-        self.assertIn('python-version: ["3.11"]', workflow)
-        self.assertEqual(re.findall(r"(?m)^  ([a-z-]+):$", workflow.split("\njobs:\n", 1)[1]), ["validate", "cut-release"])
+        self.assertEqual(re.findall(r"(?m)^  ([a-z-]+):$", workflow.split("\njobs:\n", 1)[1]), ["cut-release"])
+        for withdrawn in ("run-tests.py", "macos", "full-matrix", "matrix", "unittest"):
+            with self.subTest(withdrawn=withdrawn):
+                self.assertNotIn(withdrawn, workflow)
         self.assertNotRegex(workflow, r"(?i)gates? (publishing|a release|releases)")
 
     def test_ci_proves_the_release_path_with_nothing_above_read_permission(self) -> None:
@@ -460,18 +460,8 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn('scripts/cut-release.py --version v0.0.0-rc.0 --out "$RUNNER_TEMP/release"', job)
         self.assertIn('git status --porcelain', job)
 
-    def test_every_ci_system_sizes_its_workers_from_the_runner(self) -> None:
+    def test_ci_runs_on_every_change_request_and_each_push_to_main(self) -> None:
         ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertEqual(re.findall(r"(?m)^    timeout-minutes: (\d+)$", ci), ["120", "120"])
-        self.assertEqual(re.findall(r"(?m)^.*scripts/run-tests\.py.*$", ci),
-                         ["""        run: python scripts/run-tests.py --workers "$(python -c 'import os; print(os.cpu_count())')\""""])
-        self.assertRegex(ci, r"(?m)^      - shell: bash\n        run: python scripts/run-tests\.py ")
-
-    def test_ci_runs_ubuntu_and_adds_macos_on_a_push_to_main_or_with_the_label(self) -> None:
-        ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertIn("""        os: ${{ fromJSON((github.event_name == 'push' """
-                      """|| contains(github.event.pull_request.labels.*.name, 'full-matrix')) """
-                      """&& '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}\n""", ci)
         self.assertNotIn("windows-latest", ci)
         self.assertRegex(ci, r"(?m)^  push:\n    branches: \[main\]$")
         self.assertRegex(ci, r"(?m)^on:\n  pull_request:\n  push:$")

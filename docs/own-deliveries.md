@@ -393,7 +393,7 @@ deploying; the corpus's own CI jobs inform and hold neither. The service and the
 publishing generation move together: a snapshot or renderer version change
 deploys the service in the same step that applies the generation (hosted
 deliveries, "Versions move together"). An absent/red service
-job is not replaced by a green corpus job or a passing local suite. The lead owns the budgeted macOS
+job is not replaced by a passing local suite. The lead owns the budgeted macOS
 Python 3.11 full suite; packaging lanes run only focused checks.
 
 Installed-archive qualification from local builds is not published-candidate

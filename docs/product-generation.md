@@ -202,8 +202,8 @@ the release; the tag's annotation says it went over.
 
 CI on `main` informs. It does not block a merge, because `main` is unprotected, and it
 does not block a release, because the release workflow does not read it. A merge can
-land on red, and it falls to whoever merges to read the result and fix it. CI's macOS
-job runs on pushes to `main`, and on a change request with the `full-matrix` label.
+land on red, and it falls to whoever merges to read the result and fix it. CI runs
+only `cut-release`, and no tests.
 Windows is not validated.
 
 Never move or reuse a release tag. A version tag that never published may be deleted to
