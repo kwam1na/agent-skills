@@ -374,8 +374,8 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertRegex(self.head, r"(?m)^permissions: \{\}$")
         self.assertRegex(self.guard, r"(?m)^    permissions:\n      contents: read\n    outputs:$")
         self.assertNotIn("write", self.guard)
-        self.assertRegex(self.publish, r"(?m)^    permissions:\n      contents: write\n      id-token: write\n      attestations: write$")
-        self.assertEqual(self.workflow.count(": write"), 3)
+        self.assertRegex(self.publish, r"(?m)^    permissions:\n      contents: write\n    steps:$")
+        self.assertEqual(self.workflow.count(": write"), 1)
 
     def test_no_job_calls_the_matrix(self) -> None:
         self.assertNotIn("uses: ./.github/workflows/ci.yml", self.workflow)
@@ -422,14 +422,15 @@ class WorkflowWiringTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, self.workflow)
 
-    def test_provenance_precedes_publishing_and_both_cover_every_output_file(self) -> None:
+    def test_publishing_covers_every_output_file_and_attests_nothing(self) -> None:
+        # GitHub offers no attestation for a private repository owned by a personal account, so none is made.
         cut = self.publish.index("scripts/cut-release.py")
-        provenance = self.publish.index("actions/attest-build-provenance@")
         release = self.publish.index("gh release create")
-        self.assertLess(cut, provenance)
-        self.assertLess(provenance, release)
-        self.assertIn("subject-path: ${{ runner.temp }}/release/*", self.publish)
+        self.assertLess(cut, release)
         self.assertIn('"$OUT"/*', self.publish[release:])
+        for withdrawn in ("attest", "id-token"):
+            with self.subTest(withdrawn=withdrawn):
+                self.assertNotIn(withdrawn, self.workflow)
         self.assertNotIn("if: always()", self.publish)
         self.assertNotIn("continue-on-error", self.workflow)
 

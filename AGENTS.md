@@ -27,7 +27,7 @@ commit must equal or descend from the highest one's; a backport to an older line
 unsupported. Never move or reuse a release tag. A version tag that never published
 may be deleted to clear that guard, which is neither. Pushing the tag publishes a
 GitHub release of the same name from the tagged tree, carrying its verified product
-archives, release files and records with their build provenance; that release is
+archives, release files and records; that release is
 the channel adopters download from. A release edits no file in the repository and
 needs no live tracker run. Older set-named tags remain, frozen in place with their
 checked-in bytes, and do not match the publish trigger.
