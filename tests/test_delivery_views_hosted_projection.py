@@ -358,6 +358,7 @@ WITHDRAWN = [
     r'Local reference omitted', r'not published', r'unpublished', r'publishes no (facts|story)',
     r'carries no (story|facts)', r'none of its facts', r'privacy', r'redact', r'allowlist', r'workstation',
     r'hostedCut', r'option[- ]path', r'leaves? out the steps', r'unrelated[_ ]evidence', r'unregistered[_ ]kind',
+    r'execution details', r'no other facts', r'and no story\b', r'identity and kind', r'no link a fact names',
 ]
 WITHDRAWN_FILES = [
     'skills/delivery-views/scripts/public_projection.py', 'skills/delivery-views/references/hosted-snapshot.schema.json',
