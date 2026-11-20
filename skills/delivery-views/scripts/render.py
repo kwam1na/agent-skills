@@ -10,6 +10,15 @@ live opt-in marker, so the state tool's live server serves it at
 ``/view/<output>`` and the page follows every record write by itself; opened
 as a file, it shows the record as it was rendered.
 
+``runs`` prints the runs page: every run the configured ``runs`` command lists,
+open runs first under "Now", then ended ones, each newest first, with its line of
+workflow stages, what it is doing, what it waits on, and a detail panel of its
+gates, decisions, blockers, change request, review rounds and result. It reads
+each run with ``runs show`` and ``runs view``, and serves with or without a record:
+the live server renders it from ``{"spec": "delivery-state-absent/1"}`` while there
+is none. ``line-map`` and ``history`` given that document each print one page that
+says no delivery is under way and links to the runs page.
+
 ``history`` prints the delivery history: every run the configured ``runs``
 command lists, read with ``runs show``, and every export in the configured
 ``exports`` directory, newest first, each opening the line map's run summary.
@@ -44,9 +53,11 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 import re
 import subprocess
 import time
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -94,6 +105,13 @@ QUIET_FIELDS = frozenset({"Attempt", "Authority", "Candidate", "Cost", "Elapsed 
 # The report's own states, in the run's words, for a finding the run observed no state for.
 RAISED_STATES = {"open": "unresolved", "deferred": "deferred", "dropped": "resolved"}
 CONTROL_RUN = re.compile("[\u0000-\u001f\u007f]+")
+# What the live server gives every view while its state directory holds no record.
+ABSENT_SPEC = "delivery-state-absent/1"
+# The workflow stages a run's line draws, read only from activities named stage-<name> with that phase.
+STAGES = ("route", "plan", "diagnose", "execute", "review", "compound")
+ENDED_STATES = frozenset({"completed", "failed", "interrupted"})
+# What the live server tells its views of the run store, when the binding names liveRuns.
+RUNS_FLAG = "DELIVERY_LIVE_RUNS"
 SAFE_INTEGER = 2 ** 53 - 1
 
 
@@ -915,6 +933,251 @@ def collect_history(document: object, config: dict, root: Path, cache_path: Path
     return {"asOf": as_of, "rows": sorted(rows.values(), key=_history_order), "notes": notes}
 
 
+def is_absent(document: object) -> bool:
+    """Whether the document is the live server's word that there is no record."""
+    return _is_object(document) and document.get("spec") == ABSENT_SPEC
+
+
+def _payload(event: dict) -> dict:
+    return event["payload"] if _is_object(event.get("payload")) else {}
+
+
+def _stage_of(payload: dict) -> str | None:
+    """The stage an activity marks: an activity named stage-<name> whose phase is that stage, or None."""
+    activity, phase = _text(payload.get("activityId")), _text(payload.get("phase"))
+    return phase if activity is not None and activity.startswith("stage-") and phase in STAGES else None
+
+
+def _cost(value: object) -> dict | None:
+    if not _is_object(value):
+        return None
+    return {"unit": _text(value.get("unit")), "total": _count(value.get("total")), "coverage": _text(value.get("coverage"))}
+
+
+def run_of_events(exported: object) -> dict | None:
+    """What the runs page shows of a run, from its exported events: its stages in first-entry order and the current
+    one, its current activity, its unresolved waits, gates, decisions, blockers, change request, result, and the run
+    its start displaced. None when the value is not a run export."""
+    summary = summarize_run_export(exported)
+    if summary is None:
+        return None
+    events = sorted((event for event in exported.get("events", []) if _is_object(event)) if isinstance(exported.get("events"), list) else (),
+                    key=lambda event: _count(event.get("seq")) or 0)
+    stages: list[str] = []
+    entered: list[str] = []
+    activity = None
+    waits: dict[str, dict] = {}
+    gates, decisions, blockers = [], [], []
+    change, result, displaces = None, None, None
+    for event in events:
+        kind, payload = event.get("kind"), _payload(event)
+        if kind == "run.started":
+            displaces = _text(payload.get("displacedRunId")) or displaces
+        elif kind == "activity.observed":
+            stage, state = _stage_of(payload), _text(payload.get("state"))
+            if stage is not None:
+                if stage not in stages:
+                    stages.append(stage)
+                if stage in entered:
+                    entered.remove(stage)
+                if state not in ENDED_STATES:
+                    # The innermost stage open is the current one; one entered again is innermost again.
+                    entered.append(stage)
+            if state in ("queued", "running", "waiting"):
+                activity = {"activityId": _text(payload.get("activityId")), "phase": _text(payload.get("phase")),
+                            "state": state, "nextStep": _text(payload.get("nextStep")), "at": _text(event.get("at"))}
+            elif activity is not None and activity["activityId"] == _text(payload.get("activityId")):
+                activity = None
+        elif kind == "wait.started" and _text(payload.get("waitId")):
+            waits[payload["waitId"]] = {"waitId": payload["waitId"], "waitingOn": _text(payload.get("waitingOn")),
+                                        "reason": _text(payload.get("reason")), "nextAction": _text(payload.get("nextAction")),
+                                        "owner": _text(payload.get("owner")), "since": _text(event.get("at"))}
+        elif kind == "wait.resolved" and _text(payload.get("waitId")):
+            waits.pop(payload["waitId"], None)
+        elif kind == "gate.reported":
+            gates.append({"command": _text(payload.get("command")), "outcome": _text(payload.get("outcome")),
+                          "durationMs": _count(payload.get("durationMs"))})
+        elif kind == "decision.recorded":
+            decisions.append({"fork": _text(payload.get("fork")), "choice": _text(payload.get("choice")),
+                              "text": _text(payload.get("text")), "why": _text(payload.get("why"))})
+        elif kind == "blocker.recorded":
+            blockers.append({"code": _text(payload.get("code")), "summary": _text(payload.get("summary"))})
+        elif kind == "pr.opened":
+            change = _text(payload.get("url")) or change
+        elif kind == "run.ended":
+            cost = _cost(payload.get("cost")) or {"unit": None, "total": None, "coverage": None}
+            result = {"result": _text(payload.get("result")), **cost}
+    shown_waits = [{**wait, "needsYou": wait["waitingOn"] == "human"} for wait in waits.values()]
+    return {"runId": summary["runId"], "ticket": summary["ticket"], "startedAt": summary["startedAt"],
+            "lastAt": summary["lastAt"], "stages": stages, "currentStage": entered[-1] if entered else None,
+            "activity": activity, "waits": shown_waits, "needsYou": any(wait["needsYou"] for wait in shown_waits),
+            "gates": gates, "decisions": decisions, "blockers": blockers, "changeRequest": change, "result": result,
+            "displaces": displaces}
+
+
+def _listed_facts(row: dict) -> dict:
+    return {"open": row.get("open") if isinstance(row.get("open"), bool) else None, "status": _text(row.get("status")),
+            "current": row.get("current") is True, "durationSeconds": _count(row.get("durationSeconds"))}
+
+
+def _read_page_run(product: Product, run_id: str, row: dict, specs: list[str]) -> dict | None:
+    """A run as the runs page shows it, from ``runs show`` and ``runs view``, or None when either can't be read."""
+    shown = run_of_events(product("runs", "show", run_id, "--json"))
+    if shown is None:
+        return None
+    rounds = _read_run(product, run_id, row, specs)
+    if rounds is None:
+        return None
+    return {**shown, "runId": run_id, "summary": rounds}
+
+
+def _page_order(entry: dict) -> tuple:
+    at = _milliseconds(entry.get("startedAt") if entry.get("section") == "now" else entry.get("lastAt") or entry.get("startedAt"))
+    return (entry.get("section") != "now", at is None, -(at or 0), entry["runId"])
+
+
+def collect_run_page(document: object, config: dict, root: Path, cache_path: Path, deadline: float) -> dict:
+    """Every listed run as the runs page shows it, each read again only when the inventory shows it changed: open
+    runs first, then ended ones and those a later start displaced, each newest first."""
+    argv = views_common.runs_argv(config, root)
+    if argv is None:
+        return {"runs": [], "notes": []}
+    product = Product(argv, config["runs"]["timeoutSeconds"], config["scrubEnv"], root, deadline)
+    specs = config["findings"]["reportSpecs"]
+    inventory = product("runs", "list", "--json")
+    if not _is_object(inventory) or not isinstance(inventory.get("runs"), list):
+        return {"runs": [], "notes": ["The product's run list could not be read."]}
+    rows = [row for row in inventory["runs"] if _is_object(row) and _text(row.get("runId"))]
+    pieces = {run_id: _text(item.get("subject")) for key in ("queue", "planned")
+              for item in ((document.get("state") or {}).get(key) or [] if _is_object(document) and not is_absent(document)
+                           and _is_object(document.get("state")) else [])
+              if _is_object(item) for run_id in [_text(item.get("runId"))] if run_id}
+    cached = views_common.read_runs_cache(cache_path)
+    kept, read, unread = {}, {}, []
+    for row in rows:
+        size = row.get("bytes") if _count(row.get("bytes")) is not None else None
+        hit = cached.get(row["runId"])
+        if (size is not None and _is_object(hit) and _number_equal(hit.get("bytes"), size)
+                and hit.get("reportSpecs") == specs and _is_object(hit.get("summary"))):
+            kept[row["runId"]] = hit
+            read[row["runId"]] = hit["summary"]
+        else:
+            unread.append(row)
+
+    def one(row: dict) -> tuple:
+        own = Product(argv, config["runs"]["timeoutSeconds"], config["scrubEnv"], root, deadline)
+        return _read_page_run(own, row["runId"], row, specs), own.late
+
+    with ThreadPoolExecutor(max_workers=READ_WORKERS) as pool:
+        for row, (entry, late) in zip(unread, pool.map(one, unread)):
+            size = row.get("bytes") if _count(row.get("bytes")) is not None else None
+            if entry is None:
+                continue
+            if size is not None and not late:
+                kept[row["runId"]] = {"bytes": size, "reportSpecs": specs, "summary": entry}
+            read[row["runId"]] = entry
+    views_common.write_runs_cache(cache_path, kept)
+    displaced = {entry["displaces"]: run_id for run_id, entry in read.items() if entry.get("displaces")}
+    shown = []
+    for row in rows:
+        run_id = row["runId"]
+        facts = _listed_facts(row)
+        entry = {**read[run_id], **facts} if run_id in read else {"runId": run_id, "unavailable": True, **facts}
+        entry["displacedBy"] = displaced.get(run_id)
+        # A run a later start displaced was left open: it is listed with the ended runs, never under Now.
+        entry["section"] = "now" if facts["open"] is True and entry["displacedBy"] is None else "ended"
+        entry["piece"] = pieces.get(run_id)
+        shown.append(entry)
+    return {"runs": sorted(shown, key=_page_order), "notes": []}
+
+
+def run_page_within_budget(page: dict, budget: int = PAGE_BUDGET_BYTES) -> dict:
+    """The runs page within its budget: ended runs give up their details first, oldest first, then open ones."""
+    page = copy.deepcopy(page)
+    size = len(embed(page).encode("utf-8"))
+    ended = [entry for entry in page["runs"] if entry.get("section") == "ended"]
+    current = [entry for entry in page["runs"] if entry.get("section") != "ended"]
+    for entry in [*reversed(ended), *reversed(current)]:
+        if size <= budget:
+            break
+        before = len(embed(entry).encode("utf-8"))
+        kept = {name: entry.get(name) for name in ("runId", "section", "open", "status", "current", "startedAt", "lastAt",
+                                                  "displacedBy", "piece")}
+        entry.clear()
+        entry.update({**kept, "clipped": True})
+        size -= before - len(embed(entry).encode("utf-8"))
+    return page
+
+
+def _page_head(title: str, styles: str) -> list[str]:
+    return ["<!doctype html>", '<html lang="en">', "<head>", '<meta charset="utf-8">',
+            '<meta name="viewport" content="width=device-width, initial-scale=1">',
+            '<meta name="color-scheme" content="light dark">', '<meta name="delivery-state-live">',
+            f"<title>{_html_text(title)}</title>", f'<link rel="stylesheet" href="{FONTS}">',
+            f"<style>\n{styles}</style>", "</head>", "<body>"]
+
+
+def render_runs(page: dict, config: dict, *, line_map: str | None, history: str | None, watched: str | None,
+                as_of: str) -> str:
+    """The runs page. ``watched`` is what the live server said of the run store: watched, unwatched, or None."""
+    view = {"lineMap": line_map, "history": history, "runs": config["runs"] is not None, "asOf": as_of,
+            "watched": watched if watched in ("watched", "unwatched") else None, "lenses": config["lenses"],
+            "links": page_links({}, {}, config) | {"changes": {
+                entry["changeRequest"]: link for entry in page["runs"] if _text(entry.get("changeRequest"))
+                for link in [views_common.change_request_identity(entry["changeRequest"], config["forges"])] if link}}}
+    return "\n".join([
+        *_page_head("Runs", _asset("runs.css") + _asset("run-summary.css")),
+        '<main id="app"></main>',
+        f'<script type="application/json" id="delivery-run-page">{embed(page)}</script>',
+        f'<script type="application/json" id="delivery-run-page-view">{embed(view)}</script>',
+        f"<script>\n{_asset('run-summary.js')}{_asset('runs.js')}</script>",
+        "</body>",
+        "</html>",
+        "",
+    ])
+
+
+# The page a view prints while there is no record: it says so, links to the runs page, and reloads once a record
+# reaches it, so the live server's next render of the view takes its place.
+_ABSENT_PROGRAM = """(function () {
+  "use strict";
+  var link = document.getElementById("runs-link");
+  if (link && typeof location === "object" && /^https?:$/.test(location.protocol)) {
+    link.setAttribute("href", "/view/" + link.getAttribute("data-output").split("/").map(encodeURIComponent).join("/"));
+  }
+  var store = globalThis.deliveryStateStore;
+  if (store && typeof store.subscribe === "function") {
+    try { store.subscribe(function () { location.reload(); }); } catch (error) { /* the page stays as it is */ }
+  }
+})();
+"""
+
+
+def render_absent(title: str, runs_page: str | None) -> str:
+    """A view's page while there is no record: no delivery is under way, and the runs page is where runs show."""
+    link = ""
+    if runs_page is not None:
+        href = "/".join(_url_segment(part) for part in runs_page.split("/"))
+        link = (f'<p class="say"><a id="runs-link" href="{_html_attribute(href)}" '
+                f'data-output="{_html_attribute(runs_page)}">See the runs</a></p>')
+    return "\n".join([
+        *_page_head(title, _asset("history.css")),
+        '<main id="app"><div class="page">',
+        f'<div class="kicker"><span>{_html_text(title)}</span></div>',
+        '<h1 class="title">No delivery is under way.</h1>',
+        *([link] if link else ['<p class="say">No runs page is configured.</p>']),
+        "</div></main>",
+        f"<script>\n{_ABSENT_PROGRAM}</script>",
+        "</body>",
+        "</html>",
+        "",
+    ])
+
+
+def _url_segment(part: str) -> str:
+    return urllib.parse.quote(part, safe="")
+
+
 def history_within_budget(history: dict, budget: int = PAGE_BUDGET_BYTES) -> dict:
     """The history within the page budget: the oldest rows give up their summaries first."""
     history = copy.deepcopy(history)
@@ -930,8 +1193,8 @@ def history_within_budget(history: dict, budget: int = PAGE_BUDGET_BYTES) -> dic
     return history
 
 
-def render_history(history: dict, config: dict, *, line_map: str | None) -> str:
-    view = {"lineMap": line_map, "runs": config["runs"] is not None,
+def render_history(history: dict, config: dict, *, line_map: str | None, runs_page: str | None = None) -> str:
+    view = {"lineMap": line_map, **({"runsPage": runs_page} if runs_page is not None else {}), "runs": config["runs"] is not None,
             "exports": config["exports"]["directory"] if config.get("exports") else None}
     return "\n".join([
         "<!doctype html>",
@@ -1482,6 +1745,9 @@ def line_map(arguments: argparse.Namespace) -> int:
     if not _is_object(document):
         print("line-map: the delivery document on stdin is not an object", file=sys.stderr)
         return 1
+    if is_absent(document):
+        sys.stdout.write(render_absent(inputs.config["title"], _renderer_output(inputs.binding, "runs")))
+        return 0
     seconds = _runs_deadline(inputs.binding, "line-map", arguments.deadline_seconds)
     runs = collect_runs(document, inputs.config, inputs.root, views_common.runs_cache_path(inputs.state_directory),
                         time.monotonic() + seconds)
@@ -1503,13 +1769,36 @@ def history(arguments: argparse.Namespace) -> int:
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
         print("history: the delivery document on stdin is not JSON", file=sys.stderr)
         return 1
+    if is_absent(document):
+        sys.stdout.write(render_absent("Delivery history", _renderer_output(inputs.binding, "runs")))
+        return 0
     seconds = _runs_deadline(inputs.binding, "history", arguments.deadline_seconds)
     as_of = arguments.now or datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     collected = collect_history(document, inputs.config, inputs.root,
                                 views_common.runs_cache_path(inputs.state_directory).with_name("history.json"),
                                 time.monotonic() + seconds, as_of)
     sys.stdout.write(render_history(history_within_budget(collected), inputs.config,
-                                    line_map=_renderer_output(inputs.binding, "line-map")))
+                                    line_map=_renderer_output(inputs.binding, "line-map"),
+                                    runs_page=_renderer_output(inputs.binding, "runs")))
+    return 0
+
+
+def runs(arguments: argparse.Namespace) -> int:
+    inputs = views_common.load_inputs(arguments.config, arguments.binding, state_dir=arguments.state_dir)
+    try:
+        document = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        print("runs: the delivery document on stdin is not JSON", file=sys.stderr)
+        return 1
+    seconds = _runs_deadline(inputs.binding, "runs", arguments.deadline_seconds)
+    as_of = arguments.now or datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    collected = collect_run_page(document, inputs.config, inputs.root,
+                                 views_common.runs_cache_path(inputs.state_directory).with_name("runs-page.json"),
+                                 time.monotonic() + seconds)
+    sys.stdout.write(render_runs(run_page_within_budget(collected), inputs.config,
+                                 line_map=_renderer_output(inputs.binding, "line-map"),
+                                 history=_renderer_output(inputs.binding, "history"),
+                                 watched=os.environ.get(RUNS_FLAG), as_of=as_of))
     return 0
 
 
@@ -1528,9 +1817,14 @@ def main(argv: list[str] | None = None) -> int:
     listed.add_argument("--deadline-seconds", type=float, default=DEFAULT_DEADLINE_SECONDS,
                         help="the time all runs commands share, capped at the renderer's timeout less 5 seconds")
     listed.add_argument("--now", help="the history's as-of time, for tests; the clock otherwise")
+    paged = commands.add_parser("runs", help="the runs page")
+    views_common.add_input_arguments(paged)
+    paged.add_argument("--deadline-seconds", type=float, default=DEFAULT_DEADLINE_SECONDS,
+                       help="the time all runs commands share, capped at the renderer's timeout less 5 seconds")
+    paged.add_argument("--now", help="the page's as-of time, for tests; the clock otherwise")
     arguments = parser.parse_args(argv)
     try:
-        return {"line-map": line_map, "history": history}[arguments.command](arguments)
+        return {"line-map": line_map, "history": history, "runs": runs}[arguments.command](arguments)
     except ConfigError as error:
         print(f"{arguments.command}: {error}", file=sys.stderr)
         return 2

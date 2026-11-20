@@ -85,6 +85,9 @@ opts in to the live stream, so `live` serves it at `/view/<output>` and the
 page follows every record write; opened as a file, it shows the record as it
 was rendered. A history renderer declared in the same binding (`render.py
 history`) is linked from its footer.
+A live page reads its run summaries again from the view the server renders
+three seconds after each pushed record, every 30 seconds, and at once on each
+`event: runs`, which the server sends only after the views are written.
 
 A piece's detail panel says where the story is before it lands, in one state
 line with a dot: "Being built", "In review, round N", "Fixing review
@@ -169,6 +172,51 @@ that cannot be read is listed with a note. The record on stdin only names the
 delivery each run belongs to. Its run commands share the render's deadline, and
 past the 4 MiB page budget the oldest rows give up their summaries first.
 `--now` fixes the history's as-of time, for tests.
+
+## The runs page
+
+`scripts/render.py runs` prints the runs page: every run of every workflow the
+`runs` command lists, in the line map's typefaces, colour tokens and run
+summary. Its style and program are `assets/runs.css` and `assets/runs.js` with
+the run summary's two assets, inlined into the page. Declare it beside the line
+map, and name it in the binding's `state.liveRuns` so the live server watches
+the run store and serves it as the front page while there is no record:
+
+```json
+{ "id": "runs", "argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/render.py", "runs", "--config", ".agents/delivery-views.json", "--binding", ".agents/orchestration.json", "--state-dir", "{stateDirectory}"], "output": "runs.html", "timeoutSeconds": 60 }
+```
+
+- "Now" lists open runs, newest first. Each run's line draws its workflow
+  stages, each once, in the order the run first entered it, with the current
+  one ringed: the innermost stage entered and not yet exited. Stages are read
+  only from activities whose `activityId` starts `stage-` and whose phase is
+  `route`, `plan`, `diagnose`, `execute`, `review` or `compound`, so a lens
+  attempt or the runtime's own `prepare` and `verify` never add one. Under it
+  are the run's current activity and next step, and each unresolved wait with
+  its reason and next action. Only a wait on a human with no `wait.resolved` of
+  the same `waitId` says "Needs you".
+- Ended runs follow, newest first, and link to the history. A run that a later
+  `run.started` names as its `displacedRunId` is listed with them, marked "Left
+  open, replaced", never under "Now".
+- Each run opens a panel of its gates (`command`, outcome, duration),
+  decisions, blockers, change request, review rounds through the run summary,
+  and result with its cost unit and coverage. A run bound to a piece of the
+  record names that piece and links to the line map.
+
+Each run is read with `runs show <id> --json` and `runs view <id> --json`, and
+cached in the state directory while the inventory shows it unchanged. A run
+either can't be read for is shown unavailable, and the others render. Past the
+4 MiB budget, ended runs give up their details first, oldest first, then open
+ones. When the live server says, in `DELIVERY_LIVE_RUNS`, that the run store
+isn't watched, the page says so. Served live, the page reads itself again on
+each `event: runs` through the adapter's `onRuns`, keeping open panels open.
+`--now` fixes the page's as-of time, for tests.
+
+With no record, the live server gives every view `{"spec":
+"delivery-state-absent/1"}`. `runs` renders from it as from a record; `line-map`
+and `history` each print one page that says no delivery is under way, links
+to the runs page and reloads once a record reaches it. The history also links
+to the runs page when the binding declares one.
 
 ## The plan chapter
 
