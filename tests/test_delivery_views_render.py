@@ -1432,6 +1432,14 @@ class RunsPageTests(unittest.TestCase):
         self.assertEqual(render.run_of_events(exported)["activity"],
                          {"activityId": "stage-execute", "phase": "execute", "state": "running", "nextStep": "Build it.",
                           "at": "2026-11-20T09:00:01Z"})
+        # A later state of the same activity that names no next step keeps the one it had.
+        events.append(observed(8, "stage-execute", "execute", "waiting"))
+        self.assertEqual(render.run_of_events(exported)["activity"],
+                         {"activityId": "stage-execute", "phase": "execute", "state": "waiting", "nextStep": "Build it.",
+                          "at": "2026-11-20T09:00:08Z"})
+        # The activity that moved last is current, though another opened after it.
+        events.extend([observed(9, "execute-slice-2", "execute", "running"), observed(10, "stage-execute", "execute", "running")])
+        self.assertEqual(render.run_of_events(exported)["activity"]["activityId"], "stage-execute")
 
 
 class LiveRunsPageTests(unittest.TestCase):
