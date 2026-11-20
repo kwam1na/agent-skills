@@ -141,6 +141,10 @@ checks may need no file at all.
   // Fallbacks, used only where the binding and delivery-views.json declare nothing: "remote", "workDirectory",
   // "tracker": {"issueUrl"}, "forge": {"adapter"|"argv", "repository", "tokenEnv"}, "review.prepare",
   // "gates": [{"id", "argv", "timeoutSeconds"}] (argv placeholders {base}, {key}, {delivery}).
+  // A gate may instead be a string naming a binding check by id (selection.catalogue, alwaysRun or fallback): `gate`
+  // runs it through merge_queue.py run-checks at HEAD, the way the queue does, so its record says where: runner.
+  // An inline gate runs in the lane's checkout, and its record says where: checkout, with no environment or host.
+  // `gates.json` keeps each gate's record under its result; doctor reports an id the binding doesn't define.
   // A gate whose argv equals inApp.build.argv also stamps the in-app build when every gate passes.
   "cleanup": {                                // optional
     "deleteRemoteBranches": false,            // lead-cleanup deletes a merged story's remote branch only if true
