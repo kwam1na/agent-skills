@@ -44,7 +44,10 @@
         "head": "Getting started",
         "line": "",
         "standing": []
-      }
+      },
+      "setbacks": [
+        "s1"
+      ]
     }
   ],
   "beats": [
@@ -177,6 +180,7 @@
       "closedAt": "2026-11-16T09:20:00Z",
       "cost": 600,
       "state": "closed",
+      "endedBy": "answer",
       "entries": [
         2,
         3,
@@ -193,6 +197,35 @@
       "words": {
         "head": "A setback: the main line broke",
         "line": "The full run failed at d7daad0: The full run failed on the main line. It ended when the main line was repaired."
+      }
+    }
+  ],
+  "ledger": [
+    {
+      "id": "s1",
+      "subject": null,
+      "kind": "base.broken",
+      "reason": null,
+      "threads": [
+        "t1"
+      ],
+      "count": 1,
+      "firstOpenedAt": "2026-11-16T09:10:00Z",
+      "lastOpenedAt": "2026-11-16T09:10:00Z",
+      "state": "closed",
+      "since": null,
+      "endedAt": "2026-11-16T09:20:00Z",
+      "endedBy": 4,
+      "ending": "answer",
+      "cost": 600,
+      "waitingOn": null,
+      "chapters": {
+        "opened": "c1",
+        "ended": "c1"
+      },
+      "words": {
+        "head": "The main line broke.",
+        "line": "It ended when the main line was repaired."
       }
     }
   ],
