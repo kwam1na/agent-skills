@@ -1,0 +1,254 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3645",
+  "headline": "V26-3645: checks as a workflow component, so a lane's recorded pass counts and guards run where a change is checked",
+  "baseBranch": "integrate/checks-as-a-workflow-component",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-19-checks-as-a-workflow-component.md",
+  "laneBrief": "docs/plans/2026-11-19-checks-as-a-workflow-component.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-19-checks-as-a-workflow-component.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions",
+      "Units and order",
+      "Execution posture and sensors"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/orchestrate-work/scripts/merge_queue.py",
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "skills/orchestrate-work/references/schemas.json",
+        "skills/orchestrate-work/references/orchestration-guide.md",
+        "skills/orchestrate-work/SKILL.md",
+        "tests/test_merge_queue.py",
+        "tests/test_orchestration_state.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/run-delivery/scripts/run_delivery.py",
+        "skills/run-delivery/references/config.md",
+        "skills/run-delivery/SKILL.md",
+        "tests/test_run_delivery.py",
+        ".agents/run-delivery.json",
+        ".agents/orchestration.json",
+        "tests/test_own_deliveries.py"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3660": {
+      "title": "Run a check the way the queue does, anywhere, with the facts that make it reproducible",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3660-1",
+          "text": "run-checks writes one record per id with every field above, exits non-zero on a failure with its log kept, and never prints a variable's value."
+        },
+        {
+          "id": "v26-3660-2",
+          "text": "A variable outside the baseline and inherit doesn't reach a check in the queue or in run-checks; the failure output names dropped variables; listing it in inherit makes it pass; the runner's own git keeps the inherited environment."
+        },
+        {
+          "id": "v26-3660-3",
+          "text": "run-checks from a second worktree, with different TMPDIR and PATH, yields the same environment digest and host facts as the queue from the main checkout."
+        },
+        {
+          "id": "v26-3660-4",
+          "text": "run-checks and a queue command sharing a --repo both finish without removing each other's worktree."
+        },
+        {
+          "id": "v26-3660-5",
+          "text": "handoff --evidence accepts and keeps the widened fields and still accepts the five-field shape."
+        },
+        {
+          "id": "v26-3660-6",
+          "text": "No fixed rule replaces the agent's judgement: the facts are recorded, and nothing is refused on them here."
+        }
+      ]
+    },
+    "V26-3661": {
+      "title": "Answer whether a recorded pass applies, and reuse a lane's pass by default",
+      "lane": "lane-1",
+      "after": [
+        "V26-3660"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3661-1",
+          "text": "Every existing reusable and carry_plan outcome holds after both call applies, and a pre-change queue row with no facts still carries."
+        },
+        {
+          "id": "v26-3661-2",
+          "text": "A lane record applies at an identical tree, across an unread base move, and across a move outside a complete read set; it runs with a named reason for a move inside the read set, an unknown read set, differing facts (value, swapped values, tool, platform, where: checkout), missing facts, a changed definition, a failure, a needed prerequisite, a binding change, an exclusion or a {baseHead} placeholder. Notes never print a value."
+        },
+        {
+          "id": "v26-3661-3",
+          "text": "A grant makes the V26-3614 shape apply (record before a lane-side base merge, handed head the merge, unknown read set) and journals check.reused with because; it doesn't apply after a lane change or a revert to a path the candidate touched, after a new hand-off, or for a checkout, differing-facts, changed-definition or failed record."
+        },
+        {
+          "id": "v26-3661-4",
+          "text": "No fixed rule replaces the agent's judgement: reuse is the default when applies says so, and the grant is the recorded override."
+        }
+      ]
+    },
+    "V26-3662": {
+      "title": "Record a lane's check runs, and hand off with them",
+      "lane": "lane-2",
+      "after": [
+        "V26-3660"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3662-1",
+          "text": "check writes records equal to what run-checks prints, at HEAD."
+        },
+        {
+          "id": "v26-3662-2",
+          "text": "A later failing record replaces an earlier pass in the hand-off."
+        },
+        {
+          "id": "v26-3662-3",
+          "text": "An id gate leaves a runner record and an inline gate a checkout record; gates_summary behaves as before."
+        },
+        {
+          "id": "v26-3662-4",
+          "text": "End to end: in a child process whose TMPDIR and PATH differ from the queue's, a lane runs check in its worktree and hands off, and a queue run from the main checkout at the same tree reuses the record and journals check.reused."
+        },
+        {
+          "id": "v26-3662-5",
+          "text": "No fixed rule replaces the agent's judgement: nothing is refused for a missing record."
+        }
+      ]
+    },
+    "V26-3664": {
+      "title": "Run guards where a change is checked, and show the lead what still applies",
+      "lane": "lane-2",
+      "after": [
+        "V26-3661",
+        "V26-3662"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3664-1",
+          "text": "In a fixture binding, a diff its guard rejects fails gate, naming the guard, before the repository's gates run; a second gate at the same tree reuses the pass; a recorded skip shows in the hand-off and gates_summary still passes."
+        },
+        {
+          "id": "v26-3664-2",
+          "text": "lead-push publishes with no override when guards pass at the published commit, journaling no decision.recorded; refuses and publishes nothing when a guard rejects a merge whose parents each pass; publishes with --skip-guards --why and journals decision.recorded."
+        },
+        {
+          "id": "v26-3664-3",
+          "text": "lead-accept's proposal shows applies or why not and the median for each selected check, and --reuse records the grant."
+        },
+        {
+          "id": "v26-3664-4",
+          "text": "No fixed rule replaces the agent's judgement: every default has a --why override, and only lead-push refuses."
+        }
+      ]
+    },
+    "V26-3663": {
+      "title": "Start guards first and the longest checks next",
+      "lane": "lane-1",
+      "after": [
+        "V26-3661"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3663-1",
+          "text": "The start order follows the rule above."
+        },
+        {
+          "id": "v26-3663-2",
+          "text": "A failing guard ends the run before any other check starts."
+        },
+        {
+          "id": "v26-3663-3",
+          "text": "A passing run records the same results as before."
+        },
+        {
+          "id": "v26-3663-4",
+          "text": "No fixed rule replaces the agent's judgement: ordering changes nothing about which checks run."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "V26-3660, V26-3661, V26-3662, V26-3663 and V26-3664 land on integrate/checks-as-a-workflow-component through its merge queue, meeting plan finish lines 1 to 5",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration head, with --workers 4 --budget tests/suite-budget.json, inside the budget",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide's integration review says, and the operator merges it into main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-19"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The operator approves this plan once its review aligns.",
+      "state": "done",
+      "who": "Kwamina"
+    },
+    {
+      "id": "approval-2",
+      "text": "Approved by the operator on 2026-11-19, after round 4 aligned at e805cf59. The five stories are filed under V26-3645 as V26-3660 to V26-3664, and their keys replaced the plan's placeholder keys.",
+      "state": "done",
+      "who": "Kwamina"
+    },
+    {
+      "id": "approval-3",
+      "text": "The operator chooses the delivery base, `main` or an integration branch, at `lead-setup`.",
+      "state": "done",
+      "who": "Kwamina"
+    }
+  ],
+  "outOfScope": [
+    "**What no record can capture.** That means nondeterminism (network, clock, randomness, concurrency and flaky tests), external services, and programs a check calls that neither its argv nor `reuse.tools` names. These stay what `fullHealth` catches after a merge. The queue's own runs share every one of them, so reuse adds no gap beyond the queue's own.",
+    "Declaring read sets or `unread` paths for this repository's catalogue. Decision 5 covers V26-3614's case without them, and which paths are truly unread is a judgement for a later change.",
+    "Inferring read sets from imports or file access.",
+    "Keeping a prepared runner worktree between runs. Each run prepares afresh, as the queue does, and commands show the prepare time.",
+    "Running guards inside `review-prepare` or `lead-accept`. Both show the guard records.",
+    "Formatting (V26-3652), shared-machine capacity (V26-3638), and any change to the TypeScript harness.",
+    "Changing the existing `handoff` refusal when the gates haven't passed at the head."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}
