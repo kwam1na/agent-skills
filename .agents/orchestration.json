@@ -2,7 +2,7 @@
   "schemaVersion": "orchestration-binding/1",
   "base": {
     "remote": "origin",
-    "ref": "integrate/checks-as-a-workflow-component"
+    "ref": "main"
   },
   "bases": [
     "main",
