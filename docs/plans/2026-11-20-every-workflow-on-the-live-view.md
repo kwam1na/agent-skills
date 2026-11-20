@@ -92,12 +92,14 @@ Checked against `main` at `4035682f` on 2026-11-20:
      `bind-run` as today.
    - A workflow another workflow invoked in the same session joins the current run and starts none. `deliver-work`
      starts its run at `route`, and the workflows it routes to join it.
-   - Only the workflow that started a run ends it. It ends the run before it hands control back to the operator for
-     an approval or a decision, with `result: partial` when work remains, so no run is left open across the
-     operator's turn. The next workflow the operator invokes starts a new run.
-   - A start that meets an open current run, one an interrupted session left behind, starts with `--force`, which
-     records the displaced run. A start the runtime still refuses is silent, as Decision 4 says, and the workflow
-     goes on without a run.
+   - The run stays open across every approval or decision the request waits on, each marked by `wait.started` and
+     `wait.resolved` with `waitingOn: human`, so a `deliver-work` request through `plan` and `execute` is one run and
+     its approval shows as "Needs you" while the operator holds it.
+   - Only the workflow that started a run ends it, when its request finishes (`complete`), stops on a blocker
+     (`blocked`), or is stopped by the operator with work left (`partial`).
+   - A request abandoned without an end leaves its run open. The next start in that worktree meets it as the open
+     current run and starts with `--force`, which records it as `displacedRunId`. A start the runtime still refuses
+     is silent, as Decision 4 says, and the workflow goes on without a run.
 
    `execute-work`'s unconditional sentences ("`run.started` before reading repository authority…", "`run.ended`
    last…") are replaced by references to the kernel's rule. This is a withdrawn behaviour, so every skill in the
@@ -136,8 +138,11 @@ Checked against `main` at `4035682f` on 2026-11-20:
    3. then it sends `event: runs` with data `{"generation": N}` on every open `/events` stream.
 
    A record change still sends `event: document` as today, now after its views are written. `event: runs` is sent
-   with or without a record. The runs page re-fetches itself on each `runs` event. The line map's `refreshRuns`
-   re-fetches on it too, with no delay, keeping its 30-second interval. Pages that don't handle `runs` ignore it. An
+   with or without a record. Pages reach `/events` only through the live adapter the server injects
+   (`_LIVE_ADAPTER` in `render_state.py`), so KEY-2 adds `deliveryStateStore.onRuns(fn)` to it, calling `fn` with the
+   event's data on each `runs` event. The adapter keeps `read`, `subscribe` and `onStatus` as they are. The runs page
+   re-fetches itself through `onRuns`. The line map's `refreshRuns` re-fetches through it too, with no delay, keeping
+   its 30-second interval. A page that registers no `onRuns` is unaffected. An
    inventory that fails, times out or names a `runsDir` that can't be read leaves the record's watch working. The
    runs page then says runs aren't being watched, from a flag the server passes to its views.
 
@@ -154,19 +159,23 @@ Checked against `main` at `4035682f` on 2026-11-20:
      its reason and next action without "Needs you".
    - Each run opens a detail panel: its gates (`command`, outcome, duration), decisions, blockers, change request,
      review rounds through the existing run summary track and cards, and result with cost unit and coverage.
-   - Ended runs follow, newest first, and link to the history.
+   - Ended runs follow, newest first, and link to the history. A run that a later `run.started` names as its
+     `displacedRunId` is listed with them, marked "Left open, replaced", never under "Now".
    - A run bound to a delivery's piece names that piece and links to it on the line map.
 
    The page reads runs only through the existing `runs` commands, under the existing deadline, scrub list and
    4 MiB budget, ended runs giving up their summaries first, oldest first.
 
-9. **One standing server per repository.** `live --if-absent` reads `<git common directory>/delivery-live/server.json`,
-   which every `live` writes at start and removes on a clean stop: its PID, host, port and the state directory it
-   serves. If that PID is alive and the address answers `/health` as a live server for this repository
-   (`docs/solutions/test-failures/a-ready-wait-that-accepts-any-listener-checks-another-runs-server-2026-11-09.md`),
-   it prints that address and exits 0. Otherwise it serves as `live` does. The run store is shared across worktrees,
-   so one server shows every worktree's runs. `live --stop` signals the PID in that file, after the same check, and
-   nothing else. The kernel says: where the repository declares a live view command, a workflow that starts a run as
+9. **One standing server per repository.** Every `live` writes its own entry,
+   `<git common directory>/delivery-live/<pid>.json`, at start, with its PID, host, port and the state directory it
+   serves, and removes only that entry on a clean stop. An entry is verified when its PID is alive and its address
+   answers `/health` as a live server for this repository
+   (`docs/solutions/test-failures/a-ready-wait-that-accepts-any-listener-checks-another-runs-server-2026-11-09.md`).
+   `live --if-absent` prints the address of a verified entry, preferring one with `liveRuns`, and exits 0; with none,
+   it serves as `live` does. So a lead's delivery server and a standing server never remove each other's entry. The
+   run store is shared across worktrees, so one server shows every worktree's runs. `live --stop` signals the PID of
+   each verified entry this checkout's state directory started, and nothing else: an entry that fails verification
+   is left alone, its PID never signalled. The kernel says: where the repository declares a live view command, a workflow that starts a run as
    the operator's invocation runs it with `--if-absent` in the background and gives the operator the address. A
    workflow that joins a run, and an epic lane, does neither. The lead keeps starting the delivery's live server as
    today.
@@ -175,11 +184,18 @@ Checked against `main` at `4035682f` on 2026-11-20:
     0.8.6 runtime in a fixture repository. It records, as vectors, whether each planned emission is accepted:
     `run.started` without `ticket`, the stage markers and waits with `HEAD^{tree}` as candidate, `run.started` while
     another run is current with and without `--force`, and `emit` with no managed installation registered. It then
-    drives two runs carrying every planned kind (a `plan` then `execute` run with gates, a decision, a blocker, a
-    change request, a nested `review` entry and exit, a lens attempt with `phase: review`, a human wait resolved, an
-    agent wait open, and `run.ended` with cost), and stores the runtime's real `runs list --json` and
-    `runs view <id> --json` output. Each refusal goes to the operator as a decision before the story goes on. A
-    runtime change belongs to the harness repository and is out of scope.
+    drives these runs and stores the runtime's real `runs list --json` and `runs view <id> --json` output for each:
+    - an ended `plan` then `execute` run with gates, a decision, a blocker, a change request, a nested `review` entry
+      and exit, a lens attempt with `phase: review`, a human wait resolved, and `run.ended` with cost;
+    - an open `execute` run inside a `plan` stage, with a runtime command that records a `prepare` or `verify` phase,
+      a nested `review` entry and exit followed by more `execute` activity, and an unresolved `waitingOn: human` wait;
+    - an open run whose `review` is entered, exits, and is entered again after more `execute` activity, still open;
+    - an open run that re-enters `execute` after a `review` exit;
+    - an open run waiting on an agent;
+    - a run left open, then displaced by a `--force` start, and that start's run, ended `partial`.
+
+    Each refusal, including a runtime command that can't record a phase in the fixture, goes to the operator as a
+    decision before the story goes on. A runtime change belongs to the harness repository and is out of scope.
 
 ## Out of scope
 
@@ -233,14 +249,16 @@ KEY-1, in `tests/test_run_event_acceptance.py`, against the stored runtime:
   recording `displacedRunId`.
 - The captured `runs list --json` and `runs view <id> --json` in `tests/fixtures/run-events/` are re-derived from the
   same driven sequence and compared, apart from times and ids, so a runtime whose view changes shape fails it.
-- The nested-run vector is evidence of what the runtime accepts, not of what the skills say.
+- The driven runs are evidence of what the runtime accepts and shows, not of what the skills say.
 
 KEY-1, in `tests/test_run_event_emission_corpus.py`:
 
 - `EMITTED_KINDS` lists the four lifecycle kinds under `skills/compound-delivery-kernel/SKILL.md`. A second owner of
   any kind fails.
 - The kernel carries each clause of Decision 2's rule, the stage marker identity and names of Decision 3, and
-  Decision 9's start-only server sentence, each pinned with its neighbouring text.
+  Decision 9's start-only server sentence, each pinned with its neighbouring text. Among them: the run stays open
+  across a human wait within the request, only the starter ends it, and an abandoned run is displaced by the next
+  start's `--force`.
 - `execute-work`'s `REQUIRED_PHRASES` and `EMIT_POINT_LIST_CLOSE` pins on the unconditional sentences are replaced
   by pins on its reference to the kernel's rule, including that an epic lane's `execute-work` starts and binds its
   own run and does not start the live server.
@@ -255,7 +273,7 @@ KEY-2, in `tests/test_orchestration_render.py`:
 
 - A binding with `state.liveRuns` naming a declared renderer validates. One naming an undeclared renderer, or with an
   `inventory` without `argv`, is refused, naming the field.
-- `live` over an empty state directory serves, writes `server.json`, and its front page is the `liveRuns` renderer's
+- `live` over an empty state directory serves, writes its own `delivery-live/<pid>.json` entry, and its front page is the `liveRuns` renderer's
   output, rendered from exactly `{"spec": "delivery-state-absent/1"}`. When a record appears, the front page follows
   `liveHome`.
 - Runs watch, over an empty state directory and again with a record: with a counting fixture inventory command and a
@@ -263,24 +281,39 @@ KEY-2, in `tests/test_orchestration_render.py`:
   page. Appending a partial, non-JSON line to a file under `runsDir` produces exactly one `event: runs` within two
   poll intervals. A GET of the runs view made after that event returns the appended content, so the views were
   written first. With a record, no `event: document` is sent for that change.
+- A record change sends `event: document` only after its views are written: a GET of a view made after the event
+  returns the content the record change produced.
+- The injected `_LIVE_ADAPTER`, run under `jsdom` against the running server, calls a registered `onRuns` once per
+  `event: runs` with its data, and leaves `subscribe` uncalled for it.
 - Without `liveRuns`, appending under the same `runsDir` runs the inventory command zero times and re-renders
   nothing.
-- An inventory that exits non-zero, or a `runsDir` removed while serving, leaves a record change still sending
+- An inventory that exits non-zero, one that passes its timeout at start, or a `runsDir` removed while serving, leaves a record change still sending
   `event: document`, and the views receive the not-watched flag.
-- `live --if-absent` with a live server registered for this repository prints its address and exits 0, starting
-  nothing. With a stale `server.json`, a dead PID, or a listener that answers `/health` as another server, it serves
-  itself. `live --stop` stops the registered server and only it.
+- `live --if-absent` with a verified entry prints its address and exits 0, starting nothing. With only a stale entry,
+  a dead PID, or a listener that answers `/health` as another server, it serves itself.
+- Two servers, one over a record and one with `liveRuns` and no record: each writes its own entry, `--if-absent`
+  prints the `liveRuns` one, and stopping either cleanly removes only its own entry, the other still verified.
+- `live --stop` stops a verified server this checkout's state directory started, and its entry goes.
+- Refusal: an entry naming the PID of a sleeper the test started, which is not a live server, with an address that
+  fails `/health` or answers as another server. `live --stop` exits without signalling, the sleeper is still alive,
+  and the test then stops the sleeper by its recorded PID.
 
-KEY-3, in `tests/test_delivery_views_render.py`, from an inventory built from KEY-1's captured bytes:
+KEY-3, in `tests/test_delivery_views_render.py`. Every run in the inventory comes from KEY-1's captured bytes,
+changed only in ids and times:
 
-- The runs payload holds an open `execute` run that waits on a human and is nested inside a `plan` stage, an open run
-  waiting on an agent, an open run whose human wait was resolved, and two ended runs, one `partial`. For each it
+- The runs payload holds every captured run: the open `execute` run inside `plan` waiting on a human, the open run
+  waiting on an agent, the two re-entry runs, the ended run whose human wait was resolved, the displaced run, and the
+  `partial` run that displaced it. For each it
   carries the stages in order and the current stage, the current activity and next step, the wait, gates with
   `command` and `durationMs`, decisions, blockers, change request, rounds, and result with cost unit and coverage.
 - The open `execute` run carries a runtime `verify` phase, a lens attempt with `phase: review`, and a nested `review`
   stage entry and exit followed by more `execute` activity. Its stages are exactly `plan`, `execute` and `review`,
   with `execute` current. `verify` and the lens attempt add none.
-- Only the unresolved human wait yields "Needs you".
+- The run that re-enters `review` has stages exactly `plan`, `execute`, `review`, each once in first-entry order,
+  with `review` current. The run that re-enters `execute` after a `review` exit keeps that order, with `execute`
+  current.
+- Only the unresolved human wait yields "Needs you". The resolved one and the agent wait don't.
+- The displaced run is listed with the ended runs, marked "Left open, replaced", and not under "Now".
 - A run whose `view` fails or passes the deadline shows unavailable, and the others render. An inventory over the
   4 MiB budget drops the oldest ended runs' summaries first.
 - A run bound to a record's piece carries that piece's key.
@@ -294,10 +327,13 @@ KEY-3 page rows, in `tests/delivery_views_page/runs.test.mjs`:
 
 - "Now" lists open runs before ended ones. Each order is newest first, checked with two ended runs.
 - "Needs you" appears only on the unresolved human wait. The agent wait shows its reason and next action without it.
-- A run's line draws exactly its stages, `execute` ringed, and draws no `verify`.
+- A run's line draws exactly its stages, `execute` ringed, and draws no `verify`. Each re-entry run draws each stage
+  once, in first-entry order, with the re-entered stage ringed.
+- The displaced run shows under ended runs as "Left open, replaced".
 - The detail panel draws gates, decisions, blockers, the change request and the run summary's rounds.
-- Driven with the exact `event: runs` bytes and re-fetch sequence KEY-2's server produces, the page re-fetches
-  itself and the open panel shows the new `gate.reported`. The line map re-fetches its runs on the same event
+- With the real `_LIVE_ADAPTER` injected, as the existing line-map test injects it, and driven with the exact
+  `event: runs` bytes and re-fetch sequence KEY-2's server produces, the page re-fetches itself through `onRuns` and
+  the open panel shows the new `gate.reported`. The line map re-fetches its runs through `onRuns` on the same event
   without the three-second delay.
 - A new `runs` golden case pins the page whole. Every existing line-map and history golden renders unchanged.
 
@@ -335,7 +371,8 @@ Lane 2, tier 1, not blocked. Test-first. Files: `skills/orchestrate-work/scripts
 `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/SKILL.md` and
 `tests/test_orchestration_render.py`.
 
-Implement Decisions 5, 6, 7 (the server side) and 9 (`--if-absent`, `--stop` and `server.json`).
+Implement Decisions 5, 6 (with `onRuns` on the adapter), 7 (the server side) and 9 (`--if-absent`, `--stop` and
+the `delivery-live/` entries).
 
 ### KEY-3. A live runs page in the line map's language
 
