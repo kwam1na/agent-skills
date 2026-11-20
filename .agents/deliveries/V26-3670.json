@@ -1,0 +1,203 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3670",
+  "headline": "V26-3670: show every delivery workflow on the live view",
+  "baseBranch": "integrate/every-workflow-on-the-live-view",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-20-every-workflow-on-the-live-view.md",
+  "laneBrief": "docs/plans/2026-11-20-every-workflow-on-the-live-view.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-20-every-workflow-on-the-live-view.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions",
+      "Units and order"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/compound-delivery-kernel/*",
+        "skills/execute-work/*",
+        "skills/plan-work/SKILL.md",
+        "skills/diagnose-work/*",
+        "skills/deliver-work/SKILL.md",
+        "tests/test_run_event_emission_corpus.py",
+        "tests/test_run_event_acceptance.py",
+        "tests/fixtures/run-events/*",
+        "tests/test_own_deliveries.py",
+        ".agents/orchestration.json",
+        "AGENTS.md",
+        "docs/own-deliveries.md",
+        ".agents/delivery-views.json"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/orchestrate-work/scripts/render_state.py",
+        "skills/orchestrate-work/references/schemas.json",
+        "skills/orchestrate-work/SKILL.md",
+        "tests/test_orchestration_render.py",
+        "skills/delivery-views/*",
+        "tests/test_delivery_views_render.py",
+        "tests/test_delivery_views_history.py",
+        "tests/delivery_views_page/*",
+        "tests/fixtures/delivery-views/*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3666": {
+      "title": "Every delivery workflow reports its run in one vocabulary",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3666-1",
+          "text": "A directly invoked plan-work, diagnose-work or execute-work makes exactly one run. A deliver-work request is one run whose stages follow each other."
+        },
+        {
+          "id": "v26-3666-2",
+          "text": "No skill in the linear profile still tells a workflow to start or end a run unconditionally."
+        },
+        {
+          "id": "v26-3666-3",
+          "text": "Each lifecycle kind has exactly one owning skill, the kernel."
+        },
+        {
+          "id": "v26-3666-4",
+          "text": "A runtime that stops accepting a planned emission, or changes the shape of its run view, fails a test."
+        }
+      ]
+    },
+    "V26-3667": {
+      "title": "The live server serves without a record and follows the run store",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3667-1",
+          "text": "In a repository whose binding declares liveRuns, a change in the run store reaches an open page as event: runs within two poll intervals, with or without a record, and any view fetched after the event shows the change."
+        },
+        {
+          "id": "v26-3667-2",
+          "text": "live over an empty state directory serves the liveRuns renderer as its front page. Once a record appears, liveHome takes over."
+        },
+        {
+          "id": "v26-3667-3",
+          "text": "Without liveRuns, the store is never read, and every existing live behaviour and golden is unchanged."
+        },
+        {
+          "id": "v26-3667-4",
+          "text": "live --stop never signals a process that fails verification, or a verified server from another state directory."
+        }
+      ]
+    },
+    "V26-3668": {
+      "title": "A live runs page in the line map's language",
+      "lane": "lane-2",
+      "after": [
+        "V26-3666",
+        "V26-3667"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3668-1",
+          "text": "Every run in the inventory appears on the runs page, with its stages, current stage, wait, gates, decisions, blockers, change request, rounds and result, read from the runtime's real runs view output."
+        },
+        {
+          "id": "v26-3668-2",
+          "text": "Lens attempts and the runtime's command phases (prepare, verify) never become stages. A re-entered stage is drawn once and becomes current again."
+        },
+        {
+          "id": "v26-3668-3",
+          "text": "\"Needs you\" appears on no wait that is resolved, or that waits on an agent or outside party."
+        },
+        {
+          "id": "v26-3668-4",
+          "text": "The runs page, line map and history each render from the no-record document and exit 0. Every existing line map and history golden is unchanged."
+        }
+      ]
+    },
+    "V26-3669": {
+      "title": "Watch this repository's own runs",
+      "lane": "lane-1",
+      "after": [
+        "V26-3666",
+        "V26-3667",
+        "V26-3668"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3669-1",
+          "text": "With the candidate applied, a directly invoked execute-work run here appears on the runs page and updates live through to its end."
+        },
+        {
+          "id": "v26-3669-2",
+          "text": "A deliver-work request through plan and execute appears as one run, its plan approval showing \"Needs you\" while it waits."
+        },
+        {
+          "id": "v26-3669-3",
+          "text": "What each watched run showed is recorded in the delivery's proof."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "V26-3666, V26-3667, V26-3668 and V26-3669 land on integrate/every-workflow-on-the-live-view through its merge queue",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration head after the last story lands, with --workers 4 --budget tests/suite-budget.json, inside the budget",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "no-runtime-change",
+      "label": "Runtime unchanged",
+      "text": "No runtime change and no new event kind: the runtime stays 0.8.6, and a repository that declares neither the run-event command nor state.liveRuns keeps every existing golden",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide's integration review says, and the operator merges it into main; the operator tags the final after V26-3669's watched runs",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-20"
+  },
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "outcome": {
+    "summary": "Every delivery workflow is visible on the same live server, in the line map's visual language, from the run-event/2 events the workflows already emit.",
+    "text": "Every delivery workflow is visible on the same live server, in the line map's visual language, from the run-event/2 events the workflows already emit. A directly invoked plan-work, diagnose-work or execute-work makes one run, a deliver-work request is one run whose stages follow each other, the live server serves the runs page with or without a delivery record, and a repository that declares neither stays exactly as it is."
+  }
+}
