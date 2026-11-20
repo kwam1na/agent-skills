@@ -133,9 +133,9 @@ credential. The detached supervisor receives that credential through a private
 pipe, never a command argument or a stored sidecar.
 Before the binding shelf names its credential, discovery git runs with a
 restricted OS/session environment. This also protects a token name changed on
-the shelf. Public prose containing recognizable local references carries a
-visible omission marker; raw uploaded paths and configured secrets still fail
-strict validation.
+the shelf. The hosted page shows what the local live view shows, from the same
+record; a cut holding a configured secret's value or a credential-named field is
+refused with its code.
 
 Explicit lead status output, `doctor` and `view` show the hosted URL and local
 publication status. These links grant public read access. Supervisor logs do not

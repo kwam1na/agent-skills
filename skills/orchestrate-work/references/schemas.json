@@ -559,7 +559,7 @@
         }
       },
       "siblings": {
-        "description": "Sibling deliveries of the same epic in other repositories, by their hosted links: lead-sibling adds and removes one, and reconcile writes what each sibling-snapshot/1 read shows. Optional; the hosted projection never carries it.",
+        "description": "Sibling deliveries of the same epic in other repositories, by their hosted links: lead-sibling adds and removes one, and reconcile writes what each sibling-snapshot/1 read shows. Optional; the hosted snapshot carries it without each sibling's hosted link, which grants read access to that delivery.",
         "type": "array",
         "items": {
           "type": "object",

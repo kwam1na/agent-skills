@@ -27,6 +27,11 @@
       "layer": "schema"
     },
     {
+      "file": "valid-full-record.json",
+      "valid": true,
+      "layer": "schema"
+    },
+    {
       "file": "invalid-version.json",
       "valid": false,
       "layer": "schema"
@@ -42,17 +47,17 @@
       "layer": "schema"
     },
     {
-      "file": "invalid-raw-review.json",
-      "valid": false,
-      "layer": "schema"
-    },
-    {
-      "file": "invalid-command.json",
-      "valid": false,
-      "layer": "schema"
-    },
-    {
       "file": "invalid-history.json",
+      "valid": false,
+      "layer": "schema"
+    },
+    {
+      "file": "invalid-fingerprint.json",
+      "valid": false,
+      "layer": "schema"
+    },
+    {
+      "file": "invalid-text-bound.json",
       "valid": false,
       "layer": "schema"
     },
@@ -62,64 +67,9 @@
       "layer": "boundary"
     },
     {
-      "file": "invalid-local-path.json",
+      "file": "invalid-credential-field.json",
       "valid": false,
       "layer": "boundary"
-    },
-    {
-      "file": "invalid-unrelated-run.json",
-      "valid": false,
-      "layer": "boundary"
-    },
-    {
-      "file": "invalid-fingerprint.json",
-      "valid": false,
-      "layer": "schema"
-    },
-    {
-      "file": "valid-omitted-workflow-prose.json",
-      "valid": true,
-      "layer": "boundary"
-    },
-    {
-      "file": "invalid-option-path-unix.json",
-      "valid": false,
-      "layer": "boundary"
-    },
-    {
-      "file": "invalid-option-path-windows.json",
-      "valid": false,
-      "layer": "boundary"
-    },
-    {
-      "file": "invalid-option-path-relative.json",
-      "valid": false,
-      "layer": "boundary"
-    },
-    {
-      "file": "invalid-installed-executable-path.json",
-      "valid": false,
-      "layer": "boundary"
-    },
-    {
-      "file": "invalid-entry-facts.json",
-      "valid": false,
-      "layer": "schema"
-    },
-    {
-      "file": "invalid-entry-because.json",
-      "valid": false,
-      "layer": "schema"
-    },
-    {
-      "file": "invalid-story.json",
-      "valid": false,
-      "layer": "schema"
-    },
-    {
-      "file": "invalid-round-extra-fact.json",
-      "valid": false,
-      "layer": "schema"
     }
   ]
 }
