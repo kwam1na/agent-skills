@@ -62,6 +62,8 @@ test("the count says the two beats once every piece has landed, today's count wh
   const done = await shown(delivery([merged(30, M), suite(31, M), round(32, M), requested(33, M), rejoined(34)]));
   expect(count(done)).toBe("Every piece landed");
   expect(done.querySelector("#line .rejoin")).toBe(null);
+  // Rejoined, nothing waits on a change request any more: none is offered under the bar.
+  expect(done.querySelector("#line .mg-change-label")).toBe(null);
   expect(drift(done)).toBe(null);
 });
 
@@ -138,6 +140,8 @@ test("a catch-up after a fix strikes the suite, the round and the earlier merge"
 test("a request superseded by a later suite is struck and its stop hollow", async () => {
   const app = await shown(delivery([merged(30, M), requested(31, H1), suite(32, H2)]));
   expect(states(app)).toEqual(["filled", "filled", "next", "hollow"]);
+  // A request that no longer stands at the current head is not offered as the open one.
+  expect(app.querySelector("#line .mg-change-label")).toBe(null);
   expect(said(app, "rejoin")).toBe("Needs an approving round at the current head.");
 });
 
