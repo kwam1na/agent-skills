@@ -3254,6 +3254,41 @@
             "type": "string",
             "minLength": 1
           },
+          "liveRuns": {
+            "description": "Optional. The runs page and the run store the live server follows. renderer is the id of a declared argv renderer whose HTML view is the front page while there is no record. inventory.argv is the runtime's runs command, the same argv as .agents/delivery-views.json's runs, to which live appends list --json once at start to read runsDir; timeoutSeconds bounds it, 10 when absent. Without it, live never runs the inventory or reads the store.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "renderer",
+              "inventory"
+            ],
+            "properties": {
+              "renderer": {
+                "type": "string",
+                "minLength": 1
+              },
+              "inventory": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "argv"
+                ],
+                "properties": {
+                  "argv": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "timeoutSeconds": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          },
           "statusOverrideMaxAgeSeconds": {
             "description": "Optional. How long a lead's status override lasts before the derived status line returns; 14400 when absent.",
             "type": "integer",
