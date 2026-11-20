@@ -31,6 +31,8 @@ export interface ViewStatus {
     | "incompatible";
   detail: string;
   receipt: Metadata | null;
+  /** Whether the last request failed, though the status it leaves may still be readable. */
+  problem: boolean;
 }
 export interface PublicProjection extends Record<string, unknown> {
   sourceFingerprint: string;
@@ -228,7 +230,7 @@ export function createViewStore(
         ? "Incompatible update · showing the last saved progress"
         : "This hosted view requires a compatible snapshot",
     }[kind];
-    return { kind, detail, receipt };
+    return { kind, detail, receipt, problem: !!problem };
   }
   function announce() {
     const value = status();
