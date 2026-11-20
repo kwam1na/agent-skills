@@ -565,3 +565,7 @@ Criteria:
 - the scenarios pass;
 - existing render snapshots are unchanged when the machine directory is empty;
 - no fixed rule replaces the agent's judgement.
+
+### V26-3693. Serve the hosted page in the same fonts as the local live view
+
+Lane 4, tier 1, not blocked. Added mid-delivery: The operator added it on 2026-11-20: the hosted page falls back to Georgia and the system sans because its policy and asset build carry none of the local view's fonts.

@@ -173,6 +173,17 @@
           "text": "No fixed rule replaces the agent's judgement."
         }
       ]
+    },
+    "V26-3693": {
+      "title": "Serve the hosted page in the same fonts as the local live view",
+      "lane": "lane-4",
+      "why": "The operator added it on 2026-11-20: the hosted page falls back to Georgia and the system sans because its policy and asset build carry none of the local view's fonts.",
+      "criteria": [
+        {
+          "id": "v26-3693-1",
+          "text": "On the hosted page, Newsreader, Geist and Geist Mono load from the hosted origin, headings, body and mono text compute to the same families and weights as the local view, and the page's policy differs from today's only by font-src 'self', with no third-party request."
+        }
+      ]
     }
   },
   "finish": [
