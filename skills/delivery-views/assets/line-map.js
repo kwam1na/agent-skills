@@ -1963,20 +1963,36 @@
       var said = rejoinSaid(doc) || [];
       var current = -1;
       stops.forEach(function (state, i) { if (current < 0 && state !== "filled") { current = i; } });
+      // Every step in but not yet rejoined: it waits on its last step, the change request, and says so.
+      if (current < 0 && !rejoined) { current = stops.length - 1; }
       shape(svg, "text", { class: "mg-step-label mg-bar-label", x: barX, y: trunkY - 22 },
-        "Rejoin " + step.target + (current >= 0 ? " · " + STEP_TITLES[current].toLowerCase() : " · done"));
+        "Rejoin " + step.target + (rejoined ? " · done" : " · " + STEP_TITLES[current].toLowerCase()));
       var segment = (BAR_WIDTH - 6) / 4;
       stops.forEach(function (state, i) {
-        var words = state === "filled" ? (rejoined ? "Done." : said[i] || "Done.") : said[i] || "Not yet.";
+        // A step says what its latest fact shows; once rejoined the ledger has no words left, and every step is done.
+        var words = said[i] || (state === "filled" ? "Done." : "Not yet.");
         var r = shape(svg, "rect", { class: "mg-step " + state, x: barX + i * (segment + 2), y: trunkY - 5, width: segment, height: 10, rx: 2,
           tabindex: 0, role: "img", "data-step": INTEGRATION_STOPS[i], "data-state": state, "aria-label": STEP_TITLES[i] + ": " + words });
-        look.wire(r, null, STEP_TITLES[i] + " · " + (state === "filled" ? "done" : i === current ? "now" : state === "hollow" ? "later" : "now"), words);
+        // Only the step the bar is on reads "now".
+        look.wire(r, null, STEP_TITLES[i] + " · " + (i === current ? "now" : state === "filled" ? "done" : "later"), words);
       });
-      var sentence = rejoined ? "Rejoined " + step.target + "." : current >= 0 ? STEP_TITLES[current] + ". " + (said[current] || "") : "";
-      wrapWords(sentence, 34).slice(0, 3).forEach(function (line, k) {
+      var sentence = rejoined ? "Rejoined " + step.target + "." : STEP_TITLES[current] + ". " + (said[current] || "");
+      var saidLines = wrapWords(sentence, 34).slice(0, 3);
+      saidLines.forEach(function (line, k) {
         shape(svg, "text", { class: "mg-why mg-step-said", x: barX, y: trunkY + 22 + k * 12 }, line);
         below = Math.max(below, trunkY + 26 + k * 12);
       });
+      // The open change request into the target, the operator's to merge, opens from under the bar.
+      var request = !rejoined && standing(step, "requested") ? step.latest.requested : null;
+      if (request && text(request.data.changeRequest)) {
+        var target = changeTarget(request.data.changeRequest);
+        var y = trunkY + 22 + saidLines.length * 12 + 2;
+        var holder = target ? shape(svg, "a", { class: "mg-change", href: target.href, target: "_blank", rel: "noopener noreferrer",
+          "aria-label": "Open the change request into " + step.target + " " + target.label }) : svg;
+        shape(holder, "text", { class: "mg-why mg-change-label", x: barX, y: y },
+          "Change request " + (target ? target.label : text(request.data.changeRequest)));
+        below = Math.max(below, y + 4);
+      }
       below = Math.max(below, postY + 22);
     }
     // The finish post, its label, and the finish lines as squares beside the label, with how many are met.
@@ -2266,7 +2282,10 @@
       row.addEventListener("mouseleave", function () { light(null); });
       var landedHere = items.filter(isLanded).length;
       var open = items.filter(function (piece) { return !isLanded(piece); });
+      // The piece being checked keeps its stop whatever its place in the lane, so the line's stream still fires from it.
+      var checked = open.filter(function (piece) { return stopKind(piece, nowSubject) === "now"; })[0];
       var shownOpen = open.slice(0, OPEN_STOPS);
+      if (checked && shownOpen.indexOf(checked) < 0) { shownOpen = shownOpen.slice(0, OPEN_STOPS - 1).concat([checked]); }
       ends.push({ colour: colours[lane], done: landedHere === items.length });
       add(row, add(el("div", "name"), el("b", null, lane ? names[lane] || lane : noLane(doc)), figures(el("span"), "lane:" + lane, landedHere + " of " + items.length + " landed")));
       var stops = el("div", "stops");
@@ -2309,7 +2328,7 @@
         stops.appendChild(seg);
       });
       if (open.length > OPEN_STOPS) {
-        var rest = open.slice(OPEN_STOPS).map(function (piece) { return subjectOf(piece.item); });
+        var rest = open.filter(function (piece) { return shownOpen.indexOf(piece) < 0; }).map(function (piece) { return subjectOf(piece.item); });
         var more = el("div", "seg more", "+" + rest.length);
         more.setAttribute("role", "img");
         more.setAttribute("aria-label", rest.length + " more open: " + spokenList(rest));

@@ -350,6 +350,8 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .mg-step:focus-visible, .mg-square:focus-visible { stroke: var(--ink); stroke-width: 2; }
 .mg-step-label { font: 500 10px var(--text); fill: var(--soft); }
 .mg-target-label { font-size: 11px; fill: var(--soft); }
+.mg-change .mg-change-label { fill: var(--soft); text-decoration: underline; }
+.mg-change:focus-visible .mg-change-label { fill: var(--ink); }
 /* The finish lines, as squares beside the post's label. */
 .mg-square { outline: none; }
 .mg-square.met { fill: var(--ink); }

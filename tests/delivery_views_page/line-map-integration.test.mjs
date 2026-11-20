@@ -165,8 +165,24 @@ test("what stands at the current head rings its stop and says what the rejoin st
   const ready = await shown(delivery([merged(30, M), suite(31, H1), round(32, H1), requested(33, H1)]));
   expect(states(ready)).toEqual(["filled", "filled", "filled", "filled"]);
   expect(said(ready, "rejoin")).toBe(`Ready. The change request https://github.com/acme/app/pull/7 is open at ${short(H1)}. The merge is the operator's.`);
-  // Every step is in: the bar says it is done, and the rejoin's own words stay on its segment.
-  expect(ready.querySelector("#line .mg-bar-label").textContent).toBe("Rejoin main · done");
+  // Every step is in but it hasn't rejoined: the bar is on its change request, says what it waits on, and links it.
+  expect(ready.querySelector("#line .mg-bar-label").textContent).toBe("Rejoin main · change request");
+  expect(under(ready)).toBe(`Change request. Ready. The change request https://github.com/acme/app/pull/7 is open at ${short(H1)}. The merge is the operator's.`
+    .split(" ").reduce((lines, word) => { const last = lines[lines.length - 1]; if (last && (last + " " + word).length > 34) lines.push(word); else lines[lines.length - 1] = last ? last + " " + word : word; return lines; }, [""])
+    .slice(0, 3).join(" "));
+  // With no forge configured it is named as text, as every change request on the page is; with one, it is linked.
+  expect([ready.querySelector("#line a.mg-change"), ready.querySelector("#line .mg-change-label").textContent])
+    .toEqual([null, "Change request https://github.com/acme/app/pull/7"]);
+  const forge = { name: "GitHub", repository: "acme/app", pullUrl: "https://github.com/{repository}/pull/{number}",
+    commitUrl: "https://github.com/{repository}/commit/{sha}" };
+  const readyDoc = delivery([merged(30, M), suite(31, H1), round(32, H1), requested(33, H1)]);
+  const [{ app: linked }] = await openPage(pageWithRuns(readyDoc, {}, { config: { ...CONFIG, forges: [forge] } }), { now: NOW, store: false });
+  const link = linked.querySelector("#line a.mg-change");
+  expect([link.getAttribute("href"), link.getAttribute("target"), link.getAttribute("rel"), link.textContent])
+    .toEqual(["https://github.com/acme/app/pull/7", "_blank", "noopener noreferrer", "Change request #7"]);
+  expect(link.getAttribute("aria-label")).toBe("Open the change request into main #7");
+  // Only the step the bar is on reads now: a failed suite is "now", the review after it "later".
+  expect([...failed.querySelectorAll("#line .mg-step")].map((step) => step.getAttribute("data-state"))).toEqual(["filled", "danger", "next", "hollow"]);
 
   const apart = await shown(delivery([merged(30, M), suite(31, H1), round(32, H2)]));
   expect(said(apart, "rejoin")).toBe("Needs a passing suite and an approving round at one head.");

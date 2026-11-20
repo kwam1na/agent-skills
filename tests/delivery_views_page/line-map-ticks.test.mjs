@@ -15,7 +15,8 @@ const KEY = "APP-10";
 // The tick states in the order the line draws them, nearest to landing first.
 const ORDER = ["landed", "queued", "review", "building", "stopped", "planned"];
 // How each state is held in the record: landed, queued and stopped are queue elements; the rest are planned work.
-const HELD = { landed: ["queue", "merged"], queued: ["queue", "queued"], stopped: ["queue", "stopped"],
+const HELD = { landed: ["queue", "merged"], queued: ["queue", "queued"], pending: ["queue", "queued", { pending: true }],
+  checking: ["queue", "checking"], stopped: ["queue", "stopped"],
   review: ["planned", "review"], building: ["planned", "building"], planned: ["planned", "planned"] };
 
 /** A delivery with one lane per entry of `lanes`, each listing its stories' states in its own order. */
@@ -23,9 +24,9 @@ function delivery(lanes, { integration = null, steps = [], finish = [] } = {}) {
   const queue = [], planned = [];
   let next = 1;
   lanes.forEach((states, lane) => states.forEach((state) => {
-    const [where, stage] = HELD[state];
+    const [where, stage, extra = {}] = HELD[state];
     const subject = `APP-${next++}`;
-    (where === "queue" ? queue : planned).push(where === "queue" ? item(subject, stage, { lane: `lane-${lane + 1}` })
+    (where === "queue" ? queue : planned).push(where === "queue" ? item(subject, stage, { lane: `lane-${lane + 1}`, ...extra })
       : { subject, title: `Work ${subject}`, lane: `lane-${lane + 1}`, stage });
   }));
   const entries = journal(steps);
@@ -78,6 +79,17 @@ for (const [total, laneCount] of [[5, 2], [24, 6], [48, 8]]) {
       expect(row.querySelectorAll(".stop-btn")).toHaveLength(Math.min(open, 3));
       expect(row.querySelector(".seg.fold")?.textContent ?? null).toBe(own.length - open ? `${own.length - open} in` : null);
       expect(row.querySelector(".seg.more")?.textContent ?? null).toBe(open > 3 ? `+${open - 3}` : null);
+      if (open > 3) {
+        // Its accessible name lists exactly the folded open stories: the lane's open ones without a stop.
+        const label = row.querySelector(".seg.more").getAttribute("aria-label");
+        expect(label.startsWith(`${open - 3} more open: `)).toBe(true);
+        const named = label.slice(label.indexOf(": ") + 2).split(/, | and /).sort();
+        const lane = row.getAttribute("data-lane");
+        const kept = new Set([...row.querySelectorAll(".stop-btn")].map((stop) => stop.getAttribute("data-subject")));
+        const folded = drawn.filter((tick) => tick.getAttribute("data-lane") === lane && tick.getAttribute("data-state") !== "landed")
+          .map((tick) => tick.getAttribute("data-subject")).filter((subject) => !kept.has(subject)).sort();
+        expect(named).toEqual(folded);
+      }
     }
   });
 }
@@ -105,7 +117,8 @@ const rejoined = [34, "integration.landed", KEY, { data: { target: "main", head:
 test("the rejoin bar names the step it is on at each stage, and bends into the target at the post", async () => {
   const stages = [[[], "main in", ["next", "hollow", "hollow", "hollow"]], [[merged], "suite", ["filled", "next", "hollow", "hollow"]],
     [[merged, suite], "review", ["filled", "filled", "next", "hollow"]], [[merged, suite, round], "change request", ["filled", "filled", "filled", "next"]],
-    [[merged, suite, round, requested], "done", ["filled", "filled", "filled", "filled"]],
+    // Every step in but not rejoined: it waits on its change request.
+    [[merged, suite, round, requested], "change request", ["filled", "filled", "filled", "filled"]],
     [[merged, suite, round, requested, rejoined], "done", ["filled", "filled", "filled", "filled"]]];
   for (const [steps, label, states] of stages) {
     const [{ app }] = await open(delivery([["landed", "landed"]], { integration: INTEGRATION, steps }));
@@ -176,4 +189,121 @@ test("focusing a tick, a step or a square names it and lights a tick's lane; hov
     tick.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   } }]);
   expect(pressed.app.querySelector("#detail .d1")?.textContent).toBe("Work APP-1");
+});
+
+test("the piece being checked keeps its stop when its lane has more than three open stories, and the rest fold", async () => {
+  const [{ app }] = await open(delivery([["stopped", "queued", "queued", "checking"]]));
+  const row = app.querySelector("#line .line");
+  // The checking piece is the lane's fourth open story in the queue's order; it keeps a stop, so the stream still fires.
+  expect([...row.querySelectorAll(".stop-btn")].map((stop) => [stop.getAttribute("data-subject"), stop.className.replace("stop-btn ", "")]))
+    .toEqual([["APP-1", "held"], ["APP-2", "ready"], ["APP-4", "now"]]);
+  expect([row.querySelector(".seg.more").textContent, row.querySelector(".seg.more").getAttribute("aria-label")]).toEqual(["+1", "1 more open: APP-3"]);
+});
+
+test("only the step the bar is on reads now; a step after it reads later, even one already marked next", async () => {
+  const failed = [31, "integration.suite", KEY, { data: { head: H, result: "failed", seconds: 1200 } }];
+  const doc = delivery([["landed"]], { integration: INTEGRATION, steps: [merged, failed] });
+  const focus = (index) => ({ run: (window) => window.document.querySelectorAll(".mg-step")[index].focus() });
+  const [, first, second, third, fourth] = await open(doc, [focus(0), focus(1), focus(2), focus(3)]);
+  const head = (snap) => snap.app.querySelector("#line .mg-tip b").textContent;
+  expect([first, second, third, fourth].map(head)).toEqual(["Main in · done", "Suite · now", "Review · later", "Change request · later"]);
+});
+
+test("the caret passes over a hand-over the lead hasn't accepted, which ticks after the ready ones", async () => {
+  const [{ app: only }] = await open(delivery([["landed", "pending", "building"]]));
+  expect([only.querySelector("#line .mg-caret"), only.querySelector("#line .mg-next")]).toEqual([null, null]);
+  const [{ app: both }] = await open(delivery([["pending", "queued"]]));
+  // The pending one comes first in the lane, the ready one first on the line, and the caret is on the ready one.
+  expect(ticks(both).map((tick) => tick.getAttribute("data-subject"))).toEqual(["APP-2", "APP-1"]);
+  expect(both.querySelector("#line .mg-next").textContent).toBe("next: APP-2");
+});
+
+test("a closed delivery ticks every landed story before every one that never landed", async () => {
+  const doc = delivery([["planned", "landed"], ["queued", "landed"]], { steps: [[40, "delivery.closed", null]] });
+  const [{ app }] = await open(doc);
+  const states = ticks(app).map((tick) => tick.getAttribute("data-state"));
+  expect(states).toEqual(["landed", "landed", "unlanded", "unlanded"]);
+});
+
+test("the main line is solid to the bar once every story has landed, and through the bend once it has rejoined", async () => {
+  const trunk = (app) => [...app.querySelectorAll("#line .mg-trunk")].map((path) => [path.getAttribute("class"), path.getAttribute("d")]);
+  const barX = (app) => Number(app.querySelector("#line .mg-step").getAttribute("x"));
+  const [{ app: open_ }] = await open(delivery([["landed", "queued"]], { integration: INTEGRATION }));
+  expect(trunk(open_).map(([cls]) => cls)).toEqual(["mg-trunk open"]);
+  const [{ app: allIn }] = await open(delivery([["landed", "landed"]], { integration: INTEGRATION, steps: [merged] }));
+  expect(trunk(allIn).map(([cls]) => cls)).toEqual(["mg-trunk open", "mg-trunk"]);
+  expect(trunk(allIn)[1][1]).toBe(`M0 ${/ (\d+)H/.exec(trunk(allIn)[1][1])[1]}H${barX(allIn) - 10}`);
+  const [{ app: done }] = await open(delivery([["landed", "landed"]], { integration: INTEGRATION, steps: [merged, suite, round, requested, rejoined] }));
+  const drawn = trunk(done);
+  expect(drawn.map(([cls]) => cls)).toEqual(["mg-trunk open", "mg-trunk", "mg-trunk"]);
+  // The solid run reaches the bend, and the bend itself is solid, ending at the post on the target.
+  const post = /^M(\d+) (\d+(?:\.\d+)?)V/.exec(done.querySelector("#line .mg-post").getAttribute("d"));
+  expect(drawn[1][1].endsWith(`H${Number(post[1]) - 30}`)).toBe(true);
+  expect(drawn[2][1].endsWith(` ${post[1]} ${Number(post[2]) + 20}`)).toBe(true);
+  // Rejoined, every step says it is done.
+  expect([...done.querySelectorAll("#line .mg-step")].map((step) => step.getAttribute("aria-label")))
+    .toEqual(["Main in: Done.", "Suite: Done.", "Review: Done.", "Change request: Done."]);
+});
+
+test("a tick opens its panel on Space and on a click with no focus, and a stop's focus lights its lane", async () => {
+  const doc = delivery([["landed", "queued"], ["review"]]);
+  const key = (subject, value) => ({ run: (window) => window.document.querySelector(`.mg-tick[data-subject="${subject}"]`)
+    .dispatchEvent(new window.KeyboardEvent("keydown", { key: value, bubbles: true })) });
+  const click = (subject) => ({ run: (window) => window.document.querySelector(`.mg-tick[data-subject="${subject}"]`)
+    .dispatchEvent(new window.MouseEvent("click", { bubbles: true })) });
+  const [, spaced, clicked, focused] = await open(doc, [key("APP-1", " "), click("APP-3"),
+    { run: (window) => window.document.querySelector('.stop-btn[data-subject="APP-2"]').focus() }]);
+  expect(spaced.app.querySelector("#detail .d1").textContent).toBe("Work APP-1");
+  expect(clicked.app.querySelector("#detail .d1").textContent).toBe("Work APP-3");
+  const lit = [...focused.app.querySelectorAll("#line .lines-track.lit [data-lane].on")].map((node) => node.getAttribute("class").split(" ")[0]).sort();
+  expect(lit).toEqual(["line", "mg-tick", "mg-tick", "mg-turn"]);
+});
+
+test("under reduced motion a story that lands just lands; a first open stop after the fold isn't drawn incoming", async () => {
+  const before = delivery([["landed", "queued", "building"]]);
+  const after = delivery([["landed", "landed", "building"]]);
+  const motion = (reduced) => openPage(pageWithRuns(before, {}, { config: CONFIG }), { now: NOW, store: { read: "pending" },
+    motion: { reduced }, steps: [{ push: before }, { push: after }] });
+  const tickOf = (snap) => snap.app.querySelector('.mg-tick[data-subject="APP-2"]').getAttribute("class");
+  const foldOf = (snap) => snap.app.querySelector("#line .seg.fold").className;
+  const moving = await motion(false), still = await motion(true);
+  expect([tickOf(moving[2]), foldOf(moving[2])]).toEqual(["mg-tick landed landing", "seg fold grew"]);
+  expect([tickOf(still[2]), foldOf(still[2])]).toEqual(["mg-tick landed", "seg fold"]);
+  // The open stop next to the fold is reached along the rule, not drawn coming in; one with nothing before it is.
+  expect(still[2].app.querySelector("#line .stops > .seg:not(.fold)").className).toBe("seg");
+  const [{ app: alone }] = await open(delivery([["building"]]));
+  expect(alone.querySelector("#line .stops > .seg").className).toBe("seg incoming");
+});
+
+test("rejoining, the stream down the main line stops short of the bar, and the track keeps room for what hangs below", async () => {
+  const doc = () => {
+    const shown = delivery([["landed", "checking"]], { integration: INTEGRATION, steps: [merged] });
+    shown.state.meta.checking = { now: { subject: "APP-2", steps: [{ id: "suite", state: "running" }] }, next: [] };
+    return shown;
+  };
+  const WIDTH = 1200;
+  const lay = (window) => {
+    Object.defineProperty(window.HTMLElement.prototype, "clientWidth", { configurable: true,
+      get() { return this.classList.contains("lines-track") ? WIDTH : 0; } });
+    Object.defineProperty(window.HTMLElement.prototype, "clientHeight", { configurable: true,
+      get() { return this.classList.contains("lines-track") ? 300 : 0; } });
+    window.Element.prototype.getBoundingClientRect = function () {
+      const left = this.classList.contains("stop-btn") ? 500 : 0;
+      return { left, right: left + 18, top: 0, bottom: 18, width: this.classList.contains("stop-btn") ? 18 : WIDTH, height: 18 };
+    };
+    const computed = window.getComputedStyle.bind(window);
+    window.getComputedStyle = (node) => node.classList && node.classList.contains("lines-track")
+      ? { paddingTop: node.style.getPropertyValue("--merge-top") } : computed(node);
+  };
+  const snaps = await openPage(pageWithRuns(doc(), {}, { config: CONFIG }), { now: NOW, store: { read: "pending" }, motion: {},
+    steps: [{ run: lay }, { push: doc() }] });
+  const drawn = snaps[2];
+  const svg = drawn.app.querySelector("#line .line-merge");
+  const width = Number(svg.getAttribute("width")), barX = Number(svg.querySelector(".mg-step").getAttribute("x"));
+  const trunk = drawn.app.querySelector(".line-flow path.flow-trunk").getAttribute("d");
+  expect(trunk.endsWith(`H${WIDTH - width + barX - 10}`)).toBe(true);
+  // One row: 46 of drawing for it, and the bar's status and the target hang below that, kept as room under the track.
+  const track = drawn.app.querySelector("#line .lines-track");
+  expect(Number(svg.getAttribute("height"))).toBeGreaterThan(46);
+  expect(track.style.getPropertyValue("--merge-below")).toBe(`${Number(svg.getAttribute("height")) - 46 + 16}px`);
 });
