@@ -1,5 +1,5 @@
 {
-  "contentSha256": "485faf15c905f84c016a8405b5255ff1db2983b9d671db9ceb88ff1e2ff14c44",
+  "contentSha256": "25b344ab22f2da6743d31e91f88f8c45fb6aa845e8300838a52c8fefbbfea79b",
   "entryPoint": "python -m agent_skills.validate --root .",
   "files": [
     {
@@ -150,7 +150,7 @@
     {
       "group": "linear",
       "path": "catalog.json",
-      "sha256": "3a31a599f7eaf072d20ce3c4da7359e57d7bb76d91098a2b1afdd8dfba6faf57"
+      "sha256": "c8b4729e3830669a0c136f3756044f7e660ed3695d35f907137d899af79a49f1"
     },
     {
       "group": "linear",
@@ -270,22 +270,22 @@
     {
       "group": "linear",
       "path": "profiles/delivery-views.json",
-      "sha256": "f74f9194e2a40e4d0c0ab178e490cc34ae5fcd4ea3715a1d0aad310579d14deb"
+      "sha256": "11f426f6a0273e9b0afd256cf9a1f5849634429f225e3eb5fa92b970eeb9322f"
     },
     {
       "group": "linear",
       "path": "profiles/linear.json",
-      "sha256": "aee30a3f7ac2be40e4a3230147527212f148229972c6eb469423611563b2f3df"
+      "sha256": "3c620dd272063b09111e06a1f2e54ea20822873884a0b8b3a19c31212df46e1c"
     },
     {
       "group": "linear",
       "path": "profiles/run-delivery.json",
-      "sha256": "e0597763ed8613e55028acf15dd004685189dd5526606661e12f36b6489277a5"
+      "sha256": "311a944384f212f52cc2b22cdecb95c82889520e2f25dba1972a7d4d79818638"
     },
     {
       "group": "linear",
       "path": "provenance.lock.json",
-      "sha256": "ff2e88e68fc8742a1f9041dc76f422c3019dbd07b446102c22b5451f0e7d86b6"
+      "sha256": "018abcd6a0538d9590706375e47ed972d535a6368c313e2b43dfbf2908fe64ab"
     },
     {
       "group": "linear",
@@ -340,7 +340,7 @@
     {
       "group": "linear",
       "path": "runtime/runtime.json",
-      "sha256": "292109368cf040ae9454fbe28414d17f97dd0ca4a15cc3b0b5cfe1939c71e6ff"
+      "sha256": "fd38877975361febecb186a0ce109dabd7cbcefc1fe8dfc445610dd637f9d355"
     },
     {
       "group": "linear",
@@ -480,12 +480,12 @@
     {
       "group": "linear",
       "path": "skills/delivery-views/scripts/hosted.py",
-      "sha256": "07d1a464655465e717b77abde24c970bd9eaa61404efcc6f788c86c0391b547b"
+      "sha256": "44b7c24bc34b5741f9382f4a02b7e9706887010cd3ae8cfd39001a48777f3c73"
     },
     {
       "group": "linear",
       "path": "skills/delivery-views/scripts/public_projection.py",
-      "sha256": "45f980069a4c82008ee02f2d0c17776b6c094220e3449eae8f59fdd467603365"
+      "sha256": "f3a6607ee50056bba3cd4a3297f70f6e47b355833bda0e3bdb6d4349195df66f"
     },
     {
       "group": "linear",
@@ -1003,10 +1003,10 @@
         "validation-inventory.json",
         "workflows/delivery-v1.json"
       ],
-      "sha256": "485faf15c905f84c016a8405b5255ff1db2983b9d671db9ceb88ff1e2ff14c44"
+      "sha256": "25b344ab22f2da6743d31e91f88f8c45fb6aa845e8300838a52c8fefbbfea79b"
     }
   },
   "profile": "linear",
-  "releaseId": "linear-v4.0.0-rc.1",
+  "releaseId": "linear-v4.1.0",
   "schemaVersion": "agent-skills-release/1"
 }
