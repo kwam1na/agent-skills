@@ -1113,6 +1113,41 @@ class LedgerTests(unittest.TestCase):
         self.assertNotEqual(row["endedBy"], handed)
         self.assertEqual(story["chapters"][2]["standing"], [ended["id"]])
 
+    def test_a_row_ends_in_the_chapter_of_its_last_thread_not_its_first(self) -> None:
+        # B's first stop is answered before A lands; its second, opened then too, stands until B lands after C.
+        journal = Journal()
+        journal.started()
+        start = journal.add(1, "check.started", subject="B")
+        first = journal.stopped(3, "B", [journal.failed(2, "B", start)])
+        journal.handed(5, "B", answers=[first])
+        [standing] = self.stops(journal, [7], subject="B", reason="check_failed")
+        journal.add(10, "candidate.merged", {"head": "c" * 40}, subject="A")
+        journal.add(15, "candidate.merged", {"head": "d" * 40}, subject="C")
+        journal.add(20, "candidate.merged", {"head": "e" * 40}, subject="B")
+        story = journal.told()
+        [row] = story["ledger"]
+        ended = next(thread for thread in story["threads"] if thread["opening"] == standing)
+        self.assertEqual(row["chapters"], {"opened": "c1", "ended": "c4"})
+        self.assertEqual([chapter["standing"] for chapter in story["chapters"]], [[], [], [], [ended["id"]]])
+
+    def test_a_chapter_carries_the_thread_that_ended_last_though_a_later_one_opened_there(self) -> None:
+        # B's first stop stands from before A's landing until B lands; a second, opened and answered after A landed,
+        # is told by its own beat. The chapter where B lands carries the first, which stood across A's landing.
+        journal = Journal()
+        journal.started()
+        [held] = self.stops(journal, [3], subject="B", reason="check_failed")
+        journal.add(10, "candidate.merged", {"head": "c" * 40}, subject="A")
+        start = journal.add(11, "check.started", subject="B")
+        second = journal.stopped(13, "B", [journal.failed(12, "B", start)])
+        journal.handed(15, "B", answers=[second])
+        journal.add(20, "candidate.merged", {"head": "d" * 40}, subject="B")
+        story = journal.told()
+        self.assertValid(story)
+        [row] = story["ledger"]
+        first = next(thread for thread in story["threads"] if thread["opening"] == held)
+        self.assertEqual(row["chapters"], {"opened": "c1", "ended": "c3"})
+        self.assertEqual(story["chapters"][2]["standing"], [first["id"]])
+
     def test_a_landing_ends_only_its_own_storys_stops(self) -> None:
         journal = Journal()
         journal.started()
