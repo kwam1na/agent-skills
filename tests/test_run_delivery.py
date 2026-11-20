@@ -7138,7 +7138,8 @@ class LiveLeadChangesTests(unittest.TestCase):
                              {"check", "definition", "head", "tree", "result", "seconds", "at", "where"})
             self.assertEqual(results["lint"]["record"]["where"], "checkout")
         with self.subTest("the hand-off carries the latest record of each check, and shows each --checks id"):
-            self.assertIn(f"- checks run: unit (recorded at {head[:10]}: passed), other (named only)", out)
+            self.assertIn(f"- checks run: unit, other\n- checks run, as recorded: unit recorded at {head[:10]}: passed; "
+                          "other named only\n", out)
             self.assertIn(f"- check records: check passed at {head[:10]} (runner); unit passed at {head[:10]} (runner)", out)
             item = next(i for i in record(fx)["state"]["queue"] if i["subject"] == "FX-2")
             fields = ("check", "definition", "head", "tree", "result", "where", "environment", "host", "seconds", "at")

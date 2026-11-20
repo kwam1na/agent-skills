@@ -2217,8 +2217,8 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         handed = kinds(fx, "candidate.handed")[-1]
         item = self.item(fx)
         assert_facts(self, handed, "candidate.handed", {
-            "head": item["head"], "changeRequest": item["changeRequest"], "rounds": 1,
-            "checks": ["tests.test_two", "tests.test_one"]})
+            "head": item["head"], "changeRequest": item["changeRequest"], "rounds": 1, "checks": ["tests.test_two", "tests.test_one"],
+            "evidence": [{**{k: v for k, v in item["evidence"][0].items() if k != "recordedAt"}, "check": "check", "where": "checkout", "head": item["head"]}]})
 
     def test_a_check_the_story_adds_is_named_at_handoff_selected_at_acceptance_and_run_by_the_queue(self) -> None:
         fx = self.fixture()

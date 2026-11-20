@@ -3180,9 +3180,8 @@ def checkout_record(c, g: dict, head: str, tree: str, code: int, seconds: float)
     neither environment nor host facts. Its definition is the binding's check of that id, if it has one."""
     binding = {"checkTimeoutSeconds": 1800, "profiles": {}, "environment": {}, "prepare": [], "hooks": "inherit",
                **(c.binding or {})}
-    check = binding_checks(c.binding).get(g["id"]) or {"id": g["id"], "argv": g["argv"], "cwd": g.get("cwd", "."),
-                                                         "prerequisites": [],
-                                                         "timeoutSeconds": g.get("timeoutSeconds", 1800)}
+    check = {"cwd": ".", "prerequisites": [], **(binding_checks(c.binding).get(g["id"]) or {
+        "id": g["id"], "argv": g["argv"], "cwd": g.get("cwd", "."), "timeoutSeconds": g.get("timeoutSeconds", 1800)})}
     return {"check": g["id"], "definition": _validator().check_definition(check, binding), "head": head, "tree": tree,
             "result": "passed" if code == 0 else "failed", "seconds": round(seconds, 3), "at": now(),
             "where": "checkout"}
@@ -4994,16 +4993,15 @@ def check_ids(c, text: str, what: str, added: dict[str, dict] | None = None) -> 
     return names
 
 
-def checks_shown(names: list[str], added: dict[str, dict], records: dict[str, dict] | None = None) -> str:
-    """The checks as a hand-off shows them: each id the candidate's own diff adds to the catalogue marked so, and, given
-    the lane's records, each as recorded, with its head and result, or as named only."""
-    def shown(name: str) -> str:
-        said = name + (" (added by this story)" if name in added else "")
-        if records is None:
-            return said
-        record = records.get(name)
-        return said + (f" (recorded at {record['head'][:10]}: {record['result']})" if record else " (named only)")
-    return ", ".join(shown(name) for name in names)
+def checks_shown(names: list[str], added: dict[str, dict]) -> str:
+    """The checks as a hand-off shows them: each id the candidate's own diff adds to the catalogue marked so."""
+    return ", ".join(f"{name} (added by this story)" if name in added else name for name in names)
+
+
+def checks_recorded(names: list[str], records: dict[str, dict]) -> str:
+    """Each named check as the lane's records show it: recorded, with its head and result, or named only."""
+    return "; ".join(f"{name} recorded at {records[name]['head'][:10]}: {records[name]['result']}" if name in records
+                     else f"{name} named only" for name in names)
 
 
 def provider_selects(c) -> bool:
@@ -5493,7 +5491,8 @@ def handoff(args) -> None:
         + (f"; history: {'; '.join(histories)}" if histories else ""),
         f"- review lenses: {lenses_text(story_lenses, lenses_reason, requested)}",
         f"- validation: {validation}",
-        *([f"- checks run: {checks_shown(ran, added, records)}"] if ran else []),
+        *([f"- checks run: {checks_shown(ran, added)}", f"- checks run, as recorded: {checks_recorded(ran, records)}"]
+          if ran else []),
         f"- check records: {records_shown(records)}",
         *([f"- PR review: {pr_line}"] if pr_line else []),
         "- in-app checks: " + ("; ".join(lines) or "none required"),
