@@ -199,9 +199,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " rule. Under the kernel's rule, invoked by the operator it starts the run, and"
         " invoked by another workflow in the same session it joins that"
         " workflow's run and starts none",
-        "An epic lane's `$execute-work` starts its own run and binds it to its"
-        " piece with the delivery's `bind-run`, and does not start the live"
-        " view, which the lead runs for the delivery",
+        "Under the kernel's rule, an epic lane's `$execute-work` starts its own"
+        " run and binds it to its piece with the delivery's `bind-run`, and does"
+        " not start the live view, which the lead runs for the delivery",
         "It ends the run only where it started it, as the kernel's rule says",
         "It marks its stage `execute` at entry and exit, and `review` around"
         " each review round it obtains, nested inside `execute`",
@@ -253,7 +253,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " running` at entry and `completed`, `failed` or `interrupted` at exit,"
         " a new `attemptId` for each entry, and `owner` the host",
         "`<name>` is one of `route`, `plan`, `diagnose`, `execute`, `review` and"
-        " `compound`",
+        " `compound`: `$deliver-work` marks `route`, `$plan-work` `plan`,"
+        " `$diagnose-work` `diagnose`, `$execute-work` `execute` and `review`"
+        " around each review round it obtains, and compounding `compound`. A"
+        " workflow that joins a run marks its own stage in it",
         "A stage entered again keeps its `activityId`, takes a new `attemptId`,"
         " and names the stage's previous attempt as `supersedesAttemptId`;"
         " every later state of that attempt repeats it",
@@ -273,6 +276,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Under `$compound-delivery-kernel`'s run lifecycle rule, this workflow"
         " starts the request's run at `route` and marks its `route` stage, and"
         " every workflow it routes to joins that run and starts none",
+        "The run stays open while the request waits on the operator between"
+        " workflows, and this workflow ends it when the request finishes, stops"
+        " on a blocker, or is stopped with work left",
     ),
     "skills/plan-work/SKILL.md": (
         "Apply `$compound-delivery-kernel`'s run lifecycle rule: invoked by the"
@@ -285,6 +291,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Apply `$compound-delivery-kernel`'s run lifecycle rule: invoked by the"
         " operator this workflow starts the run, invoked by another workflow it"
         " joins that run, and it marks its stage `diagnose`",
+        "A diagnosis that a later stage runs as a subflow joins its caller's"
+        " run",
     ),
 }
 
@@ -326,6 +334,17 @@ WITHDRAWN_LIFECYCLE_SKILLS: tuple[str, ...] = (
     "skills/plan-work/SKILL.md",
     "skills/diagnose-work/SKILL.md",
     "skills/deliver-work/SKILL.md",
+    # The other workflows that apply the kernel or run inside a delivery. A
+    # skill that speaks of a check run rather than a delivery's run, such as
+    # run-delivery's configuration reference, is left out.
+    "skills/execute-linear-ticket/SKILL.md",
+    "skills/create-linear-ticket/SKILL.md",
+    "skills/execute-jira-ticket/SKILL.md",
+    "skills/create-jira-ticket/SKILL.md",
+    "skills/review-work/SKILL.md",
+    "skills/obtain-review/SKILL.md",
+    "skills/compound-learning/SKILL.md",
+    "skills/orchestrate-work/SKILL.md",
 )
 WITHDRAWN_LIFECYCLE_SYNONYMS: tuple[str, ...] = (
     "start the run",
@@ -334,6 +353,9 @@ WITHDRAWN_LIFECYCLE_SYNONYMS: tuple[str, ...] = (
     "start a linked successor",
     "starts a run",
     "starts its run",
+    "starts its own run",
+    "start its own run",
+    "begins its run",
     "begin a run",
     "begin the run",
     "begins the run",
@@ -341,13 +363,32 @@ WITHDRAWN_LIFECYCLE_SYNONYMS: tuple[str, ...] = (
     "opens a run",
     "end the run",
     "ends the run",
+    "end its run",
+    "ends its run",
     "close the run",
+    "closes the run",
     "emit `run.started` first",
     "`run.started` first",
     "`run.started` before",
     "`run.ended` last",
 )
-KERNEL_REFERENCE = "kernel"
+# A sentence defers to the kernel only by naming the skill or its rule; a
+# sentence that merely mentions "the kernel" can still contradict the rule.
+KERNEL_REFERENCES: tuple[str, ...] = (
+    "`$compound-delivery-kernel`",
+    "the kernel's rule",
+    "kernel's run lifecycle rule",
+)
+
+
+def uses(sentence: str, synonym: str) -> bool:
+    """Whether ``sentence`` uses ``synonym`` as words: "starts the runner" does not use "starts the run"."""
+    return re.search(rf"(?<![\w-]){re.escape(synonym)}(?![\w-])", sentence.lower()) is not None
+
+
+def defers_to_the_kernel(sentence: str) -> bool:
+    lowered = sentence.lower()
+    return any(reference.lower() in lowered for reference in KERNEL_REFERENCES)
 
 
 def sentences(text: str) -> list[str]:
@@ -444,21 +485,25 @@ class RunEventEmissionCorpusTests(unittest.TestCase):
     def test_no_workflow_starts_or_ends_a_run_outside_the_kernels_rule(self) -> None:
         for relative in WITHDRAWN_LIFECYCLE_SKILLS:
             for sentence in sentences(self.archived[relative]):
-                lowered = sentence.lower()
                 for synonym in WITHDRAWN_LIFECYCLE_SYNONYMS:
-                    if synonym in lowered:
+                    if uses(sentence, synonym):
                         with self.subTest(path=relative, synonym=synonym):
-                            self.assertIn(KERNEL_REFERENCE, lowered, sentence)
+                            self.assertTrue(defers_to_the_kernel(sentence), sentence)
 
     def test_the_withdrawn_sensor_catches_an_unconditional_start(self) -> None:
         # The absence check above is only as good as its synonyms and its
         # sentence split: an unconditional sentence pasted into a skill fails.
         for synonym in WITHDRAWN_LIFECYCLE_SYNONYMS:
-            pasted = f"Before reading repository authority, {synonym} for the delivery. Apply the kernel."
+            pasted = (f"Before reading repository authority, {synonym} for the delivery. Apply the kernel's rule."
+                      f" When the plan is approved, {synonym}, as the kernel says.")
             with self.subTest(synonym=synonym):
-                offending = [s for s in sentences(pasted) if synonym in s.lower()]
-                self.assertEqual(len(offending), 1)
-                self.assertNotIn(KERNEL_REFERENCE, offending[0].lower())
+                offending = [s for s in sentences(pasted) if uses(s, synonym)]
+                self.assertEqual(len(offending), 2)
+                # Neither names the skill or its rule; the second only
+                # mentions the kernel while contradicting it.
+                self.assertFalse(any(defers_to_the_kernel(s) for s in offending))
+        self.assertTrue(defers_to_the_kernel("Under the kernel's rule, it ends the run only where it started it."))
+        self.assertFalse(uses("Only the lead starts the runner.", "starts the run"))
 
     def test_each_emit_section_stands_unnested(self) -> None:
         for relative, headings in UNNESTED_SECTIONS.items():
