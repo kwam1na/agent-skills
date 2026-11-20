@@ -2956,7 +2956,8 @@ class Runner:
                     if outside and any(name not in outcomes for name in guarding):
                         # Nothing else starts until every guard, and what it needs, has finished.
                         break
-                    if (outside and guard_failed) or any(outcomes[name] != "passed" for name in check["prerequisites"]):
+                    # Once a guard fails the run has ended: nothing else starts, another guard included.
+                    if guard_failed or any(outcomes[name] != "passed" for name in check["prerequisites"]):
                         pending.pop(0)
                         outcomes[check["id"]] = "skipped"
                         records[check["id"]]["state"] = "skipped"

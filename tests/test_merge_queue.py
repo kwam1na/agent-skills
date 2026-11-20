@@ -8560,7 +8560,8 @@ class CheckCatalogueQueueTests(MergeQueueTestCase):
         adopter = self.catalogue_adopter()
         self.candidate(adopter, {"src/app.txt": "app two\n"})
         self.select_tool(adopter, "feature", "focused,lib")
-        self.history(adopter, {"focused": [4, 6, 5], "lib": [40, 60, 50], "guard": [1]})
+        # focused's latest run, its longest and its mean are all above lib's; only its median, 5, is below lib's 50.
+        self.history(adopter, {"focused": [4, 5, 200], "lib": [40, 50, 60], "guard": [1]})
         results = self.run_queue(adopter, "feature")
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
         self.assertEqual(self.ran(adopter), ["guard-setup", "guard", "lib", "focused", "always"])
@@ -8572,11 +8573,14 @@ class CheckCatalogueQueueTests(MergeQueueTestCase):
         for name, parallel in (("one at a time", {}), ("in parallel", {"parallelChecks": 4})):
             with self.subTest(name):
                 self.fresh()
+                # A second guard, as this repository's own binding names two: the first one's failure ends the run
+                # before it starts, when they run one at a time.
                 catalogue = [check_entry("focused", "src/app.txt", parallelSafe=True),
                              check_entry("guard", "--always-fail", prerequisites=["guard-setup"], parallelSafe=True),
-                             check_entry("guard-setup", parallelSafe=True), check_entry("lib", "src/lib.txt", parallelSafe=True)]
+                             check_entry("guard-setup", parallelSafe=True), check_entry("lib", "src/lib.txt", parallelSafe=True),
+                             check_entry("guard2")]
                 adopter = self.adopter({**parallel, "alwaysRun": [check_entry("always", parallelSafe=True)],
-                                        "selection": {"lead": True, "catalogue": catalogue, "guards": ["guard"]}})
+                                        "selection": {"lead": True, "catalogue": catalogue, "guards": ["guard", "guard2"]}})
                 self.candidate(adopter, {"src/app.txt": "app two\n"})
                 self.select_tool(adopter, "feature", "focused,lib")
                 results = self.run_queue(adopter, "feature")
@@ -8585,7 +8589,7 @@ class CheckCatalogueQueueTests(MergeQueueTestCase):
                 self.assertEqual(set(self.ran(adopter)), {"guard-setup", "guard"})
                 checked = next(r.document() for r in results if r.document()["subcommand"] == "check")
                 states = {entry["id"]: entry["state"] for entry in checked["checks"]}
-                self.assertEqual(states, {"guard-setup": "passed", "guard": "failed", "lib": "skipped",
+                self.assertEqual(states, {"guard-setup": "passed", "guard": "failed", "guard2": "skipped", "lib": "skipped",
                                           "focused": "skipped", "always": "skipped"})
 
     def test_a_selection_recorded_before_the_binding_named_a_guard_still_runs_the_guard(self) -> None:
