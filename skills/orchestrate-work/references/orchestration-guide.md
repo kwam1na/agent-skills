@@ -971,21 +971,43 @@ python3 -B <skill>/scripts/delivery_state.py --dir <state> handoff --lane <lane>
 Add `--run` with the id of the run that built the work when your repository
 records runs; leave it out when it records none.
 
-When the binding lists a check in `reusableChecks` and you ran that check
-yourself, at a head you pushed, and it passed, add its evidence to the
-hand-off, once for each such check: the queue skips running it again when the
-tree it would check is the one you checked. Print the evidence as a step of its
-own and hand it off only if that step succeeded:
+Run a check the way the queue does, from any checkout, with `run-checks`. It
+reads the binding from the head's own tree, makes its own checkout of the head
+under `workRoot/runs/<pid>-<n>`, runs the binding's `prepare` steps there, and
+runs each check, its prerequisites first, in the check's declared environment.
+It fetches nothing and writes no delivery state; it never clears
+`workRoot/checkouts`, so it runs beside a queue serving the same repository,
+and it removes only what it made:
 
 ```bash
-python3 -B <skill>/scripts/merge_queue.py --repo <lane checkout> --remote <remote> --base <base> evidence --check <reusable check> --head <head you ran it on>
+python3 -B <skill>/scripts/merge_queue.py --repo <your checkout> --remote <remote> --base <base> run-checks --head <commit> --checks <id>[,<id>...]
 ```
 
-It exits 1 with the reason whenever it refuses: the head is not a commit, its
-tree has no valid binding for this base, the check is not reusable in that
-binding, or git fails. A refusal pasted into `--evidence` is refused as the
-evidence command's. Record only a run that finished at the head
-you name; add `--result failed` for one that failed, or leave the evidence out.
+It prints one record a check: `check`, `definition` (the check's digest under
+the head's binding), `head`, `tree`, `result` (`passed`, `failed`, or `skipped`
+when a prerequisite didn't pass), `seconds`, `at`, `where: runner`, and the
+facts that say whether another run would agree: `environment` (the names the
+check received and a digest of the values that decide it, never a value) and
+`host` (the platform, and the sha256 of each tool it names, resolved on its
+`PATH`). A failed record names its `log`, kept under `workRoot/runs/logs`. It
+exits 1 when a check didn't pass, and prints `reason` and `detail` instead
+when it refuses: the head is not a commit, its tree has no valid binding for
+this base, a check is unknown, a check needs a placeholder other than
+`{treeSha}` and `{workRoot}`, or git fails.
+
+A check and a `prepare` step get a declared environment, in the queue as in
+`run-checks`: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` and
+every `LC_*` name, the names the binding lists in `inherit`, then the binding's
+`environment`, the check's profile, the git identity and the hooks folder.
+Everything else is dropped, and a failed run's output names what was dropped:
+a check that needs one passes once `inherit` lists it. The queue's own steps
+keep its whole environment. Queue rows carry the same `environment` and `host`.
+
+Add a record to your hand-off with `--evidence`, once for each check, less its
+`log`. The queue reuses a passing run of a check the binding lists in
+`reusableChecks` when the tree it would check is the one you checked. A
+refusal pasted into `--evidence` is refused as `run-checks`'s. Nothing is
+refused on the facts a record carries.
 
 The hand-off queues your planned work at its reviewed head; the runner takes
 it from there. To hand off a stopped candidate again, run the same command
@@ -1407,6 +1429,8 @@ it is not a freshness proof or permission to skip any admission check.
 | `reusableChecks` | Optional. Ids of the binding's own checks (`alwaysRun` or `fallback`) the runner may reuse from a lane's hand-off evidence instead of running them again. Each may use no placeholder but `{treeSha}`, and no binding check may name it as a prerequisite. None when absent, so nothing is reused until you opt in. See "Reused checks". |
 | `batch` | Optional. `{culpritSearch}`: how `batch` finds the member that failed a batch's checks, `bisect` (the default, fewest check runs) or `serial` (each prefix in order). |
 | `environment` | Variables set for every argv the runner runs. It must not set `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS`, which would change the paths the workRoot checks match; these names are matched without case. The runner drops an inherited setting of them before running git or any declared argv; a profile's environment may still set them for its checks. |
+| `inherit` | Optional. Names a check and a `prepare` step inherit from the runner's environment beyond the baseline: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` and every `LC_*` name. Everything else is dropped from them, and a failed run's output names what was. A listed name's value is in the run's environment digest. It must not name a variable that moves git (`GIT_DIR` and the like) or changes how it reads a pathspec. The runner's own steps keep its whole environment. None when absent. |
+| `reuse` | Optional. `tools`: programs every check may call, beyond its own and each `prepare` step's, that a run record names by the sha256 of the file each resolves to on the check's `PATH`. |
 | `ready` | An argv run before merging; a non-zero exit stops with `ready_refused`. |
 | `merge` | An argv that must use `{expectedHead}`. A binding whose `merge` lacks it is invalid. |
 | `release` | Ordered targets, each with an `id`, `argv`, `stopsOnFailure` and `requiresApproval`, and an optional `timeoutSeconds`. |
@@ -1502,7 +1526,10 @@ the runner's fetch and push rely on. A pin overrides every configuration
 level, the repository's own included. Settings outside this set, and
 `.gitattributes`, still apply, and the argv the binding declares runs with the
 user's full configuration apart from the hooks setting above. Under
-`hooks: "run"`, a global `core.hooksPath` still chooses which hooks run.
+`hooks: "run"`, a global `core.hooksPath` still chooses which hooks run. A
+check and a `prepare` step get only their declared environment, so their git
+finds its configuration through `HOME`, and a `GIT_CONFIG_GLOBAL` or
+`XDG_CONFIG_HOME` reaches them only when the binding lists it in `inherit`.
 
 The runner's own git reads the global and system configuration of the user
 who started it: `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`,

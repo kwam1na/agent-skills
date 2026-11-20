@@ -142,6 +142,8 @@ SELECT_QUEUE = ("leadSelection",)
 # Written only by the lead's repair command, and cleared by the tool when base.repaired is journaled.
 REPAIR_QUEUE = ("repair",)
 EVIDENCE_FIELDS = ("check", "definition", "head", "tree", "result")
+# What a run-checks record adds to an entry: where it ran, its environment and host facts, how long, and when.
+EVIDENCE_OPTIONAL = ("where", "environment", "host", "seconds", "at")
 EVIDENCE_COMMIT = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 EVIDENCE_DEFINITION = re.compile(r"^sha256:[0-9a-f]{64}$")
 TOOL_OWNED = ("schemaVersion", "version")
@@ -1453,18 +1455,24 @@ def _set_lane_state(state: dict, lane: str, lane_state: str) -> None:
 
 
 def evidence_errors(evidence: object) -> list[str]:
-    """Problems with a lane's suite evidence: what ``merge_queue.py evidence`` prints, one entry a check."""
+    """Problems with a lane's suite evidence: the records ``merge_queue.py run-checks`` prints, one entry a check.
+
+    An entry has the five fields every record has, and may carry what a run-checks record adds; nothing is refused
+    on those facts here, only on their shape."""
     if not isinstance(evidence, list):
         return ["evidence is a list of entries"]
     problems = []
     for entry in evidence:
         if isinstance(entry, dict) and set(entry) == {"reason", "detail"}:
-            # What merge_queue.py evidence prints when it refuses.
-            problems.append(f"the evidence command refused: {entry['reason']}: {entry['detail']}")
+            # What merge_queue.py run-checks prints when it refuses.
+            problems.append(f"run-checks refused: {entry['reason']}: {entry['detail']}")
             continue
-        if not isinstance(entry, dict) or set(entry) != set(EVIDENCE_FIELDS):
-            problems.append(f"an evidence entry has exactly {', '.join(EVIDENCE_FIELDS)}")
+        if (not isinstance(entry, dict) or not set(EVIDENCE_FIELDS) <= set(entry)
+                or not set(entry) <= {*EVIDENCE_FIELDS, *EVIDENCE_OPTIONAL}):
+            problems.append(f"an evidence entry has exactly {', '.join(EVIDENCE_FIELDS)}, and may have "
+                            f"{', '.join(EVIDENCE_OPTIONAL)}")
             continue
+        problems.extend(_run_fact_problems(entry))
         if not isinstance(entry["check"], str) or not entry["check"]:
             problems.append("an evidence entry names its check")
         if not isinstance(entry["definition"], str) or not EVIDENCE_DEFINITION.match(entry["definition"]):
@@ -1477,6 +1485,40 @@ def evidence_errors(evidence: object) -> list[str]:
     checks = [entry.get("check") for entry in evidence if isinstance(entry, dict)]
     if len(checks) != len(set(checks)):
         problems.append("one evidence entry a check")
+    return problems
+
+
+def _run_fact_problems(entry: dict) -> list[str]:
+    """What is wrong with the shape of the facts a run-checks record adds to an evidence entry."""
+    name = entry.get("check")
+    problems = []
+    if "where" in entry and entry["where"] not in ("runner", "checkout"):
+        problems.append(f"{name}: where is runner or checkout")
+    if "seconds" in entry and (isinstance(entry["seconds"], bool) or not isinstance(entry["seconds"], (int, float))
+                               or entry["seconds"] < 0):
+        problems.append(f"{name}: seconds is a duration")
+    if "at" in entry:
+        try:
+            if not entry["at"].endswith("Z"):
+                raise ValueError(entry["at"])
+            _parse_time(entry["at"], exact=True)
+        except (AttributeError, TypeError, ValueError):
+            problems.append(f"{name}: at is a time")
+    if "environment" in entry:
+        environment = entry["environment"]
+        if (not isinstance(environment, dict) or set(environment) != {"names", "digest"}
+                or not isinstance(environment["names"], list)
+                or not all(isinstance(item, str) and item for item in environment["names"])
+                or not isinstance(environment["digest"], str) or not EVIDENCE_DEFINITION.match(environment["digest"])):
+            problems.append(f"{name}: the environment has its names and a sha256: digest")
+    if "host" in entry:
+        host = entry["host"]
+        if (not isinstance(host, dict) or set(host) != {"platform", "tools"}
+                or not isinstance(host["platform"], str) or not host["platform"]
+                or not isinstance(host["tools"], dict)
+                or not all(value is None or (isinstance(value, str) and EVIDENCE_DEFINITION.match(value))
+                           for value in host["tools"].values())):
+            problems.append(f"{name}: the host has its platform and each tool's sha256: digest or null")
     return problems
 
 
@@ -1498,8 +1540,9 @@ def handoff(
 
     The subject is planned in the lane, or queued in it and waiting or stopped,
     for a hand-off at a new head. Work in flight is never handed off again.
-    ``evidence`` records the lane's own runs of the binding's reusable checks,
-    each with the head and tree it ran on; a hand-off without it keeps none.
+    ``evidence`` records the lane's own runs of checks, as run-checks prints
+    them, each with the head and tree it ran on and any facts its record
+    carries; a hand-off without it keeps none.
     ``run`` names the run that built the work; a hand-off without it keeps the
     run already stored, from an earlier hand-off or the lead's plan. A run another
     planned or queued subject holds is refused with ``run_bound``. ``checks`` names
@@ -1620,7 +1663,8 @@ def handoff(
     if rounds is not None:
         facts["rounds"] = rounds
     if evidence:
-        facts["evidence"] = [{key: entry[key] for key in EVIDENCE_FIELDS} for entry in evidence]
+        facts["evidence"] = [{key: entry[key] for key in (*EVIDENCE_FIELDS, *EVIDENCE_OPTIONAL) if key in entry}
+                             for entry in evidence]
     if carried:
         facts["carry"] = dict(carried)
     # A hand-off for a stopped piece answers the stop standing for it.

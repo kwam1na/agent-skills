@@ -4231,6 +4231,14 @@ class LaneWriterTests(unittest.TestCase):
         found.update(changes)
         return found
 
+    @classmethod
+    def record(cls, **changes: object) -> dict:
+        """A run-checks record: the five fields, and where it ran, its facts, how long and when."""
+        return {**cls.evidence(), "where": "runner", "seconds": 12.5, "at": "2026-11-19T10:00:00.250Z",
+                "environment": {"names": ["HOME", "LANG", "PATH"], "digest": "sha256:" + "1" * 64},
+                "host": {"platform": "Darwin 25.5.0 arm64", "tools": {"git": "sha256:" + "2" * 64, "npm": None}},
+                **changes}
+
     def test_a_hand_off_records_the_lanes_suite_evidence_for_that_candidate(self) -> None:
         item = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40,
                                   change_request="cr", evidence=[self.evidence()])
@@ -4251,6 +4259,25 @@ class LaneWriterTests(unittest.TestCase):
                                    evidence=[self.evidence(head="b" * 40, result="failed")])
         self.assertEqual([(entry["head"], entry["result"]) for entry in third["evidence"]], [("b" * 40, "failed")])
 
+    def test_a_run_checks_record_keeps_its_facts_through_the_hand_off_and_its_replay(self) -> None:
+        records = [self.record(), self.record(check="lint", where="checkout", seconds=0)]
+        item = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40,
+                                  change_request="cr", evidence=records)
+        self.assertEqual([{key: value for key, value in entry.items() if key != "recordedAt"}
+                          for entry in item["evidence"]], records)
+        handed = state_tool.read_journal(self.directory)[-1]
+        self.assertEqual((handed["kind"], handed["data"]["evidence"]), ("candidate.handed", records))
+        self.assertEqual(state_tool.journal_errors(state_tool.read_journal(self.directory)), [])
+        # A hand-off waiting on a failed run is the row its journaled facts make, those facts included.
+        state = state_tool.read_state(self.directory)
+        waiting = next(entry for entry in state["queue"] if entry["subject"] == "work-a")
+        waiting.update(pending=True, head="f" * 40, evidence=[])
+        replayed = state_tool.handed_item(state, state_tool.read_journal(self.directory), "work-a")
+        self.assertEqual(replayed["evidence"], [{**entry, "recordedAt": handed["at"]} for entry in records])
+        # The facts are recorded, not judged: a record from another host or a lane's own checkout is taken as given.
+        self.assertEqual(state_tool.evidence_errors([self.record(where="checkout",
+                                                                 host={"platform": "Linux 6.1 x86_64", "tools": {}})]), [])
+
     def test_malformed_suite_evidence_is_refused(self) -> None:
         cases = {
             "a missing tree": {key: value for key, value in self.evidence().items() if key != "tree"},
@@ -4261,6 +4288,15 @@ class LaneWriterTests(unittest.TestCase):
             "a short tree": self.evidence(tree="abc"),
             "an empty check": self.evidence(check=""),
             "the same check twice": None,
+            "an unknown place": self.record(where="laptop"),
+            "a negative duration": self.record(seconds=-1),
+            "a duration in words": self.record(seconds="fast"),
+            "a time without its zone": self.record(at="2026-11-19T10:00:00"),
+            "an environment with a value": self.record(environment={"names": ["HOME"], "digest": "sha256:" + "1" * 64,
+                                                                    "values": {"HOME": "/x"}}),
+            "a bare environment digest": self.record(environment={"names": ["HOME"], "digest": "1" * 64}),
+            "a host without its platform": self.record(host={"tools": {}}),
+            "a tool's bare digest": self.record(host={"platform": "Darwin", "tools": {"git": "2" * 64}}),
         }
         for name, entry in cases.items():
             with self.subTest(name):
@@ -6339,7 +6375,10 @@ class CarryReviewTests(unittest.TestCase):
 class StateToolFactsTests(unittest.TestCase):
     """The state tool's own entries carry their kind's facts and links, and no sentence."""
 
-    EVIDENCE = [{"check": "full", "definition": "sha256:" + "d" * 64, "head": HEAD_A, "tree": "e" * 40, "result": "passed"}]
+    EVIDENCE = [{"check": "full", "definition": "sha256:" + "d" * 64, "head": HEAD_A, "tree": "e" * 40, "result": "passed",
+                 "where": "runner", "seconds": 3.25, "at": "2026-11-19T10:00:00Z",
+                 "environment": {"names": ["PATH"], "digest": "sha256:" + "1" * 64},
+                 "host": {"platform": "Darwin 25.5.0 arm64", "tools": {"git": None}}}]
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()

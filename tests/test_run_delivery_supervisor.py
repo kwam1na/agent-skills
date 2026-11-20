@@ -186,6 +186,8 @@ def supervised(fx: Fixture, *, grant_ready: bool = True, merge_needs_ready: bool
                    "{expectedHead}", "{baseHead}"], fullHealth=py("full_health.py"))
     binding["fallback"] = [{"id": "check", "argv": py("check.py"), "cwd": ".", "reasons": ["every candidate"],
                             "prerequisites": []}]
+    # The check reads these from the queue's environment, which a check gets only for the names inherit lists.
+    binding["inherit"] = ["FX_SIGNALS", "FX_CHECK_SECONDS"]
     binding["state"] = {"directory": ".orchestration/state", "publishers": [], "renderers": [],
                         "forgeSnapshot": {"argv": py("snapshot.py")}, "refreshSeconds": 0}
     (m / ".agents/orchestration.json").write_text(json.dumps(binding, indent=2))

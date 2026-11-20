@@ -25,8 +25,10 @@ import contextlib
 import copy
 import functools
 import datetime
+import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import signal
@@ -165,6 +167,14 @@ GIT_CONFIG_HOME_VARIABLES = (
     "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "XDG_CONFIG_HOME",
     "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
 )
+# What a check and a prepare step inherit from the runner's environment, whatever the binding says: the session's
+# own locations and identity, and its locale. Every other inherited name is dropped unless the binding lists it in
+# inherit. Windows needs a few more to start a process at all.
+CHECK_BASELINE = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG")
+WINDOWS_BASELINE = ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "USERPROFILE")
+# Passed to the check, but left out of its environment digest: they say where, or by whom, a run happens. PATH's
+# effect is captured by the tool digests instead.
+UNDIGESTED = frozenset({"PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", *WINDOWS_BASELINE})
 FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
 # Windows reads environment names without case.
@@ -417,6 +427,16 @@ def binding_errors(binding: object) -> list[str]:
     for variable in sorted(binding["environment"]):
         if variable.upper() in GIT_PATHSPEC_VARIABLES:
             errors.append(f"/environment: {variable} changes how git reads a pathspec and must not be set")
+    inherit = binding.get("inherit", [])
+    if len({environment_name(name) for name in inherit}) != len(inherit):
+        errors.append("/inherit: names must be unique")
+    for variable in inherit:
+        if variable.upper() in GIT_LOCATION_VARIABLES | GIT_PATHSPEC_VARIABLES or re.match(
+                r"GIT_CONFIG_(KEY|VALUE)_\d+\Z", variable.upper()):
+            errors.append(f"/inherit: {variable} would move or change the git a check runs and must not be inherited")
+    tools = binding.get("reuse", {}).get("tools", [])
+    if len(set(tools)) != len(tools):
+        errors.append("/reuse/tools: names must be unique")
     if "{expectedHead}" not in binding["merge"]:
         errors.append("/merge: the merge argv must use {expectedHead} as a whole element")
     if "{candidate}" not in binding["candidate"]:
@@ -884,8 +904,8 @@ class Runner:
     """One runner invocation against one repository.
 
     ``seams`` maps a step name to a callable run at that point, so tests can
-    make every race deterministic. Names: ``after_resolve``, ``after_sync``,
-    ``after_check`` and ``before_merge``.
+    make every race deterministic. Names include ``after_start``,
+    ``after_resolve``, ``after_sync``, ``after_check`` and ``before_merge``.
     """
 
     def __init__(
@@ -948,15 +968,58 @@ class Runner:
         self._stopping = False
         self._counter = 0
         self._logs = 0
+        self._tool_digests: dict[tuple[str, int, int], str] = {}
 
     # -- git ---------------------------------------------------------------
 
     def environment(self, extra: dict[str, str] | None = None) -> dict[str, str]:
+        """The environment the runner's own steps run with: its own, less what would move git elsewhere, plus the
+        binding's. A check and a prepare step get ``check_environment`` instead."""
         env = {
             key: value for key, value in os.environ.items()
             if key not in GIT_LOCATION_VARIABLES and key not in GIT_PATHSPEC_VARIABLES
             and not re.match(r"GIT_CONFIG_(KEY|VALUE)_\d+\Z", key)
         }
+        return self.declared(env, extra)
+
+    def check_environment(self, profile: dict[str, str] | None = None,
+                          context: Context | None = None) -> tuple[dict[str, str], dict, list[str]]:
+        """The environment a check or a prepare step runs with, what its run record says of it, and the inherited
+        names it drops.
+
+        It is declared, not inherited: the fixed baseline, the names the binding lists in ``inherit``, then the
+        binding's environment, the check's profile (``profile``, its placeholders filled from ``context``), the git
+        identity and the hooks directory. The record holds the names the check received and a sha256 over the sorted
+        name=value pairs that decide the run: the locale, the inherited names, the binding's environment and the
+        profile, a ``{workRoot}`` or ``{treeSha}`` value as its placeholder. Where and by whom the run happens is
+        passed but not digested, and no value is ever recorded.
+        """
+        context = context or Context()
+        baseline = {environment_name(name) for name in (*CHECK_BASELINE, *(WINDOWS_BASELINE if WINDOWS else ()))}
+        listed = {environment_name(name) for name in self.binding.get("inherit", [])}
+
+        def kept(name: str) -> bool:
+            name = environment_name(name)
+            return name in baseline or name in listed or name.startswith("LC_")
+
+        inherited = {key: value for key, value in os.environ.items() if kept(key)}
+        dropped = sorted(key for key in os.environ if not kept(key))
+        profile = profile or {}
+        resolved = {key: context.element(value) for key, value in profile.items()}
+        # A value made from workRoot says where the run happens, and one made from the tree is the tree's, which the
+        # record names already: each is digested as its placeholder, as a check's definition digests its argv.
+        stable = {key: value if PLACEHOLDER.match(value) and PLACEHOLDER.match(value)[1] in ("workRoot", "treeSha")
+                  else context.element(value) for key, value in profile.items()}
+        digested = {key: value for key, value in inherited.items() if environment_name(key) not in UNDIGESTED}
+        digested.update(self.binding.get("environment", {}))
+        digested.update(stable)
+        env = self.declared(dict(inherited), resolved)
+        text = json.dumps(sorted(digested.items()), ensure_ascii=True, separators=(",", ":"))
+        facts = {"names": sorted(env), "digest": "sha256:" + hashlib.sha256(text.encode("ascii")).hexdigest()}
+        return env, facts, dropped
+
+    def declared(self, env: dict[str, str], extra: dict[str, str] | None = None) -> dict[str, str]:
+        """``env`` with the binding's environment, ``extra``, the git identity and the hooks directory on top."""
         env.update(self.binding.get("environment", {}))
         if extra:
             env.update(extra)
@@ -1034,6 +1097,8 @@ class Runner:
             shutil.rmtree(checkouts)
         self.git("worktree", "prune")
         checkouts.mkdir(parents=True, exist_ok=True)
+        # workRoot/runs is run-checks' own, and a run there may be live: it is never cleared here.
+        self.seam("after_start", "")
 
     def checkout(self, commit: str, label: str, prepare: bool = True, context: Context | None = None) -> Path:
         self._counter += 1
@@ -1045,7 +1110,7 @@ class Runner:
         if prepare:
             context = (context or Context()).with_values(treeSha=self.tree("HEAD", cwd=path))
             for argv in self.binding["prepare"]:
-                completed = self.run_argv(argv, path, context, self.binding["checkTimeoutSeconds"])
+                completed = self.run_declared(argv, path, context, self.binding["checkTimeoutSeconds"])
                 if completed.returncode != 0:
                     said, kept = self.refusal("prepare", completed)
                     what = said if completed.timed_out else f"failed: {said}"
@@ -1065,6 +1130,19 @@ class Runner:
         env = {key: context.element(value) for key, value in (extra_env or {}).items()}
         return run_process(resolved, cwd=cwd, env=self.environment(env), timeout=timeout, stdin=stdin,
                            track=self._track, untrack=self._untrack)
+
+    def run_declared(self, argv: list[str], cwd: Path, context: Context, timeout: float,
+                     profile: dict[str, str] | None = None) -> Completed:
+        """Run a check's or a prepare step's argv in its declared environment. A run that fails says, first in its
+        output, which inherited names it was not given, so a check that needs one can have it listed; the tail a stop
+        quotes stays the run's own."""
+        resolved = context.argv(argv)
+        env, _, dropped = self.check_environment(profile, context)
+        completed = run_process(resolved, cwd=cwd, env=env, timeout=timeout, track=self._track, untrack=self._untrack)
+        if completed.returncode != 0 and dropped:
+            completed.stdout = (f"merge-queue: this run's environment left out {', '.join(dropped)}; a check that "
+                                f"needs one gets it once the binding lists it in inherit\n{completed.stdout}")
+        return completed
 
     def _track(self, process: subprocess.Popen) -> None:
         with self._live_lock:
@@ -1212,8 +1290,9 @@ class Runner:
         Written before a check starts and after it ends, so both views name the
         check that is running and never disagree. Every member of a batch shows
         the batch's checks. A step carries its times and its expected duration;
-        a queue row's check carries its failing tests and its log. A reused
-        check carries the head of the lane's run it was reused from.
+        a queue row's check carries its failing tests, its log, and the
+        environment and host facts of its run. A reused check carries the head
+        of the lane's run it was reused from.
         """
         steps = [
             {"label": record["id"], "state": record["state"],
@@ -1225,7 +1304,7 @@ class Runner:
              **({"failures": [failure["id"] for failure in record["failures"]]} if record.get("failures") else {}),
              **({"log": record["log"]} if "log" in record else {}),
              **({"reusedFrom": record["reusedFrom"]} if "reusedFrom" in record else {}),
-             **{key: record[key] for key in ("node", "nodeBelowMinimum") if key in record}}
+             **{key: record[key] for key in ("node", "nodeBelowMinimum", "environment", "host") if key in record}}
             for record in states
         ]
 
@@ -1530,24 +1609,114 @@ class Runner:
                                           f"{self.base}, or deliver to a base it serves (see {BASE_MISMATCH_GUIDE})")
         return binding
 
-    def evidence(self, check_id: str, head: str, result: str = "passed") -> dict:
-        """What a lane records of its own run of a reusable check at ``head``, for its hand-off.
+    def run_records(self, head: str, ids: list[str]) -> list[dict]:
+        """Run checks at ``head`` the way the queue runs them, and return a record of each run: run-checks.
 
-        The check's definition is digested from the binding in the head's own
-        tree, the one the lane ran it under; the runner reuses the run only if
-        the base's binding digests it alike. Only a check that binding marks
-        reusable has evidence. Nothing is fetched.
+        The binding is read from the head's own tree, the one each definition is digested from, and the checks are
+        its catalogue's and its own. A check's prerequisites run first, and one whose prerequisite didn't pass is
+        recorded as skipped. Nothing is fetched, and no delivery state is read or written. The run works in a folder
+        of its own, workRoot/runs/<pid>-<n>, holding its checkout and hooks folder: it never clears
+        workRoot/checkouts, so it can run beside a queue serving from the same repository, and it removes only what
+        it made. A failed run's output is kept under workRoot/runs/logs, and its record names that file.
         """
-        commit = self.git("rev-parse", "--verify", "--quiet", f"{head}^{{commit}}", check=False)
-        if commit.returncode != 0:
+        top = self.git("rev-parse", "--show-toplevel", check=False)
+        if top.returncode != 0 or folded(Path(top.stdout.strip()).resolve()) != folded(self.repository):
+            raise Stop("binding_invalid", f"--repo must be the top level of a checkout, not {self.repository}")
+        found = self.git("rev-parse", "--verify", "--quiet", f"{head}^{{commit}}", check=False)
+        if found.returncode != 0:
             raise Stop("ref_invalid", f"{head} is not a commit here")
-        commit_id = commit.stdout.strip()
-        binding = self.read_binding(commit_id)
-        if check_id not in binding.get("reusableChecks", []):
-            raise Stop("binding_invalid", f"the binding does not mark {check_id} reusable")
-        check = next(check for check in [*binding["alwaysRun"], *binding["fallback"]] if check["id"] == check_id)
-        return {"check": check_id, "definition": check_definition(check, binding), "head": commit_id,
-                "tree": self.tree(commit_id), "result": result}
+        commit = found.stdout.strip()
+        binding = self.read_binding(commit)
+        self.binding = binding
+        root = Path(binding["workRoot"])
+        self.work_root = (root if root.is_absolute() else self.repository / root).resolve()
+        self.guard_work_root()
+        catalogue = (binding.get("selection") or {}).get("catalogue") or []
+        pool = {check["id"]: check for check in [*catalogue, *binding["alwaysRun"], *binding["fallback"]]}
+        unknown = [name for name in ids if name not in pool]
+        if unknown or not ids:
+            raise Stop("check_unknown", f"the binding at {commit} has no check {', '.join(unknown)}" if unknown
+                       else "name at least one check")
+        chosen: list[dict] = []
+
+        def add(name: str, seen: tuple[str, ...]) -> None:
+            if name not in pool:
+                raise Stop("check_unknown", f"{seen[-1]} needs {name}, which the binding at {commit} has no check of")
+            if name in seen or any(check["id"] == name for check in chosen):
+                return
+            for prerequisite in pool[name]["prerequisites"]:
+                add(prerequisite, (*seen, name))
+            chosen.append(pool[name])
+
+        for name in ids:
+            add(name, ())
+        ordered = order_checks(chosen) or chosen
+        given = {"treeSha", "workRoot"}
+        for check in ordered:
+            profile = self.profile_environment(check)
+            varying = sorted({element for element in [*check["argv"], *profile.values(),
+                                                      *(item for argv in binding["prepare"] for item in argv)]
+                              if PLACEHOLDER.match(element) and PLACEHOLDER.match(element)[1] not in given})
+            if varying:
+                raise Stop("binding_invalid", f"{check['id']} uses {', '.join(varying)}, which a run at a commit "
+                                              "has no value for; run-checks gives only {treeSha} and {workRoot}")
+        runs = self.work_root / "runs"
+        runs.mkdir(parents=True, exist_ok=True)
+        self.state_directory = runs
+        while True:
+            self._counter += 1
+            directory = runs / f"{os.getpid()}-{self._counter}"
+            try:
+                directory.mkdir()
+                break
+            except FileExistsError:
+                continue
+        checkout = directory / "checkout"
+        try:
+            self.hooks_bypassed = binding["hooks"] == "bypass"
+            self.hooks_directory = directory / "hooks" if self.hooks_bypassed else None
+            if self.hooks_directory is not None:
+                self.hooks_directory.mkdir()
+            self.git("worktree", "add", "--detach", "--quiet", str(checkout), commit)
+            private = Path(self.git("rev-parse", "--absolute-git-dir", cwd=checkout).stdout.strip())
+            (private / CHECKOUT_MARKER).write_bytes(b"")
+            tree = self.tree(commit)
+            context = Context({"workRoot": str(self.work_root), "treeSha": tree})
+            problems = selection_errors(ordered, binding, check_cwd=checkout) + self.profile_errors(ordered)
+            if problems:
+                raise Stop("selection_invalid", "; ".join(problems)[:800])
+            for argv in binding["prepare"]:
+                completed = self.run_declared(argv, checkout, context, binding["checkTimeoutSeconds"])
+                if completed.returncode != 0:
+                    said, kept = self.refusal("prepare", completed)
+                    what = said if completed.timed_out else f"failed: {said}"
+                    raise Stop("prepare_failed", f"prepare {argv[0]} {what} in the fresh checkout of {commit}; "
+                                                 f"{kept.replace('the state directory', str(runs))}")
+            outcomes: dict[str, str] = {}
+            records = []
+            for check in ordered:
+                record = {"check": check["id"], "definition": check_definition(check, binding), "head": commit,
+                          "tree": tree, "where": "runner"}
+                if any(outcomes[name] != "passed" for name in check["prerequisites"]):
+                    outcomes[check["id"]] = "skipped"
+                    records.append({**record, "result": "skipped", "at": now()})
+                    continue
+                completed = self.run_one(check, checkout, context)
+                assert completed is not None
+                passed = completed.returncode == 0 and not completed.timed_out
+                outcomes[check["id"]] = "passed" if passed else "failed"
+                record.update(result=outcomes[check["id"]], seconds=round(completed.seconds, 3), at=now(),
+                              environment=self.check_environment(self.profile_environment(check), context)[1],
+                              host=self.host_facts(check, checkout, context))
+                if not passed:
+                    if completed.timed_out:
+                        completed.stderr += f"\nmerge-queue: stopped after {check.get('timeoutSeconds', binding['checkTimeoutSeconds'])} seconds\n"
+                    record["log"] = str(runs / self.save_log(check["id"], completed))
+                records.append(record)
+            return records
+        finally:
+            self.git("worktree", "remove", "--force", str(checkout), check=False)
+            shutil.rmtree(directory, ignore_errors=True)
 
     def tree_of(self, head: str) -> str | None:
         """The tree of a commit this repository has, or None."""
@@ -1639,7 +1808,10 @@ class Runner:
         return listed
 
     def own_checkout(self, path: Path, prunable: bool) -> bool:
-        """Whether ``path`` is a checkout an earlier run of the runner added under workRoot/checkouts."""
+        """Whether ``path`` is a checkout a run of the runner added under workRoot/checkouts, or one under
+        workRoot/runs, which only run-checks adds and the queue never clears, marked yet or not."""
+        if within(path, self.work_root / "runs"):
+            return True
         if not within(path, self.work_root / "checkouts"):
             return False
         if not path.exists():
@@ -1709,7 +1881,7 @@ class Runner:
                 raise Stop("binding_invalid", f"workRoot must not sit in the submodule {submodule} of the checkout at {path}")
             if self.git("check-ignore", "-q", "--no-index", "--", relative, cwd=path, check=False).returncode != 0:
                 raise Stop("binding_invalid", f"a workRoot inside the checkout at {path} must be ignored there")
-        for name in ("checkouts", "empty-hooks"):
+        for name in ("checkouts", "empty-hooks", "runs"):
             # The runner empties these folders; through a symlink it would empty the target.
             if is_link(work / name):
                 raise Stop("binding_invalid", f"workRoot/{name} must not be a symlink or junction")
@@ -2495,7 +2667,53 @@ class Runner:
         if cwd is None:
             return None
         timeout = check.get("timeoutSeconds", self.binding["checkTimeoutSeconds"])
-        return self.run_argv(check["argv"], cwd, context, timeout, extra_env=self.profile_environment(check))
+        return self.run_declared(check["argv"], cwd, context, timeout, profile=self.profile_environment(check))
+
+    def host_facts(self, check: dict, checkout: Path, context: Context) -> dict:
+        """The host a check runs on, as its run record says it: the system, release and machine, and the sha256 of
+        each tool it names, links followed, or null for one that isn't found.
+
+        The tools are the program of the check and of each prepare step, and the names the binding lists in
+        reuse.tools, each found on the PATH the check gets; a program with a path is found where its step runs.
+        A file's digest is kept for the runner's life, so a run digests each tool once.
+        """
+        env, _, _ = self.check_environment(self.profile_environment(check), context)
+        cwd = inside(checkout, check["cwd"]) or checkout
+        named = [(check["argv"][0], cwd), *((argv[0], checkout) for argv in self.binding["prepare"] if argv),
+                 *((name, cwd) for name in self.binding.get("reuse", {}).get("tools", []))]
+        tools: dict[str, str | None] = {}
+        for name, where in named:
+            if name not in tools and not PLACEHOLDER.match(name):
+                tools[name] = self.tool_digest(name, env.get("PATH"), where)
+        uname = platform.uname()
+        return {"platform": f"{uname.system} {uname.release} {uname.machine}", "tools": tools}
+
+    def tool_digest(self, name: str, path: str | None, cwd: Path) -> str | None:
+        """The sha256 of the file a program name runs, links followed, or None when there is none."""
+        if os.path.isabs(name):
+            found: str | None = name
+        elif "/" in name or "\\" in name:
+            found = str(cwd / name)
+        else:
+            found = shutil.which(name, path=path)
+        if found is None or not os.path.isfile(found):
+            return None
+        real = os.path.realpath(found)
+        try:
+            info = os.stat(real)
+        except OSError:
+            return None
+        key = (real, info.st_size, info.st_mtime_ns)
+        if key not in self._tool_digests:
+            digest = hashlib.sha256()
+            try:
+                with open(real, "rb") as stream:
+                    for block in iter(lambda: stream.read(1 << 20), b""):
+                        digest.update(block)
+            except OSError:
+                return None
+            self._tool_digests[key] = "sha256:" + digest.hexdigest()
+        return self._tool_digests[key]
 
     def profile_environment(self, check: dict) -> dict[str, str]:
         return self.binding["profiles"].get(check.get("environmentProfile", ""), {"environment": {}})["environment"]
@@ -2503,8 +2721,8 @@ class Runner:
     def check_node(self, check: dict, checkout: Path, context: Context) -> str | None:
         """The Node a check runs: the first `node` on the PATH it gets, after the binding's and its profile's
         environment, which may put another first, asked in the folder the check ran in."""
-        extra = {key: context.element(value) for key, value in self.profile_environment(check).items()}
-        return node_on(self.environment(extra), inside(checkout, check["cwd"]) or checkout)
+        env, _, _ = self.check_environment(self.profile_environment(check), context)
+        return node_on(env, inside(checkout, check["cwd"]) or checkout)
 
     def run_checks(
         self, subjects: list[str], checks: list[dict], checkout: Path, context: Context, result: Result,
@@ -2534,7 +2752,7 @@ class Runner:
         def begin(check: dict) -> None:
             record = records[check["id"]]
             record.update(state="running", startedAt=now())
-            for key in ("finishedAt", "failures", "log", "node", "nodeBelowMinimum"):
+            for key in ("finishedAt", "failures", "log", "node", "nodeBelowMinimum", "environment", "host"):
                 record.pop(key, None)
 
         def finish(check: dict, completed: Completed) -> dict:
@@ -2543,9 +2761,12 @@ class Runner:
             record = records[check["id"]]
             record.update(state=state, finishedAt=now())
             node = node_fields(self.check_node(check, checkout, context), minimum)
-            record.update(node)
+            # The facts that decide whether another run of it would agree, as a run-checks record carries them.
+            facts = {"environment": self.check_environment(self.profile_environment(check), context)[1],
+                     "host": self.host_facts(check, checkout, context)}
+            record.update(node, **facts)
             entry = {"id": check["id"], "state": state, "exitCode": completed.returncode,
-                     "seconds": round(completed.seconds, 3), **node}
+                     "seconds": round(completed.seconds, 3), **node, **facts}
             record.pop("failures", None)
             record.pop("log", None)
             if state == "passed":
@@ -3883,11 +4104,11 @@ def serve(
             pause()
 
 
-def evidence(repository: Path, *, remote: str, base: str, check: str, head: str, result: str = "passed") -> dict:
-    """A lane's evidence of its own run of a reusable check at ``head``, for ``delivery_state.py handoff --evidence``."""
+def run_checks(repository: Path, *, remote: str, base: str, head: str, checks: list[str]) -> list[dict]:
+    """Run checks at ``head`` the way the queue does, from any checkout, and return a record of each run."""
     runner = Runner(repository, repository, remote=remote, base=base)
     try:
-        return runner.evidence(check, head, result)
+        return runner.run_records(head, checks)
     finally:
         shutil.rmtree(runner._bootstrap_hooks, ignore_errors=True)
 
@@ -3905,7 +4126,7 @@ def write_document_line(document: dict) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="the repository the queue serves")
-    parser.add_argument("--state", type=Path, help="the delivery state directory; every command but evidence needs it")
+    parser.add_argument("--state", type=Path, help="the delivery state directory; every command but run-checks needs it")
     parser.add_argument("--remote", required=True, help="the remote the base and candidates live on")
     parser.add_argument("--base", required=True, help="the base branch; its binding must name the same base")
     parser.add_argument("--lead", default="lead", help="the lease holder name the lead uses in the state")
@@ -3921,23 +4142,23 @@ def main(argv: list[str] | None = None) -> int:
     release = commands.add_parser("release")
     release.add_argument("ref")
     release.add_argument("--approved-by", help="records an approval the operator already gave")
-    proof = commands.add_parser("evidence", help="a lane's evidence of its own run of a reusable check, for its hand-off")
-    proof.add_argument("--check", required=True, help="the reusable check the lane ran")
-    proof.add_argument("--head", required=True, help="the commit the lane ran it on")
-    proof.add_argument("--result", choices=("passed", "failed"), default="passed", help="how the lane's run ended")
+    running = commands.add_parser("run-checks", help="run checks at a commit the way the queue does, from any checkout, "
+                                                     "and print a record of each run")
+    running.add_argument("--head", required=True, help="the commit to run them at")
+    running.add_argument("--checks", required=True, help="the check ids, comma-separated")
     args = parser.parse_args(argv)
-    if args.command == "evidence":
+    if args.command == "run-checks":
         try:
-            found = evidence(args.repo, remote=args.remote, base=args.base, check=args.check, head=args.head,
-                             result=args.result)
+            records = run_checks(args.repo, remote=args.remote, base=args.base, head=args.head,
+                                 checks=[name for name in args.checks.split(",") if name])
         except Stop as stop:
             sys.stdout.buffer.write(ascii_json({"reason": stop.reason, "detail": stop.detail}))
             return 1
         except RuntimeError as error:
             sys.stdout.buffer.write(ascii_json({"reason": "git_failed", "detail": str(error)}))
             return 1
-        sys.stdout.buffer.write(ascii_json(found))
-        return 0
+        sys.stdout.buffer.write(ascii_json(records))
+        return 0 if all(record["result"] == "passed" for record in records) else 1
     if args.state is None:
         parser.error("--state is required")
     if args.command == "serve" and not args.until_idle:
