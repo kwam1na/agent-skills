@@ -251,6 +251,10 @@ describe("trusted corpus DOM bridge (behavior only)", () => {
       expect(window.document.querySelector("#app")!.textContent).not.toContain(
         "could not be told",
       );
+      // Nor a setbacks ledger or a chapter's setback line: with no story there is no ledger to draw, and no reason leaks.
+      expect(
+        window.document.querySelectorAll("#happened .setback-ledger, #happened .chapter-setback").length,
+      ).toBe(0);
       expect(window.document.querySelector("#plan")).not.toBeNull();
       const detail = window.document.querySelector("#detail")!.textContent;
       expect(detail).toContain("APP-1");

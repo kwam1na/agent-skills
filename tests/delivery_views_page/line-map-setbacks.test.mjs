@@ -24,7 +24,7 @@ function chapter(id, form, at, head, setbacks = [], standing = []) {
     notLanded: [], words: { head, line: "", standing } };
 }
 function storied(ledger, chapters, { decisions = 0 } = {}) {
-  const document = record({ queue: [item("V26-3666", "merged"), item("V26-3667", "merged"), item("V26-3668", "queued")] });
+  const document = record({ queue: [item("APP-3666", "merged"), item("APP-3667", "merged"), item("APP-3668", "queued")] });
   document.story = { schemaVersion: "story/1", state: "open", tones: [], beats: [], threads: [],
     digest: { landed: 2, pieces: 3, decisions, setbacks: { closed: 0, cost: 0, standing: [] },
       words: { head: "Two of three pieces landed so far.", line: "The narrator's own line." } },
@@ -41,50 +41,50 @@ const lines = (app) => [...app.querySelectorAll("#happened .chapter-of")].map((l
 // As this delivery stood: two stories stopped over and over while their merges failed, both since landed, and one stop
 // that cost ten minutes before a fresh hand-off.
 const THIS_DELIVERY = [
-  row("s1", { subject: "V26-3668", head: "V26-3668 was stopped.", line: "It ended when lane 2 handed off V26-3668.", first: "2026-11-20T18:56:00Z",
+  row("s1", { subject: "APP-3668", head: "APP-3668 was stopped.", line: "It ended when lane 2 handed off APP-3668.", first: "2026-11-20T18:56:00Z",
     endedAt: "2026-11-20T19:06:00Z", cost: 600, opened: "c3", ended: "c3" }),
-  row("s2", { subject: "V26-3667", head: "V26-3667 was stopped 6 times.", line: "It ended when V26-3667 landed.", count: 6,
+  row("s2", { subject: "APP-3667", head: "APP-3667 was stopped 6 times.", line: "It ended when APP-3667 landed.", count: 6,
     first: "2026-11-20T17:56:00Z", last: "2026-11-20T17:58:00Z", endedAt: "2026-11-20T18:00:00Z", cost: 0, opened: "c1", ended: "c2" }),
-  row("s3", { subject: "V26-3666", head: "V26-3666 was stopped 6 times.", line: "It ended when V26-3666 landed.", count: 6,
+  row("s3", { subject: "APP-3666", head: "APP-3666 was stopped 6 times.", line: "It ended when APP-3666 landed.", count: 6,
     first: "2026-11-20T17:57:00Z", last: "2026-11-20T17:59:00Z", endedAt: "2026-11-20T18:00:00Z", cost: 0, opened: "c1", ended: "c2" }),
 ];
 const THIS_CHAPTERS = [chapter("c1", "start", "2026-11-20T17:00:00Z", "Getting started", ["s2", "s3"]),
-  chapter("c2", "landing", "2026-11-20T18:00:00Z", "V26-3667 and V26-3666 landed", ["s2", "s3"]),
-  chapter("c3", "landing", "2026-11-20T19:20:00Z", "V26-3668 landed", ["s1"]), chapter("c4", "now", "2026-11-20T20:00:00Z", "Finishing")];
+  chapter("c2", "landing", "2026-11-20T18:00:00Z", "APP-3667 and APP-3666 landed", ["s2", "s3"]),
+  chapter("c3", "landing", "2026-11-20T19:20:00Z", "APP-3668 landed", ["s1"]), chapter("c4", "now", "2026-11-20T20:00:00Z", "Finishing")];
 
 test("this delivery's ledger: every setback once, none standing, and the summary says nothing is stopped", async () => {
   const [{ app }] = await open(storied(THIS_DELIVERY, THIS_CHAPTERS, { decisions: 3 }));
   expect(app.querySelector("#happened .say").textContent).toBe("Nothing is stopped now. Three are over, costing 10m. The lead made three decisions.");
   expect(app.querySelector("#happened .ledger-title").textContent).toBe("Setbacks");
   expect(ledgerRows(app)).toEqual([
-    { id: "s1", cls: "ledger-row is-closed", what: "V26-3668 was stopped.It ended when lane 2 handed off V26-3668.", span: "6:56 pm", state: "ended 7:06 pm · cost 10m" },
-    { id: "s2", cls: "ledger-row is-closed", what: "V26-3667 was stopped 6 times.It ended when V26-3667 landed.", span: "5:56 pm–5:58 pm", state: "ended 6:00 pm" },
-    { id: "s3", cls: "ledger-row is-closed", what: "V26-3666 was stopped 6 times.It ended when V26-3666 landed.", span: "5:57 pm–5:59 pm", state: "ended 6:00 pm" },
+    { id: "s1", cls: "ledger-row is-closed", what: "APP-3668 was stopped.It ended when lane 2 handed off APP-3668.", span: "6:56 pm", state: "ended 7:06 pm · cost 10m" },
+    { id: "s2", cls: "ledger-row is-closed", what: "APP-3667 was stopped 6 times.It ended when APP-3667 landed.", span: "5:56 pm–5:58 pm", state: "ended 6:00 pm" },
+    { id: "s3", cls: "ledger-row is-closed", what: "APP-3666 was stopped 6 times.It ended when APP-3666 landed.", span: "5:57 pm–5:59 pm", state: "ended 6:00 pm" },
   ]);
   // Nothing in the stop colour: no row, no chapter line, and none of the old standing lines.
   expect(app.querySelectorAll("#happened .is-open, #happened .chapter-standing")).toHaveLength(0);
   // Each chapter names only what opened or ended in it, linked to its row; the finishing chapter repeats nothing.
   expect(lines(app)).toEqual([
-    ["c3", [["V26-3668 was stopped · over", "#setback-s1"]]],
-    ["c2", [["V26-3667 was stopped 6 times · ended here", "#setback-s2"], ["V26-3666 was stopped 6 times · ended here", "#setback-s3"]]],
-    ["c1", [["V26-3667 was stopped 6 times · opened here, ended later", "#setback-s2"], ["V26-3666 was stopped 6 times · opened here, ended later", "#setback-s3"]]],
+    ["c3", [["APP-3668 was stopped · over", "#setback-s1"]]],
+    ["c2", [["APP-3667 was stopped 6 times · ended here", "#setback-s2"], ["APP-3666 was stopped 6 times · ended here", "#setback-s3"]]],
+    ["c1", [["APP-3667 was stopped 6 times · opened here, ended later", "#setback-s2"], ["APP-3666 was stopped 6 times · opened here, ended later", "#setback-s3"]]],
   ]);
   expect(app.querySelector('#happened [data-chapter="c4"] .chapter-setback')).toBeNull();
 });
 
 test("one standing setback comes first, tinted, with since when and who it waits on; the ended ones follow, muted", async () => {
-  const ledger = [row("s1", { subject: "V26-3700", head: "V26-3700 was stopped.", line: "It still stands. It waits on the lead.", state: "open",
+  const ledger = [row("s1", { subject: "APP-3700", head: "APP-3700 was stopped.", line: "It still stands. It waits on the lead.", state: "open",
     first: "2026-11-20T20:10:00Z", since: "2026-11-20T20:10:00Z", waitingOn: "the lead", opened: "c4" }), ...THIS_DELIVERY.map((one, i) => ({ ...one, id: `s${i + 2}` }))];
   const chapters = THIS_CHAPTERS.map((one) => ({ ...one, setbacks: one.setbacks.map((name) => `s${Number(name.slice(1)) + 1}`) }));
   chapters[3].setbacks = ["s1"];
   const [{ app }] = await open(storied(ledger, chapters));
   const shown = ledgerRows(app);
   expect(shown.map(({ cls }) => cls)).toEqual(["ledger-row is-open", "ledger-row is-closed", "ledger-row is-closed", "ledger-row is-closed"]);
-  expect(shown[0]).toEqual({ id: "s1", cls: "ledger-row is-open", what: "V26-3700 was stopped.It still stands. It waits on the lead.", span: "8:10 pm",
+  expect(shown[0]).toEqual({ id: "s1", cls: "ledger-row is-open", what: "APP-3700 was stopped.It still stands. It waits on the lead.", span: "8:10 pm",
     state: "since 8:10 pm · waits on the lead" });
   expect(app.querySelector("#happened .say").textContent).toBe("One setback stands now. Three are over, costing 10m.");
   const line = app.querySelector('#happened [data-chapter="c4"] .chapter-setback');
-  expect([line.className, line.textContent]).toEqual(["chapter-setback is-open", "V26-3700 was stopped · still stands"]);
+  expect([line.className, line.textContent]).toEqual(["chapter-setback is-open", "APP-3700 was stopped · still stands"]);
 });
 
 test("a chapter's line and its ledger row are both reached from the keyboard", async () => {
@@ -114,6 +114,19 @@ test("the Setbacks filter shows the ledger and the chapters' setback lines; anot
   expect([...problems.app.querySelectorAll("#happened .chapter-of")].map((li) => li.getAttribute("data-chapter"))).toEqual(["c3", "c2", "c1"]);
   expect(decisions.app.querySelector("#happened .setback-ledger")).toBeNull();
   expect(decisions.app.querySelectorAll("#happened .chapter-setback")).toHaveLength(0);
+});
+
+test("a chapter shown for its decision draws no setback line under the Decisions filter, and does under All", async () => {
+  const chapters = structuredClone(THIS_CHAPTERS);
+  chapters[2].beats = ["b1"];
+  const document = storied(THIS_DELIVERY, chapters);
+  document.story.beats = [{ id: "b1", form: "entry", tone: "decision", altitudes: ["headline", "story", "everything"], entries: [1],
+    at: "2026-11-20T19:10:00Z", words: { head: "The lead chose to hand it off again.", line: "" } }];
+  const [all, decisions] = await open(document, [{ click: '#happened [data-tab="decisions"]' }]);
+  expect(all.app.querySelectorAll('#happened [data-chapter="c3"] .chapter-setback')).toHaveLength(1);
+  const shown = decisions.app.querySelector('#happened [data-chapter="c3"]');
+  expect(shown).not.toBeNull();
+  expect(shown.querySelectorAll(".chapter-setback")).toHaveLength(0);
 });
 
 test("a delivery with no setbacks draws no ledger and says so; a story told before the ledger keeps its own lines", async () => {
