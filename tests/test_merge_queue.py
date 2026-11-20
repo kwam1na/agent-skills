@@ -9305,8 +9305,15 @@ class MachineClaimQueueTests(MergeQueueTestCase):
         self.measured(adopter, "always", 2)
         self.measured(adopter, "fallback", 3)
         claim = adopter.runner().claim_turn(["feature"])
-        self.addCleanup(claim.release)
         self.assertEqual(claim.record["slots"], 3)
+        claim.release()
+        # A selection recorded at the current head counts only where the binding lets the lead select: this one doesn't.
+        state_tool.select_checks(adopter.state, "feature", binding={**adopter.binding, "selection": {"lead": True}},
+                                 head=adopter.item("feature")["head"], checks=[check_entry("x")], reason="one")
+        self.measured(adopter, "x", 7)
+        ignored = adopter.runner().claim_turn(["feature"])
+        self.addCleanup(ignored.release)
+        self.assertEqual(ignored.record["slots"], 3)
 
     def test_under_the_slot_the_turns_claim_grows_to_what_the_queue_selected(self) -> None:
         self.capacity(6)
