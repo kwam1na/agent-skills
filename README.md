@@ -332,16 +332,17 @@ installed bytes instead, from the repository root:
 grep -c 'installed-data-proof/1' .agent-skills/current/runtime/cli.mjs
 ```
 
-Pushing an annotated version tag publishes a release from the tagged tree. A tag is
-`vMAJOR.MINOR.PATCH`, with `-rc.N` for a candidate. The release workflow refuses a
-tag that is not annotated, not merged to `main`, or not above every existing version
-tag. It never replaces a release that already exists, and it reads no CI result. If
+A release is published from the tagger's machine: push an annotated version tag, then run
+`python3 scripts/release_channel.py publish --tag <tag>` at the repository root. A tag is
+`vMAJOR.MINOR.PATCH`, with `-rc.N` for a candidate. The publish command refuses a
+tag that is not pushed, not annotated, not merged to `main`, or not above every existing
+version tag. It never replaces a release that already exists, and it reads no CI result. If
 anything fails, nothing is published. A candidate is
 never latest, so download one by naming its tag. See
 [product generations](docs/product-generation.md#releases).
 
 A release rests on whoever tags. Before tagging, they run the full suite locally on
-macOS with Python 3.11, and it must pass. The release job cannot verify that run:
+macOS with Python 3.11, and it must pass. The publish command cannot verify that run:
 
 ```bash
 uv python install 3.11
@@ -355,7 +356,7 @@ annotation says the run went over.
 
 CI on `main` informs. It blocks neither a merge nor a release, so a red run there is
 for whoever merges to read and fix. It runs only `cut-release`, which builds a release
-the way the release job does, and no tests.
+the way the publish command does, and no tests.
 
 Windows is not validated: CI does not run it, and the fixes made for it are unproven.
 

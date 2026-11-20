@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""The decisions a version tag has to pass before it publishes, for release.yml.
+"""Publishing a version tag from this machine, and the decisions it has to pass first.
 
 Commands:
 
+    publish --tag TAG [--dry-run]        check the pushed tag, build it with cut-release and publish its release
     order --tag TAG                      refuse a tag that is not a version, or would go backwards
     flags --tag TAG                      print the `gh release create` latest flags, one a line
     existing --tag TAG                   print publish=false if the release exists, publish=true if it does not
     previous --tag TAG --published FILE  print the published tag the generated list starts from, if any
     notes --tag TAG --out DIR --generated FILE    print the release notes
 
-Exit codes: 0 when the decision passes; 1 when it refuses. Nothing here publishes, and nothing here reads CI:
-a release rests on the full suite passing locally before the tag is pushed.
+Exit codes: 0 when the decision passes or the release is published; 1 when it refuses. Only `publish` publishes,
+and nothing here reads CI: a release rests on the full suite passing locally before the tag is pushed.
 """
 
 from __future__ import annotations
@@ -21,8 +22,11 @@ sys.dont_write_bytecode = True
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Iterable
 
@@ -132,12 +136,105 @@ def release_absent(tag: str) -> bool:
     raise ChannelError(f"could not tell whether {tag} is published: {done.stderr.strip()}")
 
 
+def _run(argv: list[str], cwd: Path, environment: dict | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, check=False, env=environment)
+
+
+def _must(done: subprocess.CompletedProcess[str], what: str) -> str:
+    if done.returncode != 0:
+        raise ChannelError(f"{what} failed: {(done.stderr or done.stdout).strip()[-800:]}")
+    return done.stdout
+
+
+def _tag_commit(tag: str, root: Path) -> str:
+    """Fetch the pushed tag object itself, so a lightweight local copy or a moved tag cannot stand in for it."""
+    _must(_git(root, "fetch", "--force", "origin", f"refs/tags/{tag}:refs/tags/{tag}"), f"fetching {tag}")
+    return _must(_git(root, "rev-parse", f"refs/tags/{tag}^{{commit}}"), f"resolving {tag}").strip()
+
+
+def check_tag(tag: str, root: Path) -> str:
+    """Every guard a tag passes before anything is built; returns the commit it names."""
+    if parse_version(tag) is None:
+        raise ChannelError(f"{tag!r} is not a version tag: use vMAJOR.MINOR.PATCH, optionally -rc.N")
+    commit = _tag_commit(tag, root)
+    _must(_git(root, "fetch", "origin", "main"), "fetching main")
+    if _git(root, "cat-file", "-t", f"refs/tags/{tag}").stdout.strip() != "tag":
+        raise ChannelError(f"{tag} is not an annotated tag{NEVER_PUBLISHED}")
+    merged = _git(root, "merge-base", "--is-ancestor", commit, "refs/remotes/origin/main")
+    if merged.returncode == 1:
+        raise ChannelError(f"{tag} names a commit not merged to main{NEVER_PUBLISHED}")
+    _must(merged, f"checking {tag} is merged to main")
+    check_order(tag, root)
+    if not release_absent(tag):
+        raise ChannelError(f"{tag} is already published, and a release is never replaced")
+    return commit
+
+
+def build(tree: Path, tag: str, work: Path, python: str | None) -> Path:
+    """Run cut-release on the tagged tree in its own environment, pinned by the tree's .python-version."""
+    environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    if python is None:
+        pin = (tree / ".python-version").read_text(encoding="utf-8").strip()
+        venv = work / "venv"
+        _must(_run(["uv", "venv", "--quiet", "--python", pin, str(venv)], tree), "creating the build environment")
+        python = str(venv / "bin" / "python")
+        _must(_run(["uv", "pip", "install", "--quiet", "--python", python, "-e", f"{tree}[test]"], tree, environment),
+              "installing the release command's dependencies")
+    out = work / "release"
+    _must(_run([python, "-B", "scripts/cut-release.py", "--version", tag, "--out", str(out)], tree, environment),
+          "cut-release")
+    if _git(tree, "status", "--porcelain").stdout.strip():
+        raise ChannelError("cut-release changed the tagged tree")
+    return out
+
+
+def publish(tag: str, root: Path, *, python: str | None = None, dry_run: bool = False) -> Path:
+    """Check, build and publish one version tag from this machine. Returns the folder holding the release files."""
+    commit = check_tag(tag, root)
+    work = Path(tempfile.mkdtemp(prefix=f"agent-skills-publish-{tag}-"))
+    tree = work / "tree"
+    _must(_git(root, "worktree", "add", "--detach", str(tree), commit), "checking out the tagged tree")
+    try:
+        try:
+            out = build(tree, tag, work, python)
+        finally:
+            _git(root, "worktree", "remove", "--force", str(tree))
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    # The build takes minutes: the tag is checked again before anything is published.
+    if _tag_commit(tag, root) != commit:
+        raise ChannelError(f"{tag} moved during the build, so nothing is published")
+    check_order(tag, root)
+    listed = _must(_run(["gh", "release", "list", "--exclude-drafts", "--limit", "1000", "--json", "tagName",
+                         "--jq", ".[].tagName"], root), "listing published releases")
+    previous = previous_tag(tag, listed.splitlines())
+    repository = _must(_run(["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], root),
+                       "naming the repository").strip()
+    generate = ["gh", "api", "-X", "POST", f"repos/{repository}/releases/generate-notes", "-f", f"tag_name={tag}"]
+    if previous is not None:
+        generate += ["-f", f"previous_tag_name={previous}"]
+    generated = _must(_run([*generate, "--jq", ".body"], root), "generating the change list")
+    notes = work / "notes.md"
+    notes.write_text(render_notes(annotation(tag, root), out, generated), encoding="utf-8")
+    if dry_run:
+        return out
+    files = sorted(str(path) for path in out.iterdir())
+    _must(_run(["gh", "release", "create", tag, "--verify-tag", "--title", tag, "--notes-file", str(notes),
+                *release_flags(tag), *files], root), f"publishing {tag}")
+    shutil.rmtree(work, ignore_errors=True)
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("order", "flags", "existing", "previous", "notes"):
+    for name in ("publish", "order", "flags", "existing", "previous", "notes"):
         command = commands.add_parser(name)
         command.add_argument("--tag", required=True)
+        if name == "publish":
+            command.add_argument("--dry-run", action="store_true", help="stop before publishing and print the release folder")
+            command.add_argument("--python", help="build with this interpreter instead of a fresh environment")
         if name == "previous":
             command.add_argument("--published", type=Path, required=True)
         if name == "notes":
@@ -146,7 +243,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     root = Path.cwd()
     try:
-        if args.command == "order":
+        if args.command == "publish":
+            out = publish(args.tag, root, python=args.python, dry_run=args.dry_run)
+            if args.dry_run:
+                print(out)
+        elif args.command == "order":
             check_order(args.tag, root)
         elif args.command == "flags":
             print("\n".join(release_flags(args.tag)))

@@ -25,12 +25,13 @@ contract. Release ids are `<profile>-<version>`. A tag's version must be strictl
 greater than every existing version tag, with a candidate below its final, and its
 commit must equal or descend from the highest one's; a backport to an older line is
 unsupported. Never move or reuse a release tag. A version tag that never published
-may be deleted to clear that guard, which is neither. Pushing the tag publishes a
-GitHub release of the same name from the tagged tree, carrying its verified product
-archives, release files and records; that release is
-the channel adopters download from. A release edits no file in the repository and
+may be deleted to clear that guard, which is neither. After pushing the tag, publish it
+from your machine with `python3 scripts/release_channel.py publish --tag <tag>` at the repository root. It
+builds the tagged tree with `cut-release` in a fresh Python 3.11 environment and publishes
+a GitHub release of the same name, carrying its verified product archives, release files
+and records; that release is the channel adopters download from. A release edits no file in the repository and
 needs no live tracker run. Older set-named tags remain, frozen in place with their
-checked-in bytes, and do not match the publish trigger.
+checked-in bytes, and are not version tags, so the publish command refuses them.
 
 A runtime or record-shape change goes out first as a candidate, is applied in one
 adopter, and is then promoted by tagging the final version on the same commit. The
@@ -39,13 +40,13 @@ id does; an adopter verifies the final's own. See `docs/product-generation.md`.
 
 The default branch is unprotected, and CI on it informs rather than blocks. A merge
 can land on red, and it falls to whoever merges to read the result and fix what it
-shows. CI does not block a release either: the release workflow reads no CI result,
-so pushing a tag publishes whatever CI says about its commit. CI runs only
+shows. CI does not block a release either: the publish command reads no CI result,
+so it publishes whatever CI says about its commit. CI runs only
 `cut-release`, on every change request and on each push to the default branch. It runs
 no tests, so the full local suite before a tag is the only run of them.
 
 Before tagging, run the full suite locally on macOS with Python 3.11. A release rests
-on that run passing. Nothing else checks it, in CI or in the release job, so it rests
+on that run passing. Nothing else checks it, in CI or in the publish command, so it rests
 on whoever tags. A newer Python can hide what the
 declared minimum shows, so a run on one doesn't count. `.python-version` pins `.venv`
 to it, the version CI runs:
