@@ -8559,17 +8559,23 @@ class OwnLaneWaitingOnAnotherStoryTests(MergeQueueTestCase):
         super().setUp()
         self.record = self.adopter()
 
-    def own_lane_waits(self) -> str:
-        """lane-1 hands off `feature`, then waits on `other`, lane-2's planned story, for its own planned `next`."""
+    def own_lane_waits(self, other_queued: bool = False) -> str:
+        """lane-1 hands off `feature`, then waits on `other`, lane-2's story, for its own planned `next`. `other` is
+        planned, or queued behind `feature` when ``other_queued``."""
         self.record.lead_write(lambda state: state_tool.patch(
             self.record.state, writer="lead", version=state["version"], changes={
                 "lanes": [{"id": "lane-1", "title": "lane-1", "focus": "feature: building", "state": "working",
                            "waitingOn": None, "since": "2026-11-03T00:00:00Z"},
                           {"id": "lane-2", "title": "lane-2", "focus": "other: building", "state": "working",
                            "waitingOn": None, "since": "2026-11-03T00:00:00Z"}],
-                "planned": [{"subject": "next", "title": "Next", "lane": "lane-1", "stage": "planned"},
-                            {"subject": "other", "title": "Other", "lane": "lane-2", "stage": "planned"}]}))
+                "planned": [{"subject": "next", "title": "Next", "lane": "lane-1", "stage": "planned"}]
+                + ([] if other_queued else [{"subject": "other", "title": "Other", "lane": "lane-2", "stage": "planned"}])}))
         head = self.candidate(self.record)
+        if other_queued:
+            self.candidate(self.record, {"src/lib.txt": "lib two\n"}, name="other")
+            self.record.lead_write(lambda state: state_tool.patch(
+                self.record.state, writer="lead", version=state["version"], selector="queue[subject=other]",
+                assignments={"/lane": "lane-2"}))
         state_tool.set_focus(self.record.state, "lane-1", "feature queued; next waits for other", state="waiting",
                              waiting_on="other")
         row = self.row()
@@ -8593,16 +8599,11 @@ class OwnLaneWaitingOnAnotherStoryTests(MergeQueueTestCase):
         self.assertStillWaits("feature merged")
 
     def test_the_wait_still_ends_when_the_story_it_waits_on_lands(self) -> None:
-        self.own_lane_waits()
+        self.own_lane_waits(other_queued=True)
         self.run_queue(self.record, "feature")
-        self.record.lead_write(lambda state: state_tool.patch(
-            self.record.state, writer="lead", version=state["version"],
-            changes={"planned": [entry for entry in state["planned"] if entry["subject"] != "other"]}))
-        self.candidate(self.record, {"src/lib.txt": "lib two\n"}, name="other")
-        self.record.lead_write(lambda state: state_tool.patch(
-            self.record.state, writer="lead", version=state["version"], selector="queue[subject=other]",
-            assignments={"/lane": "lane-2"}))
+        self.assertStillWaits("feature merged")
         self.run_queue(self.record, "other")
+        self.assertEqual(self.record.item("other")["stage"], "merged")
         row = self.row()
         self.assertNotEqual(row["state"], "waiting")
         self.assertIsNone(row["waitingOn"])

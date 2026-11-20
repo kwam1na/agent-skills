@@ -1373,9 +1373,11 @@ def lane_rows_after(directory: Path, state: dict, subject: str, *, stopped: str 
                                 for item in work)
                 row.update(focus=f"{subject} merged", state="assigned" if open_work else "idle")
             return rows
-    elif row is not None and row.get("state") == "waiting" and row.get("waitingOn") == subject:
+    elif row is not None and row.get("state") == "waiting":
         # A stop returns only the subject's own lane to the state it waited from, and the stop's words and its wait on
-        # the lead then apply, whatever its focus names; another lane waiting on the stopped piece still waits.
+        # the lead then apply, whatever its focus names; another lane waiting on the stopped piece still waits. That
+        # holds whatever the lane waits on: a waiting row can't wait on the lead, and the stop is the lead's to answer
+        # before the lane's other wait.
         back = (row.get("waitingFrom") or {}).get("state") or "idle"
         row.pop("waitingFrom", None)
         row.update(focus=f"{subject} stopped: {stopped}", state="assigned" if back == "handed" else back,
@@ -1402,6 +1404,11 @@ def lane_rows_after(directory: Path, state: dict, subject: str, *, stopped: str 
         if row["state"] in ("assigned", "working", "reviewing", "blocked") and "focusAt" in row and handed \
                 and _parse_time(row["focusAt"], exact=True) >= _parse_time(handed[-1], exact=True):
             return rows
+    if row["state"] == "waiting":
+        # The lane waits on another story: the landing ends nothing it waits on, so the wait, and the state it returns
+        # to, stay, and only its words say what landed. A waiting row with no waitingOn is not a row the record holds.
+        row["focus"] = f"{subject} merged"
+        return rows
     resting = row["state"]
     if not waiting:
         resting = "idle"
