@@ -300,19 +300,19 @@ latest release. Download one profile's pair into an empty directory:
 gh release download --repo kwam1na/agent-skills --pattern 'run-delivery-*'
 ```
 
-A Jira adopter downloads the `jira-*` pair the same way. Then verify each file's
-build provenance, pinned to the release workflow as signer:
+A Jira adopter downloads the `jira-*` pair the same way. Then compare the archive's
+sha256 with the one the release notes list for it:
 
 ```bash
-gh attestation verify run-delivery-*.zip --repo kwam1na/agent-skills --signer-workflow kwam1na/agent-skills/.github/workflows/release.yml
-```
-
-```bash
-gh attestation verify run-delivery-*.release.json --repo kwam1na/agent-skills --signer-workflow kwam1na/agent-skills/.github/workflows/release.yml
+shasum -a 256 run-delivery-*.zip
 ```
 
 Install the pair with `apply` below, which verifies the archive against its
-`.release.json` again before it writes anything.
+`.release.json` before it writes anything.
+
+Releases carry no build-provenance attestation: GitHub offers none for a private
+repository owned by a personal account. The version-tagged releases up to v3.4.0
+were published with one.
 
 A repository can declare on its base that its deliveries run without the gate, in
 `.agents/delivery-posture.json`. A runtime from 0.7.8 on honours it, and a repository
@@ -320,8 +320,7 @@ declaring nothing behaves as before.
 [The product generation guide](docs/product-generation.md#declaring-a-delivery-posture) has
 the file, what each case resolves to, and how to move off a local version.
 
-Releases before the first version tag carry no attestation, so that check finds
-nothing for them. Releases before the first version tag, which is what latest
+Releases before the first version tag, which is what latest
 resolves to until then, carry a 0.7.7 runtime without the installed-data protocol,
 so an adopter whose installed runtime has `installed-data-proof/1` must not apply
 them. A candidate is never latest, so latest stays on those releases until the

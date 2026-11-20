@@ -1,7 +1,7 @@
 name: Release
 
-# Pushing a version tag publishes a release built from the tagged tree, with its records and build provenance. Nothing
-# here reads CI or runs the suite: a release rests on whoever tags running the full suite locally first, and it passing.
+# Pushing a version tag publishes a release built from the tagged tree, with its records. Nothing here reads CI
+# or runs the suite: a release rests on whoever tags running the full suite locally first, and it passing.
 on:
   push:
     tags: ["v[0-9]*"]
@@ -54,8 +54,6 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: write
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,9 +67,6 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: python scripts/cut-release.py --version "$TAG" --out "$RUNNER_TEMP/release"
-      - uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: ${{ runner.temp }}/release/*
       - name: Publish every output file
         env:
           GH_TOKEN: ${{ github.token }}
