@@ -7092,7 +7092,6 @@ class LiveLeadChangesTests(unittest.TestCase):
         binding = json.loads(binding_path.read_text())
         binding.update(alwaysRun=[{**entry("always"), "argv": ["true"]}],
                        selection={"lead": True, "catalogue": [entry("unit"), entry("other")]})
-        binding["reusableChecks"] = ["check"]  # the queue at this base reuses only the checks its binding lists
         binding_path.write_text(json.dumps(binding, indent=2) + "\n")
         conf_path = m / ".agents/run-delivery.json"
         conf = json.loads(conf_path.read_text())
