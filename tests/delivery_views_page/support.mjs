@@ -352,7 +352,13 @@ export async function openPage(page, scenario = {}) {
     if ("dropped" in step) stream.error.forEach((listener) => listener({}));
     if ("hover" in step) document.querySelector(step.hover).dispatchEvent(new dom.window.Event("mouseenter"));
     if ("leave" in step) document.querySelector(step.leave).dispatchEvent(new dom.window.Event("mouseleave"));
-    if ("click" in step) { const node = document.querySelectorAll(step.click)[step.index || 0]; node.focus(); node.click(); }
+    if ("click" in step) {
+      const node = document.querySelectorAll(step.click)[step.index || 0];
+      node.focus();
+      // An SVG element, such as a tick on the line, has no click(): it is clicked as a pointer would.
+      if (typeof node.click === "function") node.click();
+      else node.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    }
     if ("toggle" in step) { const node = document.querySelector(step.toggle); node.open = !node.open; }
     if ("tick" in step) intervals.forEach((callback) => callback());
     if ("frame" in step) {

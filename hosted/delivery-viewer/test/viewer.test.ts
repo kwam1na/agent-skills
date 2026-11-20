@@ -684,8 +684,11 @@ describe("what the hosted cut does not publish", () => {
     const why = (title: string) =>
       Array.from(document.querySelectorAll("li")).find((row) => row.querySelector(".a1")?.textContent === title)
         ?.querySelector(".a2")?.textContent ?? null;
+    // A story opens from its stop, or, folded out of its row, from its tick on the main line.
     const open = (subject: string) => {
-      (document.querySelector(`.stop-btn[data-subject="${subject}"]`) as HTMLButtonElement).click();
+      const target = document.querySelector(`.stop-btn[data-subject="${subject}"]`) ??
+        document.querySelector(`.mg-tick[data-subject="${subject}"]`);
+      target!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       return document.querySelector("#detail")!;
     };
     return { dom, document, why, open };
