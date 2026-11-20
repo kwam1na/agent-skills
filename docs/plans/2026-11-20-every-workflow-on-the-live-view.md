@@ -167,8 +167,8 @@ Checked against `main` at `4035682f` on 2026-11-20:
    4 MiB budget, ended runs giving up their summaries first, oldest first.
 
 9. **One standing server per repository.** Every `live` writes its own entry,
-   `<git common directory>/delivery-live/<pid>.json`, at start, with its PID, host, port and the state directory it
-   serves, and removes only that entry on a clean stop. An entry is verified when its PID is alive and its address
+   `<git common directory>/delivery-live/<pid>.json`, at start, with its PID, host, port, the state directory it
+   serves and whether it has `liveRuns`, and removes only that entry on a clean stop. An entry is verified when its PID is alive and its address
    answers `/health` as a live server for this repository
    (`docs/solutions/test-failures/a-ready-wait-that-accepts-any-listener-checks-another-runs-server-2026-11-09.md`).
    `live --if-absent` prints the address of a verified entry, preferring one with `liveRuns`, and exits 0; with none,
@@ -291,8 +291,11 @@ KEY-2, in `tests/test_orchestration_render.py`:
   `event: document`, and the views receive the not-watched flag.
 - `live --if-absent` with a verified entry prints its address and exits 0, starting nothing. With only a stale entry,
   a dead PID, or a listener that answers `/health` as another server, it serves itself.
-- Two servers, one over a record and one with `liveRuns` and no record: each writes its own entry, `--if-absent`
-  prints the `liveRuns` one, and stopping either cleanly removes only its own entry, the other still verified.
+- Two servers over different state directories, one over a record and one with `liveRuns` and no record: each
+  writes its own entry, `--if-absent` prints the `liveRuns` one, and stopping either cleanly removes only its own
+  entry, the other still verified. Then, with both up again, `live --stop` run for one server's state directory stops
+  that server and removes its entry, while the other still answers `/health` as this repository's live server, its
+  PID alive and its entry in place. The test then stops the second server by its recorded PID.
 - `live --stop` stops a verified server this checkout's state directory started, and its entry goes.
 - Refusal: an entry naming the PID of a sleeper the test started, which is not a live server, with an address that
   fails `/health` or answers as another server. `live --stop` exits without signalling, the sleeper is still alive,
