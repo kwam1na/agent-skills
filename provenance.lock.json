@@ -41,7 +41,7 @@
       "outputs": [
         {
           "path": "skills/compound-delivery-kernel/SKILL.md",
-          "sha256": "6395c9c185de9ddadba81d26c98243ece568d8d7cc66d66feb2906946006f558"
+          "sha256": "c6593a83c2afef859921e58d572346799710571d5f1179fed86799d3cea12495"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -165,7 +165,7 @@
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
-          "sha256": "f5d058a523f684eeb596013292c7e704c62954093bda966da64806643d8ea1e0"
+          "sha256": "e8bb11706524185c444a0f1cb088bfca3ab4eb8e6b8ecbdf79b54538b63ef132"
         },
         {
           "path": "skills/deliver-work/agents/openai.yaml",
@@ -279,7 +279,7 @@
       "outputs": [
         {
           "path": "skills/diagnose-work/SKILL.md",
-          "sha256": "bce0c487747c0920e9a069770340e2f5ebd16efadd18326b0646f9cf9dae9355"
+          "sha256": "50c522d3ea60a9949eaf4320b75344c346f710e205743d4da9c73a83457adc1d"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -361,11 +361,11 @@
       "outputs": [
         {
           "path": "skills/execute-work/SKILL.md",
-          "sha256": "09eb0b0737b3f0ad408c6b04ee772651bddf76651c63a54accd261151a6a3377"
+          "sha256": "11b98475565967daafde3b972dad606fda6f8e3970da4f4c5ad602edb74f46df"
         },
         {
           "path": "skills/execute-work/references/run-observation-contract.md",
-          "sha256": "a009b0f88c599df6a7c56210f06c1e7d48b1283e395f52f27bf0bf9ef41b5068"
+          "sha256": "9bd80e76c91e31b5c133016e6afe374cba28aff46b285ab741d241dba160ea3e"
         },
         {
           "path": "skills/execute-work/scripts/report_observation.py",
@@ -1033,7 +1033,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "f12d2b382f3a03b05bb35cff1393a9b0308f419216fbdb0e4a08d82382d8e3fe"
+          "sha256": "7f6fd500c72583b9e1cf68c1f95241fd8fbfd97a702fdda93c2b1418230dea75"
         }
       ],
       "owner": "agent-skills-corpus",

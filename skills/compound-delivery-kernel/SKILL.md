@@ -55,6 +55,82 @@ one item per shippable outcome. Where no tracker is configured, those follow-up
 items are the actionable tracking handoff in the executor's delivery result
 rather than a blocker.
 
+## Report the Run
+
+Every delivery workflow that applies this kernel reports its run through the
+run-event command the repository's root instruction file declares, when it
+declares one. The capability is optional: where the repository declares none,
+proceed silently, with no handoff and no blocker. Reading the root instruction
+file for that declaration is capability discovery: it comes before anything is
+emitted, and everything else that file governs is read after the run starts.
+What is emitted is observability, not evidence. No gate, approval, or
+finish-line decision reads it, and a refused or failed emission never changes a
+command's outcome or the delivery's result.
+
+Report with the kinds the runtime already accepts, in version 2 of its event
+grammar. Start the run with `--version 2`, because without it the runtime
+starts a version 1 run, and give every emission on a version 2 run its own
+`--event-id`, the same one for a retry of the same emission.
+
+### The run lifecycle rule
+
+- A workflow the operator invoked starts the run with `run.started`, naming the
+  host and the installed workflow release it runs under, and the work item
+  where there is one. So does an epic lane's `$execute-work`, which binds its
+  run to its piece with the delivery's `bind-run`.
+- A workflow another workflow invoked in the same session joins the current run
+  and starts none. `$deliver-work` starts its run at `route`, and the workflows
+  it routes to join it.
+- The run stays open across every approval or decision the request waits on,
+  each marked by `wait.started` and `wait.resolved` with `waitingOn: human`
+  where the operator is needed, so a request routed through `plan` and
+  `execute` is one run.
+- Only the workflow that started a run ends it, with `run.ended`, when its
+  request finishes (`complete`), stops on a blocker (`blocked`), or is stopped
+  by the operator with work left (`partial`). `run.ended` carries the result
+  category and the delivery's self-reported cost, the same cost the handoff
+  reports, and nothing is emitted to the run after it.
+- A request abandoned without an end leaves its run open. A start that the
+  runtime refuses because the worktree has an open current run is made again
+  with `--force`, which records the open run as `displacedRunId`. A start the
+  runtime still refuses is silent, and the workflow goes on without a run.
+
+Within the run, every workflow emits:
+
+- `decision.recorded` at every fork resolved by judgement rather than by a
+  discovered rule, naming the fork and the choice. Each workflow names its own
+  forks.
+- `blocker.recorded` for each typed blocker raised, naming its token.
+
+### Stages
+
+At each workflow's entry and exit, emit `activity.observed` as its stage
+marker: `activityId: stage-<name>`, `phase: <name>`, `state: running` at entry
+and `completed`, `failed` or `interrupted` at exit, a new `attemptId` for each
+entry, and `owner` the host. `<name>` is one of `route`, `plan`, `diagnose`,
+`execute`, `review` and `compound`: `$deliver-work` marks `route`, `$plan-work`
+`plan`, `$diagnose-work` `diagnose`, `$execute-work` `execute` and `review`
+around each review round it obtains, and compounding `compound`. A workflow
+that joins a run marks its own stage in it. A stage entered again keeps its
+`activityId`, takes a new `attemptId`, and names the stage's previous attempt as
+`supersedesAttemptId`; every later state of that attempt repeats it, because
+the runtime refuses a new attempt of an existing activity that names no
+predecessor. Where no candidate exists yet, stage markers and waits carry the
+worktree's `HEAD^{tree}` as `candidateTreeSha`. Lens attempts, executor
+verification and the runtime's own command phases are not stage markers and
+never take a `stage-` activity id.
+
+Mark every stop for an approval or a decision with `wait.started` and
+`wait.resolved`, with `waitingOn: human` where the operator is needed, and the
+waiting party otherwise.
+
+### The live view
+
+Where the repository declares a live view command, a workflow that starts a run
+as the operator's invocation runs it with `--if-absent` in the background and
+gives the operator the address. A workflow that joins a run, and an epic lane,
+does neither.
+
 ## Handoff
 
 Report the changed outcome, sensors run, review result, residual risk,
