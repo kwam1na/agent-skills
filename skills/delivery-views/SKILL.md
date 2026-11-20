@@ -89,6 +89,33 @@ A live page reads its run summaries again from the view the server renders
 three seconds after each pushed record, every 30 seconds, and at once on each
 `event: runs`, which the server sends only after the views are written.
 
+The line draws one row per lane and one main line they merge into, and keeps
+the same shape at any delivery size:
+
+- **A lane row** is one width whatever its story count: its landed stories fold
+  into one bar sized by their count, with how many under it, then at most three
+  open stories keep a stop, in the lane's order, and the rest fold into "+n",
+  whose accessible name lists them.
+- **The main line** past the join is the delivery's progress: one tick per story
+  in its lane's colour, in groups of five. Landed stories come first, then the
+  open ones nearest to landing first: in the merge queue, in review, being built,
+  stopped, not started. A tick is drawn by its state, a stopped one with a mark
+  above it, and a caret marks the story the queue lands next. Over the ticks a
+  count line says how many have landed and how many are stopped.
+- **The rejoin.** A delivery rejoining its target draws one bar of its four
+  steps (main in, suite, review, change request) past the ticks, labelled with
+  the step it is on, that step's status sentence under it, and the line bends
+  into the target at the finish post, so the target is drawn once. A delivery
+  straight to its base ends at the post, with no bar.
+- **The finish post** carries its label and, beside it, one square per finish
+  line, filled once met, with how many are met.
+- **Naming and lighting.** Hovering or focusing a tick names its story and state
+  and lights its lane; hovering a lane's row lights its ticks. A tick opens its
+  story's panel, as a stop does, so a story folded out of its row is still one
+  step away. Each step of the bar names its status, and each square its finish
+  line. Every tick, step and square is reached from the keyboard, and the
+  drawing's accessible name states the landed, met and rejoin counts.
+
 A piece's detail panel says where the story is before it lands, in one state
 line with a dot: "Being built", "In review, round N", "Fixing review
 findings", "Reviewed, getting ready to hand off", "Waiting for the lead to
@@ -1101,8 +1128,8 @@ print those words. A record with no siblings draws exactly as before.
   linked" row after the epic's own groups, with its outcome, and the chapter's
   title counts only the epic's own.
 - **The epic's post.** With a same-epic sibling, the line map's main line runs
-  on past this repository's "Finish line" post, which keeps its place and
-  counts, to a second post for the epic. Its label, "Epic", and its count, "L/T
+  on past this repository's "Finish line" post, which keeps its place at the end
+  of the ticks, to a second post for the epic. Its label, "Epic", and its count, "L/T
   landed" across this repository's pieces and every same-epic sibling's
   stories, stack above it. At most two siblings get a row under the lanes, with
   their name and "L of T landed" and no stops, and turn in at the epic's post

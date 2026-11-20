@@ -94,7 +94,7 @@ a:focus-visible, summary:focus-visible, .issue-link:focus-visible { border-radiu
 [tabindex="-1"]:focus { outline: none; }
 .plan-unit:focus, .plan-open li:focus { position: relative; isolation: isolate; }
 .plan-unit:focus::before, .plan-open li:focus::before { content: ""; position: absolute; inset: 4px -12px; z-index: -1; border-radius: 4px; background: color-mix(in srgb, var(--ink) 6%, transparent); }
-@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .lines-track [data-lane] { transition: none; } }
 body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--text); font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
 .chapter { padding: 64px max(64px, env(safe-area-inset-right, 0px)) 64px max(24px, env(safe-area-inset-left, 0px)); }
 .chapter + .chapter { border-top: 1px solid var(--hair); }
@@ -278,12 +278,12 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 /* The rows keep 16px of room above and below inside the scroll area, so a stop's glow and pulse and the last row's labels
    are never clipped; scrolling sideways (on a phone) never brings a vertical scroll with it. */
 /* The track's least width: the lane-name column and its gap (220 + 24, or 104 + 12 on a phone) and the merge's width,
-   plus 46 for each stop of the longest lane, so stops never crowd under their keys. The drawing sets the merge's width,
-   --merge-width (176, 304 with the epic's post, or 478 with the integration step), and the room above the line,
-   --merge-top (16, or more for the epic's words), on the track, so the padding, the least width and the drawing's place
-   all follow the one number. */
-.lines-track { position: relative; display: grid; gap: 20px; padding-top: var(--merge-top); padding-right: var(--merge-width); padding-bottom: 16px; padding-left: 0;
-  min-width: calc(244px + var(--merge-width) + var(--most, 1) * 46px); }
+   plus 46 for each of a row's five slots (its folded landed stories, up to three stops and "+n"), so a row is one width
+   whatever its story count. The drawing sets the merge's width, --merge-width, which grows with the ticks on its main
+   line; the room above the line, --merge-top; and the room it needs below the last row, --merge-below, on the track, so
+   the padding, the least width and the drawing's place all follow the drawing. */
+.lines-track { position: relative; display: grid; gap: 20px; padding-top: var(--merge-top); padding-right: var(--merge-width);
+  padding-bottom: var(--merge-below, 16px); padding-left: 0; min-width: calc(244px + var(--merge-width) + var(--most, 1) * 46px); }
 .line { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; height: 64px; }
 /* The lane's name stays pinned at the left while its row scrolls, so a lane is named wherever the reader has scrolled to. */
 .line .name { position: sticky; left: 0; z-index: 2; align-self: stretch; padding: 3px 12px 10px 0; margin-bottom: -10px; font-size: 12px; line-height: 16px; color: var(--faint); overflow: hidden;
@@ -295,6 +295,15 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .stops::before { content: ""; position: absolute; left: 0; right: 0; top: 22px; height: 2.5px; border-radius: 2px;
   background: linear-gradient(90deg, var(--c) var(--solid, 0%), color-mix(in oklab, var(--c) 30%, transparent) var(--solid, 0%)); }
 .seg { position: relative; flex: 0 0 calc(100% / var(--most, 1)); height: 64px; display: grid; place-items: center; min-width: 0; }
+/* A row's landed stories, folded into one bar on the rule that grows with their count, with how many under it. */
+.seg.fold .fold-bar { position: absolute; top: 20px; left: 4px; height: 7px; border-radius: 3px; background: var(--c);
+  width: calc(10px + var(--landed, 1) * 6px); max-width: calc(100% - 8px); }
+.seg.fold .fold-label, .seg.more { position: absolute; top: 40px; font: 450 11px/14px var(--mono); color: var(--soft); white-space: nowrap; }
+.seg.fold .fold-label { left: 4px; }
+.seg.more { top: 14px; color: var(--faint); }
+/* Lighting a lane, from its row, its stop or one of its ticks, dims every other lane's row, turn and ticks. */
+.lines-track [data-lane] { transition: opacity .15s; }
+.lines-track.lit [data-lane]:not(.on) { opacity: .22; }
 .line-merge { position: absolute; top: var(--merge-top); right: 0; overflow: visible; }
 .mg-trunk { fill: none; stroke: var(--ink); stroke-width: 4; stroke-linecap: round; }
 .mg-trunk.open { stroke: color-mix(in oklab, var(--ink) 30%, transparent); }
@@ -312,29 +321,46 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .mg-post { stroke: var(--ink); stroke-width: 3; stroke-linecap: round; }
 .mg-label { font: 550 13px var(--text); fill: var(--ink); }
 .mg-count { font: 500 11px var(--mono); fill: var(--faint); }
-/* The integration step: the main line runs on through four stops and bends into the target, drawn beneath it. Its width,
-   478 (REJOIN_WIDTH in line-map.js), reaches the track as --merge-width like every merge's. */
-.lines-track.rejoining { padding-bottom: 74px; }
+/* The main line's ticks: one per story in its lane's colour, drawn by its state. Landed fills; in the queue is half-strength;
+   in review is a ring; being built is half filled; stopped is outlined in the stop colour with a mark above; not started is
+   a faint outline. Only the tick's own box takes the pointer, wider than the mark so a close row is easy to hit. */
+.mg-tick { cursor: pointer; outline: none; }
+.mg-tick-hit { fill: transparent; }
+.mg-tick-mark { fill: var(--paper); stroke: color-mix(in oklab, var(--c) 45%, transparent); stroke-width: 1; }
+.mg-tick.landed .mg-tick-mark { fill: var(--c); stroke: none; }
+.mg-tick.queued .mg-tick-mark { fill: color-mix(in oklab, var(--c) 45%, transparent); stroke: none; }
+.mg-tick.review .mg-tick-mark { stroke: var(--c); stroke-width: 2; }
+.mg-tick.building .mg-tick-mark { fill: none; stroke: var(--c); }
+.mg-tick-half { fill: var(--c); }
+.mg-tick.stopped .mg-tick-mark { stroke: var(--held); stroke-width: 2; }
+.mg-tick.unlanded .mg-tick-mark, .mg-tick.unknown .mg-tick-mark { stroke: var(--edge); stroke-dasharray: 2 2; }
+.mg-flag { fill: var(--held); }
+.mg-tick:hover .mg-tick-mark, .mg-tick:focus-visible .mg-tick-mark, .mg-tick[aria-pressed="true"] .mg-tick-mark { stroke: var(--ink); stroke-width: 2; }
+.mg-caret { fill: var(--ink); }
+.mg-why { font: 400 10px var(--text); fill: var(--faint); }
+.mg-stopped { fill: var(--held); }
+/* The integration step: one bar of its four steps after the ticks, and the main line bends into the target at the post. */
 .mg-target { fill: none; stroke: var(--edge); stroke-width: 4; stroke-linecap: round; }
-.mg-step { fill: var(--paper); stroke: color-mix(in oklab, var(--ink) 30%, transparent); stroke-width: 2; }
-.mg-step.filled { fill: var(--ink); stroke: var(--ink); }
-.mg-step.danger { stroke: var(--held); stroke-width: 3; }
-.mg-step.warning { stroke: var(--wait); stroke-width: 3; }
-.mg-step.next { stroke: var(--l1); stroke-width: 3; }
+.mg-target.solid { stroke: var(--ink); }
+.mg-step { fill: color-mix(in oklab, var(--ink) 12%, transparent); outline: none; }
+.mg-step.filled { fill: var(--ink); }
+.mg-step.danger { fill: var(--held); }
+.mg-step.warning { fill: var(--wait); }
+.mg-step.next { fill: var(--l1); }
+.mg-step:focus-visible, .mg-square:focus-visible { stroke: var(--ink); stroke-width: 2; }
 .mg-step-label { font: 500 10px var(--text); fill: var(--soft); }
-.mg-base, .mg-target-label { font-size: 11px; fill: var(--soft); }
+.mg-target-label { font-size: 11px; fill: var(--soft); }
+.mg-change .mg-change-label { fill: var(--soft); text-decoration: underline; }
+.mg-change:focus-visible .mg-change-label { fill: var(--ink); }
+/* The finish lines, as squares beside the post's label. */
+.mg-square { outline: none; }
+.mg-square.met { fill: var(--ink); }
+.mg-square.unmet { fill: none; stroke: color-mix(in oklab, var(--ink) 35%, transparent); stroke-width: 1.5; }
+/* What the pointer or focus is on in the drawing: a tick's story and state, a step's status, a finish line's name. */
+.mg-tip { position: absolute; z-index: 3; pointer-events: none; background: var(--ink); color: var(--paper); font: 500 12px/1.4 var(--text);
+  padding: 7px 10px; border-radius: 6px; max-width: 260px; box-shadow: 0 6px 18px -8px rgba(0, 0, 0, .4); }
+.mg-tip b { display: block; font: 500 11px var(--mono); opacity: .75; }
 .title-beat { color: var(--faint); }
-.rejoin { margin: 18px 0 6px; }
-.rejoin-title { font: 600 14px var(--text); margin: 0 0 8px; }
-.rejoin-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.rj-row { display: grid; grid-template-columns: 96px 1fr; gap: 12px; font: 400 13px var(--text); color: var(--ink); }
-.rj-name { color: var(--soft); }
-.rj-head { font: 500 12px var(--mono); }
-.rj-head.struck { color: var(--faint); }
-.rj-dots { display: inline-flex; gap: 3px; vertical-align: middle; }
-.rj-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.rj-dot.approve { background: var(--landed); }
-.rj-dot.changes { background: var(--wait); }
 /* The epic's post: past this repository's finish line the main line runs on to it, and sibling repositories turn in from
    rows under the lanes. Every stroke of it is neutral: dashed while work is open, dotted for a sibling that can't be read,
    solid once everything has landed. No warning colour, since a sibling out of reach is not trouble here. */
@@ -741,6 +767,10 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
   @keyframes ring { from { opacity: .5; transform: scale(.7); } to { opacity: 0; transform: scale(1.5); } }
   .stop-btn.landing { animation: land var(--move) var(--ease); }
   @keyframes land { 0% { transform: scale(.4); } 55% { transform: scale(1.35); } 100% { transform: scale(1); } }
+  /* A story that just landed: its tick lands on the line, and its row's folded bar grows to take it in. */
+  .mg-tick.landing .mg-tick-mark { animation: land var(--move) var(--ease); transform-box: fill-box; transform-origin: center; }
+  .seg.fold.grew .fold-bar { animation: grow var(--move) var(--ease); transform-origin: left center; }
+  @keyframes grow { from { transform: scaleX(.6); } to { transform: none; } }
   .beat.fresh, .parked li.fresh { animation: slide-in var(--move) var(--ease) both; }
   /* A setback still standing breathes on the page's one slow pulse; a closed one is still. */
   .beat.setback.is-standing .setback-sheet { animation: live calc(var(--beat) * 2) ease-in-out infinite; }
