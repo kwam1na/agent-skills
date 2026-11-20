@@ -43,9 +43,14 @@
     // Each path segment is encoded and the separators kept, as the live server names a view by its output.
     lineMap.setAttribute("href", (served ? "/view/" : "") + VIEW.lineMap.split("/").map(encodeURIComponent).join("/"));
   }
+  var runsPage = null;
+  if (text(VIEW.runsPage)) {
+    runsPage = el("a", null, "The runs");
+    runsPage.setAttribute("href", (served ? "/view/" : "") + VIEW.runsPage.split("/").map(encodeURIComponent).join("/"));
+  }
   var sources = [VIEW.runs === true ? "the delivery product" : null, text(VIEW.exports) ? "the exports tracked under " + VIEW.exports : null].filter(Boolean);
   var page = add(el("div", "page"),
-    add(el("div", "kicker"), el("span", null, "Delivery history"), lineMap),
+    add(el("div", "kicker"), el("span", null, "Delivery history"), lineMap, runsPage),
     el("h1", "title", "Past deliveries and runs, newest first."),
     el("p", "say", sources.length ? "Runs from " + sources.join(" and ") + ", as of " + at(history.asOf) + " UTC. Reload for newer."
       : "No runs command or export directory is configured."));

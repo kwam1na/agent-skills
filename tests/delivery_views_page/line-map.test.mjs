@@ -6,7 +6,7 @@ import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { CORPUS, RENDER, REPLAYED_RUNS, ROOT, block, embedded, expect, openPage, pageWithRuns, readJson, renderIn, repository, runSync, summarize, told } from "./support.mjs";
+import { CORPUS, RENDER, REPLAYED_RUNS, ROOT, block, embedded, expect, openPage, pageWithRuns, readJson, renderIn, repository, runSync, served, summarize, told } from "./support.mjs";
 import { FIX, readings, reportView } from "./round-reports.mjs";
 
 const SOURCE = path.join(CORPUS, "source");
@@ -1389,4 +1389,13 @@ test("shows a planned story's bound run's rounds before its hand-off", async () 
   expect(unbound.app.querySelector("#detail .run-card")).toBeNull();
   expect(unbound.app.querySelector("#detail .d-run-none")?.textContent)
     .toBe("No review rounds yet. Each round shows here as soon as the lane reduces it, before the hand-off.");
+});
+
+test("a runs event re-fetches the line map's runs at once, without the three seconds a push waits", async () => {
+  const page = render(fixtureDocument());
+  const live = served(page);
+  // Quickened: the three-second wait is held and never runs, so only a re-read that waits for nothing is seen.
+  const result = await open(fixtureDocument(), { store: undefined, server: { document: fixtureDocument() }, rendered: live, quicker: 1,
+    steps: [{ wait: 20 }, { runs: '{"generation": 1}' }, { asked: 1 }] }, live);
+  expect(result.fetched.length >= 1).toBe(true);
 });

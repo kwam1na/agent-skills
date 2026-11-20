@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "3d232b3757ca2b70360bf4adfc7bf232da8e0ce1d8b8944ad1fd97cb41fb264c"
+          "sha256": "3eef3889d115fbb50d52d7546c9bbd39c8f4ccf0a47b715b7999de979d44c0eb"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -206,7 +206,7 @@
         },
         {
           "path": "skills/delivery-views/assets/history.js",
-          "sha256": "cadb8bf66ff89d708ab7340ee972d98110273110577585ad6561aa5c93f8280d"
+          "sha256": "1d200b23e4da88907afb94fc4c61e31aa05faccc3fd68cce0c712d67460b6b34"
         },
         {
           "path": "skills/delivery-views/assets/line-map.css",
@@ -214,7 +214,7 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "f5db51a5133688f09884fe7944d4d65c6508336365b5c655193d7f15bcca5b61"
+          "sha256": "01ededbcabcbfdaf2318c38385980e6a3a6d2ead8f43bf9e62909ddabb3f253b"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
@@ -223,6 +223,14 @@
         {
           "path": "skills/delivery-views/assets/run-summary.js",
           "sha256": "5f958959be3589cfb48663cd0aa2b5eb34b34bcb5fa9ed3cb19086e6f87abee2"
+        },
+        {
+          "path": "skills/delivery-views/assets/runs.css",
+          "sha256": "a6a6a27a6aabaa5bc237633cb643fa2b1e56627ef9bb3d0f09202ca7eec4282b"
+        },
+        {
+          "path": "skills/delivery-views/assets/runs.js",
+          "sha256": "16ba57788ba654280fef93d9b659d31a0df50922c2eab9c40b016b2943c879a4"
         },
         {
           "path": "skills/delivery-views/references/delivery-plan.schema.json",
@@ -242,7 +250,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "cf297f96ba465b8c6f77d888d14d988199e2e18aadefc7b8e5bffd21f0cc08fb"
+          "sha256": "215c40042a5570891745a8aa60680196fa23b8a5e1169ed45013f279a44fe21a"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
