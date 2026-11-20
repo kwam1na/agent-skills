@@ -184,7 +184,7 @@
       "criteria": [
         {
           "id": "v26-3691-1",
-          "text": "What happened draws one Setbacks ledger above the chapters with each setback once, grouped by story and reason, standing rows first; no chapter repeats an earlier setback; with nothing standing it says Nothing is stopped now; chapter lines link to their rows; and the hosted page builds and renders the ledger without unpublished facts."
+          "text": "What happened draws one Setbacks ledger above the chapters with each setback once, grouped by story and reason, standing rows first; no chapter repeats an earlier setback; with nothing standing it says Nothing is stopped now; chapter lines link to their rows; and the hosted page still builds and publishes no story, so it draws no ledger and no unpublished fact."
         }
       ],
       "after": [
