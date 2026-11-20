@@ -49,14 +49,14 @@ function released() {
   return { ...record(), waits: [], waitedOn: [] };
 }
 
-const stop = (app, key) => app.querySelector(`.stop-btn[data-subject="${key}"]`);
+const stop = (app, key) => app.querySelector(`:is(.stop-btn, .mg-tick)[data-subject="${key}"]`);
 const leftRow = (app, key) => [...app.querySelectorAll(".left-groups li")].find((row) => row.querySelector(`[data-ticket="${key}"]`));
 const person = (app, id) => [...app.querySelectorAll(".person")].find((row) => row.querySelector("h3").textContent === (id === "lane-1" ? "Waits" : "Renderer"));
 const said = (node) => (node ? node.textContent : "");
 
 test("a wait on another delivery is said on the story, the lane, the queued piece and under the lead's status", async () => {
   const [shown, story, piece] = await openPage(pageWithRuns(record(), {}, { config: CONFIG }), { now: NOW, steps: [
-    { click: '.stop-btn[data-subject="APP-2"]' }, { click: '.stop-btn[data-subject="APP-5"]' }] });
+    { click: ':is(.stop-btn, .mg-tick)[data-subject="APP-2"]' }, { click: ':is(.stop-btn, .mg-tick)[data-subject="APP-5"]' }] });
   // Under the page's status line: what the lead waits on in PEER-1, and what PEER-1 waits on here.
   expect([...shown.app.querySelectorAll(".say-wait")].map((line) => line.textContent)).toEqual([LEAD, HELD]);
   expect(said(person(shown.app, "lane-1"))).toContain(LANE);
@@ -68,7 +68,7 @@ test("a wait on another delivery is said on the story, the lane, the queued piec
 
 test("released, every wait on another delivery is gone with no reload", async () => {
   const [, , gone] = await openPage(pageWithRuns(record(), {}, { config: CONFIG }), { now: NOW, steps: [
-    { click: '.stop-btn[data-subject="APP-2"]' }, { push: released() }] });
+    { click: ':is(.stop-btn, .mg-tick)[data-subject="APP-2"]' }, { push: released() }] });
   const text = gone.app.textContent;
   for (const words of [CLAIM, LANE, PIECE, LEAD, HELD]) { expect(text.includes(words)).toBe(false); }
   expect(gone.app.querySelectorAll(".say-wait").length).toBe(0);

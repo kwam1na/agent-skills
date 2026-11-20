@@ -72,9 +72,9 @@ test("a live update flips each changed digit of every count, from the right, and
   });
   expect(merge(first.app)).toEqual({
     label: "Every lane merges into one main line: 10 of 12 pieces landed, 1 of 1 finish lines met",
-    counts: ["10/12 landed", "1/1 met"],
-    out: [["9/12 landed", "9"], ["0/1 met", "0"]],
-    in: [["10/12 landed", "10"], ["1/1 met", "1"]],
+    counts: ["10 of 12 landed", "1/1"],
+    out: [["9 of 12 landed", "9"], ["0/1", "0"]],
+    in: [["10 of 12 landed", "10"], ["1/1", "1"]],
     held: ["1", "0", "1"],
   });
   // Ten to eleven, mid-turn: the redraw took the turning words off the page, so only the new turns are held.
@@ -84,14 +84,18 @@ test("a live update flips each changed digit of every count, from the right, and
   expect(counts(second.app).left).toEqual({ words: "1", flips: [["2", "1"]] });
   expect(merge(second.app)).toEqual({
     label: "Every lane merges into one main line: 11 of 12 pieces landed, 1 of 1 finish lines met",
-    counts: ["11/12 landed", "1/1 met"],
-    out: [["10/12 landed", "0"]],
-    in: [["11/12 landed", "1"]],
+    counts: ["11 of 12 landed", "1/1"],
+    out: [["10 of 12 landed", "0"]],
+    in: [["11 of 12 landed", "1"]],
     held: ["1"],
   });
   // The words are the new value throughout: both turning digits are the stylesheet's to draw, with no text of their own.
   expect(second.app.querySelector("#now .now-count").textContent).toBe("11 of 12 pieces have landed");
-  expect(second.text).not.toContain("10 of 12");
+  // The merge's turning layers are drawing, hidden from assistive technology: the words alone hold no old count.
+  const words = second.app.cloneNode(true);
+  for (const hidden of words.querySelectorAll('[aria-hidden="true"]')) hidden.remove();
+  expect(second.app.querySelectorAll('.line-merge text.flip-out:not([aria-hidden="true"]), .line-merge text.flip-in:not([aria-hidden="true"])')).toHaveLength(0);
+  expect(words.textContent).not.toContain("10 of 12");
   for (const digit of second.app.querySelectorAll(".flip")) {
     expect(digit.getAttribute("aria-hidden")).toBe("true");
     expect(digit.textContent).toBe("");
@@ -130,7 +134,7 @@ test("nothing flips on the first draw, on an update that changes no number, or o
   for (const { app } of snapshots) {
     expect(app.querySelectorAll(".flip, .flip-in, .flip-out, .flip-gap")).toHaveLength(0);
     expect(counts(app).now.words).toBe("9 of 12");
-    expect(merge(app).counts).toEqual(["9/12 landed", "0/1 met"]);
+    expect(merge(app).counts).toEqual(["9 of 12 landed", "0/1"]);
   }
 });
 
@@ -145,7 +149,7 @@ test("for a reader who asked for less motion, or a browser without highlights, a
   }
   // The merge's counts are drawing, not words, and need no highlight; they rest under reduced motion only.
   expect(reduced.app.querySelectorAll(".flip-in, .flip-out, .flip-gap")).toHaveLength(0);
-  expect(merge(reduced.app).counts).toEqual(["10/12 landed", "1/1 met"]);
+  expect(merge(reduced.app).counts).toEqual(["10 of 12 landed", "1/1"]);
 });
 
 test("a landing that moves the stop shown to the next piece eases its panel from the panel it replaced, not from empty", async () => {

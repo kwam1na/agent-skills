@@ -266,7 +266,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       golden.folds[name] = opened.app.querySelector(`.plan-fold[data-fold="${name}"]`).textContent;
     }
     for (const subject of [plan.units[0].subject, plan.units.find((entry) => document.state.queue.some((queued) => queued.subject === entry.subject && queued.stage !== "merged")).subject]) {
-      const [, shown] = await openPage(page, { now, steps: [{ click: `.stop-btn[data-subject="${subject}"]` }] });
+      const [, shown] = await openPage(page, { now, steps: [{ click: `:is(.stop-btn, .mg-tick)[data-subject="${subject}"]` }] });
       golden.details[subject] = { detail: shown.app.querySelector("#detail").textContent };
     }
     writeFileSync(path.join(folder, "golden.json"), JSON.stringify(golden, null, 2) + "\n");

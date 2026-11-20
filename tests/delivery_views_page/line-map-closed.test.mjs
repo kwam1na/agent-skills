@@ -49,10 +49,10 @@ test("a closed stop that was being checked in a batch says nothing of the batch 
   const steps = [...landed("Z"), [20, "candidate.handed", "A"], [21, "candidate.handed", "B"],
     [22, "check.started", "A", batch], [23, "check.started", "B", batch]];
   const shape = (entries) => record({ queue: [item("Z", "merged"), item("A", "checking"), item("B", "checking")], journal: journal(entries) });
-  const [, live] = await open(render(shape(steps)), { steps: [{ click: '.stop-btn[data-subject="A"]' }] });
+  const [, live] = await open(render(shape(steps)), { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="A"]' }] });
   expect(live.app.querySelector("#detail .d-batch").textContent).toBe("Checked together with B; lands in order once the shared test run passes.");
   expect(live.app.querySelector("#detail .d-stage .d-stage-icon")).not.toBeNull();
-  const [, closed] = await open(render(shape([...steps, [45, "delivery.closed", null]])), { steps: [{ click: '.stop-btn[data-subject="A"]' }] });
+  const [, closed] = await open(render(shape([...steps, [45, "delivery.closed", null]])), { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="A"]' }] });
   expect(closed.app.querySelector("#detail .d-batch")).toBeNull();
   expect(closed.app.querySelector("#detail .d-stage .d-stage-icon")).toBeNull();
   expect(closed.app.querySelector("#detail .d-stage").textContent).toBe("Not landed");
@@ -72,7 +72,7 @@ test("a planned piece reads as not landed at the close, whatever stage it claims
   const document = record({ queue: [item("A", "merged")], journal: journal([...landed("A"), close]) });
   document.state.planned = [{ subject: "P", title: "Work P", lane: "lane-1", stage: "merged" }];
   const [shown] = await open(render(document));
-  const stop = shown.app.querySelector('.stop-btn[data-subject="P"]');
+  const stop = shown.app.querySelector(':is(.stop-btn, .mg-tick)[data-subject="P"]');
   expect(stop.className.trim()).toBe("stop-btn unlanded");
   expect(stop.getAttribute("aria-label")).toBe("Work P, Not landed");
   expect(shown.app.querySelector("#now .now-count").textContent).toBe("Closed with 1 of 2 pieces landed");
@@ -107,12 +107,12 @@ test("a closed delivery names a piece with no lane as having none, and a stop na
   const shape = (entries) => record({ queue: [item("A", "merged"), item("U", "queued", { lane: null })], journal: journal(entries) });
   const names = (snapshot) => [...snapshot.app.querySelectorAll("#line .line .name b")].map((name) => name.textContent);
   const [openLine, openStop, laneStop] = await open(render(shape(landed("A"))),
-    { steps: [{ click: '.stop-btn[data-subject="U"]' }, { click: '.stop-btn[data-subject="A"]' }] });
+    { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="U"]' }, { click: ':is(.stop-btn, .mg-tick)[data-subject="A"]' }] });
   expect(names(openLine)).toEqual(["Lane one", "Not yet assigned"]);
   expect(openStop.app.querySelector("#detail .d-owner").textContent).toBe("Not yet assigned");
   // lane-1 reads as a lane's name, never as a count of lanes.
   expect(laneStop.app.querySelector("#detail .d-owner").textContent).toBe("Lane 1");
-  const [closedLine, closedStop] = await open(render(shape([...landed("A"), close])), { steps: [{ click: '.stop-btn[data-subject="U"]' }] });
+  const [closedLine, closedStop] = await open(render(shape([...landed("A"), close])), { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="U"]' }] });
   expect(names(closedLine)).toEqual(["Lane one", "No lane"]);
   expect(closedStop.app.querySelector("#detail .d-owner").textContent).toBe("No lane");
   expect(closedLine.text).not.toContain("Not yet assigned");

@@ -81,17 +81,18 @@ const rows = (snap) => [...snap.app.querySelectorAll(".line.sibling")].map((row)
 const aria = (snap) => svgOf(snap).getAttribute("aria-label");
 
 // Today's drawing, captured before the epic's post was added, for one lane landed and for two lanes, one still open.
-const TODAY_ONE = '<svg class="line-merge" viewBox="0 0 176 46" width="176" height="46" role="img" aria-label="Every lane merges into one main line: 1 of 1 pieces landed"><path class="mg-trunk" d="M100 23H162"></path><path class="mg-turn" d="M0 23H12C64 23 48 23 100 23" style="--c: var(--l1);"></path><circle class="mg-join" cx="100" cy="23" r="4"></circle><path class="mg-post" d="M162 3V43"></path><text class="mg-label" x="165" y="-7" text-anchor="end">Finish line</text><text class="mg-count" x="165" y="61" text-anchor="end">1/1 landed</text></svg>';
-const TODAY_TWO = '<svg class="line-merge" viewBox="0 0 176 130" width="176" height="130" role="img" aria-label="Every lane merges into one main line: 1 of 2 pieces landed"><path class="mg-trunk open" d="M100 65H162"></path><path class="mg-turn" d="M0 23H12C64 23 48 65 100 65" style="--c: var(--l1);"></path><path class="mg-turn open" d="M0 107H12C64 107 48 65 100 65" style="--c: var(--l2);"></path><circle class="mg-join" cx="100" cy="65" r="4"></circle><path class="mg-post" d="M162 45V85"></path><text class="mg-label" x="165" y="35" text-anchor="end">Finish line</text><text class="mg-count" x="165" y="103" text-anchor="end">1/2 landed</text></svg>';
+const TODAY_ONE = '<svg class="line-merge" role="group" aria-label="Every lane merges into one main line: 1 of 1 pieces landed" viewBox="0 0 176 46" width="176" height="46"><path class="mg-trunk" d="M100 23H162"></path><path class="mg-turn" data-lane="0" d="M0 23H12C64 23 48 23 100 23" style="--c: var(--l1);"></path><circle class="mg-join" cx="100" cy="23" r="4"></circle><g class="mg-tick landed" data-subject="APP-21" data-lane="0" data-state="landed" tabindex="0" role="button" aria-pressed="true" aria-label="Work APP-21, APP-21, Landed" style="--c: var(--l1);"><rect class="mg-tick-hit" x="114.5" y="7" width="15" height="32"></rect><rect class="mg-tick-mark" x="119.5" y="13" width="5" height="20" rx="2"></rect></g><text class="mg-count mg-tally" x="119" y="1">1 of 1 landed</text><path class="mg-post" d="M162 3V43"></path><text class="mg-label" x="162" y="-7" text-anchor="middle">Finish line</text></svg>';
+const TODAY_TWO = '<svg class="line-merge" role="group" aria-label="Every lane merges into one main line: 1 of 2 pieces landed" viewBox="0 0 191 130" width="191" height="130"><path class="mg-trunk open" d="M100 65H177"></path><path class="mg-turn" data-lane="0" d="M0 23H12C64 23 48 65 100 65" style="--c: var(--l1);"></path><path class="mg-turn open" data-lane="1" d="M0 107H12C64 107 48 65 100 65" style="--c: var(--l2);"></path><circle class="mg-join" cx="100" cy="65" r="4"></circle><g class="mg-tick landed" data-subject="APP-21" data-lane="0" data-state="landed" tabindex="0" role="button" aria-pressed="false" aria-label="Work APP-21, APP-21, Landed" style="--c: var(--l1);"><rect class="mg-tick-hit" x="114.5" y="49" width="15" height="32"></rect><rect class="mg-tick-mark" x="119.5" y="55" width="5" height="20" rx="2"></rect></g><g class="mg-tick unknown" data-subject="APP-22" data-lane="1" data-state="unknown" tabindex="0" role="button" aria-pressed="true" aria-label="Work APP-22, APP-22, Being built" style="--c: var(--l2);"><rect class="mg-tick-hit" x="129.5" y="49" width="15" height="32"></rect><rect class="mg-tick-mark" x="134.5" y="55" width="5" height="20" rx="2"></rect></g><text class="mg-count mg-tally" x="119" y="43">1 of 2 landed</text><path class="mg-post" d="M177 45V85"></path><text class="mg-label" x="177" y="35" text-anchor="middle">Finish line</text></svg>';
 
 test("with no same-epic sibling the line is today's, and so it is with only another epic's group", async () => {
-  const cases = [[{ lanes: [["merged"]] }, TODAY_ONE], [{ lanes: [["merged"], ["building"]] }, TODAY_TWO],
-    [{ lanes: [["merged"]], siblings: [sibling("legacy", ["building"], "other-epic")] }, TODAY_ONE],
-    [{ lanes: [["merged"], ["building"]], siblings: [sibling("legacy", ["merged"], "other-epic")] }, TODAY_TWO]];
-  for (const [given, today] of cases) {
+  // One lane's "Finish line" reaches 20 above its row, and the track keeps that room; two lanes' sits well below the top.
+  const cases = [[{ lanes: [["merged"]] }, TODAY_ONE, "20px"], [{ lanes: [["merged"], ["building"]] }, TODAY_TWO, "16px"],
+    [{ lanes: [["merged"]], siblings: [sibling("legacy", ["building"], "other-epic")] }, TODAY_ONE, "20px"],
+    [{ lanes: [["merged"], ["building"]], siblings: [sibling("legacy", ["merged"], "other-epic")] }, TODAY_TWO, "16px"]];
+  for (const [given, today, top] of cases) {
     for (const snap of await both(document(given))) {
       expect(svgOf(snap).outerHTML).toBe(today);
-      expect([property(snap, "--merge-width"), property(snap, "--merge-top")]).toEqual(["176px", "16px"]);
+      expect([property(snap, "--merge-width"), property(snap, "--merge-top")]).toEqual([today.match(/width="(\d+)"/)[1] + "px", top]);
       expect(snap.app.querySelectorAll(".line.sibling, .more-chip, .mg-epic, .mg-sib")).toHaveLength(0);
     }
   }
@@ -100,18 +101,19 @@ test("with no same-epic sibling the line is today's, and so it is with only anot
 test("waiting: both posts are drawn, the epic's words above its own, and a sibling with open stories turns in dashed", async () => {
   for (const snap of await both(document({ siblings: [sibling("api", ["building", "merged"])] }))) {
     const svg = svgOf(snap);
-    expect([svg.getAttribute("width"), svg.getAttribute("viewBox"), svg.getAttribute("height")]).toEqual(["304", "0 0 304 214", "214"]);
-    expect([property(snap, "--merge-width"), property(snap, "--merge-top")]).toEqual(["304px", "16px"]);
-    // This repository's trunk and post keep their place; the epic's line runs on past it to the epic's post.
-    expect(pathOf(svg, ".mg-trunk, .mg-post, .mg-epic, .mg-epic-post, .mg-sib")).toEqual([["mg-trunk", "M100 65H162"],
-      ["mg-epic open", "M162 65H290"], ["mg-sib open", "M0 191H12C150 191 190 65 228 65"], ["mg-post", "M162 45V85"],
-      ["mg-epic-post open", "M290 45V85"]]);
-    expect(texts(svg)).toEqual([["mg-label", 165, 35, "Finish line"], ["mg-count", 165, 103, "2/2 landed"],
-      ["mg-label", 293, 21, "Epic"], ["mg-count", 293, 35, "3/4 landed"]]);
+    expect([svg.getAttribute("width"), svg.getAttribute("viewBox"), svg.getAttribute("height")]).toEqual(["319", "0 0 319 214", "214"]);
+    expect([property(snap, "--merge-width"), property(snap, "--merge-top")]).toEqual(["319px", "16px"]);
+    // This repository's trunk and post keep their place, the post past the two ticks; the epic's line runs on past it to
+    // the epic's post.
+    expect(pathOf(svg, ".mg-trunk, .mg-post, .mg-epic, .mg-epic-post, .mg-sib")).toEqual([["mg-trunk", "M100 65H177"],
+      ["mg-epic open", "M177 65H305"], ["mg-sib open", "M0 191H12C165 191 205 65 243 65"], ["mg-post", "M177 45V85"],
+      ["mg-epic-post open", "M305 45V85"]]);
+    expect(texts(svg)).toEqual([["mg-count mg-tally", 119, 43, "2 of 2 landed"], ["mg-label", 177, 35, "Finish line"],
+      ["mg-label", 308, 21, "Epic"], ["mg-count", 308, 35, "3/4 landed"]]);
     // The sibling's row sits under this repository's lanes, with its count and no stops.
     expect(rows(snap)).toEqual(["api1 of 2 landed"]);
     expect(snap.app.querySelector(".line.sibling .stop-btn")).toBeNull();
-    expect([...trackOf(snap).children].map((node) => node.getAttribute("class"))).toEqual(["line", "line", "line sibling open", "line-merge"]);
+    expect([...trackOf(snap).children].map((node) => node.getAttribute("class"))).toEqual(["line", "line", "line sibling open", "line-merge", "mg-tip"]);
     expect(aria(snap)).toBe("Every lane merges into one main line: 2 of 2 pieces landed; the epic: 3 of 4 pieces landed across 2 repositories");
   }
 });
@@ -123,7 +125,7 @@ test("mixed epics: only the same-epic sibling is drawn and counted, and the othe
     expect(rows(snap)).toEqual(["api0 of 1 landed"]);
     expect(classOf(svg, ".mg-sib")).toEqual(["mg-sib open"]);
     expect(classOf(svg, ".mg-epic, .mg-epic-post, .mg-label")).toEqual(["mg-epic open", "mg-label", "mg-epic-post open", "mg-label"]);
-    expect(texts(svg).slice(2)).toEqual([["mg-label", 293, 21, "Epic"], ["mg-count", 293, 35, "1/3 landed"]]);
+    expect(texts(svg).slice(2)).toEqual([["mg-label", 308, 21, "Epic"], ["mg-count", 308, 35, "1/3 landed"]]);
     expect(aria(snap)).toBe("Every lane merges into one main line: 1 of 2 pieces landed; the epic: 1 of 3 pieces landed across 2 repositories");
     const chapter = snap.app.querySelector("#across");
     expect(chapter.querySelector(".title").textContent).toBe("1 other repository delivers this epic.");
@@ -140,7 +142,7 @@ test("met: every sibling turns in solid, and so do the epic's line and post", as
   for (const snap of await both(doc)) {
     const svg = svgOf(snap);
     expect(classOf(svg, ".mg-sib, .mg-epic, .mg-epic-post")).toEqual(["mg-epic", "mg-sib", "mg-sib", "mg-epic-post"]);
-    expect(texts(svg).slice(2)).toEqual([["mg-label", 293, 21, "Epic"], ["mg-count", 293, 35, "5/5 landed"]]);
+    expect(texts(svg).slice(2)).toEqual([["mg-label", 308, 21, "Epic"], ["mg-count", 308, 35, "5/5 landed"]]);
     expect(rows(snap)).toEqual(["api1 of 1 landed", "docs2 of 2 landed"]);
     expect([...snap.app.querySelectorAll(".line.sibling .stops")].map((stops) => stops.getAttribute("style"))).toEqual(["--solid: 100%;", "--solid: 100%;"]);
     expect(svg.getAttribute("height")).toBe(String(3 * 84 + 46));
@@ -152,7 +154,7 @@ test("nearly met: each sibling turns in solid, but one open piece here keeps the
   for (const snap of await both(doc)) {
     const svg = svgOf(snap);
     expect(classOf(svg, ".mg-sib, .mg-epic, .mg-epic-post")).toEqual(["mg-epic open", "mg-sib", "mg-sib", "mg-epic-post open"]);
-    expect(texts(svg).slice(2)).toEqual([["mg-label", 293, 21, "Epic"], ["mg-count", 293, 35, "3/4 landed"]]);
+    expect(texts(svg).slice(2)).toEqual([["mg-label", 308, 21, "Epic"], ["mg-count", 308, 35, "3/4 landed"]]);
   }
 });
 
@@ -161,7 +163,7 @@ test("one unreadable sibling turns in dotted, and the epic's line and post go da
   for (const snap of await both(doc)) {
     const svg = svgOf(snap);
     expect(classOf(svg, ".mg-sib, .mg-epic, .mg-epic-post")).toEqual(["mg-epic unread", "mg-sib unread", "mg-epic-post unread"]);
-    expect(texts(svg).slice(2)).toEqual([["mg-label unread", 293, 7, "Epic ?"], ["mg-count", 293, 21, "api"], ["mg-count", 293, 35, "2/3 landed"]]);
+    expect(texts(svg).slice(2)).toEqual([["mg-label unread", 308, 7, "Epic ?"], ["mg-count", 308, 21, "api"], ["mg-count", 308, 35, "2/3 landed"]]);
     expect(rows(snap)).toEqual(["apiCouldn't be read since 5 minutes ago"]);
     expect(snap.app.querySelector(".line.sibling time").getAttribute("datetime")).toBe(ATTEMPT);
     expect(aria(snap)).toBe("Every lane merges into one main line: 2 of 2 pieces landed; the epic: 2 of 3 pieces landed across 2 repositories, api can't be read");
@@ -172,8 +174,8 @@ test("two unreadable: the count of them goes under the label, and one never read
   const doc = document({ siblings: [sibling("api", ["merged", "building", "building"], "stale"), tried("web")] });
   for (const snap of await both(doc)) {
     const svg = svgOf(snap);
-    expect(texts(svg).slice(2)).toEqual([["mg-label unread", 293, 7, "Epic ?"], ["mg-count", 293, 21, "2 can't be read"],
-      ["mg-count", 293, 35, "3/5 landed"]]);
+    expect(texts(svg).slice(2)).toEqual([["mg-label unread", 308, 7, "Epic ?"], ["mg-count", 308, 21, "2 can't be read"],
+      ["mg-count", 308, 35, "3/5 landed"]]);
     // The never-read one has no stories and so a landed share of 0: it is drawn first, and reads Never read whatever its since.
     expect(rows(snap)).toEqual(["webNever read", "apiCouldn't be read since 5 minutes ago"]);
     expect(classOf(svg, ".mg-sib")).toEqual(["mg-sib unread", "mg-sib unread"]);
@@ -194,13 +196,13 @@ test("many: the waited-on sibling and the furthest behind are drawn, the rest fo
     // Under the epic's post, which ends 20 below the trunk at 65.
     expect(chip.getAttribute("style")).toBe("--chip-y: 93px;");
     expect(chip.getAttribute("aria-label")).toBe("+3 more: gamma, eps and delta");
-    expect(texts(svgOf(snap)).slice(2)).toEqual([["mg-label", 293, 21, "Epic"], ["mg-count", 293, 35, "4/10 landed"]]);
+    expect(texts(svgOf(snap)).slice(2)).toEqual([["mg-label", 308, 21, "Epic"], ["mg-count", 308, 35, "4/10 landed"]]);
     expect(aria(snap)).toBe("Every lane merges into one main line: 1 of 2 pieces landed; the epic: 4 of 10 pieces landed across 6 repositories, 3 more not drawn");
   }
   // gamma now has the most open of the lowest: it is drawn second, and the epic's count flips.
   expect(rows(pushed)).toEqual(["alpha2 of 3 landed", "gamma0 of 3 landed"]);
   expect(pushed.app.querySelector(".more-chip").getAttribute("aria-label")).toBe("+3 more: beta, eps and delta");
-  expect(texts(svgOf(pushed)).slice(2)).toEqual([["mg-label", 293, 21, "Epic"], ["mg-count", 293, 35, "4/12 landed"]]);
+  expect(texts(svgOf(pushed)).slice(2)).toEqual([["mg-label", 308, 21, "Epic"], ["mg-count", 308, 35, "4/12 landed"]]);
   expect([...svgOf(pushed).querySelectorAll("text.flip-out, text.flip-in")].map((node) => [node.getAttribute("class"), node.textContent]))
     .toEqual([["mg-count flip-out", "4/10 landed"], ["mg-count flip-in", "4/12 landed"]]);
 });
@@ -279,6 +281,7 @@ test("headroom: with one lane and an unreadable sibling, every word of the epic'
     const top = Number.parseFloat(property(snap, "--merge-top"));
     expect(top).toBeGreaterThan(16);
     const size = { "mg-label": 13, "mg-label unread": 13, "mg-count": 11 };
+    // One story: the post stands at 162, so the epic's post at 290 and its words at 293.
     const epic = texts(svgOf(snap)).filter(([, x]) => x === 293);
     expect(epic.map(([, , , words]) => words)).toEqual(["Epic ?", "api", "1/2 landed"]);
     for (const [cls, , y, words] of epic) expect([words, y + top - size[cls] >= 0]).toEqual([words, true]);
@@ -309,5 +312,5 @@ test("motion: the stream down the main line stops at this repository's post, at 
   const trunk = drawn.app.querySelector(".line-flow path.flow-trunk");
   expect(trunk).not.toBeNull();
   // The trunk is drawn 65 down the drawing, which sits 16 down the track.
-  expect(trunk.getAttribute("d")).toBe(`M${WIDTH - 304 + 100} 81H${WIDTH - 304 + 162}`);
+  expect(trunk.getAttribute("d")).toBe(`M${WIDTH - 319 + 100} 81H${WIDTH - 319 + 177}`);
 });
