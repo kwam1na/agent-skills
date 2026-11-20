@@ -151,6 +151,20 @@
           "text": "With the merging candidate's lane waiting on another held story and a focus naming the candidate, the queue's merge write and a reconcile both record the merge, and the lane keeps waiting on that story or rests as lane_rows_after intends, never waiting with no waitingOn; a test reproduces the refused write first."
         }
       ]
+    },
+    "V26-3686": {
+      "title": "Draw every story as a tick on the line where the lanes rejoin main",
+      "lane": "lane-2",
+      "why": "The operator chose the refined study B from the Line Merge Studies mockups on 2026-11-20: the merge section stops scaling past a few stories, and its rejoin steps were drawn twice.",
+      "criteria": [
+        {
+          "id": "v26-3686-1",
+          "text": "The line map's merge section draws one tick per story after the join, landed first then open ones nearest to landing, in groups of five, with the next to land marked and a stopped one flagged and counted; lane rows keep one width; the rejoin steps are one bar with the current step's status and the table goes; the line bends into main at the finish post; ticks, lanes, steps and finish squares name themselves on hover and focus and are keyboard reachable; and the hosted page still builds from the changed line-map.js."
+        }
+      ],
+      "after": [
+        "V26-3668"
+      ]
     }
   },
   "finish": [

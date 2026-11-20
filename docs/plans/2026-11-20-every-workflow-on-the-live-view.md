@@ -400,3 +400,7 @@ end, and record what each showed.
 ### V26-3675. Record a merge when the candidate's own lane waits on another story
 
 Lane 1, tier 3, not blocked. Added mid-delivery: The merge queue refused to record V26-3667's and V26-3666's merges in this delivery because each lane waited on another story (workflow gap 56; earlier gap 105 in V26-3645). The operator moved V26-3675 into V26-3670 on 2026-11-20 so the fix lands with this delivery.
+
+### V26-3686. Draw every story as a tick on the line where the lanes rejoin main
+
+Lane 2, tier 2, after V26-3668. Added mid-delivery: The operator chose the refined study B from the Line Merge Studies mockups on 2026-11-20: the merge section stops scaling past a few stories, and its rejoin steps were drawn twice.
