@@ -65,8 +65,8 @@ token, secret, API key, credential, authorization or cookie, is refused with its
 code, `snapshot.configured_secret` or `snapshot.credential_field`. `status` names
 the code and the page keeps its last cut until a clean one is sent. No scanner
 claims to recognize every secret someone may type. A sibling delivery's hosted
-link grants read access to that delivery, so the page names the sibling without
-it. The git identity in the local page's corner belongs to the reader's checkout,
+link grants read access to that delivery, so it is a credential too: the page
+names the sibling without it. The git identity in the local page's corner belongs to the reader's checkout,
 not to the record, so the hosted page has none.
 
 ## Service checks

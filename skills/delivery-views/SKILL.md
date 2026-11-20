@@ -964,7 +964,8 @@ API key, credential, authorization or cookie, at any depth, is refused; either
 refuses the cut with its bounded code (`snapshot.configured_secret`,
 `snapshot.credential_field`), which the retried status names. Collection and
 run-command children receive none of those credentials. A sibling delivery's hosted
-link grants read access to that delivery, so the cut names the sibling without it.
+link grants read access to that delivery, so it is a credential too, and the cut
+names the sibling without it.
 Byte, text and list bounds keep a cut within what the service accepts. The schema
 is `hosted-delivery-snapshot/3`, sent as renderer `delivery-line-map/3`; a reader
 given another version refuses it. No scanner claims to identify every secret
