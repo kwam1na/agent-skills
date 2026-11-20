@@ -412,11 +412,39 @@ class CollectionTests(unittest.TestCase):
         artifact=hosted.collect(self.inputs)
         self.assertNotEqual(missing['sourceFingerprint'],artifact['sourceFingerprint'])
         self.assertEqual(artifact['reviews']['APP-1'],{'unavailable':True})
+        # The files view's reads are part of the cut, as the local page embeds them, and a new read is a new cut.
+        changes={'spec':'delivery-lane-changes/1','at':'2026-11-15T00:00:00Z','base':'b'*40,'lanes':{},'files':[]}
+        (self.state/render.LANE_CHANGES_FILE).write_text(json.dumps(changes))
+        filed=hosted.collect(self.inputs)
+        self.assertEqual(filed['files'],render.read_lane_changes_block(self.state))
+        self.assertEqual(filed['files']['at'],'2026-11-15T00:00:00Z')
+        self.assertNotEqual(artifact['sourceFingerprint'],filed['sourceFingerprint'])
+        (self.state/render.LANE_CHANGES_FILE).write_text(json.dumps({**changes,'at':'2026-11-15T00:01:00Z'}))
+        refiled=hosted.collect(self.inputs)
+        self.assertNotEqual(filed['sourceFingerprint'],refiled['sourceFingerprint'])
+    def test_the_cut_counts_the_integrations_drift_in_the_deliverys_own_repository(self):
+        self.document['meta']['integration']={'base':'integrate/app','target':'main','remote':'origin'};self.write_state()
+        asked=[]
+        def drift(document,repository=None):
+            asked.append(repository);return {'moved':2,'behind':1}
+        with mock.patch.object(hosted.render,'integration_drift',side_effect=drift):
+            value=hosted.collect(self.inputs)
+        self.assertEqual(asked,[self.root])
+        self.assertEqual(value['integration'],{'drift':{'moved':2,'behind':1}})
     def test_changed_cut_symlink_and_different_run_response_are_refused(self):
         original=render.read_needs_block
         def mutate(directory):
             self.document['meta']['headline']='Changed during capture';self.write_state();return original(directory)
         with mock.patch.object(hosted.render,'read_needs_block',side_effect=mutate):
+            with self.assertRaises(hosted.public.SourceChanged):hosted.collect(self.inputs)
+        # A supervisor pass that rewrites the files view's reads during a cut changes the cut too.
+        lane_changes=self.state/render.LANE_CHANGES_FILE
+        lane_changes.write_text(json.dumps({'spec':'delivery-lane-changes/1','at':'2026-11-15T00:00:00Z','lanes':{}}))
+        read_files=render.read_lane_changes_block
+        def rewrite(directory):
+            lane_changes.write_text(json.dumps({'spec':'delivery-lane-changes/1','at':'2026-11-15T00:02:00Z','lanes':{}}))
+            return read_files(directory)
+        with mock.patch.object(hosted.render,'read_lane_changes_block',side_effect=rewrite):
             with self.assertRaises(hosted.public.SourceChanged):hosted.collect(self.inputs)
         (self.state/'plan.json').symlink_to(self.root.parent/'outside')
         with self.assertRaisesRegex(hosted.PublishError,'source_path'):hosted.collect(self.inputs)

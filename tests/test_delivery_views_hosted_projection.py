@@ -32,6 +32,7 @@ FORGE = config(forges=[{'name': 'GitHub', 'repository': 'example/app',
                         'pullUrl': 'https://github.com/{repository}/pull/{number}',
                         'commitUrl': 'https://github.com/{repository}/commit/{sha}'}])
 SIBLING = 'https://deliveries.example.com/d/' + 'e' * 64
+MERGE_NONCE = '0123456789abcdef' * 2
 
 
 def source():
@@ -60,6 +61,10 @@ def full_record():
                            'subject': None, 'because': [last['id']],
                            'data': {'text': 'Keep the suite under tests/suite-budget.json',
                                     'why': 'Measured with --output=/Users/operator/work/.orchestration/wait.json'}})
+    # A lane's authorized base merge, as the state tool journals it, with the nonce its merge commit carries.
+    doc['journal'].append({'id': last['id'] + 2, 'at': last['at'], 'kind': 'base.merge.authorized', 'lane': 'one',
+                           'subject': doc['state']['queue'][0]['subject'],
+                           'data': {'reviewed': 'a' * 40, 'baseCommits': ['b' * 40], 'token': MERGE_NONCE}})
     doc['state']['finish'] = [{'id': 'suite', 'text': 'Suite passes under scripts/run-tests.py', 'met': False}]
     doc['state']['siblings'] = [{'name': 'web', 'link': SIBLING, 'addedAt': last['at']}]
     plan = render.plan_block(json.loads((ROOT / 'tests/fixtures/delivery-views/line-map/plan-review/plan.json')
@@ -98,9 +103,14 @@ class ProjectionTests(unittest.TestCase):
             local = render.line_map_data(doc, runs, FORGE, theme_key='hosted-delivery', history=None,
                                          plan=plan, needs=needs, files=files)
             value = public.project(doc, runs, FORGE, source_fingerprint='1' * 64, plan=plan, needs=needs, files=files)
-        # Every block the local page embeds is published as the local page has it; the only difference is the
-        # sibling's hosted link, a read capability.
+        # Every block the local page embeds is published as the local page has it. The differences are the sibling's
+        # hosted link, a read capability, and a base merge's nonce, which the local page takes for a commit.
         expected = copy.deepcopy(local)
+        for entry in expected['document']['journal']:
+            if entry['kind'] == 'base.merge.authorized':
+                entry['data'].pop('token')
+                expected['document']['story'] = value['document']['story']
+        expected['links']['commits'].pop(MERGE_NONCE)
         for row in expected['document']['state']['siblings']:
             row.pop('link')
         for row in expected['document'].get('across', {}).get('groups', []):
@@ -126,7 +136,7 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(document['state']['meta']['integration'],
                          {'base': 'integrate/app', 'target': 'main', 'remote': 'origin'})
         self.assertEqual(value['integration'], {'drift': {'moved': 3, 'behind': 1}})
-        decided = document['journal'][-1]
+        decided = document['journal'][-2]
         self.assertEqual((decided['kind'], decided['because'], decided['data']['why']),
                          ('decision.recorded', [decided['because'][0]],
                           'Measured with --output=/Users/operator/work/.orchestration/wait.json'))
@@ -141,6 +151,19 @@ class ProjectionTests(unittest.TestCase):
                          {'text': 'Read docs/plans/approved.md first'})
         self.assertNotIn(SIBLING, encoded)
         self.assertEqual(document['state']['siblings'], [{'name': 'web', 'addedAt': document['journal'][-1]['at']}])
+
+    def test_a_base_merge_authorization_publishes_without_its_nonce(self):
+        doc, runs, plan, needs, files = full_record()
+        value = public.project(doc, runs, FORGE, source_fingerprint='1' * 64, plan=plan, needs=needs, files=files)
+        [authorized] = [entry for entry in value['document']['journal'] if entry['kind'] == 'base.merge.authorized']
+        self.assertEqual(authorized['data'], {'reviewed': 'a' * 40, 'baseCommits': ['b' * 40]})
+        self.assertNotIn(MERGE_NONCE, public.encode(value).decode())
+        self.assertEqual([entry for entry in doc['journal'] if entry['kind'] == 'base.merge.authorized'][0]['data']['token'],
+                         MERGE_NONCE)
+        # Any other credential-named fact is still refused.
+        doc['journal'][-2]['data']['token'] = 'a credential'
+        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.credential_field$'):
+            public.project(doc, runs, FORGE, source_fingerprint='1' * 64)
 
     def test_an_integration_step_moves_as_its_facts_are_journalled(self):
         doc, runs, plan, needs, files = full_record()
@@ -209,7 +232,7 @@ class ProjectionTests(unittest.TestCase):
             for place in ('journal fact', 'state', 'run', 'needs'):
                 with self.subTest(key=key, place=place):
                     doc, runs, plan, needs, files = full_record()
-                    holder = {'journal fact': doc['journal'][-1]['data'], 'state': doc['state']['meta'],
+                    holder = {'journal fact': doc['journal'][-2]['data'], 'state': doc['state']['meta'],
                               'run': runs['run-1']['roundDetail'][0], 'needs': needs['items'][0]}[place]
                     holder[key] = 'the value'
                     with self.assertRaisesRegex(public.ProjectionError, '^snapshot.credential_field$'):
@@ -228,6 +251,7 @@ class ProjectionTests(unittest.TestCase):
                                'subject': None, 'data': {'sibling': 'web', 'link': SIBLING}})
         doc['journal'].append({'id': last['id'] + 2, 'at': last['at'], 'kind': 'decision.recorded', 'lane': None,
                                'subject': None, 'data': {'text': f'Follow web at {SIBLING}', 'why': 'It rejoins first.'}})
+        doc['state']['meta']['seen'] = {SIBLING: 'read'}
         doc['across'] = {'groups': [{'name': 'web', 'link': SIBLING, 'fresh': True}], 'held': {}}
         original = copy.deepcopy(doc)
         value = public.project(doc, runs, FORGE, source_fingerprint='1' * 64)
@@ -235,6 +259,7 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(value['document']['across']['groups'][0]['name'], 'web')
         self.assertEqual(value['document']['journal'][-2]['data'], {'sibling': 'web'})
         self.assertEqual(value['document']['journal'][-1]['data']['text'], 'Follow web at web')
+        self.assertEqual(value['document']['state']['meta']['seen'], {'web': 'read'})
         self.assertEqual(doc, original)
 
     def test_byte_text_and_list_bounds_stay(self):

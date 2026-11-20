@@ -238,7 +238,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/public_projection.py",
-          "sha256": "86f0b2d0f4f1760f2aa6c21d36d5487f01d3db6c822ea5f428ad2cb148e841f5"
+          "sha256": "06528ce324b2536095e4e5a42e902c474eaab4270bc01e346fce7588c6b192a9"
         },
         {
           "path": "skills/delivery-views/scripts/render.py",

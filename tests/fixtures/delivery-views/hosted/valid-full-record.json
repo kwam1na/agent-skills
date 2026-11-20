@@ -294,6 +294,19 @@
           "text": "Keep the suite under tests/suite-budget.json",
           "why": "Measured with --output=/Users/operator/work/.orchestration/wait.json"
         }
+      },
+      {
+        "id": 16,
+        "at": "2026-10-30T07:40:00Z",
+        "kind": "base.merge.authorized",
+        "lane": "one",
+        "subject": "A",
+        "data": {
+          "reviewed": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "baseCommits": [
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ]
+        }
       }
     ],
     "stats": {},
@@ -406,7 +419,8 @@
             12,
             13,
             14,
-            15
+            15,
+            16
           ],
           "beats": [
             "b8",
@@ -416,7 +430,8 @@
             "b12",
             "b13",
             "b14",
-            "b15"
+            "b15",
+            "b16"
           ],
           "standing": [],
           "notLanded": [],
@@ -776,6 +791,29 @@
           },
           "explain": "The lead or the operator made a call, and said why.",
           "items": []
+        },
+        {
+          "id": "b16",
+          "chapter": "c4",
+          "form": "entry",
+          "altitudes": [
+            "story",
+            "everything"
+          ],
+          "at": "2026-10-30T07:40:00Z",
+          "entries": [
+            16
+          ],
+          "thread": null,
+          "kind": "base.merge.authorized",
+          "tone": "decision",
+          "label": "Merge allowed",
+          "words": {
+            "head": "The lead let One lane merge the main line into A",
+            "line": "bbbbbbb, from aaaaaaa"
+          },
+          "explain": "Exact commits from the main line were allowed into a piece: by the lead, or by its lane before it handed the piece off.",
+          "items": []
         }
       ],
       "threads": [],
@@ -874,7 +912,8 @@
       "340ac48d4563b48d56bca48d6815948d796e848d": "https://github.com/example/app/commit/340ac48d4563b48d56bca48d6815948d796e848d",
       "27cd983c351224214256b0064f9b3beb5cdfc7d0": "https://github.com/example/app/commit/27cd983c351224214256b0064f9b3beb5cdfc7d0",
       "7e7c6e96a8a5ec99d2cf6a9cfcf8e89f272266a2": "https://github.com/example/app/commit/7e7c6e96a8a5ec99d2cf6a9cfcf8e89f272266a2",
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "https://github.com/example/app/commit/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "https://github.com/example/app/commit/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "https://github.com/example/app/commit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     }
   },
   "plan": {

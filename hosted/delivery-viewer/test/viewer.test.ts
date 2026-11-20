@@ -600,6 +600,9 @@ function seedDOM(window: JSDOM["window"], body: PublicProjection) {
     view: body.view,
     plan: body.plan,
     needs: body.needs,
+    files: body.files,
+    "left-open": body.leftOpen,
+    integration: body.integration,
   })) {
     if (value === null || value === undefined) continue;
     const block = window.document.createElement("script");
@@ -696,6 +699,67 @@ describe("the hosted page draws what the local page draws", () => {
     } finally {
       local.window.close();
       hosted.window.close();
+    }
+  });
+  /** The full record with region claims, a files view, a drift and, when `closed`, what it left open. */
+  function blocksRecord(moved: number, paths: string[], closed = false): PublicProjection {
+    const body = fullRecord() as PublicProjection & Record<string, any>;
+    const state = body.document.state as Record<string, any>;
+    state.laneOwnership = { "lane-1": ["src/*", "docs/*"] };
+    state.laneRegions = [{ lane: "lane-1", path: "src/shared.py", baseHead: "a".repeat(40), start: 1, end: 20 }];
+    body.files = { spec: "delivery-lane-changes/1", at: "2026-10-30T07:39:00Z", base: "b".repeat(40),
+      lanes: { "lane-1": { story: "A", branch: "claude/A", head: "c".repeat(40), base: "b".repeat(40),
+        mergeBase: "b".repeat(40), readAt: "2026-10-30T07:39:00Z",
+        files: paths.map((path) => ({ path, holds: "file", changes: [] })) } },
+      files: paths.map((path) => ({ path, lines: 10, lanes: ["lane-1"] })) };
+    body.integration = { drift: { moved, behind: 1 } };
+    if (closed) {
+      const journal = body.document.journal as Record<string, unknown>[];
+      journal.push({ id: journal.length + 100, at: "2026-10-30T08:00:00Z", kind: "delivery.closed", lane: null, subject: null, data: {} });
+      body.leftOpen = { heading: "What it left open", rows: [{ subject: "A", said: { headline: "Work A was left stopped", why: "Its suite never passed." } }] };
+    }
+    projection(body);
+    return body;
+  }
+  it("reads the files view, the drift and what a closed delivery left open from the viewer's seed and its store's pushes", async () => {
+    const assets = JSON.parse(readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8")) as
+      { renderer: string; viewer: string };
+    let served = await revision(1, blocksRecord(3, ["src/one.py"]));
+    const dom = testDOM();
+    Object.assign(dom.window, {
+      fetch: async (url: string) => url.endsWith("/current") ? Response.json(served.meta)
+        : new Response(served.bytes, { headers: { "Content-Type": "application/json" } }),
+    });
+    const words = () => dom.window.document.querySelector("#app")!.textContent!.replace(/\s+/g, " ");
+    const files = () => [...dom.window.document.querySelectorAll("details.files-fold [data-path]")]
+      .map((node) => node.getAttribute("data-path"));
+    try {
+      dom.window.eval(assets.viewer);
+      await vi.waitFor(() => expect(Reflect.get(dom.window, "deliveryStateStore")).toBeDefined());
+      const store = Reflect.get(dom.window, "deliveryStateStore") as ReturnType<typeof createViewStore>;
+      dom.window.eval(assets.renderer);
+      // The first draw reads the blocks the viewer seeded, as the local page reads the ones it embeds.
+      await vi.waitFor(() => expect(words()).toContain("main moved 3 commits while this worked"));
+      expect(dom.window.document.querySelector("details.files-fold summary")!.textContent).toBe("Who holds which files");
+      expect(files()).toContain("src/one.py");
+      const local = drawn(served.body, false);
+      try {
+        expect(chapters(dom)).toBe(chapters(local));
+      } finally {
+        local.window.close();
+      }
+      // A pushed projection moves each block, as a rewritten local page does.
+      served = await revision(2, blocksRecord(5, ["src/one.py", "docs/new.md"]));
+      await store.poll();
+      await vi.waitFor(() => expect(words()).toContain("main moved 5 commits while this worked"));
+      expect(files()).toContain("docs/new.md");
+      served = await revision(3, blocksRecord(5, ["src/one.py"], true));
+      await store.poll();
+      await vi.waitFor(() => expect(words()).toContain("Work A was left stopped"));
+      expect(dom.window.document.querySelector(".left-open .ah")!.textContent).toBe("What it left open");
+    } finally {
+      dom.window.dispatchEvent(new dom.window.Event("pagehide"));
+      dom.window.close();
     }
   });
   it("draws the integration base, the rejoin and the four stops before it, and the story's words", () => {

@@ -190,11 +190,27 @@ def _without_capabilities(value: dict) -> None:
         value.update(scrub(value))
 
 
+def _without_merge_nonces(document: dict) -> dict:
+    """The record less each base merge authorization's `token`: the nonce its merge commit carries. It is no credential,
+    but the name is one, and no view draws it, so it is left out rather than refusing every cut after a base merge. It
+    goes before the links are worked out, so it is not taken for a commit either."""
+    journal = document.get('journal') if isinstance(document.get('journal'), list) else None
+    if not journal or not any(isinstance(entry, dict) and entry.get('kind') == 'base.merge.authorized' for entry in journal):
+        return document
+    entries = []
+    for entry in journal:
+        if isinstance(entry, dict) and entry.get('kind') == 'base.merge.authorized' and isinstance(entry.get('data'), dict):
+            entry = {**entry, 'data': {key: fact for key, fact in entry['data'].items() if key != 'token'}}
+        entries.append(entry)
+    return {**document, 'journal': entries}
+
+
 def project(document: dict, runs: dict, config: dict, *, source_fingerprint: str, plan: dict | None = None,
             needs: dict | None = None, files: dict | None = None, repository: Path | None = None,
             secret_values=()) -> dict:
     """The cut the local live view renders from, for one current delivery, less the credentials. It never carries
     history: the hosted page has none to link to."""
+    document = _without_merge_nonces(document)
     named = render.named_runs(document)
     selected = {key: value for key, value in runs.items() if key in named}
     data = render.line_map_data(document, selected, config, theme_key='hosted-delivery', history=None,

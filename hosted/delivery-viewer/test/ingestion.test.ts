@@ -70,6 +70,18 @@ describe('ingestion boundary', () => {
       const body = fixture() as Loose; (body.document.state.meta as Record<string, unknown>)[`${key}Budget`] = 3;
       expect((await upload(publicId, 1, body)).status).toBe(200);
     });
+  it('serves the deployed entrypoint through local Worker, DO and R2 bindings', async () => {
+    const publicId=id();
+    const auth={'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json'};
+    const acquired=await SELF.fetch(`https://service.test${route(publicId,'session')}`,{method:'POST',headers:auth,body:JSON.stringify({mode:'acquire',deliveryKey:'APP-1',ownerId:'c'.repeat(64)})});
+    expect(acquired.status).toBe(200);
+    const body=JSON.stringify(fixture());const hash=await digest(new TextEncoder().encode(body));
+    const accepted=await SELF.fetch(`https://service.test${route(publicId,'snapshots')}`,{method:'POST',headers:{...auth,'X-Writer-Epoch':'1','X-Snapshot-Sequence':'1','X-Snapshot-Digest':hash,'X-Renderer-Version':RENDERER},body});
+    expect(accepted.status).toBe(200);
+    const response=await SELF.fetch(`https://service.test/d/${publicId}/snapshots/${hash}`);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(body);
+  });
   it('hashes exact bytes and accepts data only with supported renderer and bounded headers', async () => {
     const publicId = id(); await session(publicId);
     const headers = { 'Content-Type': 'application/json', 'X-Renderer-Version': RENDERER,
