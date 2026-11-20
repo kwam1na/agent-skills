@@ -197,6 +197,10 @@
         {
           "id": "v26-3692-2",
           "text": "A configured secret's value or a value under a credential-named key never reaches the hosted snapshot; the cut is refused or the value replaced, and the status names the bounded code."
+        },
+        {
+          "id": "v26-3692-3",
+          "text": "The worker accepts the new snapshot version and refuses the old, and the docs, skill page and catalog say what a hosted link now exposes and what it never publishes."
         }
       ],
       "after": [
