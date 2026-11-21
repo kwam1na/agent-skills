@@ -1,0 +1,419 @@
+{
+  "list": {
+    "spec": "run-inventory/1",
+    "labels": "self-attested; observability, not evidence; unbound to a record",
+    "runsDir": "/private/fixture/.git/managed-delivery/runs",
+    "current": "run-0000000000000001",
+    "runs": [
+      {
+        "runId": "run-0000000000000001",
+        "status": "incomplete",
+        "open": true,
+        "current": true,
+        "durationSeconds": 0,
+        "bytes": 1777
+      }
+    ],
+    "total": {
+      "count": 1,
+      "bytes": 1777
+    },
+    "returned": 1,
+    "truncated": false
+  },
+  "runs": {
+    "run-0000000000000001": {
+      "view": {
+        "spec": "run-view/1",
+        "historical": false,
+        "asOf": "2026-11-20T09:00:00.964Z",
+        "authority": "Self-attested observations. Applicability unknown; no permission or candidate approval is granted.",
+        "sections": [
+          {
+            "id": "waiting",
+            "title": "Waiting and required action",
+            "empty": "No current waiting observation. Unreported waits remain unknown.",
+            "items": [
+              {
+                "id": "reproduction",
+                "label": "A subagent is reproducing the failure.",
+                "fields": [
+                  {
+                    "label": "Owner",
+                    "value": "claude-code"
+                  },
+                  {
+                    "label": "Human action required",
+                    "value": "No — agent"
+                  },
+                  {
+                    "label": "Next action",
+                    "value": "Compare its observation with the prediction."
+                  },
+                  {
+                    "label": "Scope",
+                    "value": "This request only; it grants no authority."
+                  },
+                  {
+                    "label": "Attempt",
+                    "value": "stage-diagnose-1"
+                  },
+                  {
+                    "label": "Observed",
+                    "value": "2026-11-20T09:00:00Z"
+                  },
+                  {
+                    "label": "Freshness",
+                    "value": "recent"
+                  },
+                  {
+                    "label": "Candidate",
+                    "value": "053fbcf66ede02d645f177faad1d70a9ce89bc8c"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "work",
+            "title": "Current work",
+            "empty": "No active work in the latest observations. Retained attempts appear in history.",
+            "items": [
+              {
+                "id": "stage-diagnose-1",
+                "label": "stage-diagnose",
+                "fields": [
+                  {
+                    "label": "Owner",
+                    "value": "claude-code"
+                  },
+                  {
+                    "label": "Phase",
+                    "value": "diagnose"
+                  },
+                  {
+                    "label": "State",
+                    "value": "running (reported)"
+                  },
+                  {
+                    "label": "Freshness",
+                    "value": "recent"
+                  },
+                  {
+                    "label": "Last observed",
+                    "value": "2026-11-20T09:00:00Z"
+                  },
+                  {
+                    "label": "Elapsed since start",
+                    "value": "0s"
+                  },
+                  {
+                    "label": "Next step",
+                    "value": "Trace the failing assertion."
+                  },
+                  {
+                    "label": "Candidate",
+                    "value": "053fbcf66ede02d645f177faad1d70a9ce89bc8c"
+                  },
+                  {
+                    "label": "Lifecycle history",
+                    "value": "Incomplete"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "reviews",
+            "title": "Reviewer attempts and history",
+            "empty": "No reviewer attempt observations.",
+            "items": []
+          },
+          {
+            "id": "findings",
+            "title": "Current unresolved findings",
+            "empty": "Unknown — detailed finding observations were not recorded.",
+            "items": []
+          },
+          {
+            "id": "evidence",
+            "title": "Evidence and candidate",
+            "empty": "No evidence observations. Applicability unknown.",
+            "items": []
+          },
+          {
+            "id": "reports",
+            "title": "Retained reports",
+            "empty": "No report references recorded.",
+            "items": []
+          },
+          {
+            "id": "finish",
+            "title": "Declared finish line",
+            "empty": "Finish steps unreported; delivery completion unknown.",
+            "items": []
+          },
+          {
+            "id": "cost",
+            "title": "Reported cost",
+            "empty": "Cost unreported.",
+            "items": [
+              {
+                "id": "review-cost",
+                "label": "Review totals",
+                "fields": [
+                  {
+                    "label": "Coverage",
+                    "value": "unreported"
+                  },
+                  {
+                    "label": "Unreported round entries",
+                    "value": "0"
+                  },
+                  {
+                    "label": "Measurement",
+                    "value": "Unreported"
+                  }
+                ]
+              },
+              {
+                "id": "run-cost",
+                "label": "Run total",
+                "fields": [
+                  {
+                    "label": "Coverage",
+                    "value": "unreported"
+                  },
+                  {
+                    "label": "Measurement",
+                    "value": "unreported"
+                  },
+                  {
+                    "label": "Reported by",
+                    "value": "Unreported"
+                  },
+                  {
+                    "label": "Accounting",
+                    "value": "Run totals can include review and attempt costs. These totals are shown separately and are not added together."
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "activity-history",
+            "title": "Activity history",
+            "empty": "No completed, failed, interrupted or superseded activity observations.",
+            "items": []
+          },
+          {
+            "id": "finding-history",
+            "title": "Finding history",
+            "empty": "No detailed finding history.",
+            "items": []
+          }
+        ]
+      },
+      "show": {
+        "spec": "delivery-run-export/2",
+        "labels": "self-attested; observability, not evidence; unbound to a record",
+        "runId": "run-0000000000000001",
+        "events": [
+          {
+            "version": "run-event/2",
+            "eventId": "start",
+            "runId": "run-0000000000000001",
+            "seq": 1,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "run.started",
+            "actor": {
+              "role": "executor"
+            },
+            "attestation": "self",
+            "payload": {
+              "host": "claude-code",
+              "workflow": {
+                "releaseId": "linear-v0.0.0",
+                "profile": "linear"
+              }
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "diagnose-in",
+            "runId": "run-0000000000000001",
+            "seq": 2,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "activity.observed",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "stage-diagnose",
+              "attemptId": "stage-diagnose-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "phase": "diagnose",
+              "state": "running",
+              "owner": "claude-code",
+              "nextStep": "Trace the failing assertion."
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "agent-wait",
+            "runId": "run-0000000000000001",
+            "seq": 3,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "wait.started",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "stage-diagnose",
+              "attemptId": "stage-diagnose-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "waitId": "reproduction",
+              "owner": "claude-code",
+              "waitingOn": "agent",
+              "reason": "A subagent is reproducing the failure.",
+              "nextAction": "Compare its observation with the prediction.",
+              "scope": "This request only; it grants no authority."
+            }
+          }
+        ],
+        "summary": {
+          "ticket": "",
+          "open": true,
+          "startedAt": "2026-11-20T09:00:00Z",
+          "lastAt": "2026-11-20T09:00:00Z",
+          "durationSeconds": 0,
+          "phases": {
+            "implementationSeconds": 0,
+            "reviewSeconds": 0,
+            "tailSeconds": 0,
+            "rounds": 0,
+            "gate": {
+              "totalMs": 0,
+              "counted": 0,
+              "unreadable": 0,
+              "unseen": true
+            }
+          },
+          "roundsOpened": 0,
+          "roundsClosed": 0,
+          "findings": {
+            "P0": 0,
+            "P1": 0,
+            "P2": 0,
+            "P3": 0
+          }
+        },
+        "costs": {
+          "review": {
+            "coverage": "unreported",
+            "unreportedEntries": 0,
+            "totals": []
+          },
+          "run": {
+            "coverage": "unreported"
+          }
+        },
+        "readout": {
+          "status": "incomplete",
+          "present": [
+            "run.started"
+          ],
+          "missing": [
+            "ticket.read",
+            "posture.declared",
+            "lens.selected",
+            "review.round.opened",
+            "review.round.closed",
+            "command.completed:gate",
+            "command.completed:record",
+            "pr.opened",
+            "run.ended",
+            "gate.reported"
+          ],
+          "violations": []
+        },
+        "refusedAppends": [],
+        "progress": {
+          "asOf": "2026-11-20T09:00:00Z",
+          "activities": [
+            {
+              "activityId": "stage-diagnose",
+              "currentAttemptId": "stage-diagnose-1",
+              "attempts": [
+                {
+                  "activityId": "stage-diagnose",
+                  "attemptId": "stage-diagnose-1",
+                  "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+                  "state": "running",
+                  "owner": "claude-code",
+                  "phase": "diagnose",
+                  "firstObservedAt": "2026-11-20T09:00:00Z",
+                  "lastObservedAt": "2026-11-20T09:00:00Z",
+                  "lifecycleIncomplete": true,
+                  "superseded": false,
+                  "freshness": "recent",
+                  "waits": [
+                    {
+                      "activityId": "stage-diagnose",
+                      "attemptId": "stage-diagnose-1",
+                      "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+                      "waitId": "reproduction",
+                      "owner": "claude-code",
+                      "waitingOn": "agent",
+                      "reason": "A subagent is reproducing the failure.",
+                      "nextAction": "Compare its observation with the prediction.",
+                      "scope": "This request only; it grants no authority.",
+                      "startedAt": "2026-11-20T09:00:00Z",
+                      "current": true
+                    }
+                  ],
+                  "startedAt": "2026-11-20T09:00:00Z",
+                  "nextStep": "Trace the failing assertion."
+                }
+              ]
+            }
+          ],
+          "waits": [
+            {
+              "activityId": "stage-diagnose",
+              "attemptId": "stage-diagnose-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "waitId": "reproduction",
+              "owner": "claude-code",
+              "waitingOn": "agent",
+              "reason": "A subagent is reproducing the failure.",
+              "nextAction": "Compare its observation with the prediction.",
+              "scope": "This request only; it grants no authority.",
+              "startedAt": "2026-11-20T09:00:00Z",
+              "current": true
+            }
+          ],
+          "findings": [],
+          "reports": [],
+          "artifacts": [],
+          "finishSteps": [],
+          "currentFindings": [],
+          "findingsCoverage": "unreported"
+        }
+      }
+    }
+  }
+}

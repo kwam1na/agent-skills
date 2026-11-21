@@ -41,7 +41,7 @@
       "outputs": [
         {
           "path": "skills/compound-delivery-kernel/SKILL.md",
-          "sha256": "6395c9c185de9ddadba81d26c98243ece568d8d7cc66d66feb2906946006f558"
+          "sha256": "c6593a83c2afef859921e58d572346799710571d5f1179fed86799d3cea12495"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -165,7 +165,7 @@
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
-          "sha256": "f5d058a523f684eeb596013292c7e704c62954093bda966da64806643d8ea1e0"
+          "sha256": "e8bb11706524185c444a0f1cb088bfca3ab4eb8e6b8ecbdf79b54538b63ef132"
         },
         {
           "path": "skills/deliver-work/agents/openai.yaml",
@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "3d232b3757ca2b70360bf4adfc7bf232da8e0ce1d8b8944ad1fd97cb41fb264c"
+          "sha256": "e126eff83018f1c161a886452d7e3b26b476f3b1cb2eb69efe9d2f8d5c85c65a"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -206,15 +206,15 @@
         },
         {
           "path": "skills/delivery-views/assets/history.js",
-          "sha256": "cadb8bf66ff89d708ab7340ee972d98110273110577585ad6561aa5c93f8280d"
+          "sha256": "1d200b23e4da88907afb94fc4c61e31aa05faccc3fd68cce0c712d67460b6b34"
         },
         {
           "path": "skills/delivery-views/assets/line-map.css",
-          "sha256": "a6e72f045215e86f3c85284ccc815eb24f22153cc6b27915eb832b1e3604c2f6"
+          "sha256": "5ccd2bd171b5e5a118c6555cb4628810b43d82c06781ee794164f101ecc95b2c"
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "f5db51a5133688f09884fe7944d4d65c6508336365b5c655193d7f15bcca5b61"
+          "sha256": "0376c7423939d993f46bf69cd5b97827551413f24f216475b2feebdb7d75e289"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
@@ -223,6 +223,14 @@
         {
           "path": "skills/delivery-views/assets/run-summary.js",
           "sha256": "5f958959be3589cfb48663cd0aa2b5eb34b34bcb5fa9ed3cb19086e6f87abee2"
+        },
+        {
+          "path": "skills/delivery-views/assets/runs.css",
+          "sha256": "a6a6a27a6aabaa5bc237633cb643fa2b1e56627ef9bb3d0f09202ca7eec4282b"
+        },
+        {
+          "path": "skills/delivery-views/assets/runs.js",
+          "sha256": "16ba57788ba654280fef93d9b659d31a0df50922c2eab9c40b016b2943c879a4"
         },
         {
           "path": "skills/delivery-views/references/delivery-plan.schema.json",
@@ -242,7 +250,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "cf297f96ba465b8c6f77d888d14d988199e2e18aadefc7b8e5bffd21f0cc08fb"
+          "sha256": "215c40042a5570891745a8aa60680196fa23b8a5e1169ed45013f279a44fe21a"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
@@ -279,7 +287,7 @@
       "outputs": [
         {
           "path": "skills/diagnose-work/SKILL.md",
-          "sha256": "bce0c487747c0920e9a069770340e2f5ebd16efadd18326b0646f9cf9dae9355"
+          "sha256": "50c522d3ea60a9949eaf4320b75344c346f710e205743d4da9c73a83457adc1d"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -361,11 +369,11 @@
       "outputs": [
         {
           "path": "skills/execute-work/SKILL.md",
-          "sha256": "09eb0b0737b3f0ad408c6b04ee772651bddf76651c63a54accd261151a6a3377"
+          "sha256": "11b98475565967daafde3b972dad606fda6f8e3970da4f4c5ad602edb74f46df"
         },
         {
           "path": "skills/execute-work/references/run-observation-contract.md",
-          "sha256": "a009b0f88c599df6a7c56210f06c1e7d48b1283e395f52f27bf0bf9ef41b5068"
+          "sha256": "9bd80e76c91e31b5c133016e6afe374cba28aff46b285ab741d241dba160ea3e"
         },
         {
           "path": "skills/execute-work/scripts/report_observation.py",
@@ -510,7 +518,7 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "b42deeb4f3da0ac01f711ba489684f6639e4569fded312f40570e3b245fda9ed"
+          "sha256": "3f2d36b488a4e79dd51c1da813fdd7c8f14886aad387225d87afeb66a7580547"
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
@@ -522,11 +530,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "4f0a1f68eae657d023a4bc7a5d7a739689fac492de0bd48483242e91120e9440"
+          "sha256": "c542fb13817e10eac0337044bcf46ac32f18c2cd10280003a149b99d53130d43"
         },
         {
           "path": "skills/orchestrate-work/references/story.schema.json",
-          "sha256": "e0294c91e4a8917ffa8e945c13d1fa12cdad948e19900129f323c10e2ee1128f"
+          "sha256": "182f55034a5d8b8a4766a7e05e2a78715e81ac160a4d4e2404f6ab1339ba5fcd"
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
@@ -534,7 +542,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "3404998175f3a6256fdbb16032ec479e8a40f630ea969ab212bf9db2413d7eb6"
+          "sha256": "9f2373aa83f04ec4180e5270a6f1b8d40f8e6193c719ea29f3e98390eedd5608"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
@@ -546,7 +554,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/narrator.py",
-          "sha256": "7e2486b86113d95ff9373b9b660d0607e9bddb5e38932036c5361209290347ad"
+          "sha256": "ff218d68c524bd81dda3e3db244c0b1df04ccea0a8c74f17cca6ba49f1b39c8a"
         },
         {
           "path": "skills/orchestrate-work/scripts/region_ownership.py",
@@ -554,7 +562,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "d8cf69fb7abc63682075204e43fd26cb83be2d0042523979888660754416e967"
+          "sha256": "9267a80663a88cff231d0a1c212f2af9fe0f336a974762dd65bf4f198823c884"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -1033,7 +1041,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "f12d2b382f3a03b05bb35cff1393a9b0308f419216fbdb0e4a08d82382d8e3fe"
+          "sha256": "7f6fd500c72583b9e1cf68c1f95241fd8fbfd97a702fdda93c2b1418230dea75"
         }
       ],
       "owner": "agent-skills-corpus",

@@ -57,7 +57,7 @@ test("without a plan the page has no plan chapter, rail entry or Now line, and W
   const { document } = recordOnlyDelivery();
   const page = render(document);
   expect(block(page, "delivery-plan")).toBeNull();
-  const [shown, detail] = await open(page, { steps: [{ click: '.stop-btn[data-subject="PAY-4"]' }] });
+  const [shown, detail] = await open(page, { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-4"]' }] });
   expect(rail(shown.app)).toEqual(["Now", "The line", "Who", "What's left", "What happened", "Parked"]);
   expect(shown.app.querySelector("#plan")).toBeNull();
   // The Now line under the name says the count alone: nothing of a plan.
@@ -936,7 +936,7 @@ test("folds stored for this page start open on the next load", async () => {
 test("each stop on the line opens its unit in the chapter, in the open list or in the folded units", async () => {
   const { document, plan } = inAppDelivery();
   const page = render(document, plan);
-  let snaps = await open(page, { steps: [{ click: '.stop-btn[data-subject="CART-105"]' }, { click: "#detail .d-plan" }] });
+  let snaps = await open(page, { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="CART-105"]' }, { click: "#detail .d-plan" }] });
   expect(snaps[1].app.querySelector("#detail .d-plan").textContent).toBe("See in the plan");
   expect(snaps[1].app.querySelector("#detail .d-plan-row").className).toBe("d-plan-row");
   // The card says where the story is in its state line, so the proofs left and the next proof stay in the plan.
@@ -945,7 +945,7 @@ test("each stop on the line opens its unit in the chapter, in the open list or i
   expect(snaps[1].app.querySelector("#detail .d-plan-next")).toBeNull();
   expect(snaps[2].focused).toBe("li");
   expect(snaps[2].app.querySelector('.plan-fold[data-fold="units"]').open).toBe(false);
-  snaps = await open(page, { steps: [{ click: '.stop-btn[data-subject="CART-101"]' }, { click: "#detail .d-plan" }] });
+  snaps = await open(page, { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="CART-101"]' }, { click: "#detail .d-plan" }] });
   expect(snaps[1].app.querySelector("#detail .d-plan-row").className).toBe("d-plan-row proven");
   expect(snaps[1].app.querySelector("#detail .d-plan-row").textContent).toBe("ProvenSee in the plan");
   // Where the unit stands sits with the stop's title and links, above its run and steps.
@@ -954,14 +954,14 @@ test("each stop on the line opens its unit in the chapter, in the open list or i
   expect(snaps[2].app.querySelector('.plan-fold[data-fold="units"]').open).toBe(true);
   // From the plan as approved, a unit added since is found once the switch is back on the plan as amended.
   snaps = await open(page, { steps: [{ toggle: '.plan-fold[data-fold="units"]' }, { click: ".plan-switch button", index: 1 },
-    { click: '.stop-btn[data-subject="CART-113"]' }, { click: "#detail .d-plan" }] });
+    { click: ':is(.stop-btn, .mg-tick)[data-subject="CART-113"]' }, { click: "#detail .d-plan" }] });
   expect([...snaps[4].app.querySelectorAll(".plan-switch button")].map((button) => button.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
   expect(snaps[4].focused).toBe("div");
   expect(snaps[4].app.querySelectorAll(".plan-all .plan-unit")).toHaveLength(20);
   // A stop the plan has no unit for has no link.
   const stray = structuredClone(document);
   stray.state.queue.push(item("STRAY-1", "queued"));
-  snaps = await open(render(stray, plan), { steps: [{ click: '.stop-btn[data-subject="STRAY-1"]' }] });
+  snaps = await open(render(stray, plan), { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="STRAY-1"]' }] });
   expect(snaps[1].app.querySelector("#detail .d-plan")).toBeNull();
   expect(snaps[1].app.querySelector("#detail .d-plan-row")).toBeNull();
 });
@@ -1100,7 +1100,7 @@ test("what a closed delivery claims holds in every state the record can leave it
   const short = closing([[10, "candidate.handed", "B"], [11, "check.started", "B"], close], [item("B", "checking")], {
     leases: [{ id: "app", holder: "lane-1", since: minute(0) }], finish: [{ id: "next", text: "First line", met: false }, { id: "then", text: "Second line", met: false }] });
   short.state.meta = { ...short.state.meta, hold: { reason: "paused" } };
-  const [shown, stop] = await open(render(short), { steps: [{ click: '.stop-btn[data-subject="B"]' }] });
+  const [shown, stop] = await open(render(short), { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="B"]' }] });
   expect(shown.app.querySelector("#now .attention")).toBeNull();
   expect(shown.app.querySelector("#who .leases")).toBeNull();
   expect(shown.app.querySelector("#left .left-groups")).toBeNull();
@@ -1145,19 +1145,23 @@ test("a closed delivery's bar, dots, stops, legend and attention all agree with 
   document.state.meta = { ...document.state.meta, sources: { tracker: { status: "stale", reason: "gone" } }, hold: { reason: "paused" } };
   document.journal.push({ id: document.journal.length + 1, at: minute(30), kind: "base.broken", lane: null, subject: null, data: { source: "queue", detail: "Main is red" } }, { ...document.journal.find((entry) => entry.kind === "delivery.closed"), id: document.journal.length + 2, at: minute(41) });
   const plan = planFor(["A", "B", "C", "D", "E", "F"].map((subject) => unit(subject)), { finish: [] });
-  const [shown, stop] = await open(render(document, plan), { steps: [{ click: '.stop-btn[data-subject="C"]' }] });
+  const [shown, stop] = await open(render(document, plan), { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="C"]' }] });
   const app = shown.app;
   expect(app.querySelector("#now .now-count").textContent).toBe("Closed with 1 of 6 pieces landed");
   expect(Math.round(parseFloat(app.querySelector("#now .journey .done").style.width))).toBe(17);
   expect([...app.querySelectorAll("#left .dots i")].map((dot) => dot.className).filter((name) => name === "open")).toHaveLength(5);
   expect(app.querySelector("#left .left-number").textContent).toBe("5pieces not landed");
+  // Each open story keeps its stop; A landed, so its row folds it, and it is a tick on the line like every story.
   for (const subject of ["B", "C", "D", "E"]) {
-    const button = app.querySelector(`.stop-btn[data-subject="${subject}"]`);
+    const button = app.querySelector(`#line .stop-btn[data-subject="${subject}"]`);
     expect([subject, button.className.trim(), button.getAttribute("aria-label").endsWith(", Not landed")]).toEqual([subject, "stop-btn unlanded", true]);
+    const tick = app.querySelector(`.mg-tick[data-subject="${subject}"]`);
+    expect([subject, tick.getAttribute("data-state"), tick.getAttribute("aria-label").endsWith(`, ${subject}, Not landed`)]).toEqual([subject, "unlanded", true]);
   }
-  expect(app.querySelector('.stop-btn[data-subject="A"]').className).toContain("merged");
+  expect(app.querySelector('#line .stop-btn[data-subject="A"]')).toBeNull();
+  expect(app.querySelector('.mg-tick[data-subject="A"]').getAttribute("data-state")).toBe("landed");
   expect(app.querySelector(".stop-btn.now")).toBeNull();
-  expect([...app.querySelectorAll(".line-legend span")].map((entry) => entry.textContent)).toEqual(["Landed", "Not landed", "Both landed"]);
+  expect([...app.querySelectorAll(".line-legend span")].map((entry) => entry.textContent)).toEqual(["Landed", "Not landed"]);
   expect(stop.app.querySelector("#detail").textContent).not.toMatch(/Needs the lead first|Position 1 in line/);
   // What was true at the close stays, under words that don't ask for anything; a silent source and a hold don't.
   const attention = app.querySelector("#now .left-open");
@@ -1194,7 +1198,7 @@ test("a closed delivery's bar, dots, stops, legend and attention all agree with 
   // A planned stop promises no review rounds to come.
   const planned = record({ queue: [], journal: journal([close]) });
   planned.state.planned = [{ subject: "E", stage: "building" }];
-  const [, plannedStop] = await open(render(planned), { steps: [{ click: '.stop-btn[data-subject="E"]' }] });
+  const [, plannedStop] = await open(render(planned), { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="E"]' }] });
   expect(plannedStop.app.querySelector("#detail").textContent).not.toContain("No review rounds yet");
 });
 
@@ -1211,7 +1215,7 @@ test("standing and stop wording hold without a merged proof, with a waiver besid
   expect(standing(await first(waived.document, waived.plan), "A")).toBe("1 proof left");
 
   const removedPlan = planFor([unit("A", { removed: true })], { finish: [] });
-  const [, removedStop] = await open(render(record({ queue: [item("A", "merged")], journal: journal([...landed, [12, "candidate.merged", "A"]]) }), removedPlan), { steps: [{ click: '.stop-btn[data-subject="A"]' }] });
+  const [, removedStop] = await open(render(record({ queue: [item("A", "merged")], journal: journal([...landed, [12, "candidate.merged", "A"]]) }), removedPlan), { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="A"]' }] });
   expect(removedStop.app.querySelector("#detail .d-plan-row .pu-standing").textContent).toBe("Removed from the plan");
   expect(removedStop.app.querySelector("#detail .d-plan-row").className).toBe("d-plan-row removed");
 

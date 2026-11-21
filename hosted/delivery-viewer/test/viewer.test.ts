@@ -251,6 +251,10 @@ describe("trusted corpus DOM bridge (behavior only)", () => {
       expect(window.document.querySelector("#app")!.textContent).not.toContain(
         "could not be told",
       );
+      // Nor a setbacks ledger or a chapter's setback line: with no story there is no ledger to draw, and no reason leaks.
+      expect(
+        window.document.querySelectorAll("#happened .setback-ledger, #happened .chapter-setback").length,
+      ).toBe(0);
       expect(window.document.querySelector("#plan")).not.toBeNull();
       const detail = window.document.querySelector("#detail")!.textContent;
       expect(detail).toContain("APP-1");
@@ -684,8 +688,11 @@ describe("what the hosted cut does not publish", () => {
     const why = (title: string) =>
       Array.from(document.querySelectorAll("li")).find((row) => row.querySelector(".a1")?.textContent === title)
         ?.querySelector(".a2")?.textContent ?? null;
+    // A story opens from its stop, or, folded out of its row, from its tick on the main line.
     const open = (subject: string) => {
-      (document.querySelector(`.stop-btn[data-subject="${subject}"]`) as HTMLButtonElement).click();
+      const target = document.querySelector(`.stop-btn[data-subject="${subject}"]`) ??
+        document.querySelector(`.mg-tick[data-subject="${subject}"]`);
+      target!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       return document.querySelector("#detail")!;
     };
     return { dom, document, why, open };

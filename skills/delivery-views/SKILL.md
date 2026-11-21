@@ -85,6 +85,36 @@ opts in to the live stream, so `live` serves it at `/view/<output>` and the
 page follows every record write; opened as a file, it shows the record as it
 was rendered. A history renderer declared in the same binding (`render.py
 history`) is linked from its footer.
+A live page reads its run summaries again from the view the server renders
+three seconds after each pushed record, every 30 seconds, and at once on each
+`event: runs`, which the server sends only after the views are written.
+
+The line draws one row per lane and one main line they merge into, and keeps
+the same shape at any delivery size:
+
+- **A lane row** is one width whatever its story count: its landed stories fold
+  into one bar sized by their count, with how many under it, then at most three
+  open stories keep a stop, in the lane's order, and the rest fold into "+n",
+  whose accessible name lists them.
+- **The main line** past the join is the delivery's progress: one tick per story
+  in its lane's colour, in groups of five. Landed stories come first, then the
+  open ones nearest to landing first: in the merge queue, in review, being built,
+  stopped, not started. A tick is drawn by its state, a stopped one with a mark
+  above it, and a caret marks the story the queue lands next. Over the ticks a
+  count line says how many have landed and how many are stopped.
+- **The rejoin.** A delivery rejoining its target draws one bar of its four
+  steps (main in, suite, review, change request) past the ticks, labelled with
+  the step it is on, that step's status sentence under it, and the line bends
+  into the target at the finish post, so the target is drawn once. A delivery
+  straight to its base ends at the post, with no bar.
+- **The finish post** carries its label and, beside it, one square per finish
+  line, filled once met, with how many are met.
+- **Naming and lighting.** Hovering or focusing a tick names its story and state
+  and lights its lane; hovering a lane's row lights its ticks. A tick opens its
+  story's panel, as a stop does, so a story folded out of its row is still one
+  step away. Each step of the bar names its status, and each square its finish
+  line. Every tick, step and square is reached from the keyboard, and the
+  drawing's accessible name states the landed, met and rejoin counts.
 
 A piece's detail panel says where the story is before it lands, in one state
 line with a dot: "Being built", "In review, round N", "Fixing review
@@ -104,6 +134,18 @@ time, its mark, its sentence and its tone's word. A row opens to nothing; the ti
 the commit, in full or cut short, and the change request its sentence names are
 links, and they lead to the evidence. Only a run of bookkeeping folds, listing its
 entries.
+
+Each setback is told once, in a Setbacks ledger above the chapters, from the story's
+`ledger`: one row per story and reason. The rows still standing come first, tinted in
+the stop colour, saying since when and who they wait on; the ended ones follow,
+muted, saying what ended them, when, and what they cost. A row of several stops says
+how many in its own words and gives the span from the first to the last. Under each
+chapter, one line names each row that opened or ended in it, linked to the row, and
+nothing still standing from an earlier chapter is repeated. The line under the title
+reads the ledger: "Nothing is stopped now" or how many stand now, then how many are
+over and what they cost, then the lead's decisions. The Setbacks filter shows the
+ledger and the chapters' setback lines; the others show neither. A story told before
+the ledger keeps its own summary and standing lines.
 
 When the record has region claims, so lanes share files by lines, "Who's doing
 what" offers "Who holds which files", closed by default. It reads
@@ -169,6 +211,52 @@ that cannot be read is listed with a note. The record on stdin only names the
 delivery each run belongs to. Its run commands share the render's deadline, and
 past the 4 MiB page budget the oldest rows give up their summaries first.
 `--now` fixes the history's as-of time, for tests.
+
+## The runs page
+
+`scripts/render.py runs` prints the runs page: every run of every workflow the
+`runs` command lists, in the line map's typefaces, colour tokens and run
+summary. Its style and program are `assets/runs.css` and `assets/runs.js` with
+the run summary's two assets, inlined into the page. Declare it beside the line
+map, and name it in the binding's `state.liveRuns` so the live server watches
+the run store and serves it as the front page while there is no record:
+
+```json
+{ "id": "runs", "argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/render.py", "runs", "--config", ".agents/delivery-views.json", "--binding", ".agents/orchestration.json", "--state-dir", "{stateDirectory}"], "output": "runs.html", "timeoutSeconds": 60 }
+```
+
+- "Now" lists open runs, newest first. Each run's line draws its workflow
+  stages, each once, in the order the run first entered it, with the current
+  one ringed: the innermost stage entered and not yet exited. Stages are read
+  only from activities whose `activityId` starts `stage-` and whose phase is
+  `route`, `plan`, `diagnose`, `execute`, `review` or `compound`, so a lens
+  attempt or the runtime's own `prepare` and `verify` never add one. Under it
+  are the run's current activity and next step, and each unresolved wait with
+  its reason and next action. Only a wait on a human with no `wait.resolved` of
+  the same `waitId` says "Needs you".
+- Ended runs follow, newest first, and link to the history. A run left open that a
+  later run's start displaced, the runtime recording it as that run's
+  `displacedRunId`, is listed with them, marked "Left open, replaced", never
+  under "Now".
+- Each run opens a panel of its gates (`command`, outcome, duration),
+  decisions, blockers, change request, review rounds through the run summary,
+  and result with its cost unit and coverage. A run bound to a piece of the
+  record names that piece and links to the line map.
+
+Each run is read with `runs show <id> --json` and `runs view <id> --json`, and
+cached in the state directory while the inventory shows it unchanged. A run
+either can't be read for is shown unavailable, and the others render. Past the
+4 MiB budget, ended runs give up their details first, oldest first, then open
+ones. When the live server says, in `DELIVERY_LIVE_RUNS`, that the run store
+isn't watched, the page says so. Served live, the page reads itself again on
+each `event: runs` through the adapter's `onRuns`, keeping open panels open.
+`--now` fixes the page's as-of time, for tests.
+
+With no record, the live server gives every view `{"spec":
+"delivery-state-absent/1"}`. `runs` renders from it as from a record; `line-map`
+and `history` each print one page that says no delivery is under way, links
+to the runs page and reloads once a record reaches it. The history also links
+to the runs page when the binding declares one.
 
 ## The plan chapter
 
@@ -1052,8 +1140,8 @@ print those words. A record with no siblings draws exactly as before.
   linked" row after the epic's own groups, with its outcome, and the chapter's
   title counts only the epic's own.
 - **The epic's post.** With a same-epic sibling, the line map's main line runs
-  on past this repository's "Finish line" post, which keeps its place and
-  counts, to a second post for the epic. Its label, "Epic", and its count, "L/T
+  on past this repository's "Finish line" post, which keeps its place at the end
+  of the ticks, to a second post for the epic. Its label, "Epic", and its count, "L/T
   landed" across this repository's pieces and every same-epic sibling's
   stories, stack above it. At most two siblings get a row under the lanes, with
   their name and "L of T landed" and no stops, and turn in at the epic's post

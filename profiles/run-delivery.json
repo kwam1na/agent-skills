@@ -13,6 +13,8 @@
     "skills/delivery-views/assets/line-map.js",
     "skills/delivery-views/assets/run-summary.css",
     "skills/delivery-views/assets/run-summary.js",
+    "skills/delivery-views/assets/runs.css",
+    "skills/delivery-views/assets/runs.js",
     "skills/delivery-views/references/delivery-plan.schema.json",
     "skills/delivery-views/references/hosted-snapshot.schema.json",
     "skills/delivery-views/scripts/hosted.py",

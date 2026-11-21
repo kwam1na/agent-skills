@@ -16,9 +16,11 @@ first to discover compatibility. No declared runtime means no invented command.
 
 Read the selected run with `runs show <run-id> --json`; require the matching
 `runId` and `spec: delivery-run-export/2`. Legacy runs retain their original
-writer version. Before starting new v2 reporting, explicitly start a linked
-successor through the existing run-start operation, with `predecessorRunId`.
-Do not rewrite history, clear another run's pointer, or restart ongoing work.
+writer version. Only the workflow that starts the run under
+`$compound-delivery-kernel`'s run lifecycle rule starts a linked successor of a
+legacy run, through the existing run-start operation with `predecessorRunId`,
+before new v2 reporting; a workflow that joins a run starts none. Do not rewrite
+history, clear another run's pointer, or restart ongoing work.
 
 Native command calls below are sufficient. The optional
 single-operation adapter at `$execute-work/scripts/report_observation.py` executes the same

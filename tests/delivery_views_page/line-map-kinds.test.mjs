@@ -15,7 +15,7 @@ test("a stopped base rerun is drawn in the story and reads as stopped in the pie
       [13, "base.rerun.started", "A"], [14, "base.rerun.stopped", "A"]]),
   });
   const [shown, card] = await openPage(pageWithRuns(document, {}, { config: CONFIG }),
-    { now: NOW, store: false, steps: [{ click: '.stop-btn[data-subject="A"]' }] });
+    { now: NOW, store: false, steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="A"]' }] });
   // The story draws the entry, and the merge check takes its kind's label from the story.
   expect(shown.app.querySelector(`#happened .beat > time[datetime="${document.journal.at(-1).at}"]`) !== null).toBe(true);
   const history = card.app.querySelector("#detail .mh");
@@ -30,7 +30,7 @@ test("a check carried over a base move is drawn in the story and reads as carrie
       [13, "candidate.stopped", "A"], [14, "check.started", "A"], [15, "check.carried", "A"]]),
   });
   const [shown, card] = await openPage(pageWithRuns(document, {}, { config: CONFIG }),
-    { now: NOW, store: false, steps: [{ click: '.stop-btn[data-subject="A"]' }] });
+    { now: NOW, store: false, steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="A"]' }] });
   // The story draws the entry, and the merge check takes its kind's label from the story.
   expect(shown.app.querySelector(`#happened .beat > time[datetime="${document.journal.at(-1).at}"]`) !== null).toBe(true);
   const history = card.app.querySelector("#detail .mh");

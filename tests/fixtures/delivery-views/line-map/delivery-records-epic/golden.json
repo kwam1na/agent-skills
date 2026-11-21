@@ -1632,7 +1632,8 @@
               "head": "Getting started",
               "line": "Four lanes picked up V26-2821, V26-2822, V26-2823, V26-2826, V26-2831 and V26-2825.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c2",
@@ -1652,7 +1653,8 @@
               "head": "V26-2823 landed",
               "line": "1h 7m after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c3",
@@ -1676,7 +1678,8 @@
               "head": "V26-2822 landed",
               "line": "1h 8m after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c4",
@@ -1696,7 +1699,8 @@
               "head": "V26-2826 landed",
               "line": "1h 9m after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c5",
@@ -1722,7 +1726,8 @@
               "head": "V26-2831 landed",
               "line": "1h 2m after it was picked up, after 3 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c6",
@@ -1752,7 +1757,8 @@
               "head": "V26-2824 landed",
               "line": "7m 16s after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c7",
@@ -1778,7 +1784,8 @@
               "head": "V26-2825 landed",
               "line": "28m after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c8",
@@ -1809,7 +1816,8 @@
               "head": "V26-2832 landed",
               "line": "10m after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c9",
@@ -1839,7 +1847,8 @@
               "head": "V26-2827 landed",
               "line": "16m after it was picked up, after 2 review rounds.",
               "standing": []
-            }
+            },
+            "setbacks": []
           },
           {
             "id": "c10",
@@ -1868,7 +1877,8 @@
               "head": "Finished",
               "line": "Every finish line was met. V26-2821 never landed.",
               "standing": []
-            }
+            },
+            "setbacks": []
           }
         ],
         "beats": [
@@ -3545,6 +3555,7 @@
           }
         ],
         "threads": [],
+        "ledger": [],
         "tones": [
           {
             "tone": "landed",
@@ -3711,7 +3722,7 @@
       ]
     }
   },
-  "initialText": "NowThe lineWhoWhat's leftWhat happenedParkedV26-2829 · Closed after 1 h 34 minDelivery records: state is the present, runs are the history (V26-2829)Every piece landedStartPieces landedFinish line metStories9 of 9 landedLast landedA sensor confirms each candidate's review rounds agree between its run and the delivery stateV26-2827 · #1155 · a minute agoClosedtook an hour 34 minutesfinal commit 5c450a1The lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.V26-2832 Storefront-composition fixture gets admission context3 of 3 landed2823#11472831#11512832#1154V26-2827 Agreement sensor for review rounds3 of 3 landed2822#11482824#11522827#1155V26-2826 history page1 of 1 landed2826#1149V26-2825 Line map shows each stop's run2 of 2 landed2825#11532821#122Finish line9/9 landed4/4 metRuns laneEpic lanes record runs: drop `ATHENA_DELIVERY_RECORDING=off` and `Run: none`, mark lane worktreesV26-2823 · #1147 · Landed 24 minutes agoEpic lanes record no runs today:Review evidence unavailable or stale for this candidate.Building · 4m 39sReview · 2m 26sWaiting · 1m 40sCheck to merge · 56m2 review roundsIn all: 1h 7mMerge check · Landed 24 minutes ago · 3 steps10:13 pmRuns lane handed off V26-2823: Ready after 2 review rounds10:15 pmChecks started on V26-282311:11 pmV26-2823 landed: At fa373d7LandedNot landedBoth landedWho's doing whatThis delivery is closed; no lane is working.Each lane was a separate session working in parallel on its own part of the work.V26-2825 Line map shows each stop's runV26-2825: review round 1FinishedV26-2827 Agreement sensor for review roundsassigned V26-2827FinishedV26-2832 Storefront-composition fixture gets admission contextassigned V26-2832FinishedV26-2826 history pageHanded off #1149; available if the queue sends it backFinishedWhat's leftNothing left to land.9 of 9 pieces have landed.The finish lineMetA real epic delivery shows each stop's run on the line mapMetIts review rounds agree between run and stateMetThe history page lists it beside earlier runsMetEvery child merged into main (agent-skills main plus release for V26-2821); no deploysWhat happenedEight of nine pieces landed in 1h 33m.No setbacks. The lead made 18 decisions.LandedDecisionHeadlinesStoryEverythingAllDecisionsLandingsSetbacksFinished11:38 pmEvery finish line was met. V26-2821 never landed.11:38 pmThe delivery finishedWithout the close-out's full runFinished11:36 pmEvery finish line was metA real epic delivery shows each stop's run on the line map, Its review rounds agree between run and state, The history page lists it beside earlier runs and Every child merged into main (agent-skills main plus release for V26-2821); no deploysFinish line met11:35 pmLead ruling: V26-2827 reads runs with the product's runs show --json instead of the ticket's runs view --json (runs view embeds a closed round's payload as a JSON string inside a display field)Both are product commands, so the ticket's no-store-reads rule holds; both lenses accepted it.DecisionV26-2827 landed11:35 pmAgreement sensor for review rounds16m after it was picked up, after 2 review rounds.11:35 pmV26-2827 landedAt 5c450a1Landed11:32 pmOperator: Linear and GitHub must refresh automaticallyThe lead restarted merge_queue serve under meta.hold: it takes and merges nothing, but refreshes the tracker and forge snapshots every 180s and reconciles the record. Merges stay manual (focused posture).Decision11:27 pmLane-runs idle after V26-2832 mergedThe only open ticket, V26-2827, is on lane-recorder.DecisionV26-2832 landed11:27 pmStorefront-composition fixture gets admission context10m after it was picked up, after 2 review rounds.11:27 pmV26-2832 landedAt 0cac8e9Landed11:22 pmLane-skills idle after V26-2825 mergedThe only open tickets, V26-2827 (lane-recorder) and V26-2832 (lane-runs), are assigned.DecisionV26-2825 landed11:22 pmLine map shows each stop's run28m after it was picked up, after 2 review rounds.11:22 pmV26-2825 landedAt 096428dLanded11:20 pmV26-2825 moved after hand-off (84f9246 -> 7d39b26): the lane rebased onto a184f2f and restamped its note fingerprintThe branch-own scripts patch is identical (patch-id a409bbc), so the lead accepts 7d39b26 as the reviewed head.DecisionV26-2824 landed11:18 pmInstall the release; lanes hand off naming their run7m 16s after it was picked up, after 2 review rounds.11:18 pmV26-2824 landedAt a184f2fLanded11:17 pmLead accepts lane-runs' call on the landing's motion: motionInventory exempts src/components/marketing/ (the public landing keeps its own motion profile outside Motion Studio) rather than retiming #1146's shipped landing onto --motion-* profilesPre-existing storefront-composition fixture break (since #1018) filed as V26-2832 and assigned to lane-runs, which diagnosed it; the e2e webServer 120s timeout is environmental (tsc 144s under load before and after #1146): no action.DecisionV26-2831 landed11:17 pmRepin the harness app registry (base fix)1h 2m after it was picked up, after 3 review rounds.11:17 pmV26-2831 landedAt c012930Landed11:14 pmLane-history idle after V26-2826 merged: no unblocked work (V26-2827 needs V26-2824, in progress on lane-recorderV26-2825 on lane-skills; V26-2831 on lane-runs).DecisionV26-2826 landed11:14 pmHistory page of deliveries and runs1h 9m after it was picked up, after 2 review rounds.11:14 pmV26-2826 landedAt 26b5301LandedV26-2822 landed11:13 pmOne review-round write lands in the run and the journal1h 8m after it was picked up, after 2 review rounds.11:13 pmV26-2822 landedAt 996b310LandedV26-2823 landed11:11 pmEpic lanes record runs1h 7m after it was picked up, after 2 review rounds.11:11 pmV26-2823 landedAt fa373d7LandedGetting started10:04 pmFour lanes picked up V26-2821, V26-2822, V26-2823, V26-2826, V26-2831 and V26-2825.11:09 pmOperator (2026-10-22): focused tests only, no full suitesThe lead stopped merge_queue serve mid-check of V26-2823 (it had pushed its sync, head 74d36b3) and removed its checkouts. Lanes drop harness:test: touched test files plus harness:check only. The lead now acts as the runner: per candidate, sync with origin/main in a detached checkout, regenerate generated artifacts and refresh solution-note fingerprints, run the lane-named focused tests plus harness:check and the Convex generated-API check, push, then merge with github:pr-merge --expected-head. Accepted risk: no broad cross-candidate check before merge.Decision10:54 pmV26-2821 merged by the lead in agent-skills: PR #122 squash 122c12f at reviewed head c96e2ddCI failures identical to main 22f90b8 (7 failures, 54 errors, pre-existing). Release linear-orchestration-v1.2-unqualified built and verified from 122c12f: ~/delivery-artifacts/agent-skills-releases/linear-orchestration-v1.2-unqualified (zip sha256 f80af86..., 123 entries). V26-2825 is unblocked.Decision10:47 pmWidened V26-2831 to all of main's #1146 breakage the queue hit on V26-2823: static-product-metadata title test and motionInventory literal timings (both reproduced on clean main), plus any behavior or e2e scenario that fails on main for a #1146 reasonIt lands first; queued candidates wait on it.Decision10:44 pmV26-2821 hand-off checked (agent-skills PR #122 head c96e2dd, 2 rounds; round 1 adversarial changes P2+P3 fixed, round 2 both approve)Removed from the Athena queue: the runner serves Athena only. The lead merges #122 in agent-skills once its CI matches main's pre-existing failures, then cuts the release. Round 1's journaled finishedAt (22:16:30Z) is the lane's estimate; the true finish was about 22:14:20Z.Decision10:19 pmV26-2826 hand-off checked (PR #1149 head eec4bec, 2 rounds, both lenses approve) and queued; the earlier hand-off entry at a mistyped head is supersededP3 left open by both lenses (1+N runs show processes per render, ~6s for 37 runs, inside the 60s timeout): dropped, no ticket; V26-2825 touches the same summary code and may batch it if it bites. lane-history left handed: no unblocked work.Decision10:17 pmV26-2822 hand-off checked (PR #1148 head 5bf8aee, 2 rounds, both lenses approve) and queuedLane-recorder left handed: no unblocked work (V26-2824 needs 2821+2823, V26-2825 needs 2821, V26-2827 needs 2822+2824); it gets the first of those to unblock.Decision10:14 pmMain fails harness:test: stale harness-app-registry pins after #1146 (V26-2819)Fix forward as V26-2831 on lane-runs (free after handing off V26-2823). V26-2823 stays queued: no approved work is held; its docs mention the recorder's marker read one merge ahead of V26-2822, accepted.Decision10:04 pmOperator: finish line is merged into main, no deploysFocused posture; no close-out full-health run.Decision10:04 pmLanes started before V26-2823 merges follow today's AGENTS.md epic rules (recording off, Run: none, push --no-verify); later lanes follow the rules it landsNo ticket touches convex/, so no dev-backend lease.Decision10:04 pmV26-2821 lives in agent-skills: its lane delivers there; the lead merges it and cuts the release there, outside the Athena runnerThe runner's sync and regenerators replace the epic's suggested single integration change set.Decision10:04 pmApproved plan = epic V26-2829, its Linear design document (operator decision 2026-10-22) and its seven filed ticketsNo separate plan document.DecisionParked for laterNothing parked.Past deliveries and runs",
+  "initialText": "NowThe lineWhoWhat's leftWhat happenedParkedV26-2829 · Closed after 1 h 34 minDelivery records: state is the present, runs are the history (V26-2829)Every piece landedStartPieces landedFinish line metStories9 of 9 landedLast landedA sensor confirms each candidate's review rounds agree between its run and the delivery stateV26-2827 · #1155 · a minute agoClosedtook an hour 34 minutesfinal commit 5c450a1The lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.V26-2832 Storefront-composition fixture gets admission context3 of 3 landed3 inV26-2827 Agreement sensor for review rounds3 of 3 landed3 inV26-2826 history page1 of 1 landed1 inV26-2825 Line map shows each stop's run2 of 2 landed2 in9 of 9 landedFinish line4/4Runs laneEpic lanes record runs: drop `ATHENA_DELIVERY_RECORDING=off` and `Run: none`, mark lane worktreesV26-2823 · #1147 · Landed 24 minutes agoEpic lanes record no runs today:Review evidence unavailable or stale for this candidate.Building · 4m 39sReview · 2m 26sWaiting · 1m 40sCheck to merge · 56m2 review roundsIn all: 1h 7mMerge check · Landed 24 minutes ago · 3 steps10:13 pmRuns lane handed off V26-2823: Ready after 2 review rounds10:15 pmChecks started on V26-282311:11 pmV26-2823 landed: At fa373d7LandedNot landedWho's doing whatThis delivery is closed; no lane is working.Each lane was a separate session working in parallel on its own part of the work.V26-2825 Line map shows each stop's runV26-2825: review round 1FinishedV26-2827 Agreement sensor for review roundsassigned V26-2827FinishedV26-2832 Storefront-composition fixture gets admission contextassigned V26-2832FinishedV26-2826 history pageHanded off #1149; available if the queue sends it backFinishedWhat's leftNothing left to land.9 of 9 pieces have landed.The finish lineMetA real epic delivery shows each stop's run on the line mapMetIts review rounds agree between run and stateMetThe history page lists it beside earlier runsMetEvery child merged into main (agent-skills main plus release for V26-2821); no deploysWhat happenedEight of nine pieces landed in 1h 33m.No setbacks. The lead made 18 decisions.LandedDecisionHeadlinesStoryEverythingAllDecisionsLandingsSetbacksFinished11:38 pmEvery finish line was met. V26-2821 never landed.11:38 pmThe delivery finishedWithout the close-out's full runFinished11:36 pmEvery finish line was metA real epic delivery shows each stop's run on the line map, Its review rounds agree between run and state, The history page lists it beside earlier runs and Every child merged into main (agent-skills main plus release for V26-2821); no deploysFinish line met11:35 pmLead ruling: V26-2827 reads runs with the product's runs show --json instead of the ticket's runs view --json (runs view embeds a closed round's payload as a JSON string inside a display field)Both are product commands, so the ticket's no-store-reads rule holds; both lenses accepted it.DecisionV26-2827 landed11:35 pmAgreement sensor for review rounds16m after it was picked up, after 2 review rounds.11:35 pmV26-2827 landedAt 5c450a1Landed11:32 pmOperator: Linear and GitHub must refresh automaticallyThe lead restarted merge_queue serve under meta.hold: it takes and merges nothing, but refreshes the tracker and forge snapshots every 180s and reconciles the record. Merges stay manual (focused posture).Decision11:27 pmLane-runs idle after V26-2832 mergedThe only open ticket, V26-2827, is on lane-recorder.DecisionV26-2832 landed11:27 pmStorefront-composition fixture gets admission context10m after it was picked up, after 2 review rounds.11:27 pmV26-2832 landedAt 0cac8e9Landed11:22 pmLane-skills idle after V26-2825 mergedThe only open tickets, V26-2827 (lane-recorder) and V26-2832 (lane-runs), are assigned.DecisionV26-2825 landed11:22 pmLine map shows each stop's run28m after it was picked up, after 2 review rounds.11:22 pmV26-2825 landedAt 096428dLanded11:20 pmV26-2825 moved after hand-off (84f9246 -> 7d39b26): the lane rebased onto a184f2f and restamped its note fingerprintThe branch-own scripts patch is identical (patch-id a409bbc), so the lead accepts 7d39b26 as the reviewed head.DecisionV26-2824 landed11:18 pmInstall the release; lanes hand off naming their run7m 16s after it was picked up, after 2 review rounds.11:18 pmV26-2824 landedAt a184f2fLanded11:17 pmLead accepts lane-runs' call on the landing's motion: motionInventory exempts src/components/marketing/ (the public landing keeps its own motion profile outside Motion Studio) rather than retiming #1146's shipped landing onto --motion-* profilesPre-existing storefront-composition fixture break (since #1018) filed as V26-2832 and assigned to lane-runs, which diagnosed it; the e2e webServer 120s timeout is environmental (tsc 144s under load before and after #1146): no action.DecisionV26-2831 landed11:17 pmRepin the harness app registry (base fix)1h 2m after it was picked up, after 3 review rounds.11:17 pmV26-2831 landedAt c012930Landed11:14 pmLane-history idle after V26-2826 merged: no unblocked work (V26-2827 needs V26-2824, in progress on lane-recorderV26-2825 on lane-skills; V26-2831 on lane-runs).DecisionV26-2826 landed11:14 pmHistory page of deliveries and runs1h 9m after it was picked up, after 2 review rounds.11:14 pmV26-2826 landedAt 26b5301LandedV26-2822 landed11:13 pmOne review-round write lands in the run and the journal1h 8m after it was picked up, after 2 review rounds.11:13 pmV26-2822 landedAt 996b310LandedV26-2823 landed11:11 pmEpic lanes record runs1h 7m after it was picked up, after 2 review rounds.11:11 pmV26-2823 landedAt fa373d7LandedGetting started10:04 pmFour lanes picked up V26-2821, V26-2822, V26-2823, V26-2826, V26-2831 and V26-2825.11:09 pmOperator (2026-10-22): focused tests only, no full suitesThe lead stopped merge_queue serve mid-check of V26-2823 (it had pushed its sync, head 74d36b3) and removed its checkouts. Lanes drop harness:test: touched test files plus harness:check only. The lead now acts as the runner: per candidate, sync with origin/main in a detached checkout, regenerate generated artifacts and refresh solution-note fingerprints, run the lane-named focused tests plus harness:check and the Convex generated-API check, push, then merge with github:pr-merge --expected-head. Accepted risk: no broad cross-candidate check before merge.Decision10:54 pmV26-2821 merged by the lead in agent-skills: PR #122 squash 122c12f at reviewed head c96e2ddCI failures identical to main 22f90b8 (7 failures, 54 errors, pre-existing). Release linear-orchestration-v1.2-unqualified built and verified from 122c12f: ~/delivery-artifacts/agent-skills-releases/linear-orchestration-v1.2-unqualified (zip sha256 f80af86..., 123 entries). V26-2825 is unblocked.Decision10:47 pmWidened V26-2831 to all of main's #1146 breakage the queue hit on V26-2823: static-product-metadata title test and motionInventory literal timings (both reproduced on clean main), plus any behavior or e2e scenario that fails on main for a #1146 reasonIt lands first; queued candidates wait on it.Decision10:44 pmV26-2821 hand-off checked (agent-skills PR #122 head c96e2dd, 2 rounds; round 1 adversarial changes P2+P3 fixed, round 2 both approve)Removed from the Athena queue: the runner serves Athena only. The lead merges #122 in agent-skills once its CI matches main's pre-existing failures, then cuts the release. Round 1's journaled finishedAt (22:16:30Z) is the lane's estimate; the true finish was about 22:14:20Z.Decision10:19 pmV26-2826 hand-off checked (PR #1149 head eec4bec, 2 rounds, both lenses approve) and queued; the earlier hand-off entry at a mistyped head is supersededP3 left open by both lenses (1+N runs show processes per render, ~6s for 37 runs, inside the 60s timeout): dropped, no ticket; V26-2825 touches the same summary code and may batch it if it bites. lane-history left handed: no unblocked work.Decision10:17 pmV26-2822 hand-off checked (PR #1148 head 5bf8aee, 2 rounds, both lenses approve) and queuedLane-recorder left handed: no unblocked work (V26-2824 needs 2821+2823, V26-2825 needs 2821, V26-2827 needs 2822+2824); it gets the first of those to unblock.Decision10:14 pmMain fails harness:test: stale harness-app-registry pins after #1146 (V26-2819)Fix forward as V26-2831 on lane-runs (free after handing off V26-2823). V26-2823 stays queued: no approved work is held; its docs mention the recorder's marker read one merge ahead of V26-2822, accepted.Decision10:04 pmOperator: finish line is merged into main, no deploysFocused posture; no close-out full-health run.Decision10:04 pmLanes started before V26-2823 merges follow today's AGENTS.md epic rules (recording off, Run: none, push --no-verify); later lanes follow the rules it landsNo ticket touches convex/, so no dev-backend lease.Decision10:04 pmV26-2821 lives in agent-skills: its lane delivers there; the lead merges it and cuts the release there, outside the Athena runnerThe runner's sync and regenerators replace the epic's suggested single integration change set.Decision10:04 pmApproved plan = epic V26-2829, its Linear design document (operator decision 2026-10-22) and its seven filed ticketsNo separate plan document.DecisionParked for laterNothing parked.Past deliveries and runs",
   "details": {
     "V26-2823": {
       "detail": "Runs laneEpic lanes record runs: drop `ATHENA_DELIVERY_RECORDING=off` and `Run: none`, mark lane worktreesV26-2823 · #1147 · Landed 24 minutes agoEpic lanes record no runs today:Review evidence unavailable or stale for this candidate.Building · 4m 39sReview · 2m 26sWaiting · 1m 40sCheck to merge · 56m2 review roundsIn all: 1h 7mMerge check · Landed 24 minutes ago · 3 steps10:13 pmRuns lane handed off V26-2823: Ready after 2 review rounds10:15 pmChecks started on V26-282311:11 pmV26-2823 landed: At fa373d7"

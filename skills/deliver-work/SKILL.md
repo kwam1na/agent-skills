@@ -84,6 +84,11 @@ no handoff and no blocker, because nothing authoritative reads what is emitted.
 The run identifier is host mechanics: it is allocated when the run starts and
 resolved from the run store for the invoking worktree, never read from work-item
 content and never invented for an emission.
+Under `$compound-delivery-kernel`'s run lifecycle rule, this workflow starts
+the request's run at `route` and marks its `route` stage, and every workflow it
+routes to joins that run and starts none. The run stays open while the request
+waits on the operator between workflows, and this workflow ends it when the
+request finishes, stops on a blocker, or is stopped with work left.
 
 ## Continue Through the Kernel
 

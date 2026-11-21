@@ -1,0 +1,1203 @@
+{
+  "list": {
+    "spec": "run-inventory/1",
+    "labels": "self-attested; observability, not evidence; unbound to a record",
+    "runsDir": "/private/fixture/.git/managed-delivery/runs",
+    "current": null,
+    "runs": [
+      {
+        "runId": "run-0000000000000001",
+        "status": "incomplete",
+        "open": false,
+        "current": false,
+        "durationSeconds": 1,
+        "bytes": 10849
+      }
+    ],
+    "total": {
+      "count": 1,
+      "bytes": 10849
+    },
+    "returned": 1,
+    "truncated": false
+  },
+  "runs": {
+    "run-0000000000000001": {
+      "view": {
+        "spec": "run-view/1",
+        "historical": false,
+        "asOf": "2026-11-20T09:00:02.062Z",
+        "authority": "Self-attested observations. Applicability unknown; no permission or candidate approval is granted.",
+        "sections": [
+          {
+            "id": "waiting",
+            "title": "Waiting and required action",
+            "empty": "No current waiting observation. Unreported waits remain unknown.",
+            "items": []
+          },
+          {
+            "id": "work",
+            "title": "Current work",
+            "empty": "No active work in the latest observations. Retained attempts appear in history.",
+            "items": []
+          },
+          {
+            "id": "reviews",
+            "title": "Reviewer attempts and history",
+            "empty": "No reviewer attempt observations.",
+            "items": [
+              {
+                "id": "round-14",
+                "label": "Declared review round",
+                "fields": [
+                  {
+                    "label": "Round",
+                    "value": "1"
+                  },
+                  {
+                    "label": "Round ID",
+                    "value": "round-1"
+                  },
+                  {
+                    "label": "Bound",
+                    "value": "4"
+                  },
+                  {
+                    "label": "Grace",
+                    "value": "Unreported"
+                  },
+                  {
+                    "label": "Reopens",
+                    "value": "Unreported"
+                  },
+                  {
+                    "label": "Candidate",
+                    "value": "053fbcf66ede02d645f177faad1d70a9ce89bc8c"
+                  }
+                ]
+              },
+              {
+                "id": "stage-review-1",
+                "label": "stage-review",
+                "fields": [
+                  {
+                    "label": "Attempt",
+                    "value": "stage-review-1"
+                  },
+                  {
+                    "label": "Round",
+                    "value": "Unreported"
+                  },
+                  {
+                    "label": "Round ID",
+                    "value": "Unreported"
+                  },
+                  {
+                    "label": "Owner",
+                    "value": "claude-code"
+                  },
+                  {
+                    "label": "State",
+                    "value": "completed"
+                  },
+                  {
+                    "label": "History",
+                    "value": "Latest observed attempt"
+                  },
+                  {
+                    "label": "Verdict",
+                    "value": "Unreported"
+                  },
+                  {
+                    "label": "Cost",
+                    "value": "unreported"
+                  },
+                  {
+                    "label": "Candidate",
+                    "value": "053fbcf66ede02d645f177faad1d70a9ce89bc8c"
+                  }
+                ]
+              },
+              {
+                "id": "lens-outcome-1",
+                "label": "lens.outcome-correctness",
+                "fields": [
+                  {
+                    "label": "Attempt",
+                    "value": "lens-outcome-1"
+                  },
+                  {
+                    "label": "Round",
+                    "value": "1"
+                  },
+                  {
+                    "label": "Round ID",
+                    "value": "round-1"
+                  },
+                  {
+                    "label": "Owner",
+                    "value": "reviewer"
+                  },
+                  {
+                    "label": "State",
+                    "value": "completed"
+                  },
+                  {
+                    "label": "History",
+                    "value": "Latest observed attempt"
+                  },
+                  {
+                    "label": "Verdict",
+                    "value": "Unreported"
+                  },
+                  {
+                    "label": "Cost",
+                    "value": "unreported"
+                  },
+                  {
+                    "label": "Candidate",
+                    "value": "053fbcf66ede02d645f177faad1d70a9ce89bc8c"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "findings",
+            "title": "Current unresolved findings",
+            "empty": "Unknown — detailed finding observations were not recorded.",
+            "items": []
+          },
+          {
+            "id": "evidence",
+            "title": "Evidence and candidate",
+            "empty": "No evidence observations. Applicability unknown.",
+            "items": [
+              {
+                "id": "9",
+                "label": "gate.reported",
+                "fields": [
+                  {
+                    "label": "Reported at",
+                    "value": "2026-11-20T09:00:00Z"
+                  },
+                  {
+                    "label": "Candidate",
+                    "value": "Unreported"
+                  },
+                  {
+                    "label": "Observation",
+                    "value": "{\"command\":\"scripts/validate-registry.py\",\"outcome\":\"pass\",\"durationMs\":4200}"
+                  },
+                  {
+                    "label": "Authority",
+                    "value": "Reported only — Applicability unknown; no verification is run by this view"
+                  }
+                ]
+              },
+              {
+                "id": "10",
+                "label": "gate.reported",
+                "fields": [
+                  {
+                    "label": "Reported at",
+                    "value": "2026-11-20T09:00:00Z"
+                  },
+                  {
+                    "label": "Candidate",
+                    "value": "Unreported"
+                  },
+                  {
+                    "label": "Observation",
+                    "value": "{\"command\":\"scripts/run-tests.py\",\"outcome\":\"fail\",\"durationMs\":615000}"
+                  },
+                  {
+                    "label": "Authority",
+                    "value": "Reported only — Applicability unknown; no verification is run by this view"
+                  }
+                ]
+              },
+              {
+                "id": "17",
+                "label": "review.round.closed",
+                "fields": [
+                  {
+                    "label": "Reported at",
+                    "value": "2026-11-20T09:00:01Z"
+                  },
+                  {
+                    "label": "Candidate",
+                    "value": "053fbcf66ede02d645f177faad1d70a9ce89bc8c"
+                  },
+                  {
+                    "label": "Observation",
+                    "value": "{\"round\":1,\"roundId\":\"round-1\",\"candidateTreeSha\":\"053fbcf66ede02d645f177faad1d70a9ce89bc8c\",\"outcome\":\"aligned\",\"findings\":{\"P0\":0,\"P1\":0,\"P2\":1,\"P3\":0},\"cost\":{\"unit\":\"subagent-tokens\",\"total\":48000,\"reportedBy\":\"claude-code\",\"coverage\":\"complete\"}}"
+                  },
+                  {
+                    "label": "Authority",
+                    "value": "Reported only — Applicability unknown; no verification is run by this view"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "reports",
+            "title": "Retained reports",
+            "empty": "No report references recorded.",
+            "items": []
+          },
+          {
+            "id": "finish",
+            "title": "Declared finish line",
+            "empty": "Finish steps unreported; delivery completion unknown.",
+            "items": []
+          },
+          {
+            "id": "cost",
+            "title": "Reported cost",
+            "empty": "Cost unreported.",
+            "items": [
+              {
+                "id": "review-cost",
+                "label": "Review totals",
+                "fields": [
+                  {
+                    "label": "Coverage",
+                    "value": "complete"
+                  },
+                  {
+                    "label": "Unreported round entries",
+                    "value": "0"
+                  },
+                  {
+                    "label": "claude-code · subagent-tokens",
+                    "value": "48000 subagent-tokens"
+                  }
+                ]
+              },
+              {
+                "id": "run-cost",
+                "label": "Run total",
+                "fields": [
+                  {
+                    "label": "Coverage",
+                    "value": "partial"
+                  },
+                  {
+                    "label": "Measurement",
+                    "value": "152352 subagent-tokens (partial coverage)"
+                  },
+                  {
+                    "label": "Reported by",
+                    "value": "claude-code"
+                  },
+                  {
+                    "label": "Accounting",
+                    "value": "Run totals can include review and attempt costs. These totals are shown separately and are not added together."
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "activity-history",
+            "title": "Activity history",
+            "empty": "No completed, failed, interrupted or superseded activity observations.",
+            "items": [
+              {
+                "id": "stage-plan-1",
+                "label": "stage-plan",
+                "fields": [
+                  {
+                    "label": "Attempt",
+                    "value": "stage-plan-1"
+                  },
+                  {
+                    "label": "Owner",
+                    "value": "claude-code"
+                  },
+                  {
+                    "label": "Phase",
+                    "value": "plan"
+                  },
+                  {
+                    "label": "State",
+                    "value": "completed (reported)"
+                  },
+                  {
+                    "label": "History",
+                    "value": "Latest observed attempt"
+                  },
+                  {
+                    "label": "Freshness",
+                    "value": "recent"
+                  },
+                  {
+                    "label": "Last observed",
+                    "value": "2026-11-20T09:00:00Z"
+                  },
+                  {
+                    "label": "Candidate",
+                    "value": "053fbcf66ede02d645f177faad1d70a9ce89bc8c"
+                  },
+                  {
+                    "label": "Lifecycle history",
+                    "value": "Incomplete"
+                  },
+                  {
+                    "label": "Cost",
+                    "value": "unreported"
+                  }
+                ]
+              },
+              {
+                "id": "stage-execute-1",
+                "label": "stage-execute",
+                "fields": [
+                  {
+                    "label": "Attempt",
+                    "value": "stage-execute-1"
+                  },
+                  {
+                    "label": "Owner",
+                    "value": "claude-code"
+                  },
+                  {
+                    "label": "Phase",
+                    "value": "execute"
+                  },
+                  {
+                    "label": "State",
+                    "value": "completed (reported)"
+                  },
+                  {
+                    "label": "History",
+                    "value": "Latest observed attempt"
+                  },
+                  {
+                    "label": "Freshness",
+                    "value": "recent"
+                  },
+                  {
+                    "label": "Last observed",
+                    "value": "2026-11-20T09:00:01Z"
+                  },
+                  {
+                    "label": "Candidate",
+                    "value": "053fbcf66ede02d645f177faad1d70a9ce89bc8c"
+                  },
+                  {
+                    "label": "Lifecycle history",
+                    "value": "Incomplete"
+                  },
+                  {
+                    "label": "Cost",
+                    "value": "unreported"
+                  }
+                ]
+              },
+              {
+                "id": "stage-review-1",
+                "label": "stage-review",
+                "fields": [
+                  {
+                    "label": "Attempt",
+                    "value": "stage-review-1"
+                  },
+                  {
+                    "label": "Owner",
+                    "value": "claude-code"
+                  },
+                  {
+                    "label": "Phase",
+                    "value": "review"
+                  },
+                  {
+                    "label": "State",
+                    "value": "completed (reported)"
+                  },
+                  {
+                    "label": "History",
+                    "value": "Latest observed attempt"
+                  },
+                  {
+                    "label": "Freshness",
+                    "value": "recent"
+                  },
+                  {
+                    "label": "Last observed",
+                    "value": "2026-11-20T09:00:01Z"
+                  },
+                  {
+                    "label": "Candidate",
+                    "value": "053fbcf66ede02d645f177faad1d70a9ce89bc8c"
+                  },
+                  {
+                    "label": "Lifecycle history",
+                    "value": "Incomplete"
+                  },
+                  {
+                    "label": "Cost",
+                    "value": "unreported"
+                  }
+                ]
+              },
+              {
+                "id": "lens-outcome-1",
+                "label": "review-lens-outcome",
+                "fields": [
+                  {
+                    "label": "Attempt",
+                    "value": "lens-outcome-1"
+                  },
+                  {
+                    "label": "Owner",
+                    "value": "reviewer"
+                  },
+                  {
+                    "label": "Phase",
+                    "value": "review"
+                  },
+                  {
+                    "label": "State",
+                    "value": "completed (reported)"
+                  },
+                  {
+                    "label": "History",
+                    "value": "Latest observed attempt"
+                  },
+                  {
+                    "label": "Freshness",
+                    "value": "recent"
+                  },
+                  {
+                    "label": "Last observed",
+                    "value": "2026-11-20T09:00:01Z"
+                  },
+                  {
+                    "label": "Candidate",
+                    "value": "053fbcf66ede02d645f177faad1d70a9ce89bc8c"
+                  },
+                  {
+                    "label": "Lifecycle history",
+                    "value": "Incomplete"
+                  },
+                  {
+                    "label": "Cost",
+                    "value": "unreported"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "finding-history",
+            "title": "Finding history",
+            "empty": "No detailed finding history.",
+            "items": []
+          }
+        ]
+      },
+      "show": {
+        "spec": "delivery-run-export/2",
+        "labels": "self-attested; observability, not evidence; unbound to a record",
+        "runId": "run-0000000000000001",
+        "events": [
+          {
+            "version": "run-event/2",
+            "eventId": "start",
+            "runId": "run-0000000000000001",
+            "seq": 1,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "run.started",
+            "actor": {
+              "role": "executor"
+            },
+            "attestation": "self",
+            "payload": {
+              "host": "claude-code",
+              "workflow": {
+                "releaseId": "linear-v0.0.0",
+                "profile": "linear"
+              }
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "plan-in",
+            "runId": "run-0000000000000001",
+            "seq": 2,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "activity.observed",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "stage-plan",
+              "attemptId": "stage-plan-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "phase": "plan",
+              "state": "running",
+              "owner": "claude-code",
+              "nextStep": "Write the plan."
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "approval-wait",
+            "runId": "run-0000000000000001",
+            "seq": 3,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "wait.started",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "stage-plan",
+              "attemptId": "stage-plan-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "waitId": "plan-approval",
+              "owner": "operator",
+              "waitingOn": "human",
+              "reason": "The plan needs the operator's approval.",
+              "nextAction": "Approve the plan or ask for changes.",
+              "scope": "This request only; it grants no authority."
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "approval-resolved",
+            "runId": "run-0000000000000001",
+            "seq": 4,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "wait.resolved",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "stage-plan",
+              "attemptId": "stage-plan-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "waitId": "plan-approval",
+              "resolution": "The operator approved the plan.",
+              "scope": "This request only; it grants no authority."
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "plan-out",
+            "runId": "run-0000000000000001",
+            "seq": 5,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "activity.observed",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "stage-plan",
+              "attemptId": "stage-plan-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "phase": "plan",
+              "state": "completed",
+              "owner": "claude-code"
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "execute-in",
+            "runId": "run-0000000000000001",
+            "seq": 6,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "activity.observed",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "stage-execute",
+              "attemptId": "stage-execute-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "phase": "execute",
+              "state": "running",
+              "owner": "claude-code",
+              "nextStep": "Implement the first slice."
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "ticket",
+            "runId": "run-0000000000000001",
+            "seq": 7,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "ticket.read",
+            "actor": {
+              "role": "executor"
+            },
+            "ticket": "V26-0001",
+            "attestation": "self",
+            "payload": {
+              "ticket": "V26-0001",
+              "tracker": "linear"
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "branch",
+            "runId": "run-0000000000000001",
+            "seq": 8,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "decision.recorded",
+            "actor": {
+              "role": "executor"
+            },
+            "attestation": "self",
+            "payload": {
+              "fork": "the branch name",
+              "choice": "claude/V26-0001, the repository's convention"
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "gate-registry",
+            "runId": "run-0000000000000001",
+            "seq": 9,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "gate.reported",
+            "actor": {
+              "role": "executor"
+            },
+            "attestation": "self",
+            "payload": {
+              "command": "scripts/validate-registry.py",
+              "outcome": "pass",
+              "durationMs": 4200
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "gate-suite",
+            "runId": "run-0000000000000001",
+            "seq": 10,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "gate.reported",
+            "actor": {
+              "role": "executor"
+            },
+            "attestation": "self",
+            "payload": {
+              "command": "scripts/run-tests.py",
+              "outcome": "fail",
+              "durationMs": 615000
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "blocker",
+            "runId": "run-0000000000000001",
+            "seq": 11,
+            "at": "2026-11-20T09:00:01Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "blocker.recorded",
+            "actor": {
+              "role": "executor"
+            },
+            "attestation": "self",
+            "payload": {
+              "code": "review.deferral-untracked",
+              "summary": "One deferral has no tracked follow-up."
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "pr",
+            "runId": "run-0000000000000001",
+            "seq": 12,
+            "at": "2026-11-20T09:00:01Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "pr.opened",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "url": "https://github.com/example/repository/pull/1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c"
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "review-in",
+            "runId": "run-0000000000000001",
+            "seq": 13,
+            "at": "2026-11-20T09:00:01Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "activity.observed",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "stage-review",
+              "attemptId": "stage-review-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "phase": "review",
+              "state": "running",
+              "owner": "claude-code",
+              "nextStep": "Run round 1."
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "round-1-opened",
+            "runId": "run-0000000000000001",
+            "seq": 14,
+            "at": "2026-11-20T09:00:01Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "review.round.opened",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "round": 1,
+              "roundId": "round-1",
+              "bound": 4,
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "lenses": [
+                "lens.outcome-correctness",
+                "lens.adversarial-testing"
+              ]
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "lens-running",
+            "runId": "run-0000000000000001",
+            "seq": 15,
+            "at": "2026-11-20T09:00:01Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "activity.observed",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "review-lens-outcome",
+              "attemptId": "lens-outcome-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "roundId": "round-1",
+              "round": 1,
+              "lensId": "lens.outcome-correctness",
+              "state": "running",
+              "owner": "reviewer",
+              "phase": "review",
+              "nextStep": "Complete the selected lens."
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "lens-completed",
+            "runId": "run-0000000000000001",
+            "seq": 16,
+            "at": "2026-11-20T09:00:01Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "activity.observed",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "review-lens-outcome",
+              "attemptId": "lens-outcome-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "roundId": "round-1",
+              "round": 1,
+              "lensId": "lens.outcome-correctness",
+              "state": "completed",
+              "owner": "reviewer",
+              "phase": "review"
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "round-1-closed",
+            "runId": "run-0000000000000001",
+            "seq": 17,
+            "at": "2026-11-20T09:00:01Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "review.round.closed",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "round": 1,
+              "roundId": "round-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "outcome": "aligned",
+              "findings": {
+                "P0": 0,
+                "P1": 0,
+                "P2": 1,
+                "P3": 0
+              },
+              "cost": {
+                "unit": "subagent-tokens",
+                "total": 48000,
+                "reportedBy": "claude-code",
+                "coverage": "complete"
+              }
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "review-out",
+            "runId": "run-0000000000000001",
+            "seq": 18,
+            "at": "2026-11-20T09:00:01Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "activity.observed",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "stage-review",
+              "attemptId": "stage-review-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "phase": "review",
+              "state": "completed",
+              "owner": "claude-code"
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "execute-out",
+            "runId": "run-0000000000000001",
+            "seq": 19,
+            "at": "2026-11-20T09:00:01Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "activity.observed",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "stage-execute",
+              "attemptId": "stage-execute-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "phase": "execute",
+              "state": "completed",
+              "owner": "claude-code"
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "end",
+            "runId": "run-0000000000000001",
+            "seq": 20,
+            "at": "2026-11-20T09:00:01Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "run.ended",
+            "actor": {
+              "role": "executor"
+            },
+            "attestation": "self",
+            "payload": {
+              "result": "complete",
+              "cost": {
+                "unit": "subagent-tokens",
+                "total": 152352,
+                "reportedBy": "claude-code",
+                "coverage": "partial"
+              }
+            }
+          }
+        ],
+        "summary": {
+          "ticket": "V26-0001",
+          "open": false,
+          "startedAt": "2026-11-20T09:00:00Z",
+          "lastAt": "2026-11-20T09:00:01Z",
+          "durationSeconds": 1,
+          "phases": {
+            "implementationSeconds": 1,
+            "reviewSeconds": 0,
+            "tailSeconds": 0,
+            "rounds": 1,
+            "gate": {
+              "totalMs": 619200,
+              "counted": 2,
+              "unreadable": 0,
+              "unseen": false
+            }
+          },
+          "roundsOpened": 1,
+          "roundsClosed": 1,
+          "findings": {
+            "P0": 0,
+            "P1": 0,
+            "P2": 1,
+            "P3": 0
+          },
+          "gate": {
+            "outcome": "pass",
+            "writer": "executor"
+          },
+          "result": "complete"
+        },
+        "costs": {
+          "review": {
+            "coverage": "complete",
+            "unreportedEntries": 0,
+            "totals": [
+              {
+                "unit": "subagent-tokens",
+                "total": 48000,
+                "reportedBy": "claude-code"
+              }
+            ]
+          },
+          "run": {
+            "unit": "subagent-tokens",
+            "total": 152352,
+            "reportedBy": "claude-code",
+            "coverage": "partial"
+          }
+        },
+        "readout": {
+          "status": "incomplete",
+          "present": [
+            "run.started",
+            "ticket.read",
+            "review.round.opened",
+            "review.round.closed",
+            "pr.opened",
+            "run.ended",
+            "gate.reported"
+          ],
+          "missing": [
+            "posture.declared",
+            "lens.selected",
+            "command.completed:gate",
+            "command.completed:record"
+          ],
+          "violations": [
+            "gate-reported-before-closed-round"
+          ],
+          "explanations": [
+            {
+              "violation": "gate-reported-before-closed-round",
+              "because": "the governing gate.reported at seq 9 precedes the governing closed round at seq 17, so that reported gate did not stand on a completed review",
+              "blocksAdmission": false
+            }
+          ]
+        },
+        "refusedAppends": [],
+        "progress": {
+          "asOf": "2026-11-20T09:00:01Z",
+          "activities": [
+            {
+              "activityId": "stage-plan",
+              "currentAttemptId": "stage-plan-1",
+              "attempts": [
+                {
+                  "activityId": "stage-plan",
+                  "attemptId": "stage-plan-1",
+                  "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+                  "state": "completed",
+                  "owner": "claude-code",
+                  "phase": "plan",
+                  "firstObservedAt": "2026-11-20T09:00:00Z",
+                  "lastObservedAt": "2026-11-20T09:00:00Z",
+                  "lifecycleIncomplete": true,
+                  "superseded": false,
+                  "freshness": "recent",
+                  "waits": [
+                    {
+                      "activityId": "stage-plan",
+                      "attemptId": "stage-plan-1",
+                      "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+                      "waitId": "plan-approval",
+                      "owner": "operator",
+                      "waitingOn": "human",
+                      "reason": "The plan needs the operator's approval.",
+                      "nextAction": "Approve the plan or ask for changes.",
+                      "scope": "This request only; it grants no authority.",
+                      "startedAt": "2026-11-20T09:00:00Z",
+                      "current": false,
+                      "resolvedAt": "2026-11-20T09:00:00Z",
+                      "resolution": "The operator approved the plan."
+                    }
+                  ],
+                  "startedAt": "2026-11-20T09:00:00Z",
+                  "nextStep": "Write the plan."
+                }
+              ]
+            },
+            {
+              "activityId": "stage-execute",
+              "currentAttemptId": "stage-execute-1",
+              "attempts": [
+                {
+                  "activityId": "stage-execute",
+                  "attemptId": "stage-execute-1",
+                  "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+                  "state": "completed",
+                  "owner": "claude-code",
+                  "phase": "execute",
+                  "firstObservedAt": "2026-11-20T09:00:00Z",
+                  "lastObservedAt": "2026-11-20T09:00:01Z",
+                  "lifecycleIncomplete": true,
+                  "superseded": false,
+                  "freshness": "recent",
+                  "waits": [],
+                  "startedAt": "2026-11-20T09:00:00Z",
+                  "nextStep": "Implement the first slice."
+                }
+              ]
+            },
+            {
+              "activityId": "stage-review",
+              "currentAttemptId": "stage-review-1",
+              "attempts": [
+                {
+                  "activityId": "stage-review",
+                  "attemptId": "stage-review-1",
+                  "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+                  "state": "completed",
+                  "owner": "claude-code",
+                  "phase": "review",
+                  "firstObservedAt": "2026-11-20T09:00:01Z",
+                  "lastObservedAt": "2026-11-20T09:00:01Z",
+                  "lifecycleIncomplete": true,
+                  "superseded": false,
+                  "freshness": "recent",
+                  "waits": [],
+                  "startedAt": "2026-11-20T09:00:01Z",
+                  "nextStep": "Run round 1."
+                }
+              ]
+            },
+            {
+              "activityId": "review-lens-outcome",
+              "currentAttemptId": "lens-outcome-1",
+              "attempts": [
+                {
+                  "activityId": "review-lens-outcome",
+                  "attemptId": "lens-outcome-1",
+                  "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+                  "state": "completed",
+                  "owner": "reviewer",
+                  "phase": "review",
+                  "roundId": "round-1",
+                  "round": 1,
+                  "lensId": "lens.outcome-correctness",
+                  "firstObservedAt": "2026-11-20T09:00:01Z",
+                  "lastObservedAt": "2026-11-20T09:00:01Z",
+                  "lifecycleIncomplete": true,
+                  "superseded": false,
+                  "freshness": "recent",
+                  "waits": [],
+                  "startedAt": "2026-11-20T09:00:01Z",
+                  "nextStep": "Complete the selected lens."
+                }
+              ]
+            }
+          ],
+          "waits": [
+            {
+              "activityId": "stage-plan",
+              "attemptId": "stage-plan-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "waitId": "plan-approval",
+              "owner": "operator",
+              "waitingOn": "human",
+              "reason": "The plan needs the operator's approval.",
+              "nextAction": "Approve the plan or ask for changes.",
+              "scope": "This request only; it grants no authority.",
+              "startedAt": "2026-11-20T09:00:00Z",
+              "current": false,
+              "resolvedAt": "2026-11-20T09:00:00Z",
+              "resolution": "The operator approved the plan."
+            }
+          ],
+          "findings": [],
+          "reports": [],
+          "artifacts": [],
+          "finishSteps": [],
+          "currentFindings": [],
+          "findingsCoverage": "unreported"
+        }
+      }
+    }
+  }
+}

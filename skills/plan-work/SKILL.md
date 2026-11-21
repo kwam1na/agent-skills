@@ -12,6 +12,16 @@ re-deriving scope. Apply `$compound-delivery-kernel` for the shared delivery
 posture. This workflow plans only; it does not edit implementation files or run
 the planned work.
 
+## Report the Run
+
+Report the run through the run-event command the repository's root instruction
+file declares, when it declares one; where it declares none, proceed silently,
+with no handoff and no blocker. Apply `$compound-delivery-kernel`'s run
+lifecycle rule: invoked by the operator this workflow starts the run, invoked
+by another workflow it joins that run, and it marks its stage `plan`. The
+approval the plan waits on is a wait within the request, under the kernel's
+rule, not the run's end.
+
 ## Discover Repository Authority
 
 Read the adopting repository's instructions before choosing paths, commands,

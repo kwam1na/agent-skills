@@ -201,8 +201,9 @@
     };
     node.textContent = "";
     spell(node, words, function (i) { return !changed(i); }, "flip-gap");
-    spell(shape(svg, "text", Object.assign({}, attributes, { class: attributes.class + " flip-out" })), was, changed, "flip-hide");
-    spell(shape(svg, "text", Object.assign({}, attributes, { class: attributes.class + " flip-in" })), words, changed, "flip-hide");
+    // The layers are drawing, not words: the drawing's ticks and steps are read one by one, and its counts once.
+    spell(shape(svg, "text", Object.assign({}, attributes, { class: attributes.class + " flip-out", "aria-hidden": "true" })), was, changed, "flip-hide");
+    spell(shape(svg, "text", Object.assign({}, attributes, { class: attributes.class + " flip-in", "aria-hidden": "true" })), words, changed, "flip-hide");
     return node;
   }
 
@@ -1757,16 +1758,21 @@
 
   /* 2. The line */
   // The lanes' row geometry, matched by the stylesheet: each row's stops centre this far below its top, rows this far apart.
-  var LINE_STOP_Y = 23, LINE_PITCH = 84, MERGE_WIDTH = 176;
-  // With an integration step the main line runs on past the join through its four stops and bends into the target,
-  // drawn this far beneath it.
-  var REJOIN_PITCH = 72, REJOIN_WIDTH = 100 + 4 * REJOIN_PITCH + 90, TARGET_DROP = 34;
-  // With sibling repositories drawn, the merge widens to hold the epic's post: this repository's post keeps its x, and
-  // the epic's line runs on to a join where the siblings turn in and a post of its own. The stylesheet reads both widths
-  // and the room above the line from the variables the drawing sets on the track.
-  var EPIC_WIDTH = 304, FINISH_X = MERGE_WIDTH - 14, EPIC_JOIN_X = 228, EPIC_POST_X = EPIC_WIDTH - 14, MERGE_TOP = 16, MOST_DRAWN = 2;
+  var LINE_STOP_Y = 23, LINE_PITCH = 84;
+  // A lane row is one width whatever its story count: its landed stories fold into one segment, at most this many open
+  // ones keep a stop, and the rest fold into "+n". The stylesheet gives each of its slots an equal share.
+  var OPEN_STOPS = 3, ROW_SLOTS = OPEN_STOPS + 2;
+  // Past the join the main line carries one tick per story, this far apart at most and at least, with a wider gap between
+  // each group of five; the run of ticks aims at this length.
+  var JOIN_X = 100, TICKS_FROM = 22, TICK_MOST = 15, TICK_LEAST = 8, TICK_SPAN = 190, TICK_GROUP = 5, GROUP_GAP = 5;
+  // With an integration step a bar of its four steps follows the ticks, and the line bends into the target at the finish
+  // post, drawn this far beneath it.
+  var BAR_GAP = 34, BAR_WIDTH = 140, BAR_TO_POST = 56, TARGET_DROP = 34, TARGET_RUN = 64;
+  // Without one the post stands this far past the last tick. With sibling repositories drawn, the epic's line runs on past
+  // the post to a join where the siblings turn in, and a post of its own.
+  var POST_GAP = 40, EPIC_JOIN_GAP = 66, EPIC_POST_GAP = 128, MERGE_TOP = 16, MOST_DRAWN = 2;
   // The merge's texts' sizes, as the stylesheet sets them, so the room above the line holds every line of the epic's words.
-  var TEXT_SIZE = { "mg-label": 13, "mg-count": 11 };
+  var TEXT_SIZE = { "mg-label": 13, "mg-count": 11, "mg-step-label": 10, "mg-why": 10 };
   /**
    * The epic's siblings as the line draws them, or null when no group is of this epic: then the line is drawn as it
    * always was. Only same-epic groups count anywhere here; the state tool decides which those are. The siblings this
@@ -1822,91 +1828,198 @@
     return add(row, stops);
   }
   /**
-   * Beside the lanes, each lane's line turns into one main line that runs to the finish line. A lane's turn is solid
-   * once it has landed everything; the main line is solid once every piece is in. Drawn to the rows' fixed geometry.
-   * With siblings of the epic, the main line runs on past the finish line to the epic's post, where the drawn siblings
-   * turn in from their rows below; its words stack above it, since the siblings come in from below. A delivery rejoining
-   * its target draws that step instead, and the caller passes no epic while it does.
+   * Each story as the trunk's tick draws it, from its stop's kind: landed, in the merge queue, in review, being built,
+   * stopped, not started, or, once the delivery closed, not landed.
    */
-  function mergeDrawing(doc, all, ends, epic, track) {
+  var TICK_STATES = { merged: "landed", now: "queued", ready: "queued", "ready pending": "queued", held: "stopped", later: "planned",
+    unlanded: "unlanded", unknown: "unknown" };
+  // Nearest to landing first: landed, then the queue (the piece being checked, then the ready ones, then a hand-over the lead
+  // hasn't accepted), in review, being built, stopped, not started.
+  var TICK_RANK = { merged: 0, now: 1, ready: 2, "ready pending": 3, review: 4, building: 5, held: 6, later: 7, unknown: 8, unlanded: 9 };
+  var TICK_WORDS = { landed: "landed", queued: "in the merge queue", review: "in review", building: "being built", stopped: "stopped",
+    planned: "not started", unlanded: "not landed", unknown: "stage not recognised" };
+  function tickOf(doc, piece, nowSubject) {
+    var kind = unlandedAtClose(doc, piece) ? "unlanded" : stopKind(piece, nowSubject);
+    var state = kind === "active" ? (piece.item.stage === "review" ? "review" : "building") : TICK_STATES[kind] || "unknown";
+    return { kind: kind, state: state, rank: kind === "active" ? TICK_RANK[state] : TICK_RANK[kind] };
+  }
+  /** Where the trunk's ticks fall: one per story, in groups of five, the run aiming at TICK_SPAN however many there are. */
+  function tickLayout(count) {
+    var gap = Math.max(TICK_LEAST, Math.min(TICK_MOST, TICK_SPAN / Math.max(count, 1)));
+    var at = function (i) { return JOIN_X + TICKS_FROM + i * gap + Math.floor(i / TICK_GROUP) * GROUP_GAP; };
+    return { gap: gap, at: at, end: count ? at(count - 1) : JOIN_X + TICKS_FROM };
+  }
+  /**
+   * What each of the four steps before the delivery rejoins its target says now, in the words the record's facts give:
+   * catching up with the target, the suite, the review and the rejoin. Null once it has rejoined.
+   */
+  function rejoinSaid(doc) {
+    var ledger = rejoinLedger(doc);
+    if (!ledger) { return null; }
+    // A head a later fact moved on from says so in words, as the struck head's own name does.
+    [].forEach.call(ledger.querySelectorAll(".rj-head.struck"), function (node) { node.textContent = node.getAttribute("aria-label"); });
+    return [].map.call(ledger.querySelectorAll(".rj-said"), function (node) { return node.textContent; });
+  }
+  var STEP_TITLES = ["Main in", "Suite", "Review", "Change request"];
+  /**
+   * Beside the lanes, each lane's line turns into one main line, and the main line is the delivery's progress: one tick per
+   * story, landed first, then the open ones nearest to landing first, each drawn by its state in its lane's colour, in
+   * groups of five. A caret marks the story the queue lands next. A delivery rejoining its target then draws one bar of
+   * its four steps, labelled with the step it is on, that step's status under it, and bends into the target at the finish
+   * post, so the target is drawn once. Otherwise the post stands at the end of the ticks, and with siblings of the epic the
+   * line runs on to the epic's post, where the drawn siblings turn in from their rows below. The finish lines are squares
+   * beside the post's label. A tick, a step and a square each name themselves on hover and focus, and a tick lights its
+   * lane; the caller wires that through `look`.
+   */
+  function mergeDrawing(doc, all, ends, epic, track, look) {
     var step = closedEntry(doc) ? null : integrationOf(doc);
     var rows = ends.length + (epic ? epic.drawn.length : 0);
-    var width = step ? REJOIN_WIDTH : epic ? EPIC_WIDTH : MERGE_WIDTH;
-    var height = (rows - 1) * LINE_PITCH + LINE_STOP_Y * 2 + (step ? TARGET_DROP + 24 : 0);
     var trunkY = LINE_STOP_Y + (ends.length - 1) * LINE_PITCH / 2;
-    var joinX = 100, finishX = step ? width - 14 : FINISH_X;
+    var ticks = tickLayout(all.length);
+    var barX = ticks.end + BAR_GAP, barEnd = barX + BAR_WIDTH;
+    var postX = step ? barEnd + BAR_TO_POST : ticks.end + POST_GAP;
     var postY = step ? trunkY + TARGET_DROP : trunkY;
+    var epicJoinX = postX + EPIC_JOIN_GAP, epicPostX = postX + EPIC_POST_GAP;
+    var width = step ? postX + TARGET_RUN + 8 : epic ? epicPostX + 14 : postX + 14;
     var svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("class", "line-merge");
-    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
-    svg.setAttribute("width", String(width));
-    svg.setAttribute("height", String(height));
     var landed = all.filter(isLanded).length;
     var finish = list(doc.state.finish).filter(isObject);
     var met = finish.filter(function (line) { return line.met === true; }).length;
     var unreadNames = epic ? epic.unread.map(function (one) { return one.name; }) : [];
-    svg.setAttribute("role", "img");
+    var stops = step ? integrationStops(step) : [];
+    var filled = stops.filter(function (state) { return state === "filled"; }).length;
+    // A group, not an image: the ticks, steps and squares inside it are each reached and named.
+    svg.setAttribute("role", "group");
     svg.setAttribute("aria-label", "Every lane merges into one main line: " + landed + " of " + all.length + " pieces landed" +
       (finish.length ? ", " + met + " of " + finish.length + " finish lines met" : "") +
-      (step ? ", then rejoins " + step.target + ": " + integrationFilled(step) + " of 4 steps done" : "") +
+      (step ? ", then rejoins " + step.target + ": " + filled + " of 4 steps done" : "") +
       (epic ? "; the epic: " + epic.landed + " of " + epic.total + " pieces landed across " + epic.repositories + " repositories" +
         (unreadNames.length ? ", " + spokenList(unreadNames) + " can't be read" : "") +
         (epic.folded.length ? ", " + epic.folded.length + " more not drawn" : "") : ""));
+    var allIn = landed === all.length;
     if (step) {
-      // The target, beneath the main line from the join to the end, where the main line bends into it.
-      var bendX = joinX + 4 * REJOIN_PITCH + 24;
-      shape(svg, "path", { class: "mg-target", d: "M" + joinX + " " + postY + "H" + finishX });
-      shape(svg, "text", { class: "mg-label mg-target-label", x: joinX, y: postY + 16 }, step.target);
-      shape(svg, "path", { class: "mg-trunk" + (landed === all.length ? "" : " open"), d: "M" + joinX + " " + trunkY + "H" + (bendX - 24) +
-        "C" + bendX + " " + trunkY + " " + (bendX - 8) + " " + postY + " " + (bendX + 16) + " " + postY });
-      shape(svg, "path", { class: "mg-trunk" + (landed === all.length ? "" : " open"), d: "M" + (joinX - 100) + " " + trunkY + "H" + joinX });
-      var names = [step.target + " in", "suite", "review", "change request"];
-      integrationStops(step).forEach(function (state, i) {
-        var x = joinX + (i + 1) * REJOIN_PITCH - 24;
-        var stop = shape(svg, "circle", { class: "mg-step " + state, cx: x, cy: trunkY, r: 6, "data-step": INTEGRATION_STOPS[i] });
-        stop.setAttribute("data-state", state);
-        shape(svg, "text", { class: "mg-step-label", x: x, y: trunkY - 14, "text-anchor": "middle" }, names[i]);
-      });
-      if (step.base) { shape(svg, "text", { class: "mg-label mg-base", x: joinX, y: trunkY - 30, "text-anchor": "middle" }, step.base); }
+      var rejoined = Boolean(step.landed);
+      // The main line runs past the ticks and the bar, and bends into the target at the post; solid as far as the work is in.
+      var bend = "C" + (postX - 8) + " " + trunkY + " " + (postX - 14) + " " + postY + " " + postX + " " + postY;
+      shape(svg, "path", { class: "mg-trunk open", d: "M" + (JOIN_X - 100) + " " + trunkY + "H" + (postX - 30) + bend });
+      if (allIn) { shape(svg, "path", { class: "mg-trunk", d: "M" + (JOIN_X - 100) + " " + trunkY + "H" + (rejoined ? postX - 30 : barX - 10) }); }
+      if (rejoined) { shape(svg, "path", { class: "mg-trunk", d: "M" + (postX - 30) + " " + trunkY + bend }); }
+      shape(svg, "path", { class: "mg-target" + (rejoined ? " solid" : ""), d: "M" + postX + " " + postY + "H" + (postX + TARGET_RUN) });
+      shape(svg, "text", { class: "mg-label mg-target-label", x: postX + TARGET_RUN, y: postY + 18, "text-anchor": "end" }, step.target);
     } else {
-      shape(svg, "path", { class: "mg-trunk" + (landed === all.length ? "" : " open"), d: "M" + joinX + " " + trunkY + "H" + finishX });
+      shape(svg, "path", { class: "mg-trunk" + (allIn ? "" : " open"), d: "M" + JOIN_X + " " + trunkY + "H" + postX });
     }
-    if (epic) { shape(svg, "path", { class: "mg-epic" + (epic.state ? " " + epic.state : ""), d: "M" + finishX + " " + trunkY + "H" + EPIC_POST_X }); }
+    if (epic) { shape(svg, "path", { class: "mg-epic" + (epic.state ? " " + epic.state : ""), d: "M" + postX + " " + trunkY + "H" + epicPostX }); }
     ends.forEach(function (end, i) {
       var y = LINE_STOP_Y + i * LINE_PITCH;
-      var turn = shape(svg, "path", { class: "mg-turn" + (end.done ? "" : " open"),
-        d: "M0 " + y + "H12C" + (12 + 52) + " " + y + " " + (joinX - 52) + " " + trunkY + " " + joinX + " " + trunkY });
+      var turn = shape(svg, "path", { class: "mg-turn" + (end.done ? "" : " open"), "data-lane": i,
+        d: "M0 " + y + "H12C" + (12 + 52) + " " + y + " " + (JOIN_X - 52) + " " + trunkY + " " + JOIN_X + " " + trunkY });
       turn.style.setProperty("--c", end.colour);
     });
     (epic ? epic.drawn : []).forEach(function (one, j) {
       var y = LINE_STOP_Y + (ends.length + j) * LINE_PITCH;
       var state = siblingState(one);
       shape(svg, "path", { class: "mg-sib" + (state ? " " + state : ""),
-        d: "M0 " + y + "H12C150 " + y + " 190 " + trunkY + " " + EPIC_JOIN_X + " " + trunkY });
+        d: "M0 " + y + "H12C" + (epicJoinX - 78) + " " + y + " " + (epicJoinX - 38) + " " + trunkY + " " + epicJoinX + " " + trunkY });
     });
-    shape(svg, "circle", { class: "mg-join", cx: joinX, cy: trunkY, r: 4 });
-    if (epic) { shape(svg, "circle", { class: "mg-epic-join", cx: EPIC_JOIN_X, cy: trunkY, r: 4 }); }
-    shape(svg, "path", { class: "mg-post", d: "M" + finishX + " " + (postY - 20) + "V" + (postY + 20) });
-    shape(svg, "text", { class: "mg-label", x: finishX + 3, y: postY - 30, "text-anchor": "end" }, "Finish line");
-    // The totals stack under the post, short enough to stay clear of the lanes turning in.
-    figureText(svg, "merge-landed", { class: "mg-count", x: finishX + 3, y: postY + 38, "text-anchor": "end" }, landed + "/" + all.length + " landed");
-    if (finish.length) { figureText(svg, "merge-met", { class: "mg-count", x: finishX + 3, y: postY + 52, "text-anchor": "end" }, met + "/" + finish.length + " met"); }
+    shape(svg, "circle", { class: "mg-join", cx: JOIN_X, cy: trunkY, r: 4 });
+    if (epic) { shape(svg, "circle", { class: "mg-epic-join", cx: epicJoinX, cy: trunkY, r: 4 }); }
+    // The ticks: landed first, then the open ones nearest to landing first, each kind in the lanes' order, then the record's.
+    var shown = all.map(function (piece, order) {
+      var tick = tickOf(doc, piece, look.nowSubject);
+      return { piece: piece, order: order, lane: look.laneOf(piece), tick: tick };
+    }).sort(function (a, b) { return a.tick.rank - b.tick.rank || a.lane - b.lane || a.order - b.order; });
+    var next = null, stopped = 0;
+    shown.forEach(function (one, i) {
+      var x = ticks.at(i), key = subjectOf(one.piece.item), tick = one.tick;
+      var colour = look.colours[one.piece.item.lane || ""];
+      // A story that landed since the last draw lands on the line, as its stop once did.
+      var landing = tick.state === "landed" && prev.stages && prev.stages[key] && prev.stages[key] !== "merged" && !reduced();
+      var g = shape(svg, "g", { class: "mg-tick " + tick.state + (landing ? " landing" : ""), "data-subject": key, "data-lane": one.lane, "data-state": tick.state,
+        tabindex: 0, role: "button", "aria-pressed": String(look.selected() === key),
+        // Named in the stop's own words, so a story folded out of its row says no less than its stop did.
+        "aria-label": titleOf(doc, one.piece.item) + ", " + key + ", " + (tick.state === "unlanded" ? "Not landed" : pieceWords(doc, one.piece.item)) });
+      g.style.setProperty("--c", colour);
+      shape(g, "rect", { class: "mg-tick-hit", x: x - ticks.gap / 2, y: trunkY - 16, width: ticks.gap, height: 32 });
+      if (tick.state === "building") { shape(g, "rect", { class: "mg-tick-half", x: x - 2.5, y: trunkY, width: 5, height: 10, rx: 1 }); }
+      shape(g, "rect", { class: "mg-tick-mark", x: x - 2.5, y: trunkY - 10, width: 5, height: 20, rx: 2 });
+      if (tick.state === "stopped") { stopped += 1; shape(g, "path", { class: "mg-flag", d: "M" + x + " " + (trunkY - 13) + "l-4 -6h8z" }); }
+      // The queue lands its piece being checked next, or else its first ready one.
+      if (!next && (tick.kind === "now" || tick.kind === "ready")) { next = { x: x, key: key }; }
+      look.wire(g, one.piece, key + " · " + TICK_WORDS[tick.state], titleOf(doc, one.piece.item));
+    });
+    var count = figureText(svg, "merge-landed", { class: "mg-count mg-tally", x: JOIN_X + TICKS_FROM - 3, y: trunkY - 22 },
+      landed + " of " + all.length + " landed");
+    if (stopped) { shape(count, "tspan", { class: "mg-count mg-stopped", dx: 6 }, "· " + stopped + " stopped"); }
+    if (next) {
+      shape(svg, "path", { class: "mg-caret", d: "M" + next.x + " " + (trunkY + 14) + "l-4 6h8z" });
+      shape(svg, "text", { class: "mg-why mg-next", x: next.x - 4, y: trunkY + 32 }, "next: " + next.key);
+    }
+    // How far below the main line the drawing reaches: the ticks' own boxes, the caret's words, the bar's status and the target.
+    var below = trunkY + (next ? 36 : 16);
+    if (step) {
+      // The bar: the four steps, the one in progress named over it, and that step's status under it.
+      var said = rejoinSaid(doc) || [];
+      var current = -1;
+      stops.forEach(function (state, i) { if (current < 0 && state !== "filled") { current = i; } });
+      // Every step in but not yet rejoined: it waits on its last step, the change request, and says so.
+      if (current < 0 && !rejoined) { current = stops.length - 1; }
+      shape(svg, "text", { class: "mg-step-label mg-bar-label", x: barX, y: trunkY - 22 },
+        "Rejoin " + step.target + (rejoined ? " · done" : " · " + STEP_TITLES[current].toLowerCase()));
+      var segment = (BAR_WIDTH - 6) / 4;
+      stops.forEach(function (state, i) {
+        // A step says what its latest fact shows; once rejoined the ledger has no words left, and every step is done.
+        var words = said[i] || (state === "filled" ? "Done." : "Not yet.");
+        var r = shape(svg, "rect", { class: "mg-step " + state, x: barX + i * (segment + 2), y: trunkY - 5, width: segment, height: 10, rx: 2,
+          tabindex: 0, role: "img", "data-step": INTEGRATION_STOPS[i], "data-state": state, "aria-label": STEP_TITLES[i] + ": " + words });
+        // Only the step the bar is on reads "now".
+        look.wire(r, null, STEP_TITLES[i] + " · " + (i === current ? "now" : state === "filled" ? "done" : "later"), words);
+      });
+      var sentence = rejoined ? "Rejoined " + step.target + "." : STEP_TITLES[current] + ". " + (said[current] || "");
+      var saidLines = wrapWords(sentence, 34).slice(0, 3);
+      saidLines.forEach(function (line, k) {
+        shape(svg, "text", { class: "mg-why mg-step-said", x: barX, y: trunkY + 22 + k * 12 }, line);
+        below = Math.max(below, trunkY + 26 + k * 12);
+      });
+      // The open change request into the target, the operator's to merge, opens from under the bar.
+      var request = !rejoined && standing(step, "requested") ? step.latest.requested : null;
+      if (request && text(request.data.changeRequest)) {
+        var target = changeTarget(request.data.changeRequest);
+        var y = trunkY + 22 + saidLines.length * 12 + 2;
+        var holder = target ? shape(svg, "a", { class: "mg-change", href: target.href, target: "_blank", rel: "noopener noreferrer",
+          "aria-label": "Open the change request into " + step.target + " " + target.label }) : svg;
+        shape(holder, "text", { class: "mg-why mg-change-label", x: barX, y: y },
+          "Change request " + (target ? target.label : text(request.data.changeRequest)));
+        below = Math.max(below, y + 4);
+      }
+      below = Math.max(below, postY + 22);
+    }
+    // The finish post, its label, and the finish lines as squares beside the label, with how many are met.
+    shape(svg, "path", { class: "mg-post", d: "M" + postX + " " + (postY - 20) + "V" + (postY + 20) });
+    // Over the post, the label sits higher only to leave the squares room.
+    shape(svg, "text", { class: "mg-label", x: postX, y: postY - (finish.length ? 52 : 30), "text-anchor": "middle" }, "Finish line");
+    if (finish.length) {
+      var squaresX = postX - (finish.length * 11) / 2 - 12;
+      finish.forEach(function (line, k) {
+        var name = text(line.text) || text(line.id) || "Finish line " + (k + 1);
+        var square = shape(svg, "rect", { class: "mg-square " + (line.met === true ? "met" : "unmet"), x: squaresX + k * 11, y: postY - 44,
+          width: 8, height: 8, rx: 1.5, tabindex: 0, role: "img", "aria-label": name + (line.met === true ? ", met" : ", not met") });
+        look.wire(square, null, "Finish line · " + (line.met === true ? "met" : "not met"), name);
+      });
+      figureText(svg, "merge-met", { class: "mg-count", x: squaresX + finish.length * 11 + 3, y: postY - 37 }, met + "/" + finish.length);
+    }
     var top = MERGE_TOP;
     if (epic) {
-      shape(svg, "path", { class: "mg-epic-post" + (epic.state ? " " + epic.state : ""), d: "M" + EPIC_POST_X + " " + (trunkY - 20) + "V" + (trunkY + 20) });
+      shape(svg, "path", { class: "mg-epic-post" + (epic.state ? " " + epic.state : ""), d: "M" + epicPostX + " " + (trunkY - 20) + "V" + (trunkY + 20) });
       // Above the epic's post, bottom up: its count, what can't be read, and its label.
       var words = unreadNames.length === 1 ? unreadNames[0] : unreadNames.length ? unreadNames.length + " can't be read" : "";
       var stack = [["mg-label" + (unreadNames.length ? " unread" : ""), unreadNames.length ? "Epic ?" : "Epic"]];
       if (words) { stack.push(["mg-count", words]); }
       stack.forEach(function (line, k) {
-        shape(svg, "text", { class: line[0], x: EPIC_POST_X + 3, y: trunkY - 30 - (stack.length - k) * 14, "text-anchor": "end" }, line[1]);
+        shape(svg, "text", { class: line[0], x: epicPostX + 3, y: trunkY - 30 - (stack.length - k) * 14, "text-anchor": "end" }, line[1]);
       });
-      figureText(svg, "merge-epic", { class: "mg-count", x: EPIC_POST_X + 3, y: trunkY - 30, "text-anchor": "end" }, epic.landed + "/" + epic.total + " landed");
-      // The room above the line holds every word the merge draws.
-      [].forEach.call(svg.querySelectorAll("text"), function (node) {
-        var size = TEXT_SIZE[node.getAttribute("class").split(" ")[0]] || 0;
-        top = Math.max(top, Math.ceil(size - Number(node.getAttribute("y"))));
-      });
+      figureText(svg, "merge-epic", { class: "mg-count", x: epicPostX + 3, y: trunkY - 30, "text-anchor": "end" }, epic.landed + "/" + epic.total + " landed");
       if (epic.folded.length) {
         var more = "+" + epic.folded.length + " more";
         var chip = el("span", "more-chip", more);
@@ -1916,9 +2029,33 @@
         track.appendChild(chip);
       }
     }
+    // The room above the line holds every word the merge draws.
+    [].forEach.call(svg.querySelectorAll("text"), function (node) {
+      var size = TEXT_SIZE[node.getAttribute("class").split(" ")[0]] || 0;
+      top = Math.max(top, Math.ceil(size - Number(node.getAttribute("y"))));
+    });
+    // Words above the line overflow the drawing into the room the track keeps above it; whatever the drawing holds below
+    // its last row, the track keeps room for under it.
+    var rowsHeight = (rows - 1) * LINE_PITCH + LINE_STOP_Y * 2;
+    var height = Math.max(rowsHeight, below);
+    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+    svg.setAttribute("width", String(width));
+    svg.setAttribute("height", String(height));
     track.style.setProperty("--merge-width", width + "px");
     track.style.setProperty("--merge-top", top + "px");
+    track.style.setProperty("--merge-below", (height - rowsHeight + 16) + "px");
+    // Where the motion runs: the trunk's stream ends where the ticks do.
+    svg.geometry = { width: width, joinX: JOIN_X, streamEnd: step ? barX - 10 : postX, trunkY: trunkY };
     return svg;
+  }
+  /** Words wrapped at about `width` characters a line. */
+  function wrapWords(sentence, width) {
+    var lines = [], line = "";
+    text(sentence).split(" ").filter(Boolean).forEach(function (word) {
+      if (line && (line + " " + word).length > width) { lines.push(line); line = word; } else { line = line ? line + " " + word : word; }
+    });
+    if (line) { lines.push(line); }
+    return lines;
   }
   /**
    * The line in motion, while the delivery is open. What has landed is still. A piece being built, reviewed or checked
@@ -1930,7 +2067,7 @@
    */
   // The stream keeps the page's beat (--beat in the stylesheet): a swell is a whole number of beats long.
   var FLOW_SPEED = 72, BEAT_MS = 1200;
-  function drawFlow(track, flows, laneCount, running, mergeWidth) {
+  function drawFlow(track, flows, laneCount, running, geometry) {
     var old = track.querySelector(".line-flow");
     if (old) { old.remove(); }
     var width = track.clientWidth, height = track.clientHeight;
@@ -1945,9 +2082,8 @@
     if (typeof svg.animate !== "function") { svg.remove(); return; }
     var origin = track.getBoundingClientRect();
     var top = parseFloat(getComputedStyle(track).paddingTop) || 0;
-    var rejoining = track.classList.contains("rejoining");
-    var mergeX = width - mergeWidth, joinX = mergeX + 100;
-    var finishX = rejoining ? joinX + REJOIN_PITCH - 32 : mergeX + FINISH_X;
+    var mergeX = width - geometry.width, joinX = mergeX + geometry.joinX;
+    var finishX = mergeX + geometry.streamEnd;
     var trunkY = top + LINE_STOP_Y + (laneCount - 1) * LINE_PITCH / 2;
     // One unbroken stream: a swell of light runs down it at an even pace, with no gap anywhere along it. More running
     // checks bring the swells closer, never faster. Each swell builds slowly and ends at a bright head, so the eye reads
@@ -2077,42 +2213,97 @@
     }
     var lanes = [];
     all.forEach(function (piece) { var lane = piece.item.lane || ""; if (lanes.indexOf(lane) < 0) { lanes.push(lane); } });
-    // Every lane's stops sit on one pitch, set by the longest lane, and end together where the lane turns into the main line.
-    var most = Math.max.apply(null, lanes.map(function (lane) { return all.filter(function (piece) { return (piece.item.lane || "") === lane; }).length; }));
+    // Every lane row is the same width whatever its story count: its landed stories fold into one segment, at most three
+    // open ones keep a stop, and the rest fold into "+n". Every story is a tick on the main line past the join.
     var box = el("div", "lines");
     var track = el("div", "lines-track");
-    track.style.setProperty("--most", String(most));
+    track.style.setProperty("--most", String(ROW_SLOTS));
     box.appendChild(track);
     var stages = Object.create(null);
+    var folds = Object.create(null);
     var buttons = [];
     var ends = [];
     // Keys that all share a prefix such as "V26-" show without it on the line, so a lane's stops fit beside the merge; the
     // full key stays the link's accessible name and its data.
     var prefix = keyPrefix(all);
     var flows = [];
+    // Lighting a lane dims every other lane's row, turn and ticks; the tip names what the pointer or focus is on.
+    var tip = el("div", "mg-tip");
+    tip.hidden = true;
+    tip.setAttribute("aria-hidden", "true");
+    function light(lane) {
+      track.classList.toggle("lit", lane !== null);
+      [].forEach.call(track.querySelectorAll("[data-lane]"), function (node) {
+        node.classList.toggle("on", lane !== null && node.getAttribute("data-lane") === String(lane));
+      });
+    }
+    function name(node, head, body) {
+      if (head === null) { tip.hidden = true; return; }
+      tip.replaceChildren(el("b", null, head), document.createTextNode(body));
+      tip.hidden = false;
+      if (typeof node.getBoundingClientRect === "function" && typeof track.getBoundingClientRect === "function") {
+        var at = node.getBoundingClientRect(), origin = track.getBoundingClientRect();
+        tip.style.left = Math.max(0, at.left - origin.left - 20) + "px";
+        tip.style.top = (at.bottom - origin.top + 8) + "px";
+      }
+    }
+    var look = {
+      colours: colours, nowSubject: nowSubject,
+      laneOf: function (piece) { return lanes.indexOf(piece.item.lane || ""); },
+      selected: function () { return selected; },
+      // A tick, a step or a square names itself on hover and focus, and lights its lane where it has one; a tick also
+      // opens its piece's panel, as a stop does, so a story folded out of its row is still one step away.
+      wire: function (node, piece, head, body) {
+        var lane = node.getAttribute("data-lane");
+        var on = function () {
+          name(node, head, body);
+          light(lane === null ? null : Number(lane));
+          if (piece) { selected = subjectOf(piece.item); showDetail(doc, piece, colours, nowSubject); }
+        };
+        var off = function () { name(node, null); light(null); };
+        node.addEventListener("mouseenter", on);
+        node.addEventListener("focus", on);
+        node.addEventListener("click", on);
+        node.addEventListener("mouseleave", off);
+        node.addEventListener("blur", off);
+        if (piece) {
+          node.addEventListener("keydown", function (event) {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); on(); }
+          });
+        }
+      }
+    };
     lanes.forEach(function (lane, laneIndex) {
       var items = all.filter(function (piece) { return (piece.item.lane || "") === lane; });
       var row = el("div", "line");
       row.style.setProperty("--c", colours[lane]);
+      row.setAttribute("data-lane", String(laneIndex));
+      row.addEventListener("mouseenter", function () { light(laneIndex); });
+      row.addEventListener("mouseleave", function () { light(null); });
       var landedHere = items.filter(isLanded).length;
-      // The lane's rule is solid up to its last landed stop and faint after it; a lane that landed everything is solid to the turn.
-      var lastLanded = -1;
-      items.forEach(function (piece, i) { if (isLanded(piece)) { lastLanded = i; } });
-      var solid = landedHere === items.length ? 100 : lastLanded < 0 ? 0 : 100 - (items.length - 1 - lastLanded + 0.5) * 100 / most;
+      var open = items.filter(function (piece) { return !isLanded(piece); });
+      // The piece being checked keeps its stop whatever its place in the lane, so the line's stream still fires from it.
+      var checked = open.filter(function (piece) { return stopKind(piece, nowSubject) === "now"; })[0];
+      var shownOpen = open.slice(0, OPEN_STOPS);
+      if (checked && shownOpen.indexOf(checked) < 0) { shownOpen = shownOpen.slice(0, OPEN_STOPS - 1).concat([checked]); }
       ends.push({ colour: colours[lane], done: landedHere === items.length });
       add(row, add(el("div", "name"), el("b", null, lane ? names[lane] || lane : noLane(doc)), figures(el("span"), "lane:" + lane, landedHere + " of " + items.length + " landed")));
       var stops = el("div", "stops");
-      var merged = function (k) { return k >= 0 && k < items.length && isLanded(items[k]); };
-      items.forEach(function (piece, i) {
-        var kind = unlandedAtClose(doc, piece) ? "unlanded" : stopKind(piece, nowSubject);
+      items.forEach(function (piece) { stages[subjectOf(piece.item)] = unlandedAtClose(doc, piece) ? "unlanded" : stopKind(piece, nowSubject); });
+      // The landed stories, folded into one segment that grows with their count, up to a slot's width.
+      if (landedHere) {
+        var grew = prev.folds && typeof prev.folds[lane] === "number" && prev.folds[lane] < landedHere && !reduced();
+        var fold = el("div", "seg fold" + (grew ? " grew" : ""));
+        fold.style.setProperty("--landed", String(Math.min(landedHere, 5)));
+        add(fold, el("div", "fold-bar"), el("div", "fold-label", landedHere + " in"));
+        fold.setAttribute("aria-label", plural(landedHere, "piece") + " landed");
+        stops.appendChild(fold);
+      }
+      shownOpen.forEach(function (piece, i) {
+        var kind = stages[subjectOf(piece.item)];
         var key = subjectOf(piece.item);
-        stages[key] = kind;
-        var linkLeft = i === 0 || (merged(i) && merged(i - 1));
-        var linkRight = merged(i) && merged(i + 1);
-        var landing = prev.stages && prev.stages[key] && prev.stages[key] !== "merged" && kind === "merged" && !reduced();
-        var seg = el("div", "seg" + (linkLeft ? " link-left" : "") + (linkRight ? " link-right" : "") + (kind === "active" && !linkLeft ? " incoming" : "") +
-          (landing && (linkLeft || linkRight) ? " drawing" : ""));
-        var button = el("button", "stop-btn " + kind + (landing ? " landing" : ""));
+        var seg = el("div", "seg" + (kind === "active" && !(i === 0 && landedHere) ? " incoming" : ""));
+        var button = el("button", "stop-btn " + kind);
         button.type = "button";
         button.setAttribute("data-subject", key);
         var waiting = kind === "unlanded" ? [] : waitWords(doc, key);
@@ -2123,6 +2314,8 @@
         button.addEventListener("click", show);
         button.addEventListener("mouseenter", show);
         button.addEventListener("focus", show);
+        button.addEventListener("focus", function () { light(laneIndex); });
+        button.addEventListener("blur", function () { light(null); });
         buttons.push(button);
         if (kind === "active" || kind === "now" || kind === "ready") {
           flows.push({ fires: kind === "now", button: button, row: laneIndex, colour: colours[lane], stops: stops,
@@ -2134,6 +2327,17 @@
         add(seg, button, add(el("div", "stop-label"), ticket, piece.item.changeRequest ? changeLink(piece.item.changeRequest) : null));
         stops.appendChild(seg);
       });
+      if (open.length > OPEN_STOPS) {
+        var rest = open.filter(function (piece) { return shownOpen.indexOf(piece) < 0; }).map(function (piece) { return subjectOf(piece.item); });
+        var more = el("div", "seg more", "+" + rest.length);
+        more.setAttribute("role", "img");
+        more.setAttribute("aria-label", rest.length + " more open: " + spokenList(rest));
+        stops.appendChild(more);
+      }
+      folds[lane] = landedHere;
+      // The lane's rule is solid through its folded landed stories, and all the way once every story in it has landed.
+      var used = (landedHere ? 1 : 0) + shownOpen.length + (open.length > OPEN_STOPS ? 1 : 0);
+      var solid = landedHere === items.length ? 100 : landedHere ? (ROW_SLOTS - used + 1) * 100 / ROW_SLOTS : 0;
       stops.style.setProperty("--solid", solid + "%");
       add(row, stops);
       track.appendChild(row);
@@ -2145,20 +2349,19 @@
     // The epic's drawn siblings have rows under this repository's lanes, on the same pitch.
     var epic = rejoins ? null : epicOf(doc, all);
     (epic ? epic.drawn : []).forEach(function (one) { track.appendChild(siblingRow(one)); });
-    var merge = mergeDrawing(doc, all, ends, epic, track);
+    var merge = mergeDrawing(doc, all, ends, epic, track, look);
     track.insertBefore(merge, track.querySelector(".more-chip"));
+    track.appendChild(tip);
     var detail = el("div", "detail");
     detail.id = "detail";
     detail.setAttribute("aria-live", "polite");
     var legend = el("div", "line-legend");
-    (closedEntry(doc) ? [["f", "Landed"], ["u", "Not landed"], ["link", "Both landed"]]
-      : [["f", "Landed"], ["n", "Being checked"], ["r", "Ready to check"], ["a", "In progress"], ["d", "Not started"], ["p", "Waiting for the lead to accept"], ["h", "Stopped"], ["link", "Both landed"]]).forEach(function (entry) {
+    // A row's landed stories fold into one bar, so no line joins two landed stops any more: the key has no entry for one.
+    (closedEntry(doc) ? [["f", "Landed"], ["u", "Not landed"]]
+      : [["f", "Landed"], ["n", "Being checked"], ["r", "Ready to check"], ["a", "In progress"], ["d", "Not started"], ["p", "Waiting for the lead to accept"], ["h", "Stopped"]]).forEach(function (entry) {
       legend.appendChild(add(el("span"), el("i", entry[0]), entry[1]));
     });
-    var rejoin = closedEntry(doc) ? null : rejoinLedger(doc);
-    nodes.push(box);
-    if (rejoin) { nodes.push(rejoin); }
-    nodes.push(detail, legend);
+    nodes.push(box, detail, legend);
     inner.replaceChildren.apply(inner, nodes);
     // Where the line scrolls sideways, as on a phone, it opens at its end, where the lanes merge and the newest work is,
     // and keeps the reader's own place on later redraws.
@@ -2166,13 +2369,14 @@
     if (box.scrollWidth > box.clientWidth) { box.scrollLeft = box.scrollWidth - box.clientWidth - (prev.lineScroll || 0); }
     box.addEventListener("scroll", function () { prev.lineScroll = Math.max(0, box.scrollWidth - box.clientWidth - box.scrollLeft); });
     prev.stages = stages;
+    prev.folds = folds;
     // The motion is measured from the drawn rows, so it is laid once they are in the page, and again when their width changes.
     if (prev.flowWatch) { prev.flowWatch.disconnect(); prev.flowWatch = null; }
     if (!closedEntry(doc)) {
       var layFlow = function () {
         flows.forEach(function (flow) { flow.left = flow.stops.getBoundingClientRect().left; });
         drawFlow(track, flows, lanes.length, current ? list(current.steps).filter(function (step) { return isObject(step) && step.state === "running"; }).length : 0,
-          rejoins ? REJOIN_WIDTH : epic ? EPIC_WIDTH : MERGE_WIDTH);
+          merge.geometry);
       };
       layFlow();
       if (typeof ResizeObserver === "function") { prev.flowWatch = new ResizeObserver(layFlow); prev.flowWatch.observe(track); }
@@ -2314,7 +2518,7 @@
     detail.replaceChildren.apply(detail, nodes);
     // A new piece's panel grows or shrinks to its height smoothly; a live redraw of the same piece does not move.
     if (switched && from) { runEaseHeight(detail, from); }
-    Array.prototype.forEach.call(document.querySelectorAll(".stop-btn"), function (button) {
+    Array.prototype.forEach.call(document.querySelectorAll(".stop-btn, .mg-tick"), function (button) {
       button.setAttribute("aria-pressed", String(button.getAttribute("data-subject") === subject));
     });
   }
@@ -2524,9 +2728,10 @@
     return box;
   }
 
-  // A push redraws at once; the runs come from the view the server renders after it.
+  // A push redraws at once; the runs come from the view the server renders after it. The server's word that the runs
+  // moved comes once their views are written, so that re-read waits for nothing.
   var runsAsked = null;
-  function refreshRuns() {
+  function refreshRuns(wait) {
     if (typeof fetch !== "function" || typeof location !== "object" || !/^https?:$/.test(location.protocol)) { return; }
     clearTimeout(runsAsked);
     runsAsked = setTimeout(function () {
@@ -2547,7 +2752,7 @@
         DRIFT = drifted ? readDrift(drifted[1]) : null;
         if (isObject(next)) { runs = next; safely(lastGood || shown); }
       }).catch(function () { /* the runs already shown stay */ });
-    }, 3000);
+    }, typeof wait === "number" ? wait : 3000);
   }
 
   function timelineFor(doc, item) {
@@ -3984,13 +4189,21 @@
     }, "depth"), choice("Show", FILTERS, storyFilter, function (picked) { storyFilter = picked; }, "tab"));
     var beats = Object.create(null);
     story.beats.forEach(function (beat) { if (isObject(beat)) { beats[text(beat.id)] = beat; } });
+    // The setbacks, each told once in the ledger above the chapters, by row id.
+    var ledger = Array.isArray(story.ledger) ? story.ledger.filter(function (row) { return isObject(row) && text(row.id); }) : null;
+    var rows = Object.create(null);
+    (ledger || []).forEach(function (row) { rows[text(row.id)] = row; });
     var ol = el("ol", "story");
     story.chapters.slice().reverse().forEach(function (chapter) {
       if (!isObject(chapter) || !isObject(chapter.words)) { return; }
       var shownBeats = list(chapter.beats).map(function (name) { return beats[text(name)]; })
         .filter(function (beat) { return beatShown(beat, depth, storyFilter); }).reverse();
-      var standing = list(chapter.words.standing).filter(isObject);
-      if (storyFilter !== "all" && !shownBeats.length && !(storyFilter === "problems" && standing.length) && !(storyFilter === "landed" && chapter.form === "landing")) { return; }
+      // With a ledger, a chapter names each setback that opened or ended in it, once, linked to its row; a story told
+      // before the ledger keeps the standing lines it carried.
+      var setbacks = ledger ? list(chapter.setbacks).map(function (name) { return rows[text(name)]; }).filter(Boolean) : [];
+      var standing = ledger ? [] : list(chapter.words.standing).filter(isObject);
+      var showsSetbacks = storyFilter === "all" || storyFilter === "problems";
+      if (storyFilter !== "all" && !shownBeats.length && !(storyFilter === "problems" && (standing.length || setbacks.length)) && !(storyFilter === "landed" && chapter.form === "landing")) { return; }
       var li = el("li", "chapter-of is-" + text(chapter.form));
       li.setAttribute("data-chapter", text(chapter.id));
       var heading = add(el("div", "chapter-head"), add.apply(null, [el("h3")].concat(linked(chapter.words.head))), timeOf(chapter.at));
@@ -4002,6 +4215,7 @@
         li.appendChild(add.apply(null, [el("p", "chapter-standing" + (carried.until ? " is-ended" : ""))].concat(linked(carried.text),
           [carried.until ? ", until " + (clock(carried.until) || "a time unknown") + "." : ""])));
       });
+      if (showsSetbacks) { setbacks.forEach(function (row) { li.appendChild(setbackLine(row, chapter)); }); }
       if (shownBeats.length) {
         var ul = el("ul", "beats");
         shownBeats.forEach(function (beat) { ul.appendChild(beatRow(doc, story, beat, prev.story && !prev.story[beatKey(beat)] && !reduced(), depth)); });
@@ -4014,12 +4228,90 @@
     var digest = isObject(story.digest.words) ? story.digest.words : { head: "", line: "" };
     // A part the story doesn't hold, a digest line or a legend, is left out rather than drawn as nothing.
     inner.replaceChildren();
+    var say = ledger ? ledgerSay(ledger, story.digest) : text(digest.line);
     add(inner, el("div", "kicker", "What happened"), el("h2", "title", text(digest.head)),
-      text(digest.line) ? el("p", "say", text(digest.line)) : null, storyLegend(story, depth), switches, ol);
+      say ? el("p", "say", say) : null, storyLegend(story, depth), switches,
+      ledger && ledger.length && (storyFilter === "all" || storyFilter === "problems") ? setbackLedger(ledger) : null, ol);
     // Depth changes density in place: the chapter eases from the height it had, on the shared fold's motion.
     runEaseHeight(inner, from);
   }
   function beatKey(beat) { return text(beat.form) + ":" + list(beat.entries).join(","); }
+  var NUMBER_WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+  function numberWord(count) { return count < NUMBER_WORDS.length ? NUMBER_WORDS[count] : String(count); }
+  function capital(words) { return words.charAt(0).toUpperCase() + words.slice(1); }
+  /**
+   * What happened in one line, read from the ledger: whether anything is stopped now, how many setbacks are over and what
+   * they cost, then the lead's decisions. Copies of one setback are one row, so one setback is counted once.
+   */
+  function ledgerSay(ledger, digest) {
+    var open = ledger.filter(function (row) { return row.state === "open"; });
+    var over = ledger.filter(function (row) { return row.state !== "open"; });
+    var parts = [];
+    if (!ledger.length) { parts.push("No setbacks."); }
+    else if (open.length) { parts.push(capital(numberWord(open.length)) + (open.length === 1 ? " setback stands now." : " setbacks stand now.")); }
+    else { parts.push("Nothing is stopped now."); }
+    if (over.length) {
+      // What the ended setbacks cost together: the question the line answers, with no figure to match to a row.
+      var cost = over.reduce(function (sum, row) { return sum + (typeof row.cost === "number" && row.cost > 0 ? row.cost : 0); }, 0);
+      parts.push(capital(numberWord(over.length)) + (over.length === 1 ? " is over" : " are over") +
+        (cost > 0 ? ", costing " + duration(cost) : "") + ".");
+    }
+    var decisions = typeof digest.decisions === "number" ? digest.decisions : 0;
+    if (decisions) { parts.push("The lead made " + numberWord(decisions) + (decisions === 1 ? " decision." : " decisions.")); }
+    return parts.join(" ");
+  }
+  /** When a row's setbacks happened: one instant, or the first and the last of several. */
+  function rowSpan(row) {
+    var first = clock(row.firstOpenedAt) || "a time unknown";
+    return row.count > 1 && text(row.lastOpenedAt) && row.lastOpenedAt !== row.firstOpenedAt ? first + "–" + (clock(row.lastOpenedAt) || "a time unknown") : first;
+  }
+  /**
+   * The ledger: every setback once, grouped by story and reason, the ones still standing first, tinted, with since when
+   * and who they wait on; the ended ones after, muted, with what ended them, when, and what they cost. Each row can take
+   * focus, and a chapter's line about it leads to it.
+   */
+  function setbackLedger(ledger) {
+    var box = add(el("section", "setback-ledger"), el("h3", "ledger-title", "Setbacks"));
+    box.setAttribute("aria-label", "Setbacks");
+    var ul = el("ul", "ledger-rows");
+    ledger.forEach(function (row) {
+      var open = row.state === "open";
+      var li = el("li", "ledger-row " + (open ? "is-open" : "is-closed"));
+      li.id = "setback-" + text(row.id);
+      li.setAttribute("data-row", text(row.id));
+      li.setAttribute("tabindex", "0");
+      var words = isObject(row.words) ? row.words : {};
+      var what = add(el("div", "ledger-what"), add.apply(null, [el("b")].concat(linked(words.head))), el("span", "ledger-line", text(words.line)));
+      var when = open
+        ? "since " + (clock(row.since) || "a time unknown") + (text(row.waitingOn) ? " · waits on " + text(row.waitingOn) : "")
+        : "ended " + (clock(row.endedAt) || "at a time unknown") + (typeof row.cost === "number" && row.cost > 0 ? " · cost " + duration(row.cost) : "");
+      var meta = add(el("div", "ledger-when"), el("span", "ledger-span", rowSpan(row)), el("span", "ledger-state", when));
+      add(li, glyph("stop"), what, meta);
+      ul.appendChild(li);
+    });
+    return add(box, ul);
+  }
+  /**
+   * A chapter's line about one setback: what it was, and whether it opened here, ended here, or still stands, linked to
+   * its row in the ledger. Following the link moves focus to the row.
+   */
+  function setbackLine(row, chapter) {
+    var words = isObject(row.words) ? row.words : {};
+    var chapters = isObject(row.chapters) ? row.chapters : {};
+    var here = text(chapter.id);
+    var state = row.state === "open" ? "still stands" : chapters.ended === here && chapters.opened === here ? "over" :
+      chapters.ended === here ? "ended here" : "opened here, ended later";
+    var link = el("a", "setback-link", text(words.head).replace(/\.$/, "") + " · " + state);
+    link.setAttribute("href", "#setback-" + text(row.id));
+    link.addEventListener("click", function (event) {
+      var target = document.getElementById("setback-" + text(row.id));
+      if (!target) { return; }
+      event.preventDefault();
+      target.focus();
+      if (typeof target.scrollIntoView === "function") { target.scrollIntoView({ block: "nearest" }); }
+    });
+    return add(el("p", "chapter-setback" + (row.state === "open" ? " is-open" : "")), glyph("stop"), link);
+  }
   /** A small group of buttons choosing one of its options, drawn again on a pick. */
   function choice(label, options, current, pick, data) {
     var group = el("div", "tabs" + (data === "depth" ? " depth" : " filter"));
@@ -4256,6 +4548,9 @@
           safely(lastGood || shown);
         });
       } catch (error) { /* a store without a status line still serves its pushes and read below */ }
+    }
+    if (typeof store.onRuns === "function") {
+      try { store.onRuns(function () { refreshRuns(0); }); } catch (error) { /* the pushes and the interval still re-read */ }
     }
     var pushed = false;
     if (typeof store.subscribe === "function") {

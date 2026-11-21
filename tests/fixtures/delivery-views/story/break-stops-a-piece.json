@@ -54,7 +54,10 @@
         "head": "Getting started",
         "line": "Lane 1 picked up A.",
         "standing": []
-      }
+      },
+      "setbacks": [
+        "s1"
+      ]
     },
     {
       "id": "c2",
@@ -74,7 +77,8 @@
         "head": "A landed",
         "line": "34m after it was picked up, after 2 review rounds.",
         "standing": []
-      }
+      },
+      "setbacks": []
     }
   ],
   "beats": [
@@ -346,6 +350,7 @@
       "closedAt": "2026-11-16T09:25:00Z",
       "cost": 1020,
       "state": "closed",
+      "endedBy": "answer",
       "entries": [
         5,
         6,
@@ -365,6 +370,35 @@
       "words": {
         "head": "A setback: the main line broke",
         "line": "A check failed on the main line too. It held up A. It ended when the main line was repaired."
+      }
+    }
+  ],
+  "ledger": [
+    {
+      "id": "s1",
+      "subject": null,
+      "kind": "base.broken",
+      "reason": null,
+      "threads": [
+        "t1"
+      ],
+      "count": 1,
+      "firstOpenedAt": "2026-11-16T09:08:00Z",
+      "lastOpenedAt": "2026-11-16T09:08:00Z",
+      "state": "closed",
+      "since": null,
+      "endedAt": "2026-11-16T09:25:00Z",
+      "endedBy": 8,
+      "ending": "answer",
+      "cost": 1020,
+      "waitingOn": null,
+      "chapters": {
+        "opened": "c1",
+        "ended": "c1"
+      },
+      "words": {
+        "head": "The main line broke.",
+        "line": "It ended when the main line was repaired."
       }
     }
   ],

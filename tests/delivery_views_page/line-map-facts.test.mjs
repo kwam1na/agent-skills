@@ -118,7 +118,7 @@ test("the merge check's steps say what the story says of entries that carry fact
     entry(3, 12, "check.failed", { check: "suite", timedOut: false, failing: ["suite.Case.test_it"], more: 0, log: "logs/suite.log" }, "A", { because: [2] }),
   ];
   const document = record({ queue: [item("A", "queued")], journal });
-  const [, card] = await openPage(pageWithRuns(document, {}, { config: CONFIG }), { now: NOW, store: false, steps: [{ click: '.stop-btn[data-subject="A"]' }] });
+  const [, card] = await openPage(pageWithRuns(document, {}, { config: CONFIG }), { now: NOW, store: false, steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="A"]' }] });
   const beats = told(document).story.beats.filter((beat) => beat.form === "entry");
   const said = (id) => { const { words } = beats.find((beat) => beat.entries.includes(id)); return words.head + (words.line ? ": " + words.line : ""); };
   expect([...card.app.querySelectorAll("#detail .mh li span")].map((step) => step.textContent)).toEqual([said(1), said(2), said(3)]);
