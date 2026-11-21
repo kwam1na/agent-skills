@@ -16,7 +16,7 @@ judgement. It adds no rules.
 The epic is delivered on its own integration base, `integrate/lane-commands`. The lead then takes it into `main` as
 the guide's "Reviewing an integration base for the default branch" says.
 
-Checked against `main` at `b5e448e2` on 2026-11-20:
+Checked against `main` at `9a084797` on 2026-11-20:
 
 - `Runner.sync` in `skills/orchestrate-work/scripts/merge_queue.py` builds the base merge in a checkout, then calls
   `push`, which pushes `synced:refs/heads/<branch>` under `--force-with-lease=refs/heads/<branch>:<head>`. `check`

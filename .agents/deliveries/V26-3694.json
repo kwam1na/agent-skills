@@ -1,0 +1,269 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3694",
+  "headline": "V26-3694: give lanes and leads commands for what they do by hand today",
+  "baseBranch": "integrate/lane-commands",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-20-lane-commands.md",
+  "laneBrief": "docs/plans/2026-11-20-lane-commands.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-20-lane-commands.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions",
+      "Units and order"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/orchestrate-work/scripts/merge_queue.py",
+        "tests/test_merge_queue.py",
+        "tests/fixtures/journal-kinds/vectors.json",
+        "tests/test_journal_kinds.py",
+        "tests/test_journal_shape.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/orchestrate-work/scripts/region_ownership.py",
+        "tests/test_lane_changes.py",
+        "tests/test_region_grants.py",
+        "tests/test_region_claims.py",
+        "tests/test_lead_assign_owns.py"
+      ]
+    },
+    "lane-3": {
+      "owns": [
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "tests/test_orchestration_state.py",
+        "tests/test_delivery_key_collision.py",
+        "tests/test_lead_add_lane.py",
+        "tests/test_lead_plan_changes.py",
+        "tests/test_lane_rows.py"
+      ]
+    },
+    "lane-4": {
+      "owns": [
+        "skills/run-delivery/templates/lane-brief.md",
+        "tests/test_run_delivery_hooks.py",
+        "tests/test_run_delivery_review_wait.py",
+        "tests/test_round_brief_template_corpus.py",
+        "tests/test_waits_review.py"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3643": {
+      "title": "Keep the merge queue's sync merges off a lane's branch, so a lane can push its own base merge",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3643-1",
+          "text": "After the queue stops a synced candidate, a lane can push an authorized base merge of its reviewed head and hand off, with no one running a raw force-push."
+        },
+        {
+          "id": "v26-3643-2",
+          "text": "Nothing a lane or lead wrote is ever dropped: only the queue's own sync commits are moved off the lane's branch, or never placed there."
+        },
+        {
+          "id": "v26-3643-3",
+          "text": "The move, where one happens, is in the journal with its reason."
+        },
+        {
+          "id": "v26-3643-4",
+          "text": "After a failed run, the lane can push a fix on top of its handed head without a force push."
+        },
+        {
+          "id": "v26-3643-5",
+          "text": "Where the queue does leave a commit on the story branch, the candidate.stopped entry names it."
+        }
+      ]
+    },
+    "V26-3649": {
+      "title": "Pin the outside-span laneOutside item's detail",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3649-1",
+          "text": "The outside-span and whole-file laneOutside items' fields.detail is pinned to its text, for example \"It changed line 2, outside its span.\""
+        }
+      ]
+    },
+    "V26-3640": {
+      "title": "Grant line spans by anchor, and treat an edit at a span's edge as the span's",
+      "lane": "lane-2",
+      "after": [
+        "V26-3649"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3640-1",
+          "text": "c1: A span granted by anchor resolves to the right lines and records the coordinates."
+        },
+        {
+          "id": "v26-3640-2",
+          "text": "c2: Replacing a span's last line with that line plus new lines is accepted."
+        },
+        {
+          "id": "v26-3640-3",
+          "text": "c3: An insertion just past a span is refused when another lane owns the next line."
+        },
+        {
+          "id": "v26-3640-4",
+          "text": "c4: A span a base edit crossed without touching its lines is carried forward by one command, journalled."
+        }
+      ]
+    },
+    "V26-3432": {
+      "title": "Offer lead-assign's co-change warnings as owns candidates",
+      "lane": "lane-2",
+      "after": [
+        "V26-3640"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3432-1",
+          "text": "A co-change file lead-assign warns about can be added to the lane's owns without hand-editing the delivery file."
+        },
+        {
+          "id": "v26-3432-2",
+          "text": "A one-line pin update in an unowned file can be accepted with a recorded reason."
+        }
+      ]
+    },
+    "V26-3434": {
+      "title": "Let the lead patch a lane row without racing the queue's version",
+      "lane": "lane-3",
+      "criteria": [
+        {
+          "id": "v26-3434-1",
+          "text": "A lead patch to a lane row succeeds while the queue writes other parts of the record, and still refuses when the same row changed."
+        },
+        {
+          "id": "v26-3434-2",
+          "text": "Patching status on a lane row is refused with a message naming state."
+        }
+      ]
+    },
+    "V26-3578": {
+      "title": "Keep a delivery's record out of its own story's lane checkout when the two share a key",
+      "lane": "lane-3",
+      "after": [
+        "V26-3434"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3578-1",
+          "text": "c1: A delivery whose key equals a story key runs with its record somewhere lane-start doesn't use, with no extra step."
+        },
+        {
+          "id": "v26-3578-2",
+          "text": "c2: doctor --delivery reports the collision."
+        }
+      ]
+    },
+    "V26-3628": {
+      "title": "Let the lead add a lane to a running delivery with one command",
+      "lane": "lane-3",
+      "after": [
+        "V26-3578"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3628-1",
+          "text": "c1: A lead adds a lane to a running delivery with one command. The lane is then in the delivery file and in the record, and lead-own and lead-assign accept it."
+        },
+        {
+          "id": "v26-3628-2",
+          "text": "c2: Initial claims that overlap another lane's claims, a shared output, or a region claim are refused, and nothing is written."
+        },
+        {
+          "id": "v26-3628-3",
+          "text": "c3: lead-plan change --kind added can add a story on a lane added that way, with no hand edit to the delivery file or the record."
+        },
+        {
+          "id": "v26-3628-4",
+          "text": "c4: No step needs the state tool's raw patch on laneOwnership."
+        }
+      ]
+    },
+    "V26-3676": {
+      "title": "Don't tell a lane session to start the lead's lead-wait",
+      "lane": "lane-4",
+      "criteria": [
+        {
+          "id": "v26-3676-1",
+          "text": "The hook tells which session is the lead's from something other than the checkout the last command ran in, and never asks a lane session to start lead-wait."
+        },
+        {
+          "id": "v26-3676-2",
+          "text": "A test in the hooks module covers a lane session that ran a command from the lead checkout."
+        }
+      ]
+    },
+    "V26-3427": {
+      "title": "Keep lanes waiting on their own lens results inside a turn",
+      "lane": "lane-4",
+      "after": [
+        "V26-3676"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3427-1",
+          "text": "A lane running a review round ends no turn between review-prepare and review-reduce unless it is blocked or has a question: review-wait waits on its lens results in the foreground, and review-prepare and the lane brief name it."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "V26-3643, V26-3649, V26-3640, V26-3432, V26-3434, V26-3578, V26-3628, V26-3676 and V26-3427 land on integrate/lane-commands through its merge queue",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration head, with --workers 4 --budget tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide's integration review says, and merged into main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-20"
+  },
+  "outcome": {
+    "summary": "Lanes and leads do with commands what they do by hand today.",
+    "text": "Lanes and leads do with commands what they do by hand today. The queue never leaves its own commits on a lane's branch; a lead grants, carries and accepts ownership with commands and adds a lane to a running delivery in one write; a lead patches a lane row while the queue writes the rest of the record; a delivery whose key is also a story's key sets up with no extra step; the stop hook tells a lane from the lead by the session; and a lane waits on its lenses in the foreground."
+  },
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}
