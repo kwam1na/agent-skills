@@ -1391,6 +1391,19 @@ class QueueRefTests(MergeQueueTestCase):
         self.assertEqual(backs, [adopter.item("feature")["syncedHead"]])
         self.assertEqual(adopter.tip("feature"), head)
         self.assertNotIn("leftOnBranch", self.stop_entry(adopter)["data"])
+        # Both tries fail with the branch still at the synced head: the stop names what the queue left there.
+        self.fresh()
+        adopter = self.environment_adopter({"MQ_READY": "refuse"})
+        head = self.candidate(adopter)
+
+        def never_back(runner, branch, held, to):
+            return real(runner, branch, "0" * 40 if to == head else held, to)
+
+        with mock.patch.object(queue.Runner, "move_branch", never_back):
+            self.assertStopped(self.run_queue(adopter, "feature"), "ready_refused")
+        synced = adopter.item("feature")["syncedHead"]
+        self.assertEqual(adopter.tip("feature"), synced)
+        self.assertEqual(self.stop_entry(adopter)["data"]["leftOnBranch"], synced)
         self.fresh()
         adopter = self.environment_adopter({"MQ_MERGE": "delete"})
         self.candidate(adopter)
