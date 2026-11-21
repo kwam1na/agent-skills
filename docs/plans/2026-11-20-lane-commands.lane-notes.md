@@ -10,3 +10,8 @@
   `handoff --checks`.
 - Refresh `catalog.json`, `profiles/*` and `provenance.lock.json` with `scripts/update-provenance.py`, never by hand.
 - No release is cut for this delivery. Don't touch version tags or release files.
+- V26-3628's c4: the state tool's changes file records only `{at, change, journal, version}`, so show the one patch
+  by one `patch` changes line, a one-step version move, and both values in the resulting state. Don't change the
+  changes file's format, which the live view reads.
+- V26-3578's c2: assert the doctor row's level, `warn` for a colliding key whose record folder is ignored, beside
+  the `wrong` row for an unignored one.
