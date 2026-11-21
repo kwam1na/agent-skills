@@ -2,7 +2,7 @@
   "schemaVersion": "orchestration-binding/1",
   "base": {
     "remote": "origin",
-    "ref": "integrate/every-workflow-on-the-live-view"
+    "ref": "main"
   },
   "bases": [
     "main",
