@@ -94,7 +94,7 @@ the round, at the delivery's tail. Evidence beyond that set names each additiona
 path at a time, with what it is evidence for; never widen a run to a directory. Mutation and fault injection stay on
 the candidate's changed lines and the code that calls them, and your `evidence` says so.
 
-The machine's ledger is shared by every repository on this machine. `{{flow}} claim [--slots N] [--label L] -- <argv>`,
+The machine's ledger is shared by every repository on this machine. `{{flow}}{{delivery_option}} claim [--slots N] [--label L] -- <argv>`,
 run in your checkout, is the default way to start a heavy command, such as a module or mutation run: it claims slots,
 waits while the machine is full, names the claims ahead of it, and then runs argv under its claim. `{{machine}} status`
 shows the machine. `--now --why <reason>` steps off the default and runs at once, and the reason is recorded. Which

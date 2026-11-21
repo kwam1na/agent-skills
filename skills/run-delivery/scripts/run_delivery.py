@@ -1743,7 +1743,7 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
         "metadataSha256": rel["metadataSha256"], "graph": graph_digest(), "bound_text": bound_text, "kind": kind,
         "carry": carry, "resolutions": resolutions, "charter": charter, "later": later, "checkout": str(checkout),
         "context": context, "in_app": in_app_summary(key), "severities": STORY_SEVERITIES, "checks": scoped_checks(span),
-        "flow": flow_command(), "machine": machine_command(),
+        "flow": flow_command(), "machine": machine_command(), "delivery_option": delivery_option(c),
     }
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
 
@@ -2033,6 +2033,12 @@ def flow_command() -> str:
     if c is not None and c.release_override:
         return f"python3 -B {Path(c.release_override) / 'skills/run-delivery/scripts/run_delivery.py'}"
     return f"python3 -B {TOOL_PATH}"
+
+
+def delivery_option(c) -> str:
+    """` --delivery KEY` for a command a lens runs in its checkout, which is detached, so its branch names no delivery;
+    nothing for a plan review with no delivery."""
+    return f" --delivery {c.delivery}" if getattr(c, "delivery", None) else ""
 
 
 def machine_command() -> str:
@@ -2650,6 +2656,7 @@ def plan_brief(c, n: int, lens: str, candidate: str, tree: str, checkout: Path, 
         "carry": carry, "resolutions": resolutions, "charter": Path(charter_file).read_text().strip(), "later": later,
         "checkout": str(checkout), "context": context, "in_app": "None: a plan review has no in-app evidence.",
         "severities": PLAN_SEVERITIES, "flow": flow_command(), "machine": machine_command(),
+        "delivery_option": delivery_option(c),
         "checks": ("- scoped sensor commands: none; a plan review runs no checks, since the plan is the whole subject.\n"
                    "- test files in scope for this round: none."),
     }

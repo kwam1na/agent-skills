@@ -1131,7 +1131,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "926940c120c28ab4a4c59491b75c6db01e412b572ada2151c6252d86122cdf1d"
+          "sha256": "79e607c46d7940445872a25162837d3f65de13976936c7fb18066023d866524c"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
@@ -1151,7 +1151,7 @@
         },
         {
           "path": "skills/run-delivery/templates/round-brief.md",
-          "sha256": "5702aedb84e09838f8a0419ee43f76b2c2bb4bff4e722aa67af2a899d90bcec1"
+          "sha256": "ffe79dd28aa754eed231a8d5e472c1179ebe57c56f59b5dc2586fe40a12aaf66"
         }
       ],
       "owner": "delivery-agent/user-delegated",
