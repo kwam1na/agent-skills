@@ -1742,6 +1742,7 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
         "metadataSha256": rel["metadataSha256"], "graph": graph_digest(), "bound_text": bound_text, "kind": kind,
         "carry": carry, "resolutions": resolutions, "charter": charter, "later": later, "checkout": str(checkout),
         "context": context, "in_app": in_app_summary(key), "severities": STORY_SEVERITIES, "checks": scoped_checks(span),
+        "result": str(result_path(review_dir(key), round_no, short)),
     }
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
 
@@ -2017,11 +2018,58 @@ def review_prepare(args) -> None:
     else:
         print("Resume the same reviewer for each lens, in parallel, with exactly this message. Only if a reviewer "
               "can't be resumed, start a fresh one with the same prompt and say so in the hand-off.")
-    print("Save each final JSON message, exactly as returned, to its result path. Never write or edit a result.\n")
+    print("Each reviewer writes its final JSON to its result path as its last step. Wait for them in the foreground, "
+          f"inside your turn: {flow_command()} review-wait {key} --round {n} returns once every result is in, and exits "
+          "4 naming the lenses still out when its time runs out, so run it again. A reviewer that returned without "
+          "writing its result: save its final JSON message, exactly as returned, to its result path. Never edit a "
+          "result.\n")
     for lens, path, result in briefs:
-        print(f"- {lens}\n  prompt: Read {path} and follow it exactly. Your final message is only the JSON it asks for.\n"
-              f"  save to: {result}")
-    print(f"\nThen: {flow_command()} review-reduce {key} --round {n}")
+        print(f"- {lens}\n  prompt: Read {path} and follow it exactly. As your last step, write your final JSON to "
+              f"{result}, then reply with only that same JSON.\n"
+              f"  result path: {result}")
+    print(f"\nThen: {flow_command()} review-reduce {key} --round {n}, once {flow_command()} review-wait {key} --round {n} "
+          "returns 0")
+
+
+# review-wait's default deadline, inside a host's ten-minute command limit, and how often it looks.
+REVIEW_WAIT_SECONDS, REVIEW_WAIT_POLL = 540, 5
+
+
+def parsed_json(path: Path) -> bool:
+    """Whether `path` holds JSON that parses: a result still being written, or not written, doesn't."""
+    try:
+        json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def review_wait(args) -> None:
+    """`review-wait <key> --round N [--seconds S]`: wait in the foreground until every lens's result path in the
+    round's meta holds JSON that parses, then exit 0; exit 4 naming the lenses still out once S seconds run out."""
+    c = cfg()
+    key = c.require(args.key)
+    n = args.round
+    folder = review_dir(key)
+    meta = load_json(folder / f"round-{n}.meta.json")
+    if meta is None:
+        raise Stop(f"round {n} isn't prepared: {flow_command()} review-prepare {key} --round {n} prepares it")
+    if args.seconds < 0:
+        raise Stop(f"--seconds is {args.seconds:g}: give zero or more")
+    paths = {lens: result_path(folder, n, c.lenses[lens][0]) for lens in meta["lenses"] if lens in c.lenses}
+    watch = clock()
+    deadline = watch.time() + args.seconds
+    while True:
+        out = [lens for lens, path in paths.items() if not parsed_json(path)]
+        if not out:
+            print(f"{key} round {n}: every lens's result is in. Then: {flow_command()} review-reduce {key} --round {n}")
+            return
+        left = deadline - watch.time()
+        if left <= 0:
+            print(f"{key} round {n}: still out after {args.seconds:g}s: {', '.join(out)}. Wait again: "
+                  f"{flow_command()} review-wait {key} --round {n}")
+            sys.exit(4)
+        watch.sleep(min(watch.poll(REVIEW_WAIT_POLL), left))
 
 
 def flow_command() -> str:
@@ -2645,6 +2693,7 @@ def plan_brief(c, n: int, lens: str, candidate: str, tree: str, checkout: Path, 
         "severities": PLAN_SEVERITIES,
         "checks": ("- scoped sensor commands: none; a plan review runs no checks, since the plan is the whole subject.\n"
                    "- test files in scope for this round: none."),
+        "result": str(result_path(plan_review_dir(c), n, short)),
     }
     template = (TOOL / "templates/round-brief.md").read_text()
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
@@ -4430,6 +4479,8 @@ def lane_start(args) -> None:
     # it is. It comes first, so the stage is moved before the start is recorded.
     if mark_building(c, key, lane):
         did.append(f"{lane} started it: now building")
+    # On every run, so a session that takes the story over is seated as its lane too.
+    record_session(c, "lane", key)
     if not starts:
         # The focus is set only with the start, so running it again never resets what the lane has said since.
         state_tool("focus", "--lane", lane, "--text", f"{key}: started", "--state", "working", "--waiting-on", "")
@@ -7740,6 +7791,7 @@ def lead_init(args) -> None:
             rebuild_plan(c)
     print(f"initialized {c.state} with {len(planned)} planned stories across {len(c.lanes)} lanes"
           + (f"; wrote {c.state / PLAN_FILE}" if (c.state / PLAN_FILE).exists() else ""))
+    record_session(c, "lead")
     for item in planned:
         if (outcome := refine_outcome(c, item["subject"])) is not None:
             print(f"  refine: {outcome}")
@@ -11214,6 +11266,7 @@ def lead_wait(args) -> None:
     c = cfg()
     if not (c.state / "state.json").exists():
         raise Stop(f"no record at {c.state}: lead-init starts it")
+    record_session(c, "lead")
     passed = list(args.wait_args)
     parsed = _validator().wait_arguments(passed)
     after = parsed.after
@@ -11298,13 +11351,16 @@ class Seat:
         self.role, self.configs, self.story = role, configs, story
 
 
-def seat_of(cwd_text: object) -> Seat | None:
-    """The session's seat, from the payload's cwd: a lane when the cwd lies in the checkout of a story of an open
+def seat_of(payload: dict) -> Seat | None:
+    """The session's seat. A `session_id` an open delivery's sessions.json holds seats it by the role recorded there,
+    whatever its cwd: a lane on its story, matched first, else the lead of each delivery that recorded it. Any other
+    session is seated from the payload's cwd: a lane when the cwd lies in the checkout of a story of an open
     delivery, matched first; else the lead of each delivery whose record is open in the cwd's checkout; else none.
     A cwd's checkout is the deepest one holding it, after resolving symlinks, so a lane nested in the lead's
     checkout is a lane, and any other checkout nested there is neither."""
     global OFFLINE
     OFFLINE = True  # a hook reads what this machine has; it never fetches
+    cwd_text, session = payload.get("cwd"), payload.get("session_id")
     if not isinstance(cwd_text, str) or not os.path.isabs(cwd_text) or not os.path.isdir(cwd_text):
         return None
     cwd = real(cwd_text)
@@ -11339,6 +11395,8 @@ def seat_of(cwd_text: object) -> Seat | None:
         return None
     lanes: list[tuple[Path, str, str]] = []
     leads: list[str] = []
+    recorded_lanes: list[tuple[Path, str, str]] = []
+    recorded_leads: list[tuple[Path, str]] = []
     for key, d in here.delivery_files().items():
         lead_root = deepest(real(here.state_of(key, d)), checkouts)
         lead = config_at(lead_root) if lead_root is not None else None
@@ -11347,17 +11405,81 @@ def seat_of(cwd_text: object) -> Seat | None:
         files = lead.delivery_files()
         if key not in files or not lead.open_here(key, files[key]):
             continue
-        for story in files[key].get("stories") or {}:
+        stories = files[key].get("stories") or {}
+        entry = recorded_session(lead.state_of(key, files[key]), session)
+        if entry is not None and entry.get("role") == "lane" and entry.get("story") in stories:
+            recorded_lanes.append((lead_root, key, entry["story"]))
+        elif entry is not None and entry.get("role") == "lead":
+            recorded_leads.append((lead_root, key))
+        for story in stories:
             if real(lead.lane_checkout(story)) == owner:
                 lanes.append((lead_root, key, story))
         if lead_root == owner:
             leads.append(key)
+    for lead_root, key, story in recorded_lanes:
+        c = loaded(lead_root, key)
+        if c is not None:
+            return Seat("lane", [c], story)
+    found = [c for c in (loaded(lead_root, key) for lead_root, key in recorded_leads) if c is not None]
+    if found:
+        return Seat("lead", found)
     for lead_root, key, story in lanes:
         c = loaded(lead_root, key)
         if c is not None:
             return Seat("lane", [c], story)
     found = [c for c in (loaded(owner, key) for key in leads) if c is not None]
     return Seat("lead", found) if found else None
+
+
+# The host sessions a delivery's commands ran in, beside its record: {"sessions": {<session id>: {"role": "lane",
+# "story": <key>} or {"role": "lead"}}}, so a hook seats a session by its id rather than by the folder its last command
+# ran in. A host that exports no session id records none, and its sessions are seated by cwd.
+SESSIONS_FILE = "sessions.json"
+SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
+
+
+def read_sessions(path: Path) -> dict:
+    """sessions.json's `sessions`, or none when it is missing or unreadable."""
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    sessions = doc.get("sessions") if isinstance(doc, dict) else None
+    return sessions if isinstance(sessions, dict) else {}
+
+
+def recorded_session(state: Path, session: object) -> dict | None:
+    """What the record at `state` holds for the host session `session`, or None."""
+    if not isinstance(session, str) or not session:
+        return None
+    entry = read_sessions(state / SESSIONS_FILE).get(session)
+    return entry if isinstance(entry, dict) else None
+
+
+def record_session(c, role: str, story: str | None = None) -> None:
+    """Record the session this command runs in, when the host names it, as `role` (on `story`, for a lane) in the
+    record's sessions.json. It reads, changes and replaces the file under the record's state lock, so two sessions
+    recording at once both keep their entry, and leaves it untouched when it already says so."""
+    session = os.environ.get(SESSION_VARIABLE, "").strip()
+    if not session or not c.state.is_dir():
+        return
+    entry = {"role": role, **({"story": story} if story else {})}
+    path = c.state / SESSIONS_FILE
+    with open(c.state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            sessions = read_sessions(path)
+            if sessions.get(session) == entry:
+                return
+            sessions[session] = entry
+            staging = path.with_name(f".{path.name}.{os.getpid()}")
+            try:
+                staging.write_text(json.dumps({"sessions": sessions}, indent=2) + "\n")
+                os.replace(staging, path)
+            finally:
+                staging.unlink(missing_ok=True)  # gone once replaced; a failed write leaves the file as it was
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def record_of(c) -> dict:
@@ -11384,7 +11506,7 @@ def lead_may_stop(payload: dict) -> dict:
     `block` under enforce with one open delivery in the checkout; `warn` under warn, and whenever two or more open
     deliveries share the checkout, since which one this session leads can't be told. A hold the session hasn't
     already been held for journals one hook.held in each delivery it names."""
-    seat = seat_of(payload.get("cwd"))
+    seat = seat_of(payload)
     if seat is None or seat.role != "lead":
         return {"verdict": "allow"}
     mode = hook_mode(seat.configs[0].flow_raw, "lead.may-stop")
@@ -11493,7 +11615,7 @@ def orientation(seat: Seat) -> str:
 def delivery_orient(payload: dict) -> dict:
     """delivery.orient: tell a starting, resumed, cleared, compacted or forked session its role and next command.
     It only ever allows; under mode off it says nothing."""
-    seat = seat_of(payload.get("cwd"))
+    seat = seat_of(payload)
     if seat is None or hook_mode(seat.configs[0].flow_raw, "delivery.orient") == "off":
         return {"verdict": "allow"}
     return {"verdict": "allow", "context": orientation(seat)}
@@ -14050,6 +14172,7 @@ def lead_run(args) -> None:
     # Before the lock, the orphan sweep or any child: the supervisor's children run the Node first on its PATH.
     require_node(c.release, "lead-run --resume" if args.resume else "lead-run")
     if args.resume:
+        record_session(c, "lead")
         for line in stop_orphans(c):
             print(line)
         start_hosted(c,resume=True)
@@ -15668,6 +15791,11 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=note_gap)
     p = command(sub, "review-reduce"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
     p.set_defaults(fn=review_reduce)
+    p = command(sub, "review-wait", help="wait in the foreground until every lens's result in a round is in")
+    p.add_argument("key"); p.add_argument("--round", type=int, required=True)
+    p.add_argument("--seconds", type=float, default=REVIEW_WAIT_SECONDS,
+                   help=f"how long to wait before exiting 4 with the lenses still out (default {REVIEW_WAIT_SECONDS})")
+    p.set_defaults(fn=review_wait)
     p = command(sub, "plan-review", help="review the plan before it is approved: prepare, reduce or end a round")
     review_commands = p.add_subparsers(dest="action", required=True)
     plan_help = "review this plan in its own store, keyed by its reviewSlug, with no delivery"

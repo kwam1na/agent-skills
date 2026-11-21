@@ -160,6 +160,7 @@ class LaneChangesTests(unittest.TestCase):
         [item] = items
         self.assertEqual((item["holding"], item["kind"], item["lane"], item["subject"], item["who"]),
                          (False, "laneOutside", "lane-1", "S-1", "lead"))
+        self.assertEqual(item["fields"], {"path": "src/two.js", "detail": "It doesn't hold the file."})
         held = {f["path"]: f["holds"] for f in changes["lanes"]["lane-1"]["files"]}
         self.assertEqual(held, {"src/one.py": "file", "src/two.js": "none"})
         with self.subTest("the lead grants the file"):
@@ -210,6 +211,11 @@ class LaneChangesTests(unittest.TestCase):
             f"Lane 1 changed lines {gone}-{gone + 1} of `{SHARED}`, outside its span.",
             f"Lane 1 added 2 lines before line {len(SHARED_LINES) - 2} of `{SHARED}`, outside its span."])
         self.assertEqual({item["fields"]["path"] for item in items}, {SHARED})
+        self.assertEqual([(item["fields"]["lines"], item["fields"]["detail"]) for item in items], [
+            ("line 2", "It changed line 2, outside its span."),
+            (f"lines {gone}-{gone + 1}", f"It changed lines {gone}-{gone + 1}, outside its span."),
+            (f"before line {len(SHARED_LINES) - 2}",
+             f"It added 2 lines before line {len(SHARED_LINES) - 2}, outside its span.")])
         self.assertEqual(changes["files"][0]["path"], SHARED)
         self.assertEqual(changes["files"][0]["spans"], [{"lane": "lane-1", "start": held, "end": held + 9}])
         self.assertEqual(changes["files"][0]["lines"], len(SHARED_LINES))
@@ -293,6 +299,7 @@ class LaneChangesTests(unittest.TestCase):
                                        "end": held})
         changes, items = d.one_pass()
         self.assertEqual(self.texts(items), [f"Lane 1 added 1 line before line {held} of `{SHARED}`, outside its span."])
+        self.assertEqual(items[0]["fields"]["detail"], f"It added 1 line before line {held}, outside its span.")
         self.assertEqual(changes["lanes"]["lane-1"]["files"][0]["holds"], "span")
         d.state["laneRegions"].pop()
         # A mode change with a hunk outside the span beside it: the mode is what no span holds.

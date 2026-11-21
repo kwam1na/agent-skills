@@ -1451,6 +1451,10 @@
         "stage": {
           "type": "stage",
           "optional": true
+        },
+        "leftOnBranch": {
+          "type": "commit",
+          "optional": true
         }
       },
       "because": {
@@ -1468,7 +1472,7 @@
           },
           "otherwise": "{subject} was stopped"
         },
-        "line": "{detail}[ while {stage}]"
+        "line": "{detail}[ while {stage}][; the queue left {leftOnBranch:commit} on its branch]"
       },
       "explain": "The queue stopped a piece before it landed. It stays stopped until a new hand-off or the lead answers it.",
       "tracker": {
