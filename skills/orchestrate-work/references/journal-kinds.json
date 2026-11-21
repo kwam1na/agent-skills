@@ -2078,6 +2078,10 @@
         "inFlight": {
           "type": "names",
           "optional": true
+        },
+        "by": {
+          "type": "name",
+          "optional": true
         }
       },
       "because": {
@@ -2089,7 +2093,7 @@
         "head": "{path} was carried for {lane:lane}",
         "line": "From line {from.first} up to {from.after} at {was:commit} to line {to.first} up to {to.after} at {base.head:commit}[, for {story:ticket}][; {inFlight:list:ticket} must merge the base to use it]"
       },
-      "explain": "A story of the lane landed inside a claim of the lane, so the claim moved to the merge with those lines in it.",
+      "explain": "A story of the lane landed inside a claim of the lane, so the claim moved to the merge with those lines in it; or the lead moved a claim the base had shifted.",
       "tracker": null,
       "instruction": "None: which lane may edit which lines shows in the record and the views."
     },

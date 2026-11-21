@@ -290,9 +290,18 @@ class LaneChangesTests(unittest.TestCase):
         lines = list(SHARED_LINES)
         lines[held - 1:held - 1] = ["# at the edge\n"]
         d.push(checkout, {SHARED: "".join(lines)})
-        _, items = d.one_pass()
+        # No other lane claims the line above the span: the insertion at its edge is the span's.
+        changes, items = d.one_pass()
+        self.assertEqual(items, [])
+        self.assertEqual(changes["lanes"]["lane-1"]["files"][0]["holds"], "span")
+        # Another lane claims the line above it: the insertion is outside, as acceptance refuses it.
+        d.state["laneRegions"].append({"lane": "lane-2", "path": SHARED, "baseHead": d.base, "start": held - 4,
+                                       "end": held})
+        changes, items = d.one_pass()
         self.assertEqual(self.texts(items), [f"Lane 1 added 1 line before line {held} of `{SHARED}`, outside its span."])
         self.assertEqual(items[0]["fields"]["detail"], f"It added 1 line before line {held}, outside its span.")
+        self.assertEqual(changes["lanes"]["lane-1"]["files"][0]["holds"], "span")
+        d.state["laneRegions"].pop()
         # A mode change with a hunk outside the span beside it: the mode is what no span holds.
         git(checkout, "checkout", "-q", "origin/main", "--", SHARED)
         (checkout / SHARED).chmod(0o755)
@@ -310,6 +319,22 @@ class LaneChangesTests(unittest.TestCase):
         with self.subTest("a lane no longer in the record raises nothing"):
             d.state["lanes"] = [lane for lane in d.state["lanes"] if lane["id"] != "lane-1"]
             self.assertEqual(run_delivery.lane_change_needs(d.config(), d.state), [])
+
+    def test_an_insertion_at_the_file_s_end_is_the_span_s_beside_a_claim_that_no_longer_maps(self) -> None:
+        d = self.delivery()
+        size = len(SHARED_LINES)
+        checkout = d.story("S-1", "lane-1")
+        lines = list(SHARED_LINES)
+        lines[1] = "    return 100\n"  # outside the span, so the hand-off judges each change of the file
+        d.push(checkout, {SHARED: "".join([*lines, "# at the end\n"])})
+        d.land({"src/two.js": "function two() {\n  return 3;\n}\n"})
+        later = git(d.lead, "rev-parse", "origin/main")
+        d.state["laneRegions"] = [{"lane": "lane-1", "path": SHARED, "baseHead": d.base, "start": size - 3, "end": size + 1},
+                                  {"lane": "lane-2", "path": SHARED, "baseHead": later, "start": 5, "end": 8}]
+        changes, items = d.one_pass()
+        self.assertEqual(self.texts(items), [f"Lane 1 changed line 2 of `{SHARED}`, outside its span."])
+        self.assertEqual([(c["old"], c["inside"]) for c in changes["lanes"]["lane-1"]["files"][0]["changes"]],
+                         [(2, False), (size + 1, True)])
 
     def test_a_declared_shared_output_raises_nothing(self) -> None:
         d = self.delivery()

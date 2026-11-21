@@ -98,7 +98,7 @@ TABLE = {
     "ownership.granted": ("B", "note", "path span? base? movedFrom?", "", "-"),
     "ownership.revoked": ("B", "note", "path span? base? movedFrom?", "", "-"),
     "ownership.released": ("B", "note", "path span base merge", "", "-"),
-    "ownership.carried": ("B", "note", "path from to was base story? inFlight?", "", "-"),
+    "ownership.carried": ("B", "note", "path from to was base story? inFlight? by?", "", "-"),
     "ownership.carved": ("B", "note", "path base removed added", "", "-"),
     "ownership.claimed": ("B", "note", "path base", "", "-"),
     "plan.updated": ("B", "note", "updated changed", "", "-"),

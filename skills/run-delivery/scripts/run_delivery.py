@@ -6820,7 +6820,8 @@ def claims_report(c, helper, lane: str, key: str, base: str, head: str, state: d
             continue
         mine = [claim for claim in on_path if claim["lane"] == lane]
         try:
-            spans, rows = helper.change_report(c.root, path, base, head, mine)
+            spans, rows = helper.change_report(c.root, path, base, head, mine,
+                                               others=[claim for claim in on_path if claim["lane"] != lane])
         except helper.RegionError as error:
             needed.append(f"{path}: {error}; lanes share it by lines ({', '.join(described_claim(claim) for claim in on_path)})")
             continue
@@ -8797,10 +8798,16 @@ def change_regions(c, args) -> None:
     if not helper.valid_path(path):
         raise Stop("name a repository-relative file")
     numbered = args.start is not None or args.end is not None
-    if args.revoke_region and (args.around is not None or args.insert):
+    paired = args.anchor is not None or args.through is not None
+    if args.revoke_region and (args.around is not None or args.insert or paired):
         raise Stop("a revocation matches the claim by its coordinates: --base, --start and --end")
-    if not args.base or (args.around is None and (args.start is None or args.end is None)):
-        raise Stop("a region claim needs --base COMMIT and either --around TEXT or --start LINE --end LINE")
+    if paired and (args.anchor is None or args.through is None):
+        raise Stop("--anchor TEXT and --through TEXT name a span together: give both")
+    if paired and (numbered or args.around is not None):
+        raise Stop("name the lines by --anchor and --through alone, not with --start, --end or --around")
+    if not args.base or (args.around is None and not paired and (args.start is None or args.end is None)):
+        raise Stop("a region claim needs --base COMMIT and --anchor TEXT --through TEXT, --around TEXT, "
+                   "or --start LINE --end LINE")
     if args.around is not None and numbered:
         raise Stop("name the lines by --around TEXT or by --start and --end, not both")
     if args.revoke_region and args.story:
@@ -8810,7 +8817,8 @@ def change_regions(c, args) -> None:
     if args.region:
         try:
             args.start, args.end, asked = resolve_lines(helper, c, path, base_head, args.start, args.end, args.around,
-                                                        args.insert, c.record_state().get("laneRegions", []))
+                                                        args.insert, c.record_state().get("laneRegions", []),
+                                                        pair=(args.anchor, args.through) if paired else None)
         except helper.RegionError as error:
             raise Stop(str(error)) from error
     claim = {"lane": args.lane, "path": path, "baseHead": base_head, "start": args.start, "end": args.end}
@@ -8897,20 +8905,24 @@ def change_regions(c, args) -> None:
 
 
 GIVE = re.compile(r"(?P<lane>[^:+\s]+)(?:\+(?P<insert>before|after))?:"
-                  r"(?:(?P<start>[0-9]+)-(?P<end>[0-9]+)|around=(?P<around>.+?))(?:@(?P<key>[A-Za-z][A-Za-z0-9]*-[0-9]+))?")
+                  r"(?:(?P<start>[0-9]+)-(?P<end>[0-9]+)|anchor=(?P<anchor>.+?)\.\.through=(?P<through>.+?)"
+                  r"|around=(?P<around>.+?))(?:@(?P<key>[A-Za-z][A-Za-z0-9]*-[0-9]+))?")
 
 
 def carve_gives(values: list[str]) -> list[dict]:
-    """Each --give as {lane, start, end} or {lane, around}, with its story and --insert side when it names them."""
+    """Each --give as {lane, start, end}, {lane, anchor, through} or {lane, around}, with its story and --insert side
+    when it names them."""
     gives = []
     for value in values:
         found = GIVE.fullmatch(value)
         if not found:
-            raise Stop(f"--give {value!r}: name it as LANE[+before|+after]:START-END[@KEY] or "
-                       "LANE[+before|+after]:around=TEXT[@KEY]")
+            raise Stop(f"--give {value!r}: name it as LANE[+before|+after]:START-END[@KEY], "
+                       "LANE[+before|+after]:anchor=TEXT..through=TEXT[@KEY] or LANE[+before|+after]:around=TEXT[@KEY]")
         give = {"lane": found["lane"], **({"story": found["key"]} if found["key"] else {}),
                 **({"insert": found["insert"]} if found["insert"] else {})}
-        if found["around"] is not None:
+        if found["anchor"] is not None:
+            give["pair"] = (found["anchor"], found["through"])
+        elif found["around"] is not None:
             give["around"] = found["around"]
         else:
             start, end = int(found["start"]), int(found["end"])
@@ -8922,12 +8934,16 @@ def carve_gives(values: list[str]) -> list[dict]:
 
 
 def resolve_lines(helper, c, path: str, base: str, start: int | None, end: int | None, around: str | None,
-                  insert: str | None, regions: list[dict], taken: list[tuple[int, int]] = ()) -> tuple[int, int, list[str]]:
-    """The span a grant or a give names at ``base``: by --around's block (Decision 10) or its numbers, each edge at a
-    statement's start in a Python file (Decision 11), widened by --insert past an edge into an unclaimed line
-    (Decision 12). Returns it, and what to print of how it was read."""
+                  insert: str | None, regions: list[dict], taken: list[tuple[int, int]] = (),
+                  pair: tuple[str, str] | None = None) -> tuple[int, int, list[str]]:
+    """The span a grant or a give names at ``base``: by --anchor and --through (Decision 3), by --around's block
+    (Decision 10) or its numbers, each edge at a statement's start in a Python file (Decision 11), widened by --insert
+    past an edge into an unclaimed line (Decision 12). Returns it, and what to print of how it was read."""
     said = []
-    if around is not None:
+    if pair is not None:
+        start, end = helper.anchor_pair(c.root, base, path, *pair)
+        said.append(f"--anchor {pair[0]!r} --through {pair[1]!r} names [{start}, {end}) at {base[:12]}")
+    elif around is not None:
         start, end = helper.anchored(c.root, base, path, around)
         said.append(f"--around {around!r} names [{start}, {end}) at {base[:12]}")
     helper.check_statements(c.root, base, path, start, end)
@@ -8964,8 +8980,9 @@ def change_carve(c, args) -> None:
         raise Stop("a carve gives lines: --give LANE:START-END[@KEY], as many as it needs")
     if args.start is not None or args.end is not None or args.lane or args.story:
         raise Stop("a carve names its lines in each --give, not with --lane, --start, --end or --story")
-    if args.around is not None or args.insert:
-        raise Stop("a carve names each give's lines in its --give: LANE[+before|+after]:around=TEXT[@KEY]")
+    if args.around is not None or args.insert or args.anchor is not None or args.through is not None:
+        raise Stop("a carve names each give's lines in its --give: LANE[+before|+after]:around=TEXT[@KEY] or "
+                   "LANE[+before|+after]:anchor=TEXT..through=TEXT[@KEY]")
     gives = carve_gives(args.give)
     git("fetch", "-q", c.remote, c.base_branch)
     base = git("rev-parse", c.base_ref)
@@ -8976,7 +8993,7 @@ def change_carve(c, args) -> None:
         for give in gives:
             give["start"], give["end"], words = resolve_lines(
                 helper, c, path, carve_base, give.get("start"), give.get("end"), give.pop("around", None),
-                give.pop("insert", None), c.record_state().get("laneRegions", []), taken)
+                give.pop("insert", None), c.record_state().get("laneRegions", []), taken, give.pop("pair", None))
             taken.append((give["start"], give["end"]))
             asked += [f"{give['lane']}: {line}" for line in words]
     except helper.RegionError as error:
@@ -9025,6 +9042,74 @@ def change_carve(c, args) -> None:
         print(f"  removed {described_claim(claim)}")
     for claim in said["added"]:
         print(f"  added {written_lines(helper, c, claim)}")
+
+
+def change_carry(c, args) -> None:
+    """Decision 5: the lane's claims on a path, of --story when it names one, carried to the current base when every
+    base hunk since each claim's base lies wholly outside its lines; all of them, or nothing written."""
+    helper = _region_ownership()
+    path = args.carry
+    if not helper.valid_path(path):
+        raise Stop("name a repository-relative file")
+    if not args.lane:
+        raise Stop("name the lane whose claims to carry with --lane")
+    if args.source or args.insert or any(value is not None for value in (
+            args.base, args.start, args.end, args.around, args.anchor, args.through)):
+        raise Stop("a carry maps the lane's claims as they stand to the current base: it takes --lane and --story only")
+    git("fetch", "-q", c.remote, c.base_branch)
+    base = git("rev-parse", c.base_ref)
+    said: dict = {}
+
+    def compute(doc: dict) -> list[str] | None:
+        state = doc["state"]
+        ownership = state.get("laneOwnership")
+        if ownership is None:
+            raise Stop("seed this record with lead-own --seed first")
+        if args.lane not in ownership:
+            raise Stop("name a lane recorded for this delivery")
+        region_story(c, args, state, args.lane, args.story)
+        regions = list(state.get("laneRegions", []))
+        chosen = [claim for claim in regions if claim["path"] == path and claim["lane"] == args.lane
+                  and (args.story is None or claim.get("story") == args.story)]
+        if not chosen:
+            raise Stop(f"{args.lane} has no region claim on {path}" + (f" for {args.story}" if args.story else ""))
+        moved, refused = [], []
+        for claim in chosen:
+            try:
+                moved.append((claim, helper.claim_at(claim, base, *helper.carry_span(c.root, claim, base))))
+            except helper.RegionError as error:
+                refused.append(f"{described_claim(claim)}: {error}")
+        if refused:
+            raise Stop(f"the carry of {path} writes nothing: " + "; ".join(refused))
+        for old, new in moved:
+            for other in regions:
+                if other["path"] != path or any(other is gone for gone, _ in moved):
+                    continue
+                with contextlib.suppress(helper.RegionError):
+                    held = helper.mapped(c.root, other, base)
+                    if helper.overlapping((new["start"], new["end"]), held):
+                        raise Stop(f"the carry of {path} writes nothing: {described_claim(new)} would overlap "
+                                   f"{described_claim(other, held, base)}")
+        moved = [(old, new) for old, new in moved if old != new]
+        said.clear()
+        said["moved"] = moved
+        if not moved:
+            return None
+        swapped = {id(old): new for old, new in moved}
+        return ["--set", json.dumps({"/laneRegions": [swapped.get(id(claim), claim) for claim in regions]})]
+
+    patch_from(compute, f"the carry of {path}")
+    if not said["moved"]:
+        print(f"{args.lane}'s claims on {path} are already at {base[:12]}")
+        return
+    for old, new in said["moved"]:
+        state_tool("journal", "--kind", "ownership.carried", "--lane", new["lane"],
+                   *(["--subject", new["story"]] if new.get("story") else []), "--data", json.dumps(
+            {"path": path, "from": {"first": old["start"], "after": old["end"]},
+             "to": {"first": new["start"], "after": new["end"]}, "was": old["baseHead"],
+             "base": {"ref": c.base_branch, "head": base}, **({"story": new["story"]} if new.get("story") else {}),
+             "by": "lead"}))
+        print(f"carried {described_claim(old)} to {written_lines(helper, c, new)}")
 
 
 def in_flight_before(c, state: dict, lane: str, landed: str, merge: str, story: str | None) -> list[str]:
@@ -9147,6 +9232,11 @@ def change_ownership(c, args) -> None:
         return
     if args.give:
         raise Stop("--give belongs to a carve: --carve PATH --give LANE:START-END[@KEY]")
+    if args.carry:
+        change_carry(c, args)
+        return
+    if (args.anchor is not None or args.through is not None) and not args.region:
+        raise Stop("--anchor and --through name a grant's lines: use them with --region")
     if not (args.region or args.revoke_region or args.claim) and any(
             value is not None for value in (args.base, args.start, args.end)):
         raise Stop("--base, --start and --end require --region or --revoke-region")
@@ -12135,6 +12225,9 @@ def lane_holdings(c, lane: str, read: dict, state: dict) -> dict:
                 if claim["path"] == path and claim["lane"] == lane:
                     with contextlib.suppress(helper.RegionError):
                         spans.append(helper.mapped(c.root, claim, read["mergeBase"]))
+            theirs = [claim for claim in regions if claim["path"] == path and claim["lane"] != lane]
+            known: list = []
+            foreign = lambda: known or known.extend(helper.foreign_spans(c.root, theirs, read["mergeBase"])) or known
             try:
                 # What no span can hold, as acceptance's check refuses it: a creation, a deletion, a type, mode or
                 # binary change.
@@ -12142,12 +12235,13 @@ def lane_holdings(c, lane: str, read: dict, state: dict) -> dict:
                 new_mode, _ = helper.entry(c.root, read["head"], path)
                 helper.require_text(c.root, read["head"], path)
                 whole = old_mode != new_mode
+                size = len(helper.text_lines(c.root, read["mergeBase"], path))
             except helper.RegionError:
-                whole = True
+                whole, size = True, 0
             for change in changes:
-                first, removed = change["old"], change["removed"]
-                change["inside"] = any(start <= first and first + removed <= end if removed else start < first < end
-                                       for start, end in spans)
+                # Decision 4: an insertion at a span's edge is the span's unless another lane claims the far side.
+                held, _ = helper.held_by(change["old"], change["removed"], spans, size, foreign)
+                change["inside"] = held is not None
             # Refused for the file itself, or with no span that maps (a claim needing a regrant), or with every
             # change inside: the lane can't change this file by span, so it is held as no file is.
             if whole or not spans or not changes or all(change["inside"] for change in changes):
@@ -15892,6 +15986,8 @@ def main(argv: list[str] | None = None) -> None:
     action.add_argument("--revoke-region", metavar="PATH", help="remove a region claim by its exact coordinates")
     action.add_argument("--claim", metavar="PATTERN", help="claim whole files on the base for this delivery's peers")
     action.add_argument("--carve", metavar="PATH", help="recompute a file's region claims in one write, from --give")
+    action.add_argument("--carry", metavar="PATH", help="carry --lane's claims on PATH (of --story) to the current "
+                        "base, when every base hunk since lies outside their lines")
     p.add_argument("--give", action="append", metavar="LANE:START-END[@KEY]",
                    help="with --carve: lines at --base to give a lane, for one of its stories after @")
     p.add_argument("--story", metavar="KEY", help="with --region: the story of the lane the claim is for, released when it lands")
@@ -15899,6 +15995,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--base", metavar="COMMIT")
     p.add_argument("--around", metavar="TEXT", help="with --region: the block of the one line at --base holding TEXT, "
                    "in place of --start and --end")
+    p.add_argument("--anchor", metavar="TEXT", help="with --region and --through: the span from the one line at "
+                   "--base holding TEXT, in place of --start/--end and --around")
+    p.add_argument("--through", metavar="TEXT", help="with --anchor: to the first line at or after it holding TEXT, "
+                   "inclusive")
     p.add_argument("--insert", choices=("before", "after"),
                    help="with --region: widen the span one unclaimed line past that edge, for an insertion there")
     p.add_argument("--start", type=int, metavar="LINE", help="first owned line, starting at 1")

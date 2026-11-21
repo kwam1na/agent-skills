@@ -170,11 +170,49 @@ def mapped(repo: Path, claim: dict, base: str) -> tuple[int, int]:
         raise RegionError(f"{path} [{start}, {end}) at {anchor[:12]}: {error}. Regrant it against the current base") from error
 
 
-def change_report(repo: Path, path: str, base: str, head: str,
-                  claims: list[dict]) -> tuple[list[tuple[int, int]], list[dict]]:
+def foreign_spans(repo: Path, others: list[dict], base: str) -> list[tuple[dict, tuple[int, int] | None]]:
+    """Each of the other lanes' claims with its span mapped to ``base``, or None when it doesn't map."""
+    found = []
+    for other in others:
+        try:
+            found.append((other, mapped(repo, other, base)))
+        except RegionError:
+            found.append((other, None))
+    return found
+
+
+def held_by(first: int, removed: int, spans: list[tuple[int, int]], size: int,
+            foreign) -> tuple[int | None, dict | None]:
+    """Decision 4: the index of the span that holds a hunk, and the other lane's claim that refuses it at an edge. A
+    hunk inside a span is the span's. An insertion at a span's first line or just past its last is the span's when the
+    line on the far side of that edge is the file's edge, one of the lane's own lines, or no other lane's: ``foreign``,
+    called only then, gives the other lanes' claims with their spans, None for one that doesn't map, which counts as
+    covering it."""
+    for index, (start, end) in enumerate(spans):
+        if start <= first and first + removed <= end if removed else start < first < end:
+            return index, None
+    if removed:
+        return None, None
+    against = None
+    for index, (start, end) in enumerate(spans):
+        if first not in (start, end):
+            continue
+        line = start - 1 if first == start else end
+        if line < 1 or line > size or any(low <= line < high for low, high in spans):
+            return index, None
+        blocking = next((claim for claim, span in foreign() if span is None or span[0] <= line < span[1]), None)
+        if blocking is None:
+            return index, None
+        against = against or blocking
+    return None, against
+
+
+def change_report(repo: Path, path: str, base: str, head: str, claims: list[dict], *,
+                  others: list[dict] | None = None) -> tuple[list[tuple[int, int]], list[dict]]:
     """Every hunk of ``path`` from ``base`` to ``head``, each with the claim that holds it or None: the claims' spans
-    mapped to ``base``, and one row a hunk, {first, removed, added, where, claim, span}. A creation, deletion, mode or
-    binary change raises, since only a whole-file claim holds one."""
+    mapped to ``base``, and one row a hunk, {first, removed, added, where, claim, span, against}. ``others``, the other
+    lanes' claims on the path, judge only an insertion at a span's edge, and ``against`` names the one that refuses it.
+    A creation, deletion, mode or binary change raises, since only a whole-file claim holds one."""
     old_mode, old = entry(repo, base, path)
     new_mode, new = entry(repo, head, path)
     if old_mode != new_mode:
@@ -182,21 +220,31 @@ def change_report(repo: Path, path: str, base: str, head: str,
     require_text(repo, head, path)
     lines(repo, new)
     spans = [mapped(repo, claim, base) for claim in claims]
+    size = len(lines(repo, old))
+    mapped_others: list = []
+
+    def foreign() -> list:
+        if others and not mapped_others:
+            mapped_others.extend(foreign_spans(repo, others, base))
+        return mapped_others
+
     rows = []
     for first, removed, added in hunks(repo, old, new):
-        holder = next((index for index, (start, end) in enumerate(spans)
-                       if (start <= first and first + removed <= end if removed else start < first < end)), None)
-        rows.append({"first": first, "removed": removed, "added": added,
-                     "where": f"[{first}, {first + removed})" if removed else f"insertion before line {first}",
+        holder, against = held_by(first, removed, spans, size, foreign)
+        where = f"[{first}, {first + removed})" if removed else f"insertion before line {first}"
+        if against is not None:
+            where += f", next to {against['lane']}'s claim"
+        rows.append({"first": first, "removed": removed, "added": added, "where": where,
                      "claim": None if holder is None else claims[holder],
-                     "span": None if holder is None else spans[holder]})
+                     "span": None if holder is None else spans[holder], "against": against})
     return spans, rows
 
 
-def check_change(repo: Path, path: str, base: str, head: str, claims: list[dict]) -> None:
+def check_change(repo: Path, path: str, base: str, head: str, claims: list[dict], *,
+                 others: list[dict] | None = None) -> None:
     if not claims:
         raise RegionError("the lane has no region claim")
-    spans, rows = change_report(repo, path, base, head, claims)
+    spans, rows = change_report(repo, path, base, head, claims, others=others)
     outside = [row["where"] for row in rows if row["claim"] is None]
     if outside:
         raise RegionError(f"{', '.join(outside)} {'is' if len(outside) == 1 else 'are'} outside a single owned span "
@@ -212,7 +260,8 @@ def problems(repo: Path, lane: str, base: str, head: str, changed: list[str], re
         if path not in by_path:
             continue
         try:
-            check_change(repo, path, base, head, [claim for claim in by_path[path] if claim["lane"] == lane])
+            check_change(repo, path, base, head, [claim for claim in by_path[path] if claim["lane"] == lane],
+                         others=[claim for claim in by_path[path] if claim["lane"] != lane])
         except RegionError as error:
             outside[path] = str(error)
     return outside
@@ -312,6 +361,46 @@ def carried(repo: Path, claim: dict, target: str) -> tuple[int, int]:
     span = absorb(claim["start"], claim["end"], hunks(repo, old, new))
     if span != absorb(claim["start"], claim["end"], hunks(repo, old, new, "histogram")):
         raise RegionError("Git produced different line mappings")
+    return span
+
+
+def shifted(start: int, end: int, edits: list[tuple[int, int, int]]) -> tuple[tuple[int, int], list[str]]:
+    """[start, end) moved past ``edits`` that lie wholly outside its lines, and each edit that touches them."""
+    shift, touching = 0, []
+    for first, removed, added in edits:
+        if removed and first + removed <= start or not removed and first <= start:
+            shift += added - removed
+        elif first >= end:
+            continue
+        else:
+            touching.append(f"[{first}, {first + removed})" if removed else f"the insertion before line {first}")
+    return (start + shift, end + shift), touching
+
+
+def carry_span(repo: Path, claim: dict, target: str) -> tuple[int, int]:
+    """Decision 5: where ``claim``'s lines are at ``target`` when every base hunk since the claim's base lies wholly
+    outside them. Raises RegionError naming each hunk that touches them."""
+    anchor, path, start, end = claim["baseHead"], claim["path"], claim["start"], claim["end"]
+    validate_claim(repo, claim)
+    if anchor == target:
+        return start, end
+    if git(repo, "merge-base", "--is-ancestor", anchor, target, check=False).returncode:
+        raise RegionError("the claim's base is outside the target base's history")
+    old_mode, old = entry(repo, anchor, path)
+    new_mode, new = entry(repo, target, path)
+    if old_mode != new_mode:
+        raise RegionError("the base changed the file mode")
+    require_text(repo, target, path)
+    if old == new:
+        return start, end
+    span, touching = shifted(start, end, hunks(repo, old, new))
+    if touching:
+        raise RegionError(f"the base hunk{'s' if len(touching) > 1 else ''} {', '.join(touching)} since {anchor[:12]} "
+                          f"touch{'' if len(touching) > 1 else 'es'} its lines. Regrant it against the current base")
+    if shifted(start, end, hunks(repo, old, new, "histogram")) != (span, []):
+        raise RegionError("Git produced different line mappings")
+    if lines(repo, new)[span[0] - 1:span[1] - 1] != lines(repo, old)[start - 1:end - 1]:
+        raise RegionError("the claimed lines differ on the target base")
     return span
 
 
@@ -578,20 +667,45 @@ def block(path: str, text: list[str], line: int, statements: list | None = None)
     return text_block(text, line)
 
 
-def anchored(repo: Path, commit: str, path: str, anchor: str) -> tuple[int, int]:
-    """The span ``--around ANCHOR`` names at ``commit``: the block of the one line holding it."""
+def listed(text: list[str], found: list[int]) -> str:
+    """Each matching line with its text, at most 10, then how many more."""
+    said = "; ".join(f"line {number}: {shown(text[number - 1])!r}" for number in found[:10])
+    return said + (f"; and {len(found) - 10} more" if len(found) > 10 else "")
+
+
+def one_line(text: list[str], path: str, commit: str, anchor: str) -> int:
+    """The one line of ``text`` holding ``anchor``, or refused listing each line it matches."""
     if not anchor:
         raise RegionError("an anchor names some text of a line")
-    text = text_lines(repo, commit, path)
     found = matches(text, anchor)
     if not found:
         raise RegionError(f"no line of {path} at {commit[:12]} holds {anchor!r}")
     if len(found) > 1:
-        listed = "; ".join(f"line {number}: {shown(text[number - 1])!r}" for number in found[:10])
-        more = f"; and {len(found) - 10} more" if len(found) > 10 else ""
-        raise RegionError(f"{len(found)} lines of {path} at {commit[:12]} hold {anchor!r}: {listed}{more}. "
+        raise RegionError(f"{len(found)} lines of {path} at {commit[:12]} hold {anchor!r}: {listed(text, found)}. "
                           "Quote more of the line")
-    return block(path, text, found[0])
+    return found[0]
+
+
+def anchored(repo: Path, commit: str, path: str, anchor: str) -> tuple[int, int]:
+    """The span ``--around ANCHOR`` names at ``commit``: the block of the one line holding it."""
+    text = text_lines(repo, commit, path)
+    return block(path, text, one_line(text, path, commit, anchor))
+
+
+def anchor_pair(repo: Path, commit: str, path: str, anchor: str, through: str) -> tuple[int, int]:
+    """Decision 3: the span ``--anchor A --through B`` names at ``commit``: from the one line holding A to the first
+    line at or after it holding B, inclusive."""
+    text = text_lines(repo, commit, path)
+    first = one_line(text, path, commit, anchor)
+    if not through:
+        raise RegionError("--through names some text of a line")
+    found = matches(text, through)
+    last = next((number for number in found if number >= first), None)
+    if last is None:
+        where = f": {listed(text, found)}, each before it" if found else ""
+        raise RegionError(f"no line of {path} at {commit[:12]} from line {first} on holds {through!r}{where}. "
+                          "Name a --through at or after the --anchor")
+    return first, last + 1
 
 
 def logical_lines(source: str) -> list[tuple[int, int]] | None:
