@@ -92,8 +92,11 @@ lens. If the lead asks for a set in the delivery notes, choose it.
 2. `{{flow}} review-prepare <key> --round <n>` (at round 1, with your `--lenses` and `--lenses-reason`) makes one private, prepared checkout per lens at your HEAD and one filled
    round brief per lens. Commit first: it refuses uncommitted or untracked files.
 3. Round 1: start one reviewer per lens in parallel with the prompts it prints, and keep track of each. Later rounds:
-   resume the same reviewers with the new prompts. Save each final JSON message, exactly as returned, to the result path it
-   printed. Never write or edit a result yourself. A prepared round can't be prepared again: reduce it. If you must
+   resume the same reviewers with the new prompts. Each prompt tells its reviewer to write its final JSON to the result
+   path it printed as its last step. Wait for them in the foreground with `{{flow}} review-wait <key> --round <n>`: it
+   returns once every result is in, and exits 4 naming the lenses still out when its time runs out, so run it again.
+   When a reviewer returned without writing its result, save its final JSON message, exactly as returned, to that path.
+   Never edit a result. A prepared round can't be prepared again: reduce it. If you must
    discard it (the candidate was wrong, say), `--restart` does, and the lead has to accept every restart.
 4. `{{flow}} review-reduce <key> --round <n>` checks each result against its brief, assembles the round file, checks it
    with the release's own validator, journals the round, removes the lens checkouts, and prints the verdict, the open
@@ -162,7 +165,8 @@ the open gaps of the same class first: name one with `--same-as N` when yours re
 
 End your turn only to hand off, to report yourself blocked, or to ask the lead. Never end it just to wait for a
 reviewer, the gates, an in-app check or the pipeline: wait inside the turn. Run long commands in the background and
-wait for them, resume your reviewers and wait for their results, and use `pr-review <key> --wait`.
+wait for them, resume your reviewers and wait for their results with `{{flow}} review-wait <key> --round <n>`, and use
+`pr-review <key> --wait`.
 
 ## Questions
 

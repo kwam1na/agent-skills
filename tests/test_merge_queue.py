@@ -76,7 +76,24 @@ listed = subprocess.run(["git", "ls-remote", "--heads", os.environ["MQ_REMOTE"],
                         capture_output=True, text=True, check=True).stdout.split()
 if not listed:
     sys.exit(3)
-print(json.dumps({"branch": branch, "head": listed[0]}))
+head = listed[0]
+lag = os.environ.get("MQ_LAG")
+if lag:
+    # A forge that reports a change request's head late: once the branch moves, the head reported before it for
+    # MQ_LAG more reads, or for every read when it says never.
+    import pathlib
+    seen = pathlib.Path(os.environ["MQ_LOG"] + ".reported")
+    count = pathlib.Path(os.environ["MQ_LOG"] + ".lagged")
+    reported = seen.read_text() if seen.exists() else head
+    lagged = int(count.read_text()) if count.exists() else 0
+    if head != reported and lag == "elsewhere":
+        # A forge that reports a head that is neither the one before the move nor the one after it.
+        head = "0" * 40
+    elif head != reported and (lag == "never" or lagged < int(lag)):
+        count.write_text(str(lagged + 1))
+        head = reported
+    seen.write_text(head)
+print(json.dumps({"branch": branch, "head": head}))
 """,
     "regen.py": """
 import os, pathlib, time
@@ -341,7 +358,11 @@ if os.environ.get("MQ_MERGE") == "loud":
                      # On a line of their own, so only the environment and token-shape rules can remove them.
                      + os.environ.get("MQ_FORGE_TOKEN", "") + " ghp_" + "A" * 36 + "\\nmerge refused: Head branch was modified. Review and try the merge again.\\n")
     sys.exit(1)
-if os.environ.get("MQ_MERGE") == "refuse" or tip(branch) != expected:
+if os.environ.get("MQ_MERGE") == "delete":
+    # A forge that deletes the branch and still reports the merge refused.
+    git("push", "--quiet", remote, ":refs/heads/" + branch)
+    sys.exit(1)
+if os.environ.get("MQ_MERGE") in ("refuse", "refuse " + branch) or tip(branch) != expected:
     sys.exit(1)
 onto = sys.argv[sys.argv.index("--onto") + 1] if "--onto" in sys.argv else "main"
 base = tip(onto)
@@ -512,6 +533,23 @@ class Adopter:
 
     def tip(self, branch: str) -> str:
         return run("ls-remote", "--heads", str(self.remote), f"refs/heads/{branch}", cwd=self.root).split()[0]
+
+    def queued(self, subject: str) -> str | None:
+        """The commit the remote's queue ref for ``subject`` holds, or None when it has none."""
+        ref = f"refs/merge-queue/{subject}"
+        listed = run("ls-remote", str(self.remote), ref, cwd=self.root).splitlines()
+        return next((line.split()[0] for line in listed if line.split()[1:] == [ref]), None)
+
+    def lane_push(self, branch: str, files: dict[str, str]) -> str:
+        """Commit ``files`` on top of the branch as the remote has it, and push it without forcing."""
+        run("fetch", "--quiet", "origin", cwd=self.lane)
+        run("checkout", "--quiet", "-B", branch, f"origin/{branch}", cwd=self.lane)
+        for relative, text in files.items():
+            self.write(self.lane, relative, text)
+        run("add", "--all", cwd=self.lane)
+        run("commit", "--quiet", "-m", f"fix {branch}", cwd=self.lane)
+        run("push", "--quiet", "origin", f"{branch}:{branch}", cwd=self.lane)
+        return run("rev-parse", "HEAD", cwd=self.lane)
 
     def lane_commit(self, branch: str, files: dict[str, str], *, start: str = "origin/main") -> str:
         run("fetch", "--quiet", "origin", cwd=self.lane)
@@ -881,23 +919,47 @@ class CandidatePinningTests(MergeQueueTestCase):
 
 
 class RegionDiffTests(MergeQueueTestCase):
-    def test_insertions_at_edges_and_changes_spanning_claims_are_refused(self) -> None:
+    def test_an_insertion_at_an_edge_is_the_span_s_unless_another_lane_claims_the_far_side(self) -> None:
         adopter = self.adopter()
         path = "src/shared[1].txt"
         lines = [f"line {number}\n" for number in range(1, 13)]
         anchor = adopter.advance_base({path: "".join(lines)})
-        claims = [{"path": path, "baseHead": anchor, "start": 3, "end": 6},
-                  {"path": path, "baseHead": anchor, "start": 6, "end": 9}]
-        for name, changed in {
+        claims = [{"lane": "lane-1", "path": path, "baseHead": anchor, "start": 3, "end": 6},
+                  {"lane": "lane-1", "path": path, "baseHead": anchor, "start": 6, "end": 9}]
+        above = {"lane": "lane-2", "path": path, "baseHead": anchor, "start": 1, "end": 3}
+        below = {"lane": "lane-2", "path": path, "baseHead": anchor, "start": 9, "end": 13}
+        heads = {name: adopter.lane_commit(name, {path: "".join(changed)}) for name, changed in {
             "start": lines[:2] + ["inserted\n"] + lines[2:],
             "edge-between-claims": lines[:5] + ["inserted\n"] + lines[5:],
             "end": lines[:8] + ["inserted\n"] + lines[8:],
+            "last-line-replaced-with-more": lines[:7] + [lines[7], "more\n"] + lines[8:],
             "spanning": lines[:4] + ["replaced\n"] + lines[7:],
-        }.items():
-            with self.subTest(name=name):
-                head = adopter.lane_commit(name, {path: "".join(changed)})
-                with self.assertRaisesRegex(queue.region_ownership.RegionError, "outside a single owned span"):
-                    queue.region_ownership.check_change(adopter.lane, path, anchor, head, claims)
+        }.items()}
+        for name in ("start", "edge-between-claims", "end", "last-line-replaced-with-more"):
+            with self.subTest(allowed=name):
+                queue.region_ownership.check_change(adopter.lane, path, anchor, heads[name], claims)
+                queue.region_ownership.check_change(adopter.lane, path, anchor, heads[name], claims,
+                                                    others=[below] if name == "start" else [above])
+        for name, others, lane in (("start", [above], "lane-2"), ("end", [below], "lane-2"),
+                                   ("last-line-replaced-with-more", [below], "lane-2"), ("spanning", [], None)):
+            with self.subTest(refused=name):
+                with self.assertRaisesRegex(queue.region_ownership.RegionError, "outside a single owned span") as caught:
+                    queue.region_ownership.check_change(adopter.lane, path, anchor, heads[name], claims, others=others)
+                if lane:
+                    self.assertIn(f"next to {lane}'s claim", str(caught.exception))
+        # The queue's own check reads the other lanes' claims from the record, and judges alike.
+        state = {"laneRegions": [*claims, above, below]}
+        from types import SimpleNamespace
+        runner = SimpleNamespace(state=lambda: state)
+        item = {"lane": "lane-1"}
+        queue.Runner.check_regions(runner, item, adopter.lane, anchor, heads["edge-between-claims"])
+        for name in ("start", "end"):
+            with self.subTest(queue=name), self.assertRaises(queue.Stop) as caught:
+                queue.Runner.check_regions(runner, item, adopter.lane, anchor, heads[name])
+            self.assertEqual(caught.exception.reason, "unreviewed_change")
+            self.assertIn("next to lane-2's claim", caught.exception.detail)
+        state["laneRegions"] = claims
+        queue.Runner.check_regions(runner, item, adopter.lane, anchor, heads["start"])
 
     def test_base_edits_to_the_region_or_its_boundary_require_a_regrant(self) -> None:
         adopter = self.adopter()
@@ -1032,9 +1094,14 @@ class SyncSafetyTests(MergeQueueTestCase):
         def lane_pushes(runner, subject):
             moved.append(adopter.lane_commit("feature", {"src/app.txt": "pushed during sync\n"}))
 
-        self.assertStopped(self.run_queue(adopter, "feature", seams={"after_sync": lane_pushes}), "candidate_moved")
+        with recorded_pushes() as pushes:
+            self.assertStopped(self.run_queue(adopter, "feature", seams={"after_sync": lane_pushes}), "candidate_moved")
+        # The sync wrote only its queue ref, so the lane's push stands, and the check stopped on it.
         self.assertEqual(adopter.tip("feature"), moved[0])
         self.assertNotEqual(moved[0], head)
+        self.assertEqual(pushes, [["--force-with-lease=refs/merge-queue/feature:",
+                                   f"{adopter.item('feature')['syncedHead']}:refs/merge-queue/feature"]])
+        self.assertEqual(adopter.queued("feature"), adopter.item("feature")["syncedHead"])
         adopter.enqueue("main", adopter.tip("main"))
         self.assertStopped(self.run_queue(adopter, "main"), "ref_invalid")
 
@@ -1156,6 +1223,298 @@ class SyncSafetyTests(MergeQueueTestCase):
         self.assertIn("pre-commit", fired)
         self.assertIn("pre-push", fired)
         self.assertFalse(any(result.document()["hooksBypassed"] for result in results))
+
+
+
+@contextlib.contextmanager
+def recorded_pushes() -> Iterator[list[list[str]]]:
+    """Every push the runner's own git makes, as its lease and refspec, in order."""
+    pushes: list[list[str]] = []
+    real = queue.Runner.git
+
+    def git(runner, *args: str, **options: object):
+        if args and args[0] == "push":
+            pushes.append([arg for arg in args if arg.startswith("--force-with-lease") or ":" in arg])
+        return real(runner, *args, **options)
+
+    with mock.patch.object(queue.Runner, "git", git):
+        yield pushes
+
+
+class QueueRefTests(MergeQueueTestCase):
+    """The queue keeps its synced head on refs/merge-queue/<subject> and moves the lane's branch only to merge."""
+
+    def stop_entry(self, adopter: Adopter, subject: str = "feature") -> dict:
+        return journaled(adopter, "candidate.stopped", subject)[-1]
+
+    def test_a_sync_pushes_the_queue_ref_and_leaves_the_branch_at_the_handed_head(self) -> None:
+        adopter = self.adopter()
+        head = self.candidate(adopter)
+        with recorded_pushes() as pushes:
+            document = adopter.runner().run_command("sync", ["feature"])[0].document()
+        self.assertEqual(document["outcome"], "synced", document.get("stop"))
+        synced = adopter.item("feature")["syncedHead"]
+        self.assertNotEqual(synced, head)
+        self.assertEqual(adopter.queued("feature"), synced)
+        self.assertEqual(adopter.tip("feature"), head)
+        # Under a lease on the queue ref, which held nothing yet.
+        self.assertEqual(pushes, [["--force-with-lease=refs/merge-queue/feature:", f"{synced}:refs/merge-queue/feature"]])
+
+    def test_a_stopped_candidate_takes_its_lanes_fast_forward_and_its_next_sync_overwrites_the_queue_ref(self) -> None:
+        adopter = self.adopter(mode="implicit")
+        head = self.candidate(adopter, {"src/app.txt": "FAIL here\n"})
+        self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        first = adopter.item("feature")["syncedHead"]
+        self.assertEqual(adopter.tip("feature"), head)
+        self.assertEqual(adopter.queued("feature"), first)
+        # The base moves, the lead authorizes the lane's base merge, and the lane merges the base into its handed
+        # head and fixes the failure: both push as fast-forwards, with no force.
+        base = adopter.advance_base({"src/other.txt": "other\n"})
+        run("fetch", "--quiet", "origin", cwd=adopter.lane)
+        run("checkout", "--quiet", "-B", "feature", "origin/feature", cwd=adopter.lane)
+        run("merge", "--quiet", "--no-edit", "origin/main", cwd=adopter.lane)
+        run("push", "--quiet", "origin", "feature:feature", cwd=adopter.lane)
+        fixed = adopter.lane_push("feature", {"src/app.txt": "fixed\n"})
+        run("merge-base", "--is-ancestor", head, fixed, cwd=adopter.lane)
+        run("merge-base", "--is-ancestor", base, fixed, cwd=adopter.lane)
+        adopter.lead_set("feature", head=fixed)
+        with recorded_pushes() as pushes:
+            results = self.run_queue(adopter, "feature")
+        document = results[-1].document()
+        self.assertEqual(document["outcome"], "merged", document.get("stop"))
+        synced = document["syncedHead"]
+        # The next sync overwrote the stopped candidate's queue ref under a lease on what it held, the merge moved the
+        # branch under a lease on the handed head, and the merged candidate's queue ref went.
+        self.assertEqual(pushes, [
+            [f"--force-with-lease=refs/merge-queue/feature:{first}", f"{synced}:refs/merge-queue/feature"],
+            [f"--force-with-lease=refs/heads/feature:{fixed}", f"{synced}:refs/heads/feature"],
+            [f"--force-with-lease=refs/merge-queue/feature:{synced}", ":refs/merge-queue/feature"],
+        ])
+        self.assertIsNone(adopter.queued("feature"))
+
+    def test_a_refused_ready_gate_or_merge_moves_the_branch_back_and_names_nothing_left(self) -> None:
+        cases = (("ready", {"MQ_READY": "refuse"}, None, "ready_refused"),
+                 ("merge", {"MQ_MERGE": "refuse"}, None, "merge_refused"),
+                 ("gate", {"MQ_REVIEW": "missing"}, GATE, "review_not_current"))
+        for name, environment, gate, reason in cases:
+            with self.subTest(step=name):
+                self.fresh()
+                adopter = self.environment_adopter(environment, {"reviewGate": gate} if gate else None)
+                if gate:
+                    adopter.advance_base({"tools/review_gate.py": REVIEW_GATE.lstrip()})
+                head = self.candidate(adopter)
+                self.assertStopped(self.run_queue(adopter, "feature"), reason)
+                self.assertEqual(adopter.tip("feature"), head)
+                self.assertNotIn("leftOnBranch", self.stop_entry(adopter)["data"])
+                # The step saw the branch at the synced head, which the queue ref still holds.
+                self.assertEqual(adopter.queued("feature"), adopter.item("feature")["syncedHead"])
+
+    def test_a_branch_pushed_to_after_the_queue_moved_it_is_left_alone_and_the_stop_says_what_is_left(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        pushed: list[str] = []
+
+        def lane_pushes(runner, subject):
+            pushed.append(adopter.lane_push("feature", {"src/app.txt": "pushed during merge\n"}))
+
+        self.assertStopped(self.run_queue(adopter, "feature", seams={"after_branch_moved": lane_pushes}),
+                           "merge_refused")
+        synced = adopter.item("feature")["syncedHead"]
+        self.assertEqual(adopter.tip("feature"), pushed[0])
+        self.assertEqual(self.stop_entry(adopter)["data"]["leftOnBranch"], synced)
+        self.assertIn(f"the queue left {synced[:7]} on its branch",
+                      state_tool.journal_words.words(self.stop_entry(adopter))["line"])
+
+    def test_a_refused_move_of_the_branch_stops_as_a_refused_push_and_runs_no_forge_step(self) -> None:
+        adopter = self.adopter()
+        head = self.candidate(adopter)
+        runner = adopter.runner()
+        self.assertEqual(runner.run_command("sync", ["feature"])[0].document()["outcome"], "synced")
+        self.assertEqual(runner.run_command("check", ["feature"])[0].document()["outcome"], "checked")
+        # A held lock on the branch makes the remote refuse the move, while the branch stays at the handed head.
+        (adopter.remote / "refs" / "heads" / "feature.lock").write_bytes(b"")
+        document = self.assertStopped(runner.run_command("merge", ["feature"]), "push_refused")
+        self.assertIn("pushing feature failed: ", document["stop"]["detail"])
+        self.assertEqual(adopter.tip("feature"), head)
+        self.assertFalse(any(line.startswith("forge ") for line in adopter.log_lines()))
+
+    def test_a_queue_ref_moved_off_the_synced_head_stops_the_check_and_the_merge(self) -> None:
+        for step in ("check", "merge"):
+            with self.subTest(step=step):
+                self.fresh()
+                adopter = self.adopter()
+                head = self.candidate(adopter)
+                runner = adopter.runner()
+                self.assertEqual(runner.run_command("sync", ["feature"])[0].document()["outcome"], "synced")
+                if step == "merge":
+                    self.assertEqual(runner.run_command("check", ["feature"])[0].document()["outcome"], "checked")
+                run("push", "--quiet", "--force", str(adopter.remote), f"{head}:refs/merge-queue/feature",
+                    cwd=adopter.lane)
+                document = self.assertStopped(runner.run_command(step, ["feature"]), "candidate_moved")
+                self.assertIn("refs/merge-queue/feature is no longer at", document["stop"]["detail"])
+                self.assertEqual(adopter.tip("feature"), head)
+                self.assertFalse(any(line.startswith("forge ") for line in adopter.log_lines()))
+
+    def test_a_queue_ref_moved_during_the_sync_push_stops_as_moved(self) -> None:
+        adopter = self.adopter()
+        head = self.candidate(adopter)
+        real = queue.Runner.remote_ref
+        reads: list[str] = []
+
+        def remote_ref(runner, ref):
+            held = real(runner, ref)
+            if ref == "refs/merge-queue/feature" and not reads:
+                # Someone writes the queue ref between the lease's read and the push.
+                reads.append(ref)
+                run("push", "--quiet", str(adopter.remote), f"{head}:{ref}", cwd=adopter.lane)
+            return held
+
+        with mock.patch.object(queue.Runner, "remote_ref", remote_ref):
+            document = self.assertStopped(self.run_queue(adopter, "feature"), "candidate_moved")
+        self.assertEqual(document["stop"]["detail"], "refs/merge-queue/feature moved during sync; nothing was pushed")
+        self.assertEqual(adopter.queued("feature"), head)
+        self.assertEqual(adopter.tip("feature"), head)
+
+    def test_a_lane_push_just_before_the_branch_moves_stops_as_moved_and_stays(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.move_branch
+        pushed: list[str] = []
+
+        def move_branch(runner, branch, held, to):
+            if not pushed:
+                pushed.append(adopter.lane_push("feature", {"src/app.txt": "pushed before the move\n"}))
+            return real(runner, branch, held, to)
+
+        with mock.patch.object(queue.Runner, "move_branch", move_branch):
+            document = self.assertStopped(self.run_queue(adopter, "feature"), "candidate_moved")
+        self.assertIn("before the queue could move it; nothing was pushed", document["stop"]["detail"])
+        self.assertEqual(adopter.tip("feature"), pushed[0])
+        self.assertFalse(any(line.startswith("forge ") for line in adopter.log_lines()))
+
+    def test_a_failure_after_the_move_that_is_not_a_stop_moves_the_branch_back(self) -> None:
+        adopter = self.adopter()
+        head = self.candidate(adopter)
+
+        def breaks(runner, subject):
+            raise RuntimeError("the remote went away")
+
+        results = self.run_queue(adopter, "feature", seams={"after_branch_moved": breaks})
+        self.assertNotEqual(results[-1].document()["outcome"], "merged")
+        self.assertEqual(adopter.tip("feature"), head)
+        self.assertFalse(any(line.startswith("forge ") for line in adopter.log_lines()))
+
+    def test_a_move_back_retries_once_and_a_deleted_branch_leaves_nothing_named(self) -> None:
+        adopter = self.environment_adopter({"MQ_READY": "refuse"})
+        head = self.candidate(adopter)
+        real = queue.Runner.move_branch
+        backs: list[str] = []
+
+        def move_branch(runner, branch, held, to):
+            if to == head and not backs:
+                # The first move back fails though nobody pushed: a lease on no commit the branch holds.
+                backs.append(held)
+                return real(runner, branch, "0" * 40, to)
+            return real(runner, branch, held, to)
+
+        with mock.patch.object(queue.Runner, "move_branch", move_branch):
+            self.assertStopped(self.run_queue(adopter, "feature"), "ready_refused")
+        self.assertEqual(backs, [adopter.item("feature")["syncedHead"]])
+        self.assertEqual(adopter.tip("feature"), head)
+        self.assertNotIn("leftOnBranch", self.stop_entry(adopter)["data"])
+        # Both tries fail with the branch still at the synced head: the stop names what the queue left there.
+        self.fresh()
+        adopter = self.environment_adopter({"MQ_READY": "refuse"})
+        head = self.candidate(adopter)
+
+        def never_back(runner, branch, held, to):
+            return real(runner, branch, "0" * 40 if to == head else held, to)
+
+        with mock.patch.object(queue.Runner, "move_branch", never_back):
+            self.assertStopped(self.run_queue(adopter, "feature"), "ready_refused")
+        synced = adopter.item("feature")["syncedHead"]
+        self.assertEqual(adopter.tip("feature"), synced)
+        self.assertEqual(self.stop_entry(adopter)["data"]["leftOnBranch"], synced)
+        self.fresh()
+        adopter = self.environment_adopter({"MQ_MERGE": "delete"})
+        self.candidate(adopter)
+        self.assertStopped(self.run_queue(adopter, "feature"), "merge_refused")
+        self.assertEqual(run("ls-remote", "--heads", str(adopter.remote), "refs/heads/feature", cwd=self.directory), "")
+        self.assertNotIn("leftOnBranch", self.stop_entry(adopter)["data"])
+
+    def test_a_candidate_step_reporting_a_third_head_stops_at_once_and_a_bad_subject_makes_no_queue_ref(self) -> None:
+        adopter = self.environment_adopter({"MQ_LAG": "elsewhere"})
+        head = self.candidate(adopter)
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "candidate_moved")
+        self.assertIn(f"feature moved to {'0' * 40} while the queue moved it to", document["stop"]["detail"])
+        self.assertEqual(adopter.tip("feature"), head)
+        runner = adopter.runner()
+        for subject in ("-feature", "a..b", "bad name"):
+            with self.subTest(subject=subject), self.assertRaises(queue.Stop) as raised:
+                runner.queue_ref(subject)
+            self.assertEqual(raised.exception.reason, "ref_invalid")
+        self.assertEqual(runner.queue_ref("V26-3643"), "refs/merge-queue/V26-3643")
+
+    def test_the_merge_waits_for_a_late_candidate_step_and_stops_on_one_that_never_catches_up(self) -> None:
+        adopter = self.environment_adopter({"MQ_LAG": "2"})
+        self.candidate(adopter)
+        document = self.run_queue(adopter, "feature")[-1].document()
+        self.assertEqual(document["outcome"], "merged", document.get("stop"))
+        self.assertEqual(int(Path(str(adopter.log) + ".lagged").read_text()), 2)
+        self.fresh()
+        adopter = self.environment_adopter({"MQ_LAG": "never"}, {"checkTimeoutSeconds": 2})
+        head = self.candidate(adopter)
+        before = adopter.tip("main")
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "candidate_moved")
+        self.assertIn("not the synced head", document["stop"]["detail"])
+        self.assertEqual(adopter.tip("feature"), head)
+        self.assertEqual(adopter.tip("main"), before)
+        self.assertNotIn("leftOnBranch", self.stop_entry(adopter)["data"])
+        self.assertFalse(any(line.startswith("forge ") for line in adopter.log_lines()))
+
+    def test_the_guide_and_the_skill_say_where_the_queue_keeps_its_synced_head(self) -> None:
+        guide = " ".join((SCRIPTS.parent / "references" / "orchestration-guide.md").read_text(encoding="utf-8").split())
+        skill = " ".join((SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8").split())
+        for phrase in (
+            "The queue keeps its synced head on its own ref, `refs/merge-queue/<subject>` on the remote, and the lane's "
+            "branch stays exactly where the lane pushed it.",
+            "`merge` moves the lane's branch to the synced head only as its last step before `ready`, the review gate "
+            "and `merge`, under a lease on the handed head.",
+            "`candidate.stopped` names the commit it left there as `leftOnBranch`; every other stop omits the field.",
+            "So a stopped candidate's branch is at its handed head: the lane's fix, or its authorized merge of the base, "
+            "pushes as a fast-forward, with no forced push.",
+        ):
+            self.assertIn(phrase, guide)
+        self.assertIn("pushes it to the queue's own ref, `refs/merge-queue/<candidate>`, leaving the lane's branch "
+                      "where the lane pushed it.", skill)
+        self.assertIn("A refusal moves the branch back to the handed head, and a merged candidate's queue ref is "
+                      "deleted.", skill)
+
+    def test_a_batch_moves_each_branch_only_at_its_merge_and_back_when_it_fails(self) -> None:
+        adopter = self.environment_adopter({"MQ_MERGE": "refuse two"})
+        heads = {name: self.candidate(adopter, {f"src/{name}.txt": f"{name}\n"}, name=name) for name in ("one", "two")}
+        moves: list[tuple[str, int]] = []
+        real = queue.Runner.move_branch
+
+        def move_branch(runner, branch, held, to):
+            moves.append((branch, sum(line.startswith("forge merge") for line in adopter.log_lines())))
+            return real(runner, branch, held, to)
+
+        with mock.patch.object(queue.Runner, "move_branch", move_branch), recorded_pushes() as pushes:
+            documents = {result.document()["candidate"]: result.document()
+                         for result in adopter.runner().run_command("batch", ["one", "two"])}
+        self.assertEqual(documents["one"]["outcome"], "merged", documents["one"].get("stop"))
+        self.assertEqual(documents["two"]["stop"]["reason"], "merge_refused")
+        # Each branch moved just before its own merge, after the member before it merged, and two's moved back.
+        self.assertEqual(moves, [("one", 0), ("two", 1), ("two", 2)])
+        self.assertEqual(adopter.tip("two"), heads["two"])
+        self.assertNotIn("leftOnBranch", self.stop_entry(adopter, "two")["data"])
+        # Every push to a branch is under a lease, and none targets the base.
+        branch_pushes = [push for push in pushes if any("refs/heads/" in arg for arg in push)]
+        self.assertEqual(len(branch_pushes), 3)
+        for push in branch_pushes:
+            self.assertTrue(push[0].startswith("--force-with-lease=refs/heads/"), push)
+            self.assertNotIn("refs/heads/main", " ".join(push))
 
 
 REGEN_LOCK = """
@@ -1815,13 +2174,14 @@ class StepStderrTests(MergeQueueTestCase):
         adopter = self.environment_adopter({"MQ_PUSH_TOKEN": remote})
         head = self.candidate(adopter)
         adopter.advance_base({"src/lib.txt": "lib two\n"})
-        # A held lock on the candidate's ref makes the remote refuse the synced head's push.
-        lock = adopter.remote / "refs" / "heads" / "feature.lock"
+        # A held lock on the candidate's queue ref makes the remote refuse the synced head's push.
+        lock = adopter.remote / "refs" / "merge-queue" / "feature.lock"
         lock.parent.mkdir(parents=True, exist_ok=True)
         lock.write_bytes(b"")
         detail = self.assertStopped(self.run_queue(adopter, "feature"), "push_refused")["stop"]["detail"]
         self.assertEqual(adopter.tip("feature"), head)
-        self.assertIn("pushing feature failed: ", detail)
+        self.assertIsNone(adopter.queued("feature"))
+        self.assertIn("pushing refs/merge-queue/feature failed: ", detail)
         said = detail.split("failed: ", 1)[1].split("; its whole output", 1)[0]
         self.assertIn("feature", said, "the tail carries git's words")
         self.assertIn("[redacted]", said)

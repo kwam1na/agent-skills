@@ -251,6 +251,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_delivery_key_collision",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_key_collision.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_key_collision.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_delivery_posture_vectors",
         "argv": [
           ".venv/bin/python",
@@ -791,6 +809,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_lead_assign_owns",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_lead_assign_owns.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_lead_assign_owns.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_lead_plan_changes",
         "argv": [
           ".venv/bin/python",
@@ -804,6 +840,24 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_lead_plan_changes.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_lead_add_lane",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_lead_add_lane.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_lead_add_lane.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600
@@ -1682,6 +1736,24 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_run_delivery_pr_review_gates.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_run_delivery_review_wait",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_review_wait.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_review_wait.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600

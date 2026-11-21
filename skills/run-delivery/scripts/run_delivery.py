@@ -1034,12 +1034,41 @@ class Config:
         return {key: self.shelf.json(f"{self.deliveries_rel}/{key}.json") or {} for key in self.delivery_keys()}
 
     def state_of(self, key: str, d: dict) -> Path:
-        """Where a delivery's record is kept on this machine, as load_delivery finds it."""
+        """Where a delivery's record is kept on this machine, as load_delivery finds it.
+
+        By default it is in the lead's checkout, the lane checkout named by the delivery key. When that key is also a
+        story's, that folder is the story's own lane checkout, so the record goes under the work directory's
+        `deliveries/<key>/` instead. A record already at either default path stays there; one at both is refused."""
         if os.environ.get("DELIVERY_STATE"):
             return Path(os.environ["DELIVERY_STATE"])
         if d.get("stateDirectory"):
             return self.main / d["stateDirectory"]
-        return self.lane_checkout(key) / self.state_rel
+        # The binding's state.directory is the folder's name inside either default path, never a place of its own,
+        # unless it is absolute: then both paths are that one.
+        lead, apart = self.lane_checkout(key) / self.state_rel, self.record_apart(key)
+        if lead == apart:
+            return lead
+        held = [path for path in (lead, apart) if (path / "state.json").is_file()]
+        if len(held) == 2:
+            raise Stop(f"delivery {key} has a record at both {lead} and {apart}; keep the one it runs on, and move "
+                       "the other away")
+        if held:
+            return held[0]
+        return apart if key in (d.get("stories") or {}) else lead
+
+    def record_apart(self, key: str) -> Path:
+        """The default record folder of a delivery whose key is also a story's: beside the lanes, under the work
+        directory."""
+        return self.main / self.work / "deliveries" / key / self.state_rel
+
+    def record_apart_note(self) -> str | None:
+        """What doctor --delivery warns and lead-init prints when this delivery's record is kept apart: its key is
+        also a story's."""
+        if self.state != self.record_apart(self.delivery) or self.delivery not in self.stories:
+            return None
+        return (f"{self.delivery} is also a story's key, so its record is kept in {self.state}, beside the lane "
+                f"checkouts rather than in {self.lane_checkout(self.delivery)}, the story's own; to keep it elsewhere, "
+                f"set stateDirectory in {self.delivery_where}")
 
     def closed_here(self, key: str, d: dict) -> bool:
         """Whether this machine's flow log for the delivery holds the closed.json lead-close writes."""
@@ -1166,6 +1195,9 @@ class Config:
             self.sources["state"] = "DELIVERY_STATE"
         elif d.get("stateDirectory"):
             self.sources["state"] = path.name
+        elif self.state == self.record_apart(key):
+            self.sources["state"] = ("the work directory's deliveries/<key>/, " + (
+                "since the key is also a story's" if key in d["stories"] else "where the record already is"))
         else:
             self.sources["state"] = "the lead's checkout (laneCheckout with the delivery key) + the binding's state.directory"
         self.flow_log = self.state.parent / "flow-log"
@@ -1744,6 +1776,7 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
         "carry": carry, "resolutions": resolutions, "charter": charter, "later": later, "checkout": str(checkout),
         "context": context, "in_app": in_app_summary(key), "severities": STORY_SEVERITIES, "checks": scoped_checks(span),
         "flow": flow_command(), "machine": machine_command(), "delivery_option": delivery_option(c),
+        "result": str(result_path(review_dir(key), round_no, short)),
     }
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
 
@@ -2019,11 +2052,58 @@ def review_prepare(args) -> None:
     else:
         print("Resume the same reviewer for each lens, in parallel, with exactly this message. Only if a reviewer "
               "can't be resumed, start a fresh one with the same prompt and say so in the hand-off.")
-    print("Save each final JSON message, exactly as returned, to its result path. Never write or edit a result.\n")
+    print("Each reviewer writes its final JSON to its result path as its last step. Wait for them in the foreground, "
+          f"inside your turn: {flow_command()} review-wait {key} --round {n} returns once every result is in, and exits "
+          "4 naming the lenses still out when its time runs out, so run it again. A reviewer that returned without "
+          "writing its result: save its final JSON message, exactly as returned, to its result path. Never edit a "
+          "result.\n")
     for lens, path, result in briefs:
-        print(f"- {lens}\n  prompt: Read {path} and follow it exactly. Your final message is only the JSON it asks for.\n"
-              f"  save to: {result}")
-    print(f"\nThen: {flow_command()} review-reduce {key} --round {n}")
+        print(f"- {lens}\n  prompt: Read {path} and follow it exactly. As your last step, write your final JSON to "
+              f"{result}, then reply with only that same JSON.\n"
+              f"  result path: {result}")
+    print(f"\nThen: {flow_command()} review-reduce {key} --round {n}, once {flow_command()} review-wait {key} --round {n} "
+          "returns 0")
+
+
+# review-wait's default deadline, inside a host's ten-minute command limit, and how often it looks.
+REVIEW_WAIT_SECONDS, REVIEW_WAIT_POLL = 540, 5
+
+
+def parsed_json(path: Path) -> bool:
+    """Whether `path` holds JSON that parses: a result still being written, or not written, doesn't."""
+    try:
+        json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def review_wait(args) -> None:
+    """`review-wait <key> --round N [--seconds S]`: wait in the foreground until every lens's result path in the
+    round's meta holds JSON that parses, then exit 0; exit 4 naming the lenses still out once S seconds run out."""
+    c = cfg()
+    key = c.require(args.key)
+    n = args.round
+    folder = review_dir(key)
+    meta = load_json(folder / f"round-{n}.meta.json")
+    if meta is None:
+        raise Stop(f"round {n} isn't prepared: {flow_command()} review-prepare {key} --round {n} prepares it")
+    if args.seconds < 0:
+        raise Stop(f"--seconds is {args.seconds:g}: give zero or more")
+    paths = {lens: result_path(folder, n, c.lenses[lens][0]) for lens in meta["lenses"] if lens in c.lenses}
+    watch = clock()
+    deadline = watch.time() + args.seconds
+    while True:
+        out = [lens for lens, path in paths.items() if not parsed_json(path)]
+        if not out:
+            print(f"{key} round {n}: every lens's result is in. Then: {flow_command()} review-reduce {key} --round {n}")
+            return
+        left = deadline - watch.time()
+        if left <= 0:
+            print(f"{key} round {n}: still out after {args.seconds:g}s: {', '.join(out)}. Wait again: "
+                  f"{flow_command()} review-wait {key} --round {n}")
+            sys.exit(4)
+        watch.sleep(min(watch.poll(REVIEW_WAIT_POLL), left))
 
 
 def flow_command() -> str:
@@ -2659,6 +2739,7 @@ def plan_brief(c, n: int, lens: str, candidate: str, tree: str, checkout: Path, 
         "delivery_option": delivery_option(c),
         "checks": ("- scoped sensor commands: none; a plan review runs no checks, since the plan is the whole subject.\n"
                    "- test files in scope for this round: none."),
+        "result": str(result_path(plan_review_dir(c), n, short)),
     }
     template = (TOOL / "templates/round-brief.md").read_text()
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
@@ -4623,6 +4704,8 @@ def lane_start(args) -> None:
     # it is. It comes first, so the stage is moved before the start is recorded.
     if mark_building(c, key, lane):
         did.append(f"{lane} started it: now building")
+    # On every run, so a session that takes the story over is seated as its lane too.
+    record_session(c, "lane", key)
     if not starts:
         # The focus is set only with the start, so running it again never resets what the lane has said since.
         state_tool("focus", "--lane", lane, "--text", f"{key}: started", "--state", "working", "--waiting-on", "")
@@ -6463,7 +6546,8 @@ def lead_plan(args) -> None:
             raise Stop(f"{key} isn't a story of {c.delivery} yet: --kind added adds it whole with --title, --text (its "
                        "first criterion) and --lane, with --after for the stories it comes after")
         if args.lane not in c.lanes:
-            raise Stop(f"--lane {args.lane} isn't a lane of {c.delivery}: {', '.join(c.lanes)}")
+            raise Stop(f"--lane {args.lane} isn't a lane of {c.delivery}: {', '.join(c.lanes)}; add it first with "
+                       f"lead-add-lane --lane {args.lane}")
         after = args.after or []
         held = sibling_story_keys(getattr(c, "state", None))
         strangers = [other for other in after if other not in stories and other not in held]
@@ -6930,7 +7014,8 @@ def claims_report(c, helper, lane: str, key: str, base: str, head: str, state: d
             continue
         mine = [claim for claim in on_path if claim["lane"] == lane]
         try:
-            spans, rows = helper.change_report(c.root, path, base, head, mine)
+            spans, rows = helper.change_report(c.root, path, base, head, mine,
+                                               others=[claim for claim in on_path if claim["lane"] != lane])
         except helper.RegionError as error:
             needed.append(f"{path}: {error}; lanes share it by lines ({', '.join(described_claim(claim) for claim in on_path)})")
             continue
@@ -7180,9 +7265,18 @@ def co_changed(c, path: str, ref: str) -> tuple[int, collections.Counter]:
 
 
 def co_change_warning(c, key: str, tracked: list[str]) -> str | None:
+    """The warning of a story's co-changed files (co_change_files), each with the named file it changes with most."""
+    often = co_change_files(c, key, tracked)
+    if not often:
+        return None
+    return (f"{key}'s files often change with "
+            + ", ".join(f"{f} ({owner_words(c, f)}; with {path} in {n} of {count} changes)" for f, n, count, path in often))
+
+
+def co_change_files(c, key: str, tracked: list[str]) -> list[tuple[str, int, int, str]]:
     """The files outside a story's lane that changed with a file it names in at least CO_CHANGE['support'] and
-    CO_CHANGE['share'] of that file's changes: the CO_CHANGE['shown'] most coupled, each with the named file it
-    changes with most."""
+    CO_CHANGE['share'] of that file's changes: the CO_CHANGE['shown'] most coupled, each as (file, changes together,
+    the named file's changes, the named file it changes with most)."""
     lane = c.lane_of(key)
     named = story_named_files(c, key, tracked)
     ref, present = files_ref(c), set(tracked)
@@ -7195,12 +7289,8 @@ def co_change_warning(c, key: str, tracked: list[str]) -> str | None:
             if (n >= CO_CHANGE["support"] and n >= CO_CHANGE["share"] * count and f in present and f not in named
                     and not owned_by(c, lane, f) and (n / count, n) > best.get(f, (0, 0))[:2]):
                 best[f] = (n / count, n, count, path)
-    if not best:
-        return None
     often = sorted(best.items(), key=lambda item: (-item[1][0], -item[1][1], item[0]))[:CO_CHANGE["shown"]]
-    return (f"{key}'s files often change with "
-            + ", ".join(f"{f} ({owner_words(c, f)}; with {path} in {n} of {count} changes)"
-                        for f, (_, n, count, path) in often))
+    return [(f, n, count, path) for f, (_, n, count, path) in often]
 
 
 def context_problems(c) -> list[str]:
@@ -7932,6 +8022,9 @@ def lead_init(args) -> None:
             rebuild_plan(c)
     print(f"initialized {c.state} with {len(planned)} planned stories across {len(c.lanes)} lanes"
           + (f"; wrote {c.state / PLAN_FILE}" if (c.state / PLAN_FILE).exists() else ""))
+    if (apart := c.record_apart_note()):
+        print(apart)
+    record_session(c, "lead")
     for item in planned:
         if (outcome := refine_outcome(c, item["subject"])) is not None:
             print(f"  refine: {outcome}")
@@ -8904,10 +8997,16 @@ def change_regions(c, args) -> None:
     if not helper.valid_path(path):
         raise Stop("name a repository-relative file")
     numbered = args.start is not None or args.end is not None
-    if args.revoke_region and (args.around is not None or args.insert):
+    paired = args.anchor is not None or args.through is not None
+    if args.revoke_region and (args.around is not None or args.insert or paired):
         raise Stop("a revocation matches the claim by its coordinates: --base, --start and --end")
-    if not args.base or (args.around is None and (args.start is None or args.end is None)):
-        raise Stop("a region claim needs --base COMMIT and either --around TEXT or --start LINE --end LINE")
+    if paired and (args.anchor is None or args.through is None):
+        raise Stop("--anchor TEXT and --through TEXT name a span together: give both")
+    if paired and (numbered or args.around is not None):
+        raise Stop("name the lines by --anchor and --through alone, not with --start, --end or --around")
+    if not args.base or (args.around is None and not paired and (args.start is None or args.end is None)):
+        raise Stop("a region claim needs --base COMMIT and --anchor TEXT --through TEXT, --around TEXT, "
+                   "or --start LINE --end LINE")
     if args.around is not None and numbered:
         raise Stop("name the lines by --around TEXT or by --start and --end, not both")
     if args.revoke_region and args.story:
@@ -8917,7 +9016,8 @@ def change_regions(c, args) -> None:
     if args.region:
         try:
             args.start, args.end, asked = resolve_lines(helper, c, path, base_head, args.start, args.end, args.around,
-                                                        args.insert, c.record_state().get("laneRegions", []))
+                                                        args.insert, c.record_state().get("laneRegions", []),
+                                                        pair=(args.anchor, args.through) if paired else None)
         except helper.RegionError as error:
             raise Stop(str(error)) from error
     claim = {"lane": args.lane, "path": path, "baseHead": base_head, "start": args.start, "end": args.end}
@@ -9004,20 +9104,24 @@ def change_regions(c, args) -> None:
 
 
 GIVE = re.compile(r"(?P<lane>[^:+\s]+)(?:\+(?P<insert>before|after))?:"
-                  r"(?:(?P<start>[0-9]+)-(?P<end>[0-9]+)|around=(?P<around>.+?))(?:@(?P<key>[A-Za-z][A-Za-z0-9]*-[0-9]+))?")
+                  r"(?:(?P<start>[0-9]+)-(?P<end>[0-9]+)|anchor=(?P<anchor>.+?)\.\.through=(?P<through>.+?)"
+                  r"|around=(?P<around>.+?))(?:@(?P<key>[A-Za-z][A-Za-z0-9]*-[0-9]+))?")
 
 
 def carve_gives(values: list[str]) -> list[dict]:
-    """Each --give as {lane, start, end} or {lane, around}, with its story and --insert side when it names them."""
+    """Each --give as {lane, start, end}, {lane, anchor, through} or {lane, around}, with its story and --insert side
+    when it names them."""
     gives = []
     for value in values:
         found = GIVE.fullmatch(value)
         if not found:
-            raise Stop(f"--give {value!r}: name it as LANE[+before|+after]:START-END[@KEY] or "
-                       "LANE[+before|+after]:around=TEXT[@KEY]")
+            raise Stop(f"--give {value!r}: name it as LANE[+before|+after]:START-END[@KEY], "
+                       "LANE[+before|+after]:anchor=TEXT..through=TEXT[@KEY] or LANE[+before|+after]:around=TEXT[@KEY]")
         give = {"lane": found["lane"], **({"story": found["key"]} if found["key"] else {}),
                 **({"insert": found["insert"]} if found["insert"] else {})}
-        if found["around"] is not None:
+        if found["anchor"] is not None:
+            give["pair"] = (found["anchor"], found["through"])
+        elif found["around"] is not None:
             give["around"] = found["around"]
         else:
             start, end = int(found["start"]), int(found["end"])
@@ -9029,12 +9133,16 @@ def carve_gives(values: list[str]) -> list[dict]:
 
 
 def resolve_lines(helper, c, path: str, base: str, start: int | None, end: int | None, around: str | None,
-                  insert: str | None, regions: list[dict], taken: list[tuple[int, int]] = ()) -> tuple[int, int, list[str]]:
-    """The span a grant or a give names at ``base``: by --around's block (Decision 10) or its numbers, each edge at a
-    statement's start in a Python file (Decision 11), widened by --insert past an edge into an unclaimed line
-    (Decision 12). Returns it, and what to print of how it was read."""
+                  insert: str | None, regions: list[dict], taken: list[tuple[int, int]] = (),
+                  pair: tuple[str, str] | None = None) -> tuple[int, int, list[str]]:
+    """The span a grant or a give names at ``base``: by --anchor and --through (Decision 3), by --around's block
+    (Decision 10) or its numbers, each edge at a statement's start in a Python file (Decision 11), widened by --insert
+    past an edge into an unclaimed line (Decision 12). Returns it, and what to print of how it was read."""
     said = []
-    if around is not None:
+    if pair is not None:
+        start, end = helper.anchor_pair(c.root, base, path, *pair)
+        said.append(f"--anchor {pair[0]!r} --through {pair[1]!r} names [{start}, {end}) at {base[:12]}")
+    elif around is not None:
         start, end = helper.anchored(c.root, base, path, around)
         said.append(f"--around {around!r} names [{start}, {end}) at {base[:12]}")
     helper.check_statements(c.root, base, path, start, end)
@@ -9071,8 +9179,9 @@ def change_carve(c, args) -> None:
         raise Stop("a carve gives lines: --give LANE:START-END[@KEY], as many as it needs")
     if args.start is not None or args.end is not None or args.lane or args.story:
         raise Stop("a carve names its lines in each --give, not with --lane, --start, --end or --story")
-    if args.around is not None or args.insert:
-        raise Stop("a carve names each give's lines in its --give: LANE[+before|+after]:around=TEXT[@KEY]")
+    if args.around is not None or args.insert or args.anchor is not None or args.through is not None:
+        raise Stop("a carve names each give's lines in its --give: LANE[+before|+after]:around=TEXT[@KEY] or "
+                   "LANE[+before|+after]:anchor=TEXT..through=TEXT[@KEY]")
     gives = carve_gives(args.give)
     git("fetch", "-q", c.remote, c.base_branch)
     base = git("rev-parse", c.base_ref)
@@ -9083,7 +9192,7 @@ def change_carve(c, args) -> None:
         for give in gives:
             give["start"], give["end"], words = resolve_lines(
                 helper, c, path, carve_base, give.get("start"), give.get("end"), give.pop("around", None),
-                give.pop("insert", None), c.record_state().get("laneRegions", []), taken)
+                give.pop("insert", None), c.record_state().get("laneRegions", []), taken, give.pop("pair", None))
             taken.append((give["start"], give["end"]))
             asked += [f"{give['lane']}: {line}" for line in words]
     except helper.RegionError as error:
@@ -9132,6 +9241,74 @@ def change_carve(c, args) -> None:
         print(f"  removed {described_claim(claim)}")
     for claim in said["added"]:
         print(f"  added {written_lines(helper, c, claim)}")
+
+
+def change_carry(c, args) -> None:
+    """Decision 5: the lane's claims on a path, of --story when it names one, carried to the current base when every
+    base hunk since each claim's base lies wholly outside its lines; all of them, or nothing written."""
+    helper = _region_ownership()
+    path = args.carry
+    if not helper.valid_path(path):
+        raise Stop("name a repository-relative file")
+    if not args.lane:
+        raise Stop("name the lane whose claims to carry with --lane")
+    if args.source or args.insert or any(value is not None for value in (
+            args.base, args.start, args.end, args.around, args.anchor, args.through)):
+        raise Stop("a carry maps the lane's claims as they stand to the current base: it takes --lane and --story only")
+    git("fetch", "-q", c.remote, c.base_branch)
+    base = git("rev-parse", c.base_ref)
+    said: dict = {}
+
+    def compute(doc: dict) -> list[str] | None:
+        state = doc["state"]
+        ownership = state.get("laneOwnership")
+        if ownership is None:
+            raise Stop("seed this record with lead-own --seed first")
+        if args.lane not in ownership:
+            raise Stop("name a lane recorded for this delivery")
+        region_story(c, args, state, args.lane, args.story)
+        regions = list(state.get("laneRegions", []))
+        chosen = [claim for claim in regions if claim["path"] == path and claim["lane"] == args.lane
+                  and (args.story is None or claim.get("story") == args.story)]
+        if not chosen:
+            raise Stop(f"{args.lane} has no region claim on {path}" + (f" for {args.story}" if args.story else ""))
+        moved, refused = [], []
+        for claim in chosen:
+            try:
+                moved.append((claim, helper.claim_at(claim, base, *helper.carry_span(c.root, claim, base))))
+            except helper.RegionError as error:
+                refused.append(f"{described_claim(claim)}: {error}")
+        if refused:
+            raise Stop(f"the carry of {path} writes nothing: " + "; ".join(refused))
+        for old, new in moved:
+            for other in regions:
+                if other["path"] != path or any(other is gone for gone, _ in moved):
+                    continue
+                with contextlib.suppress(helper.RegionError):
+                    held = helper.mapped(c.root, other, base)
+                    if helper.overlapping((new["start"], new["end"]), held):
+                        raise Stop(f"the carry of {path} writes nothing: {described_claim(new)} would overlap "
+                                   f"{described_claim(other, held, base)}")
+        moved = [(old, new) for old, new in moved if old != new]
+        said.clear()
+        said["moved"] = moved
+        if not moved:
+            return None
+        swapped = {id(old): new for old, new in moved}
+        return ["--set", json.dumps({"/laneRegions": [swapped.get(id(claim), claim) for claim in regions]})]
+
+    patch_from(compute, f"the carry of {path}")
+    if not said["moved"]:
+        print(f"{args.lane}'s claims on {path} are already at {base[:12]}")
+        return
+    for old, new in said["moved"]:
+        state_tool("journal", "--kind", "ownership.carried", "--lane", new["lane"],
+                   *(["--subject", new["story"]] if new.get("story") else []), "--data", json.dumps(
+            {"path": path, "from": {"first": old["start"], "after": old["end"]},
+             "to": {"first": new["start"], "after": new["end"]}, "was": old["baseHead"],
+             "base": {"ref": c.base_branch, "head": base}, **({"story": new["story"]} if new.get("story") else {}),
+             "by": "lead"}))
+        print(f"carried {described_claim(old)} to {written_lines(helper, c, new)}")
 
 
 def in_flight_before(c, state: dict, lane: str, landed: str, merge: str, story: str | None) -> list[str]:
@@ -9254,6 +9431,11 @@ def change_ownership(c, args) -> None:
         return
     if args.give:
         raise Stop("--give belongs to a carve: --carve PATH --give LANE:START-END[@KEY]")
+    if args.carry:
+        change_carry(c, args)
+        return
+    if (args.anchor is not None or args.through is not None) and not args.region:
+        raise Stop("--anchor and --through name a grant's lines: use them with --region")
     if not (args.region or args.revoke_region or args.claim) and any(
             value is not None for value in (args.base, args.start, args.end)):
         raise Stop("--base, --start and --end require --region or --revoke-region")
@@ -9287,7 +9469,7 @@ def change_ownership(c, args) -> None:
         if ownership is None:
             raise Stop("seed this record with lead-own --seed first")
         if args.lane not in ownership or args.source and args.source not in ownership:
-            raise Stop("name lanes recorded for this delivery")
+            raise Stop("name lanes recorded for this delivery; add a new one with lead-add-lane --lane L")
         if args.source:
             if pattern not in ownership[args.source]:
                 raise Stop(f"{args.source} has no claim for {pattern}")
@@ -9317,6 +9499,92 @@ def change_ownership(c, args) -> None:
     print(change)
 
 
+# The plan's Units table and its lane sentences read only numbered lanes.
+LANE_NAME = re.compile(r"lane-[1-9][0-9]*")
+
+
+def lead_add_lane(args) -> None:
+    """Add a lane to a running delivery: to the delivery file's `lanes` and the plan's Units table in one commit in the
+    lead's checkout, and its ownership and `lanes[]` row in one state-tool patch. Each grant takes lead-own --grant's
+    checks, and any refusal writes nothing."""
+    c = cfg()
+    lane = args.lane
+    if not LANE_NAME.fullmatch(lane):
+        raise Stop(f"name the lane lane-N, such as lane-{len(c.lanes) + 1}, not {lane!r}: the plan's Units table and "
+                   "its lane sentences read only numbered lanes")
+    require_lead_checkout(c)
+    if not (c.state / "state.json").is_file():
+        raise Stop("initialize the delivery record before adding a lane")
+    grants = list(dict.fromkeys(args.grant or []))
+    for pattern in grants:
+        if Path(pattern).is_absolute() or any(part in ("", ".", "..") for part in pattern.split("/")):
+            raise Stop(f"name a repository-relative file or pattern, not {pattern!r}")
+    with ownership_lock(c), plan_lock(c):
+        root = lead_plan_checkout(c)
+        raw = json.loads(c.delivery_path.read_text())
+        if lane in raw["lanes"] or lane in c.effective_ownership(c.record_state()):
+            raise Stop(f"{lane} is already a lane of {c.delivery}; give it files with lead-own --lane {lane} --grant "
+                       "PATTERN")
+        plan_path = root / c.plan
+        plan_text = plan_with_lane(plan_path.read_text(), lane, grants)
+        files, shared = tracked_at_base(c), shared_outputs(c)
+        for pattern in grants:
+            outputs = sorted(path for path in shared if fnmatch.fnmatchcase(path, pattern))
+            if outputs:
+                raise Stop(f"{', '.join(outputs)} is a shared output, which every lane refreshes and none owns; "
+                           f"leave it out of {lane}'s grants")
+        row = {"id": lane, "title": lane, "focus": "", "state": "idle", "waitingOn": None}
+
+        def compute(doc: dict) -> list[str]:
+            state = doc["state"]
+            ownership = copy.deepcopy(state.get("laneOwnership"))
+            if ownership is None:
+                raise Stop("seed this record with lead-own --seed first")
+            if lane in ownership or any(entry["id"] == lane for entry in state["lanes"]):
+                raise Stop(f"{lane} is already a lane of {c.delivery}")
+            conflicts = sorted({claim["path"] for claim in state.get("laneRegions", [])
+                                if any(fnmatch.fnmatchcase(claim["path"], pattern) for pattern in grants)})
+            if conflicts:
+                raise Stop(f"whole-file claim conflicts with region claims for {', '.join(conflicts)}")
+            ownership[lane] = grants
+            overlaps = ownership_overlaps(ownership, files, shared)
+            if overlaps:
+                raise Stop(f"lanes own the same files: {'; '.join(overlaps)}")
+            return ["--set", json.dumps({"/laneOwnership": ownership,
+                                         "/lanes": [*state["lanes"], {**row, "since": now()}]})]
+
+        patch_from(compute, f"{lane}'s addition")
+        raw["lanes"][lane] = {"owns": grants}
+        c.delivery_path.write_text(json.dumps(raw, indent=2) + "\n")
+        plan_path.write_text(plan_text)
+        git("add", str(c.delivery_path), str(plan_path), cwd=root)
+        tool_commit("commit", "-q", "-m", f"{c.delivery}: add lane {lane}", *(["-m", args.why] if args.why else []),
+                    cwd=root)
+    print(f"added {lane} to {c.delivery}" + (f", owning {', '.join(grants)}" if grants else ", owning nothing yet"))
+    print(f"committed the delivery file and the plan; push it so lanes see it: {plan_publish_command(c)}")
+
+
+def plan_with_lane(text: str, lane: str, grants: list[str]) -> str:
+    """The plan with the lane's row added to the end of its Units table, at the highest tier, with no items."""
+    rows, missing = units_rows(text)
+    if rows is None:
+        raise Stop(f"{missing}, so there is no row to add the lane to")
+    body = next(b for level, title, b in plan_sections(text) if level == 2 and title == UNITS_SECTION)
+    lines = body.splitlines(keepends=True)
+    first = next(index for index, line in enumerate(lines) if line.strip().startswith("|"))
+    last = first
+    while last + 1 < len(lines) and lines[last + 1].strip().startswith("|"):
+        last += 1
+    header = [cell.strip() for cell in lines[first].strip().strip("|").split("|")]
+    values = {"Tier": str(max((tier for tier, _, _ in rows), default=1)), "Lane": lane[len("lane-"):],
+              "Owns": ", ".join(f"`{pattern}`" for pattern in grants)}
+    added = "| " + " | ".join(values.get(name, "") for name in header) + " |"
+    # After the table's last row, keeping whatever follows it as it was: a last row the section ends on has no newline.
+    added = added + "\n" if lines[last].endswith("\n") else "\n" + added
+    start = text.index(body)
+    return text[:start] + "".join(lines[:last + 1]) + added + "".join(lines[last + 1:]) + text[start + len(body):]
+
+
 def lead_assign(args) -> None:
     c = cfg()
     keys = [c.require(k) for k in args.keys]
@@ -9329,6 +9597,11 @@ def lead_assign(args) -> None:
     unready = [line for state, line in readiness.values() if state == "not-ready"]
     if unready and not args.force:
         raise Stop("; ".join(unready) + "; nothing was assigned. Have the item made ready, or assign it anyway with --force")
+    # Decision 6: the co-changed files' claims commit the delivery file as lead-plan does, so its checkout is checked
+    # before anything is written.
+    if args.own_co_changed and "laneOwnership" not in c.record_state():
+        raise Stop("--own-co-changed claims files in the record: seed this record with lead-own --seed first")
+    plan_root = lead_plan_checkout(c) if args.own_co_changed else None
     register_stories(c)
     row = {"id": args.lane, "title": args.title, "focus": f"assigned {', '.join(keys)}", "state": "assigned",
            "waitingOn": None, "since": now()}
@@ -9336,7 +9609,7 @@ def lead_assign(args) -> None:
     def assign(doc: dict) -> dict:
         state = doc["state"]
         if args.lane not in c.effective_ownership(state):
-            raise Stop(f"{args.lane} is not a lane of {c.delivery}")
+            raise Stop(f"{args.lane} is not a lane of {c.delivery}; add it first with lead-add-lane --lane {args.lane}")
         # The row is replaced where it stands: an assignment never reorders the lanes.
         rows = state["lanes"]
         changes = {"lanes": [row if entry["id"] == args.lane else entry for entry in rows]
@@ -9388,13 +9661,22 @@ def lead_assign(args) -> None:
                 if path in regional_paths:
                     print(f"{key} names a region-owned file {path} ({owner_words(c, path)}). "
                           f"{args.lane} may change only its mapped spans.")
+    co_changes = [line for key in keys if (line := co_change_warning(c, key, tracked))]
     warnings = [*(named_outside(c, key, outside) for key in keys if (outside := outside_lane(c, key, tracked))),
-                *(line for key in keys if (line := co_change_warning(c, key, tracked)))]
+                *co_changes]
     if warnings:
         print(f"Files outside {args.lane}'s owns, before it starts (lead-accept refuses a change to any of them):")
         for line in warnings:
             print(f"  {line}")
-        print(f"Move each to {args.lane}'s owns now, or plan the story on the lane that owns it.\n")
+        if args.own_co_changed:
+            with ownership_lock(c):
+                own_co_changed(c, args.lane, keys, tracked, plan_root)
+            print()
+        elif co_changes:
+            print(f"Grant a named file with lead-own, or plan the story on the lane that owns it; claim the co-changed "
+                  f"files for {args.lane} by assigning with --own-co-changed.\n")
+        else:
+            print(f"Move each to {args.lane}'s owns now, or plan the story on the lane that owns it.\n")
     print_peer_claims(c, [path for key in keys for path in story_named_files(c, key, tracked)])
     # One entry per story, so each ticket's start is its own, made when its lane begins it.
     for key in keys:
@@ -9421,6 +9703,49 @@ def lead_assign(args) -> None:
           "key and the outcome (handed off, or blocked and on what): the lead sees its first lines. Then the branch, "
           "PR, reviewed head, review rounds and verdicts, gates, in-app checks, and any decision you need from the "
           "lead. The lead checks the hand-off and tells you when to start your next story.")
+
+def grant_args(path: str, lane: str) -> argparse.Namespace:
+    """lead-own --grant PATH --lane LANE's arguments, for a command that grants through change_ownership's checks."""
+    return argparse.Namespace(
+        grant=path, lane=lane, carve=None, give=None, carry=None, anchor=None, through=None, region=None,
+        revoke_region=None, claim=None, base=None, start=None, end=None, story=None, seed=False, source=None,
+        move=None, revoke=None, around=None, insert=None)
+
+
+def own_co_changed(c, lane: str, keys: list[str], tracked: list[str], root: Path) -> list[str]:
+    """Decision 6: each file the stories' co-change warnings name, claimed for ``lane`` in the record through
+    lead-own --grant's checks and added to its owns in the delivery file, in one commit as lead-plan makes. A file
+    another lane holds is named with the --move that would take it, and one shared by lines is named and left; neither
+    is added. The warning never names a declared shared output, which every lane may change. Returns the files added."""
+    state = c.record_state()
+    ownership = c.effective_ownership(state)
+    regional = {claim["path"] for claim in state.get("laneRegions", [])}
+    added = []
+    for path in dict.fromkeys(f for key in keys for f, *_ in co_change_files(c, key, tracked)):
+        held = [(other, pattern) for other in owners_of(ownership, path) if other != lane
+                for pattern in ownership[other] if fnmatch.fnmatchcase(path, pattern)]
+        if held:
+            for other, pattern in held:
+                print(f"  {path} is {other}'s, so it isn't added; to take it: {flow_command()} lead-own --lane {lane} "
+                      f"--move {shlex.quote(pattern)} --from {other}")
+        elif path in regional:
+            print(f"  {path} is shared by lines, so it isn't added; ask for a span: {flow_command()} lead-own --region "
+                  f"{shlex.quote(path)} --lane {lane} ...")
+        else:
+            change_ownership(c, grant_args(path, lane))
+            added.append(path)
+    if not added:
+        return added
+    raw = json.loads(c.delivery_path.read_text())
+    owns = raw["lanes"][lane].setdefault("owns", [])
+    owns += [path for path in added if path not in owns]
+    c.delivery_path.write_text(json.dumps(raw, indent=2) + "\n")
+    git("add", str(c.delivery_path), cwd=root)
+    tool_commit("commit", "-q", "-m", f"{c.delivery}: {lane} owns {', '.join(added)} (lead-assign --own-co-changed)",
+                cwd=root)
+    print(f"committed the delivery file with {lane}'s owns; push it so lanes see it: {plan_publish_command(c)}")
+    return added
+
 
 # A delivery's claims on its base, kept in its own record's extensions for its peers to read (Decision 29).
 def change_claims(c, args) -> None:
@@ -9677,12 +10002,15 @@ def accept_story(c, args) -> None:
         raise Stop("the binding doesn't enable lead selection (selection.lead), so the queue selects the checks: "
                    "accept with neither --checks nor --full-suite")
     reuse, why = getattr(args, "reuse", None), getattr(args, "why", None)
+    takes = list(dict.fromkeys(getattr(args, "take", None) or []))
     if reuse is not None and args.checks is None:
         raise Stop("--reuse goes with --checks: the grant lives in the lead's selection at the handed head")
     if reuse is not None and not (why or "").strip():
         raise Stop("--reuse needs --why, why that reuse is safe, which select journals as the lead's decision")
-    if why and reuse is None:
-        raise Stop("--why goes with --reuse")
+    if takes and not (why or "").strip():
+        raise Stop("--take needs --why: why the lane takes each file, journalled as the lead's decision")
+    if why and reuse is None and not takes:
+        raise Stop("--why goes with --reuse or --take")
     if args.full_suite and provider_selects(c):
         raise Stop("the binding names a provider, so a candidate with no lead selection runs the provider's answer, "
                    "and the fallback only when the provider can't give one: --full-suite can't promise the fallback; "
@@ -9691,6 +10019,9 @@ def accept_story(c, args) -> None:
     item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
     waiting = next((p for p in doc["state"].get("planned", []) if p["subject"] == key and p.get("noChange")), None)
     if not item and waiting:
+        if takes:
+            raise Stop(f"--take {takes[0]}: {key} has a no-change hand-off, which changes no file, so there is nothing "
+                       "to take")
         if args.checks is not None:
             check_ids(c, args.checks, "--checks")  # refused as before; a no-change story runs no checks
         accept_no_change(c, key, waiting)
@@ -9808,7 +10139,11 @@ def accept_story(c, args) -> None:
             problems.append(f"review carry refused: {error}")
     # Once merged, the base holds the head or a squash of it, so a diff against it no longer says what the work changed.
     lane = item["lane"] if "laneOwnership" in doc["state"] else c.lane_of(key, doc["state"])
-    changed, outside = ([], []) if merged else candidate_ownership(c, lane, base, head, doc["state"])
+    # Decision 7: the candidate is judged as if the lane held each file it takes; the grant is written once accepted.
+    judged = taken_state(c, key, lane, base, head, doc["state"], takes) if takes and not merged else doc["state"]
+    if takes and merged:
+        raise Stop(f"{key} has merged: --take grants a file to a candidate waiting for acceptance")
+    changed, outside = ([], []) if merged else candidate_ownership(c, lane, base, head, judged)
     if outside:
         problems.append(f"the branch changes files outside {lane}'s: {outside}")
     proposal = None
@@ -9921,6 +10256,13 @@ def accept_story(c, args) -> None:
         # A selection still standing would be what the runner runs: the fallback the lead chose wouldn't.
         state_tool("select", "--subject", key, "--clear")
         decisions.append(f"cleared the lead selection recorded at {str(before.get('head'))[:10]}, so the fallback runs")
+    for path in takes:
+        change_ownership(c, grant_args(path, lane))
+    if takes:
+        state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--text",
+                   f"{lane} takes {', '.join(takes)}, which {key} changes, into its owns at acceptance", "--why",
+                   why.strip())
+        decisions.append(f"{lane} took {', '.join(takes)} into its owns: {why.strip()}")
     review_note = (f"review captured at {carried_review['from']} and carried to {head}"
                    if carried_review else "review evidence captured at that head")
     # The check is journaled first, naming the hand-off, so the acceptance after it can name the check.
@@ -9928,7 +10270,8 @@ def accept_story(c, args) -> None:
                    {"head": head, "rounds": len(set(numbers)), "afterMerge": merged, "noChange": False,
                     "notes": [review_note, *decisions]}))
     if not merged:
-        authorization = _validator().handoff_authorization(doc["state"], item)
+        # Read again after a --take's grants, which the authorization's ownership then holds.
+        authorization = _validator().handoff_authorization(load_state()["state"] if takes else doc["state"], item)
         region_paths = {claim["path"] for claim in doc["state"].get("laneRegions", [])}
         state_tool("handoff", "--accept", key, "--authorization", json.dumps(authorization),
                    *(arg for path in changed if path in region_paths for arg in ("--region-path", path)))
@@ -9946,6 +10289,35 @@ def accept_story(c, args) -> None:
     if needs_video(key):
         print("  once it merges: lead-evidence page, republish the page (same address), lead-evidence published --url, "
               "and link its section from the story in the tracker")
+
+
+def taken_state(c, key: str, lane: str, base: str, head: str, state: dict, takes: list[str]) -> dict:
+    """Decision 7: the record as acceptance judges it with ``lane`` holding each file ``takes`` names, refused when
+    another lane holds one, lanes share it by lines, it is a declared shared output, the lane holds it already, or the
+    candidate doesn't change it. Writes nothing."""
+    if "laneOwnership" not in state:
+        raise Stop("--take grants a claim in the record: seed this record with lead-own --seed first")
+    ownership = c.effective_ownership(state)
+    regional = {claim["path"] for claim in state.get("laneRegions", [])}
+    shared = shared_outputs(c)
+    changed = set(filter(None, run(["git", "diff", "--no-renames", "--name-only", "-z", base, head]).stdout.split("\0")))
+    for path in takes:
+        if Path(path).is_absolute() or any(part in ("", ".", "..") for part in path.split("/")):
+            raise Stop(f"--take {path}: name a repository-relative file")
+        others = [other for other in owners_of(ownership, path) if other != lane]
+        if others:
+            raise Stop(f"--take {path}: {path} is {' and '.join(others)}'s; move it with lead-own --move, or plan the "
+                       "change on that lane")
+        if path in regional:
+            raise Stop(f"--take {path}: lanes share {path} by lines; grant a span with lead-own --region")
+        if path in shared:
+            raise Stop(f"--take {path}: {path} is a declared shared output, which no lane takes")
+        if lane in owners_of(ownership, path):
+            raise Stop(f"--take {path}: {lane} holds {path} already; accept without --take")
+        if path not in changed:
+            raise Stop(f"--take {path}: {key} doesn't change {path}, so there is nothing to take")
+    return {**state, "laneOwnership": {name: [*patterns, *(takes if name == lane else [])]
+                                       for name, patterns in ownership.items()}}
 
 
 def lead_base_broken(args) -> None:
@@ -11317,6 +11689,7 @@ def lead_wait(args) -> None:
     c = cfg()
     if not (c.state / "state.json").exists():
         raise Stop(f"no record at {c.state}: lead-init starts it")
+    record_session(c, "lead")
     passed = list(args.wait_args)
     parsed = _validator().wait_arguments(passed)
     after = parsed.after
@@ -11401,13 +11774,16 @@ class Seat:
         self.role, self.configs, self.story = role, configs, story
 
 
-def seat_of(cwd_text: object) -> Seat | None:
-    """The session's seat, from the payload's cwd: a lane when the cwd lies in the checkout of a story of an open
+def seat_of(payload: dict) -> Seat | None:
+    """The session's seat. A `session_id` an open delivery's sessions.json holds seats it by the role recorded there,
+    whatever its cwd: a lane on its story, matched first, else the lead of each delivery that recorded it. Any other
+    session is seated from the payload's cwd: a lane when the cwd lies in the checkout of a story of an open
     delivery, matched first; else the lead of each delivery whose record is open in the cwd's checkout; else none.
     A cwd's checkout is the deepest one holding it, after resolving symlinks, so a lane nested in the lead's
     checkout is a lane, and any other checkout nested there is neither."""
     global OFFLINE
     OFFLINE = True  # a hook reads what this machine has; it never fetches
+    cwd_text, session = payload.get("cwd"), payload.get("session_id")
     if not isinstance(cwd_text, str) or not os.path.isabs(cwd_text) or not os.path.isdir(cwd_text):
         return None
     cwd = real(cwd_text)
@@ -11442,6 +11818,8 @@ def seat_of(cwd_text: object) -> Seat | None:
         return None
     lanes: list[tuple[Path, str, str]] = []
     leads: list[str] = []
+    recorded_lanes: list[tuple[Path, str, str]] = []
+    recorded_leads: list[tuple[Path, str]] = []
     for key, d in here.delivery_files().items():
         lead_root = deepest(real(here.state_of(key, d)), checkouts)
         lead = config_at(lead_root) if lead_root is not None else None
@@ -11450,17 +11828,81 @@ def seat_of(cwd_text: object) -> Seat | None:
         files = lead.delivery_files()
         if key not in files or not lead.open_here(key, files[key]):
             continue
-        for story in files[key].get("stories") or {}:
+        stories = files[key].get("stories") or {}
+        entry = recorded_session(lead.state_of(key, files[key]), session)
+        if entry is not None and entry.get("role") == "lane" and entry.get("story") in stories:
+            recorded_lanes.append((lead_root, key, entry["story"]))
+        elif entry is not None and entry.get("role") == "lead":
+            recorded_leads.append((lead_root, key))
+        for story in stories:
             if real(lead.lane_checkout(story)) == owner:
                 lanes.append((lead_root, key, story))
         if lead_root == owner:
             leads.append(key)
+    for lead_root, key, story in recorded_lanes:
+        c = loaded(lead_root, key)
+        if c is not None:
+            return Seat("lane", [c], story)
+    found = [c for c in (loaded(lead_root, key) for lead_root, key in recorded_leads) if c is not None]
+    if found:
+        return Seat("lead", found)
     for lead_root, key, story in lanes:
         c = loaded(lead_root, key)
         if c is not None:
             return Seat("lane", [c], story)
     found = [c for c in (loaded(owner, key) for key in leads) if c is not None]
     return Seat("lead", found) if found else None
+
+
+# The host sessions a delivery's commands ran in, beside its record: {"sessions": {<session id>: {"role": "lane",
+# "story": <key>} or {"role": "lead"}}}, so a hook seats a session by its id rather than by the folder its last command
+# ran in. A host that exports no session id records none, and its sessions are seated by cwd.
+SESSIONS_FILE = "sessions.json"
+SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
+
+
+def read_sessions(path: Path) -> dict:
+    """sessions.json's `sessions`, or none when it is missing or unreadable."""
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    sessions = doc.get("sessions") if isinstance(doc, dict) else None
+    return sessions if isinstance(sessions, dict) else {}
+
+
+def recorded_session(state: Path, session: object) -> dict | None:
+    """What the record at `state` holds for the host session `session`, or None."""
+    if not isinstance(session, str) or not session:
+        return None
+    entry = read_sessions(state / SESSIONS_FILE).get(session)
+    return entry if isinstance(entry, dict) else None
+
+
+def record_session(c, role: str, story: str | None = None) -> None:
+    """Record the session this command runs in, when the host names it, as `role` (on `story`, for a lane) in the
+    record's sessions.json. It reads, changes and replaces the file under the record's state lock, so two sessions
+    recording at once both keep their entry, and leaves it untouched when it already says so."""
+    session = os.environ.get(SESSION_VARIABLE, "").strip()
+    if not session or not c.state.is_dir():
+        return
+    entry = {"role": role, **({"story": story} if story else {})}
+    path = c.state / SESSIONS_FILE
+    with open(c.state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            sessions = read_sessions(path)
+            if sessions.get(session) == entry:
+                return
+            sessions[session] = entry
+            staging = path.with_name(f".{path.name}.{os.getpid()}")
+            try:
+                staging.write_text(json.dumps({"sessions": sessions}, indent=2) + "\n")
+                os.replace(staging, path)
+            finally:
+                staging.unlink(missing_ok=True)  # gone once replaced; a failed write leaves the file as it was
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def record_of(c) -> dict:
@@ -11487,7 +11929,7 @@ def lead_may_stop(payload: dict) -> dict:
     `block` under enforce with one open delivery in the checkout; `warn` under warn, and whenever two or more open
     deliveries share the checkout, since which one this session leads can't be told. A hold the session hasn't
     already been held for journals one hook.held in each delivery it names."""
-    seat = seat_of(payload.get("cwd"))
+    seat = seat_of(payload)
     if seat is None or seat.role != "lead":
         return {"verdict": "allow"}
     mode = hook_mode(seat.configs[0].flow_raw, "lead.may-stop")
@@ -11596,7 +12038,7 @@ def orientation(seat: Seat) -> str:
 def delivery_orient(payload: dict) -> dict:
     """delivery.orient: tell a starting, resumed, cleared, compacted or forked session its role and next command.
     It only ever allows; under mode off it says nothing."""
-    seat = seat_of(payload.get("cwd"))
+    seat = seat_of(payload)
     if seat is None or hook_mode(seat.configs[0].flow_raw, "delivery.orient") == "off":
         return {"verdict": "allow"}
     return {"verdict": "allow", "context": orientation(seat)}
@@ -12172,6 +12614,9 @@ def lane_holdings(c, lane: str, read: dict, state: dict) -> dict:
                 if claim["path"] == path and claim["lane"] == lane:
                     with contextlib.suppress(helper.RegionError):
                         spans.append(helper.mapped(c.root, claim, read["mergeBase"]))
+            theirs = [claim for claim in regions if claim["path"] == path and claim["lane"] != lane]
+            known: list = []
+            foreign = lambda: known or known.extend(helper.foreign_spans(c.root, theirs, read["mergeBase"])) or known
             try:
                 # What no span can hold, as acceptance's check refuses it: a creation, a deletion, a type, mode or
                 # binary change.
@@ -12179,12 +12624,13 @@ def lane_holdings(c, lane: str, read: dict, state: dict) -> dict:
                 new_mode, _ = helper.entry(c.root, read["head"], path)
                 helper.require_text(c.root, read["head"], path)
                 whole = old_mode != new_mode
+                size = len(helper.text_lines(c.root, read["mergeBase"], path))
             except helper.RegionError:
-                whole = True
+                whole, size = True, 0
             for change in changes:
-                first, removed = change["old"], change["removed"]
-                change["inside"] = any(start <= first and first + removed <= end if removed else start < first < end
-                                       for start, end in spans)
+                # Decision 4: an insertion at a span's edge is the span's unless another lane claims the far side.
+                held, _ = helper.held_by(change["old"], change["removed"], spans, size, foreign)
+                change["inside"] = held is not None
             # Refused for the file itself, or with no span that maps (a claim needing a regrant), or with every
             # change inside: the lane can't change this file by span, so it is held as no file is.
             if whole or not spans or not changes or all(change["inside"] for change in changes):
@@ -14182,6 +14628,7 @@ def lead_run(args) -> None:
     # Before the lock, the orphan sweep or any child: the supervisor's children run the Node first on its PATH.
     require_node(c.release, "lead-run --resume" if args.resume else "lead-run")
     if args.resume:
+        record_session(c, "lead")
         for line in stop_orphans(c):
             print(line)
         start_hosted(c,resume=True)
@@ -14953,6 +15400,7 @@ class Doctor:
             ("harness", "harness configuration", ("config", "generation", "node"), self.harness),
             ("knowledge", "knowledge library properties", ("platform",), self.knowledge),
             ("delivery", "delivery file", ("config", "binding"), self.check_delivery),
+            ("record", "delivery record folder", ("delivery",), self.record_folder),
             ("plan", "plan chapter", ("delivery",), self.check_plan),
             ("plan-reasons", "added stories' reasons", ("delivery",), self.plan_reasons),
             ("plan-sections", "plan sections", ("delivery",), self.stories_planned),
@@ -15565,6 +16013,21 @@ class Doctor:
         self.delivery = d
         return "ok", f"{key}: {len(d.stories)} stories across {len(d.lanes)} lanes, each owning its own files"
 
+    def record_folder(self):
+        d = self.delivery
+        note, kept = d.record_apart_note(), f"{d.state} ({d.sources.get('state')})"
+        if d.state != d.record_apart(d.delivery):
+            return "ok", kept
+        # A record kept apart is checked for git's ignore while its key collides and after its story is removed.
+        try:
+            relative = d.state.relative_to(d.main)
+        except ValueError:
+            return ("warn", note) if note else ("ok", kept)
+        if run(["git", "check-ignore", "-q", str(relative)], cwd=d.main, check=False).returncode != 0:
+            return "wrong", (f"{relative}/ isn't ignored by git, so the record would show as untracked; fix: add "
+                             f"{d.work}/ to .gitignore, or set stateDirectory in {d.delivery_where}")
+        return ("warn", note) if note else ("ok", kept)
+
     def check_plan(self):
         d = Config(self.root, self.args.doctor_delivery or self.args.delivery, tolerant=True)
         if not plan_declared(d):
@@ -15821,6 +16284,11 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=note_gap)
     p = command(sub, "review-reduce"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
     p.set_defaults(fn=review_reduce)
+    p = command(sub, "review-wait", help="wait in the foreground until every lens's result in a round is in")
+    p.add_argument("key"); p.add_argument("--round", type=int, required=True)
+    p.add_argument("--seconds", type=float, default=REVIEW_WAIT_SECONDS,
+                   help=f"how long to wait before exiting 4 with the lenses still out (default {REVIEW_WAIT_SECONDS})")
+    p.set_defaults(fn=review_wait)
     p = command(sub, "plan-review", help="review the plan before it is approved: prepare, reduce or end a round")
     review_commands = p.add_subparsers(dest="action", required=True)
     plan_help = "review this plan in its own store, keyed by its reviewSlug, with no delivery"
@@ -15981,6 +16449,8 @@ def main(argv: list[str] | None = None) -> None:
     action.add_argument("--revoke-region", metavar="PATH", help="remove a region claim by its exact coordinates")
     action.add_argument("--claim", metavar="PATTERN", help="claim whole files on the base for this delivery's peers")
     action.add_argument("--carve", metavar="PATH", help="recompute a file's region claims in one write, from --give")
+    action.add_argument("--carry", metavar="PATH", help="carry --lane's claims on PATH (of --story) to the current "
+                        "base, when every base hunk since lies outside their lines")
     p.add_argument("--give", action="append", metavar="LANE:START-END[@KEY]",
                    help="with --carve: lines at --base to give a lane, for one of its stories after @")
     p.add_argument("--story", metavar="KEY", help="with --region: the story of the lane the claim is for, released when it lands")
@@ -15988,17 +16458,29 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--base", metavar="COMMIT")
     p.add_argument("--around", metavar="TEXT", help="with --region: the block of the one line at --base holding TEXT, "
                    "in place of --start and --end")
+    p.add_argument("--anchor", metavar="TEXT", help="with --region and --through: the span from the one line at "
+                   "--base holding TEXT, in place of --start/--end and --around")
+    p.add_argument("--through", metavar="TEXT", help="with --anchor: to the first line at or after it holding TEXT, "
+                   "inclusive")
     p.add_argument("--insert", choices=("before", "after"),
                    help="with --region: widen the span one unclaimed line past that edge, for an insertion there")
     p.add_argument("--start", type=int, metavar="LINE", help="first owned line, starting at 1")
     p.add_argument("--end", type=int, metavar="LINE", help="first line after the owned span")
     p.set_defaults(fn=lead_own)
+    p = command(sub, "lead-add-lane", help="add a lane to a running delivery: its delivery file entry, its Units row "
+                "and its record ownership and row, in one commit and one patch")
+    p.add_argument("--lane", required=True, help="the new lane, lane-N")
+    p.add_argument("--grant", action="append", metavar="PATTERN", help="a whole-file claim for it; repeatable")
+    p.add_argument("--why", help="why the lane joins, in the commit's message")
+    p.set_defaults(fn=lead_add_lane)
     p = command(sub, "lead-claims", help="whether the queue would accept each story's ownership after syncing it")
     p.add_argument("keys", nargs="*"); p.set_defaults(fn=lead_claims)
     p = command(sub, "lead-assign"); p.add_argument("keys", nargs="+"); p.add_argument("--lane", required=True)
     p.add_argument("--title", required=True); p.add_argument("--note")
     p.add_argument("--force", action="store_true",
                    help="assign a story whose tracker item doesn't offer its next start move")
+    p.add_argument("--own-co-changed", action="store_true",
+                   help="claim each file the co-change warning names for the lane, in the record and the delivery file")
     p.set_defaults(fn=lead_assign)
     p = command(sub, "lead-accept"); p.add_argument("key", nargs="?"); p.add_argument("--accept-blocked", action="append")
     p.add_argument("--requeue", metavar="KEY", help="re-queue a stopped candidate you resolved, with no new hand-off")
@@ -16011,7 +16493,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--reason", help="with --checks or --full-suite: why")
     p.add_argument("--reuse", help="with --checks: check ids whose hand-off records the queue may reuse across paths the "
                    "candidate doesn't change, recorded through select as the lead's grant; needs --why")
-    p.add_argument("--why", help="with --reuse: why that reuse is safe"); p.set_defaults(fn=lead_accept)
+    p.add_argument("--take", action="append", metavar="PATH",
+                   help="grant the lane a whole-file claim on a file the candidate changes outside its owns, then "
+                   "accept; repeatable, and needs --why")
+    p.add_argument("--why", help="with --reuse: why that reuse is safe; with --take: why the lane takes each file, "
+                   "journalled as the lead's decision"); p.set_defaults(fn=lead_accept)
     p = command(sub, "lead-base-broken", help="name the base broken before a base re-run's verdict, ending a re-run at "
                 "that head")
     p.add_argument("--head", required=True, help="the base head that is broken")

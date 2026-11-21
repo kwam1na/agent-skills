@@ -198,6 +198,8 @@ KEYED_VALUE = re.compile(
     r'(?i)\b(bearer|token|password|passwd|secret|api[-_]?key)("?\s*[:=]\s*"?|\s+)(?!\[redacted\])([^\s"]+)')
 TAIL_LIMIT = 400
 CANDIDATE_OUT_LIMIT = 200
+# How long the merge waits between candidate reads while a forge catches up with the branch the queue moved.
+CANDIDATE_POLL_SECONDS = 0.5
 
 
 def scrubbed_tail(text: str, environment: dict[str, str], limit: int = TAIL_LIMIT) -> str:
@@ -304,6 +306,8 @@ class Stop(Exception):
         self.paths = sorted(set(paths))
         # The candidate goes back to queued rather than stopping, and no stop is journaled for it.
         self.requeued = requeued
+        # The queue's synced commit, when the queue moved the lane's branch to it and couldn't move it back.
+        self.left_on_branch: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1354,6 +1358,25 @@ class Runner:
         self.git("fetch", "--no-tags", "--quiet", "--refmap=", self.remote, f"+refs/heads/{branch}:{target}")
         return self.rev(target)
 
+    def queue_ref(self, subject: str) -> str:
+        """The remote ref that holds ``subject``'s synced head: the lane's branch stays where the lane pushed it."""
+        ref = f"{PRIVATE_REF}/{subject}"
+        if subject.startswith("-") or self.git("check-ref-format", ref, check=False).returncode != 0:
+            raise Stop("ref_invalid", f"{subject} makes no valid queue ref")
+        return ref
+
+    def remote_ref(self, ref: str) -> str | None:
+        """The commit ``ref`` names on the remote, or None when it has none."""
+        listed = self.git("ls-remote", self.remote, ref).stdout.splitlines()
+        return next((line.split()[0] for line in listed if line.split()[1:] == [ref]), None)
+
+    def fetch_queued(self, subject: str) -> str | None:
+        """Fetch ``subject``'s queue ref into a private ref and return its commit, or None when the remote has none."""
+        target = f"{PRIVATE_REF}/queued"
+        fetched = self.git("fetch", "--no-tags", "--quiet", "--refmap=", self.remote,
+                           f"+{self.queue_ref(subject)}:{target}", check=False)
+        return self.rev(target) if fetched.returncode == 0 else None
+
     # -- checkouts ---------------------------------------------------------
 
     def start(self) -> None:
@@ -2327,7 +2350,7 @@ class Runner:
         self.compare_with_review(checkout, item["head"], base_head, declared)
         synced = self.rev("HEAD", cwd=checkout)
         self.check_regions(item, checkout, base_head, synced)
-        self.push(branch, head, synced, subject)
+        self.push(synced, subject)
         result.syncedHead = synced
         self.set_item(subject, stage="synced", syncedHead=synced)
         self.write(assignments={"/meta/baseHead": base_head})
@@ -2574,19 +2597,59 @@ class Runner:
                 entries[path] = meta
         return entries
 
-    def push(self, branch: str, resolved: str, synced: str, subject: str) -> None:
-        if branch == self.base:
-            raise Stop("ref_invalid", "the runner never pushes to the base branch")
+    def push(self, synced: str, subject: str) -> None:
+        """Push the synced head to the candidate's queue ref, under a lease on that ref, never to its branch."""
+        ref = self.queue_ref(subject)
+        held = self.remote_ref(ref)
         pushed = self.git(
-            "push", "--quiet", f"--force-with-lease=refs/heads/{branch}:{resolved}",
-            self.remote, f"{synced}:refs/heads/{branch}", check=False,
+            "push", "--quiet", f"--force-with-lease={ref}:{held or ''}", self.remote, f"{synced}:{ref}", check=False,
         )
         if pushed.returncode != 0:
-            current = self.git("ls-remote", "--heads", self.remote, f"refs/heads/{branch}", check=False).stdout.split()
-            if current and current[0] != resolved:
-                raise Stop("candidate_moved", f"{branch} moved during sync; nothing was pushed")
+            if self.remote_ref(ref) != held:
+                raise Stop("candidate_moved", f"{ref} moved during sync; nothing was pushed")
             said, kept = self.refusal("push", pushed)
-            raise Stop("push_refused", f"pushing {branch} failed: {said}; {kept}")
+            raise Stop("push_refused", f"pushing {ref} failed: {said}; {kept}")
+
+    def move_branch(self, branch: str, held: str, to: str) -> Completed:
+        """Move the lane's branch from ``held`` to ``to`` under a lease on ``held``, and say how the push ended."""
+        if branch == self.base:
+            raise Stop("ref_invalid", "the runner never pushes to the base branch")
+        return self.git(
+            "push", "--quiet", f"--force-with-lease=refs/heads/{branch}:{held}",
+            self.remote, f"{to}:refs/heads/{branch}", check=False,
+        )
+
+    def move_back(self, branch: str, synced: str, handed: str) -> str | None:
+        """Drop the queue's synced commit from the lane's branch, or return it when the branch has moved since."""
+        for _ in range(2):
+            if self.move_branch(branch, synced, handed).returncode == 0:
+                return None
+            # A branch the forge deleted holds nothing of the queue's; one someone pushed to keeps the synced commit,
+            # as does one the remote can't be asked about. One still at the synced head is tried once more.
+            try:
+                tip = self.remote_ref(f"refs/heads/{branch}")
+            except RuntimeError:
+                return synced
+            if tip is None:
+                return None
+            if tip != synced:
+                return synced
+        return synced
+
+    def await_candidate(self, subject: str, context: Context, cwd: Path, handed: str, synced: str) -> None:
+        """Re-resolve the candidate until it reports the synced head, within checkTimeoutSeconds, as a forge that
+        updates a change request's head late does only after the branch moved."""
+        deadline = time.monotonic() + self.binding["checkTimeoutSeconds"]
+        while True:
+            _, head = self.resolve(subject, context, cwd)
+            if head == synced:
+                return
+            if head != handed:
+                raise Stop("candidate_moved", f"{subject} moved to {head} while the queue moved it to {synced}")
+            if time.monotonic() >= deadline:
+                raise Stop("candidate_moved", f"{subject} still reports {handed}, not the synced head {synced}, "
+                                              f"{self.binding['checkTimeoutSeconds']:g}s after the queue moved it")
+            time.sleep(CANDIDATE_POLL_SECONDS)
 
     # -- check -------------------------------------------------------------
 
@@ -2601,8 +2664,10 @@ class Runner:
         anchor = self.checkout(base_head, "resolve", prepare=False)
         branch, head = self.resolve(subject, context, anchor)
         result.head = head
-        if head != synced or self.fetch(branch, "candidate") != synced:
-            raise Stop("candidate_moved", f"{subject} is no longer at its synced head")
+        if head != item["head"] or self.fetch(branch, "candidate") != item["head"]:
+            raise Stop("candidate_moved", f"{subject} is no longer at its handed head {item['head']}")
+        if self.fetch_queued(subject) != synced:
+            raise Stop("candidate_moved", f"{self.queue_ref(subject)} is no longer at {subject}'s synced head {synced}")
         if self.git("merge-base", "--is-ancestor", base_head, synced, check=False).returncode != 0:
             raise Stop("base_moved", f"{self.base} moved since {subject} was synced")
         context = context.with_values(branch=branch, head=synced, expectedHead=synced)
@@ -3555,9 +3620,15 @@ class Runner:
 
     # -- merge -------------------------------------------------------------
 
-    def merge(self, subject: str, result: Result, batch_synced: str | None = None) -> None:
-        """Merge a checked candidate; a batch passes the synced head it built from the checked tree instead."""
+    def merge(self, subject: str, result: Result, batch_synced: str | None = None, handed: str | None = None) -> None:
+        """Merge a checked candidate; a batch passes the synced head it built from the checked tree instead, and the
+        head its member's branch was at.
+
+        The lane's branch moves to the synced head only here, just before ``ready``, and moves back to the handed head
+        when ``ready``, the review gate or ``merge`` refuses.
+        """
         item = self.item(subject)
+        handed = handed or item["head"]
         synced = batch_synced or item["syncedHead"]
         if batch_synced is None and (synced is None or item["stage"] != "checked"):
             raise Stop("not_synced", f"{subject} has not passed its checks at a synced head")
@@ -3568,8 +3639,10 @@ class Runner:
         self.seam("before_merge", subject)
         branch, head = self.resolve(subject, context, anchor)
         result.head = head
-        if head != synced:
-            raise Stop("candidate_moved", f"{subject} moved from its checked head {synced} to {head}")
+        if head != handed:
+            raise Stop("candidate_moved", f"{subject} moved from its handed head {handed} to {head}")
+        if self.fetch_queued(subject) != synced:
+            raise Stop("candidate_moved", f"{self.queue_ref(subject)} is no longer at {subject}'s checked head {synced}")
         base_head = self.fetch(self.base, "base")
         result.baseHead = base_head
         # The candidate was checked with the base its synced head contains. Any
@@ -3581,21 +3654,39 @@ class Runner:
         self.set_item(subject, stage="merging")
         if getattr(self, "slot_lock", None) is not None:
             delivery_state.slot_doing(self.slot_lock, {"what": "merge", "subject": subject})
+        resolving = context
         context = context.with_values(
             branch=branch, head=synced, expectedHead=synced, baseHead=base_head, treeSha=self.tree(synced),
             checkMode="single" if batch_synced is None else "batch",
         )
         timeout = self.binding["checkTimeoutSeconds"]
-        readied = self.run_argv(self.binding["ready"], anchor, context, timeout)
-        if readied.returncode != 0:
-            said, kept = self.refusal("ready", readied)
-            raise Stop("ready_refused", f"ready refused {subject}: {said}; {kept}")
-        self.review_gate(subject, synced, anchor, context)
-        merging = self.run_argv(self.binding["merge"], anchor, context, timeout)
-        if merging.returncode != 0:
-            # Why it refused, from the command itself: its whole output in a log, a bounded and scrubbed tail here.
-            said, kept = self.refusal("merge", merging)
-            raise Stop("merge_refused", f"merge refused {subject} at {synced}: {said}; {kept}")
+        # The forge merges a branch and a review gate reads the branch's head, so the branch holds the synced head now.
+        moved = self.move_branch(branch, handed, synced)
+        if moved.returncode != 0:
+            if self.remote_ref(f"refs/heads/{branch}") != handed:
+                raise Stop("candidate_moved",
+                           f"{branch} moved off {handed} before the queue could move it; nothing was pushed")
+            said, kept = self.refusal("push", moved)
+            raise Stop("push_refused", f"pushing {branch} failed: {said}; {kept}")
+        try:
+            self.await_candidate(subject, resolving, anchor, handed, synced)
+            self.seam("after_branch_moved", subject)
+            readied = self.run_argv(self.binding["ready"], anchor, context, timeout)
+            if readied.returncode != 0:
+                said, kept = self.refusal("ready", readied)
+                raise Stop("ready_refused", f"ready refused {subject}: {said}; {kept}")
+            self.review_gate(subject, synced, anchor, context)
+            merging = self.run_argv(self.binding["merge"], anchor, context, timeout)
+            if merging.returncode != 0:
+                # Why it refused, from the command itself: its whole output in a log, a bounded and scrubbed tail here.
+                said, kept = self.refusal("merge", merging)
+                raise Stop("merge_refused", f"merge refused {subject} at {synced}: {said}; {kept}")
+        except BaseException as error:
+            # Only the queue's own synced commit is dropped: a branch pushed to since is left alone, and the stop says so.
+            left = self.move_back(branch, synced, handed)
+            if isinstance(error, Stop):
+                error.left_on_branch = left
+            raise
         merged = self.fetch(self.base, "base")
         result.mergedHead = merged
         parent = self.git("rev-parse", "--verify", "-q", f"{merged}^1", check=False).stdout.strip()
@@ -3604,6 +3695,10 @@ class Runner:
         self.finish_item(subject, "merged")
         self.write(assignments={"/meta/baseHead": merged})
         self.journal("candidate.merged", subject, data={"head": synced})
+        ref = self.queue_ref(subject)
+        if self.git("push", "--quiet", f"--force-with-lease={ref}:{synced}", self.remote, f":{ref}",
+                    check=False).returncode != 0:
+            self.note(f"{ref} could not be deleted on {self.remote} after {subject} merged")
         journal = delivery_state.read_journal(self.state_directory)
         if item.get("repair") and delivery_state.base_awaits_repair(journal):
             # The named repair landed: the base is repaired, which clears the mark and puts back what the break stopped.
@@ -3755,13 +3850,13 @@ class Runner:
             "-m", f"Merge {self.base} into {member.branch}",
         ).stdout.strip()
         self.check_regions(self.item(member.subject), self.repository, base_now, synced)
-        self.push(member.branch, member.head, synced, member.subject)
+        self.push(synced, member.subject)
         result.syncedHead = synced
         # Never "checked": only the whole batch was checked, so a run killed here
         # must not leave this tree mergeable on its own. It stays "checking"
         # until the merge moves it on, and the next run stops it.
         self.set_item(member.subject, syncedHead=synced)
-        self.merge(member.subject, result, batch_synced=synced)
+        self.merge(member.subject, result, batch_synced=synced, handed=member.head)
 
     def batch_round(self, members: list[str], results: list[Result]) -> list[str]:
         """Build, check once and land one batch. Returns the members left for another round.
@@ -4044,7 +4139,8 @@ class Runner:
                 stage = self.item(subject)["stage"]
                 self.journal("candidate.stopped", subject,
                              data={"reason": stop.reason, "detail": stop.detail,
-                                   **({"requeued": True} if requeued or stage not in ("stopped", "merged") else {})},
+                                   **({"requeued": True} if requeued or stage not in ("stopped", "merged") else {}),
+                                   **({"leftOnBranch": stop.left_on_branch} if stop.left_on_branch else {})},
                              because=self.cause(stop, subject))
 
     def prepared(self, subcommand: str, subject: str | None, step: Callable[[Result], None]) -> Result:
@@ -4326,7 +4422,7 @@ def _requeue(subject: str, head: str | None) -> Callable[[dict], tuple[dict, dic
         item = next((entry for entry in current["queue"] if entry["subject"] == subject), None)
         if item is None or item["head"] != head or item["stage"] not in ("queued", "synced", "checked", "stopped"):
             raise Stop("candidate_unknown", f"{subject} changed since serve took it")
-        # syncedHead stays: sync may already have pushed it to the candidate's branch, and the next sync accepts it.
+        # syncedHead stays: sync may already have pushed it to the candidate's queue ref, which the next sync overwrites.
         return _put_back_rows(current, subject, {"stage": "queued", "checks": []}), {}
 
     return build

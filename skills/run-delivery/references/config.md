@@ -609,6 +609,12 @@ mode, naming the fix.
 | `lead.may-stop` | stop | `warn` | Holds a lead's stop while a lane works or a candidate is queued and no `lead-wait` listens, naming the delivery and its exact `lead-wait` command. `enforce` holds it; `warn` says the same without holding; `off` says nothing. |
 | `delivery.orient` | session start | `enforce` | Tells a session in a delivery its role and next command, on every start: a new, resumed, cleared, compacted or forked session. It only ever allows, so `warn` and `enforce` are alike; `off` says nothing. |
 
+A hook seats a session by its id first: `lane-start` records the session it runs in, from `CLAUDE_CODE_SESSION_ID`
+when the host sets it, as its story's lane in the record's `sessions.json`, and `lead-init`, `lead-run --resume` and
+`lead-wait` record the lead's. A payload's `session_id` that file holds seats the session by the recorded role,
+whatever folder its last command ran in, so a lane that ran a command from the lead's checkout is still a lane and is
+never told to start `lead-wait`. An unknown id, or a payload with none, is seated by its working folder as below.
+
 A session's role comes from the payload's working folder, never the hook's own: the folder's checkout is the deepest
 one holding it, after resolving symlinks. A story's checkout of an open delivery is that story's lane, matched first,
 so a lane checkout nested in the lead's is a lane. The checkout holding an open delivery's record is that delivery's

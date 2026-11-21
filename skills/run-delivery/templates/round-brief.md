@@ -71,6 +71,8 @@ Return `review-lens-result/1` as one JSON object, and nothing else, as your fina
 {{later}}
 
 A lens is read-only, files no tracked item itself, and cannot return `failed`.
+Its one permitted write, when its prompt asks for it, is its final JSON to `{{result}}` as its last step, before it
+replies with the same JSON: an exception to the read-only rule and to touching no checkout but its own.
 It stops only processes it started, by the pid it recorded, never by pattern with
 `pkill` or `killall`, because it shares the machine with other work.
 

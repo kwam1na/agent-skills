@@ -3369,12 +3369,19 @@ class SupervisorPassTests(unittest.TestCase):
         stopped = kinds(fx, "candidate.stopped")
         self.assertTrue(stopped and stopped[-1]["data"]["reason"] == "merge_refused", stopped)
         self.assertTrue(stopped[-1]["data"]["detail"].startswith(f"merge refused FX-2 at {item['syncedHead']}: "), stopped)
+        # The refused merge moved the branch back to the handed head, so the stop names nothing left on it, and the
+        # synced head waits on the queue's own ref.
+        self.assertNotIn("leftOnBranch", stopped[-1]["data"])
+        def remote_head(ref: str) -> list[str]:
+            return sh("git", "ls-remote", "origin", ref, cwd=wt).stdout.split()[:1]
+
+        self.assertEqual(remote_head("refs/heads/feature/FX-2"), [item["head"]])
+        self.assertEqual(remote_head("refs/merge-queue/FX-2"), [item["syncedHead"]])
         handed = len(kinds(fx, "candidate.handed"))
         forge = json.loads((fx.tmp / "forge.json").read_text())
         forge["https://forge.test/pr/1"]["draft"] = False  # the lead marks it ready by hand
         (fx.tmp / "forge.json").write_text(json.dumps(forge))
-        # A branch that moved on from both the handed and the synced head is the lane's to hand off again.
-        synced = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        # A branch that moved on from the handed head is the lane's to hand off again.
         sh("git", "fetch", "-q", "origin", "feature/FX-2", cwd=wt)
         sh("git", "reset", "-q", "--hard", "origin/feature/FX-2", cwd=wt)
         (wt / "src/one.txt").write_text("one, again\n")
@@ -3383,13 +3390,14 @@ class SupervisorPassTests(unittest.TestCase):
         code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
         self.assertEqual(code, 2, out)
         self.assertIn("the lane hands it off again", out)
-        sh("git", "push", "-q", "-f", "origin", f"{item['syncedHead']}:refs/heads/feature/FX-2", cwd=wt)
-        self.assertNotEqual(synced, "")
+        # Back at the handed head, the stopped candidate is requeued as it was handed off, and merges.
+        sh("git", "push", "-q", "-f", "origin", f"{item['head']}:refs/heads/feature/FX-2", cwd=wt)
         code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
         self.assertEqual(code, 0, out)
         queue_run(fx, "FX-2")
         self.assertTrue(kinds(fx, "candidate.merged"))
         self.assertEqual(len(kinds(fx, "candidate.handed")), handed, "the requeue needed a new hand-off")
+        self.assertEqual(remote_head("refs/merge-queue/FX-2"), [], "the merged candidate's queue ref stayed")
         code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
         self.assertEqual(code, 2, out)
         self.assertIn("isn't stopped (merged)", out)

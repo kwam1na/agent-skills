@@ -19,12 +19,12 @@ TOOL = ".agent-skills/current/skills/run-delivery/scripts/run_delivery.py"
 # entry here and in the binding in the same diff, and both its hand-off and its acceptance can name it from its head.
 CATALOGUE_MODULES = (
     "adoption", "bootstrap_qualification", "catalog", "compound_learning_corpus", "core_boundary", "corpus_copy",
-    "cut_release", "declared_mechanics_corpus", "delivery_posture_vectors", "delivery_provider",
+    "cut_release", "declared_mechanics_corpus", "delivery_key_collision", "delivery_posture_vectors", "delivery_provider",
     "delivery_provider_rails_contract", "delivery_views", "delivery_views_adopter", "delivery_views_history",
     "delivery_views_hosted", "delivery_views_hosted_projection", "delivery_views_page", "delivery_views_plan", "delivery_views_plan_fixtures", "delivery_views_render",
     "delivery_views_review_projection", "delivery_views_snapshots", "diagnosis", "documented_install_surface",
     "fault_injection", "forge_adapters", "handoff_listing", "historical_qualifications", "hive_knowledge_adapter", "hooks", "host_exposure", "jira_profile", "journal_kinds", "journal_shape", "knowledge_library", "lane_changes", "lane_rows",
-    "lane_ruling_corpus", "lead_plan_changes", "lead_wait", "lifecycle", "linear_profile", "linear_qualification", "machine",
+    "lane_ruling_corpus", "lead_assign_owns", "lead_plan_changes", "lead_add_lane", "lead_wait", "lifecycle", "linear_profile", "linear_qualification", "machine",
     "measure_test_writes",
     "merge_occurrence", "merge_queue", "narrator", "no_current_set_names", "orchestration_adopter", "orchestration_render",
     "orchestration_state", "own_deliveries", "ownership_lock_race", "product_descriptors", "product_launcher", "product_release",
@@ -33,7 +33,7 @@ CATALOGUE_MODULES = (
     "review_base_reopening", "review_bound_corpus", "review_grace", "review_orchestration", "round_brief_template_corpus",
     "router", "run_delivery", "run_delivery_compounding", "run_delivery_finish", "run_delivery_hooks", "run_delivery_hosted", "run_delivery_peers", "run_delivery_plan_review",
     "run_delivery_gaps", "run_delivery_lens_request", "run_delivery_pr_review",
-    "run_delivery_pr_review_gates", "run_delivery_supervisor", "run_delivery_tracker", "run_delivery_tool_commits", "run_event_acceptance",
+    "run_delivery_pr_review_gates", "run_delivery_review_wait", "run_delivery_supervisor", "run_delivery_tracker", "run_delivery_tool_commits", "run_event_acceptance",
     "run_event_emission_corpus",
     "run_tests", "runless_reviews", "suite_budget", "test_dependency_guard", "test_environment", "tracker_contract", "update_provenance",
     "validate", "siblings", "waits", "waits_review", "workflow_graph_contract", "workflow_observation", "workflows",

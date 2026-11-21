@@ -481,7 +481,7 @@ supervisor's.
 
   | Code | What the lead does |
   | --- | --- |
-  | `candidate_moved` | The lane pushed after hand-off. Check the new head as a fresh hand-off, write it as `head`, and re-queue. |
+  | `candidate_moved` | The lane pushed after hand-off, the queue ref moved off the synced head, or the candidate step never reported the synced head the merge moved the branch to. Check the new head as a fresh hand-off, write it as `head`, and re-queue. When the stop names `leftOnBranch`, the queue's synced commit is in the branch's history beneath the push: the lane decides whether to keep it. |
   | `candidate_unknown`, `candidate_unresolved` | Add the candidate to `queue[]`, or fix its reference, and re-queue. A `candidate_unresolved` stop carries the candidate command's exit code or timeout, the end of its stderr, and the end of its stdout, scrubbed (see step output below), and names the log that keeps its whole output. |
   | `already_merged` | Nothing to do; mark the lane `done` only if it was left `handed` (see the merge rule below). |
   | `source_conflict` | Return the candidate to its lane to resolve the listed paths. |
@@ -1830,6 +1830,32 @@ the runner proves two things before pushing:
 So the code that merges is the code the lenses reviewed, plus only what the
 binding declares may change.
 
+### Where the queue keeps its synced head
+
+The queue keeps its synced head on its own ref, `refs/merge-queue/<subject>`
+on the remote, and the lane's branch stays exactly where the lane pushed it. A
+sync pushes the synced head there under a lease on that ref, so a later sync
+of a stopped candidate overwrites it only where it last stood. `check` reads
+the candidate from that ref, and stops with `candidate_moved` when the lane's
+branch has moved off the handed head or the queue ref off the synced head.
+
+The forge merges a branch, and a review gate reads the pipeline at the
+branch's head, so `merge` moves the lane's branch to the synced head only as
+its last step before `ready`, the review gate and `merge`, under a lease on the
+handed head. A batch's landing does the same for each member at its own merge.
+After the move the queue reads the candidate again until the candidate step
+reports the synced head, within `checkTimeoutSeconds`, so a forge that updates
+a change request's head late doesn't refuse the merge; one that never reports
+it stops the candidate as `candidate_moved`. When that wait, `ready`, the
+review gate or `merge` fails, the queue moves the branch back to the handed
+head under a lease on the synced head, dropping only its own synced commit. If
+someone pushed to the branch since, the queue leaves it alone, and
+`candidate.stopped` names the commit it left there as `leftOnBranch`; every
+other stop omits the field. The queue deletes the ref once the story merges.
+
+So a stopped candidate's branch is at its handed head: the lane's fix, or its
+authorized merge of the base, pushes as a fast-forward, with no forced push.
+
 ### What the record shows about checks
 
 - **Progress.** Each step in `meta.checking.now.steps`, and each check on the
@@ -2031,8 +2057,9 @@ for every member.
   base's tree must equal the tree recorded before that member; otherwise the
   batch stops with `batch_tree_mismatch` and the members left go back to
   `queued`. The runner then commits the member's recorded tree, with the
-  member's head and the base as parents, pushes it to the member's branch,
-  and merges it through `ready` and `merge`, which must land exactly that
+  member's head and the base as parents, pushes it to the member's queue
+  ref, moves the member's branch to it, and merges it through `ready` and
+  `merge`, which must land exactly that
   tree on that base. Every tree that lands is one the batch built, even when
   a post-sync step's output depends on commit ids, and the tree after the
   last member is the one the batch checked. The trees in between were
