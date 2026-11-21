@@ -1991,7 +1991,7 @@ class WrapperTests(DeliveryStateFixture):
         self.assertEqual(code, 0, result)
         previous = (self.state_dir / "delivery.md").read_bytes()
 
-        def broken(document: dict) -> str:
+        def broken(document: dict, machine: dict | None = None) -> str:
             raise ValueError("cannot draw")
 
         with mock.patch.dict(render_state.BUILTINS, {"markdown": broken}):
@@ -3001,6 +3001,173 @@ class StoryViewTests(unittest.TestCase):
         self.assertIn("### change-1 reached the main line", view)
         embedded = json.loads(re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S).group(1))
         self.assertIn("change-1 reached the main line", [beat["words"]["head"] for beat in embedded["story"]["beats"]])
+
+
+
+def _load_machine():
+    sys.path.insert(0, str(SCRIPTS))
+    try:
+        spec = importlib.util.spec_from_file_location("machine_for_render", SCRIPTS / "machine.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path.remove(str(SCRIPTS))
+
+
+machine = _load_machine()
+MACHINE_AT = 1_800_000_000.0
+AT = machine._iso(MACHINE_AT)
+PRESSURE = {"cores": 8, "load5": 2.5, "diskFreeBytes": 500 * 2**30, "swapUsedBytes": 0}
+
+
+class MachineSectionTests(unittest.TestCase):
+    """Scenarios 16a to 16c: the Machine section on the built-in page and in the markdown, read live at render time
+    from this test's own machine directory, with an explicit capacity."""
+
+    def setUp(self) -> None:
+        self.folder = Path(self.enterContext(tempfile.TemporaryDirectory())) / "machine"
+        self.folder.mkdir()
+        (self.folder / "capacity.json").write_text(json.dumps(
+            {"schemaVersion": "machine-capacity/1", "slots": 8, "setAt": "2026-11-20T00:00:00.000Z",
+             "why": "a test's own ledger"}, indent=2) + "\n", encoding="utf-8")
+        self.enterContext(mock.patch.dict(os.environ, {"AGENT_SKILLS_MACHINE_DIR": str(self.folder)}))
+        self.enterContext(mock.patch.object(render_state, "machine_reading", return_value=PRESSURE))
+        self.document = {"state": json.loads(json.dumps(FIXED_STATE)), "journal": FIXED_JOURNAL}
+        self.ledger = machine.Ledger(self.folder, clock=lambda: MACHINE_AT)
+
+    def claim(self, slots: int, label: str, **options: object) -> object:
+        claim = self.ledger.request("run", label, label=label, slots=slots,
+                                    repository="/work/agent-skills/.git", **options)
+        self.addCleanup(claim.release)
+        return claim
+
+    def views(self) -> tuple[str, str]:
+        """The markdown and the page, each drawn as the wrapper draws a built-in view."""
+        encoded = json.dumps(self.document).encode("utf-8")
+        markdown = render_state._render_builtin("markdown", encoded)
+        page = render_state._render_builtin("static-page", encoded)
+        self.assertIsNone(markdown.error)
+        self.assertIsNone(page.error)
+        return markdown.stdout.decode("utf-8"), page.stdout.decode("utf-8")
+
+    def machine_markup(self, page: str) -> str | None:
+        match = re.search(r'<section id="machine">.*?</section>', page, re.S)
+        return match.group(0) if match else None
+
+    def test_a_full_section_shows_both_claims_the_waiter_and_the_last_five_overrides(self) -> None:
+        for number in range(1, 8):
+            self.ledger.request("run", f"forced-{number}", label=f"forced-{number}", slots=1,
+                                now_why=f"reason {number}").release()
+        self.claim(2, "lead-suite", delivery="V26-3689", story="V26-3683")
+        self.claim(3, "fullHealth", delivery="Athena")
+        self.claim(4, "big-check", delivery="V26-3689")
+        markdown, page = self.views()
+        section = markdown[markdown.index("## Machine"):]
+        self.assertIn("Capacity 8 slots (set 2026-11-20T00:00:00.000Z: a test's own ledger); 5 in use; "
+                      "load 2.5 on 8 cores", section)
+        self.assertIn(f"- lead-suite · agent-skills · V26-3689 · 2 slots · since {AT} · "
+                      "expected end not yet measured", section)
+        self.assertIn(f"- fullHealth · agent-skills · Athena · 3 slots · since {AT}", section)
+        self.assertIn(f"- 1\\. big-check · agent-skills · V26-3689 · 4 slots · waiting since {AT}",
+                      section)
+        reasons = re.findall(r"reason (\d)", section)
+        self.assertEqual(reasons, ["3", "4", "5", "6", "7"])
+        self.assertIn(f"- forced-7 · admitted now at {AT}: reason 7", section)
+        markup = self.machine_markup(page)
+        self.assertIsNotNone(markup)
+        for text in ("Capacity 8 slots", "5 in use", "lead-suite", "fullHealth", "big-check", "reason 7"):
+            with self.subTest(text=text):
+                self.assertIn(text, markup)
+        self.assertEqual(re.findall(r"reason (\d)", markup), ["3", "4", "5", "6", "7"])
+        # A hostile label stays text on the page and in the markdown.
+        self.claim(1, "<b>x</b>", delivery="V26-3689")
+        markdown, page = self.views()
+        self.assertIn("&lt;b&gt;x&lt;/b&gt;", self.machine_markup(page))
+        self.assertIn("\\<b\\>x\\</b\\>", markdown)
+
+    def test_no_section_for_an_empty_ledger_or_one_with_only_a_wait_in_its_history(self) -> None:
+        plain_markdown = render_state.render_markdown(json.loads(json.dumps(self.document)))
+        plain_page = render_state.render_static_page(json.loads(json.dumps(self.document)))
+        self.assertIsNone(render_state.machine_view())
+        self.assertEqual(self.views(), (plain_markdown, plain_page))
+        # A claim that waited, was admitted and ended leaves a wait in the history and no override.
+        holder = self.ledger.request("run", "suite", label="suite", slots=8)
+        waiter = self.ledger.request("run", "probe", label="probe", slots=1)
+        self.assertFalse(waiter.admitted)
+        holder.release()
+        self.assertTrue(waiter.poll())
+        waiter.release()
+        history = self.ledger.read_history()
+        self.assertIn("probe", [entry.get("label") for entry in history if entry.get("event") == "admitted"])
+        self.assertFalse(any(entry.get("event") == "override" for entry in history))
+        self.assertIsNone(render_state.machine_view())
+        self.assertEqual(self.views(), (plain_markdown, plain_page))
+
+    def test_an_unusable_ledger_says_so(self) -> None:
+        unusable = Path(self.enterContext(tempfile.TemporaryDirectory())) / "a-file"
+        unusable.write_text("not a directory", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"AGENT_SKILLS_MACHINE_DIR": str(unusable)}):
+            markdown, page = self.views()
+        section = markdown[markdown.index("## Machine"):]
+        self.assertIn("The machine ledger is unavailable:", section)
+        self.assertIn("The machine ledger is unavailable:", self.machine_markup(page))
+
+    def test_an_unset_capacity_a_hand_admission_and_waiters_in_order(self) -> None:
+        (self.folder / "capacity.json").unlink()
+        cores = os.cpu_count() or 1
+        ticks = [0]
+
+        def clock() -> float:
+            # Each read a moment later, so the waiters enqueue in order.
+            ticks[0] += 1
+            return MACHINE_AT + ticks[0]
+
+        ledger = machine.Ledger(self.folder, clock=clock)
+        holder = ledger.request("run", "suite", label="suite", slots=cores)
+        self.addCleanup(holder.release)
+        waiters = [ledger.request("run", name, label=name, slots=1) for name in ("first", "second", "third")]
+        for waiter in waiters:
+            self.addCleanup(waiter.release)
+        self.assertFalse(any(waiter.admitted for waiter in waiters))
+        ledger.admit(waiters[2].id, "the release can't wait")
+        markdown, page = self.views()
+        section = markdown[markdown.index("## Machine"):]
+        self.assertIn(f"Capacity {cores} slot" + ("" if cores == 1 else "s") + " (unset, the core count)", section)
+        self.assertLess(section.index("- 1\\. first"), section.index("- 2\\. second"))
+        self.assertNotIn("third · ", section[section.index("Waiting:"):section.index("Overrides:")])
+        self.assertIn("- third · admitted by hand at ", section)
+        self.assertIn(": the release can't wait", section)
+        markup = self.machine_markup(page)
+        self.assertLess(markup.index("<li>first"), markup.index("<li>second"))
+
+    def test_an_absent_machine_directory_shows_no_section_and_is_not_created(self) -> None:
+        absent = Path(self.enterContext(tempfile.TemporaryDirectory())) / "never-made"
+        plain = (render_state.render_markdown(json.loads(json.dumps(self.document))),
+                 render_state.render_static_page(json.loads(json.dumps(self.document))))
+        with mock.patch.dict(os.environ, {"AGENT_SKILLS_MACHINE_DIR": str(absent)}):
+            self.assertIsNone(render_state.machine_view())
+            self.assertEqual(self.views(), plain)
+        self.assertFalse(os.path.lexists(absent))
+
+    def test_the_live_page_shows_the_section_beside_the_peers(self) -> None:
+        self.claim(2, "lead-suite", delivery="V26-3689")
+        state_dir = Path(self.enterContext(tempfile.TemporaryDirectory())) / "state"
+        state_tool(state_dir, "init", "--headline", "Live machine")
+        view = render_state.LiveView(state_dir, None)
+        view.refresh()
+        server = render_state._LiveServer(("127.0.0.1", 0), render_state._live_handler(view, lambda header: True))
+        serving = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+        serving.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.addCleanup(view.stop)
+        with urllib.request.urlopen(f"http://127.0.0.1:{server.server_address[1]}/", timeout=10) as answer:
+            page = answer.read().decode("utf-8")
+        markup = self.machine_markup(page)
+        self.assertIsNotNone(markup)
+        self.assertIn("lead-suite", markup)
 
 
 if __name__ == "__main__":

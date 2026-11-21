@@ -237,6 +237,9 @@ The wait reads the record and the machine only, and returns on a hand-off, a
 failed check, a merge, a stop, a broken base, a blocker, a blocked lane, or
 machine pressure. A failed check is news, not the outcome: the turn is still
 telling it from the base's own failure, and its stop follows.
+It also returns when one of this delivery's own machine claims has waited past
+`--claim-wait-seconds`, 15 minutes by default, once per waiting stretch, and every
+wake carries the machine ledger in `machine`.
 A lane whose row has stood still past `--quiet-seconds`, an hour by default, is
 information, not a reason to return: `quietLanes` names it when the wait next ends,
 once a quiet stretch, and it may be waiting on a long review for good reason.
@@ -245,6 +248,21 @@ loading the machine before taking more work, and reduces this delivery's own
 load first, such as by capping test workers. It reports what it can't reduce to
 the operator, such as other work or a system service. It stops nothing it didn't
 start without the operator's word.
+
+## The machine
+
+Every repository on a machine shares one ledger of its heavy runs,
+`scripts/machine.py`: who holds which slots, what each run measured itself to
+cost, and the machine's capacity. It gives facts, not rules. By default a run
+claims its slots and waits while the machine is full; an agent steps off that
+with a reason, `run --now --why` or `admit --why`, and sets capacity with
+`capacity --why`, and every reason lands in the ledger's history. Nothing is
+admitted for the lead: when a long wait on one of its own claims wakes it, it
+decides. The built-in page and the markdown show a Machine section, read live:
+capacity and pressure, the running claims, the waiters and the last five
+overrides, left out while the ledger is idle and shown as unavailable when it
+can't be read. See
+[the machine ledger](references/orchestration-guide.md#the-machine-ledger).
 
 ## Findings and a broken base
 

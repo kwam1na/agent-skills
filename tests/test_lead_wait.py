@@ -55,6 +55,24 @@ def _load_tool():
 
 
 state_tool = _load_tool()
+CAPACITY = 4
+
+
+def _machine_directory(case: unittest.TestCase) -> Path:
+    """A fresh machine directory for this test alone, with an explicit capacity, so a wait's ``machine`` doesn't
+    depend on the test order, on other tests' claims or on the core count. Subprocess waits inherit it."""
+    folder = Path(case.enterContext(tempfile.TemporaryDirectory())) / "machine"
+    folder.mkdir()
+    (folder / "capacity.json").write_text(json.dumps({"schemaVersion": "machine-capacity/1", "slots": CAPACITY,
+                                                      "setAt": "2026-11-20T00:00:00.000Z", "why": "a test's own ledger"},
+                                                     indent=2) + "\n", encoding="utf-8")
+    case.enterContext(mock.patch.dict(os.environ, {"AGENT_SKILLS_MACHINE_DIR": str(folder)}))
+    return folder
+
+
+def _ledger_fields(**values) -> dict:
+    """An empty ledger's part of a wait's ``machine``, at this test's capacity."""
+    return {"capacity": CAPACITY, "used": 0, "running": [], "waiting": [], "overrides": [], **values}
 
 
 def _tree(directory: Path) -> dict[str, str]:
@@ -121,6 +139,7 @@ def _stdout() -> io.TextIOWrapper:
 
 class RecordCase(unittest.TestCase):
     def setUp(self) -> None:
+        self.machine = _machine_directory(self)
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.record = Record(Path(temporary.name) / "state")
@@ -685,7 +704,8 @@ def _restart_options(result: dict) -> dict:
     parsed = state_tool.wait_arguments(result["restart"])
     return {"after": parsed.after, "seen_blocked": parsed.seen_blocked, "seen_pressure": parsed.seen_pressure,
             "swap_baseline": parsed.swap_baseline, "load_multiple": parsed.load_multiple,
-            "min_free_bytes": parsed.min_free_bytes, "swap_growth_bytes": parsed.swap_growth_bytes}
+            "min_free_bytes": parsed.min_free_bytes, "swap_growth_bytes": parsed.swap_growth_bytes,
+            "seen_claims": parsed.seen_claim, "claim_wait_seconds": parsed.claim_wait_seconds}
 
 
 class PressureTests(MachineCase):
@@ -768,7 +788,7 @@ class PressureTests(MachineCase):
                 for _ in range(3):
                     code, held = self.restart([_reading(**worse)], held)
                     self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "a seen condition woke it before clearing")
-                self.assertEqual(held["machine"], _reading(**worse))
+                self.assertEqual(held["machine"], {**_reading(**worse), **_ledger_fields()})
 
     def test_a_value_hovering_at_its_limit_wakes_it_once(self) -> None:
         for high, near in (({"load5": 33.0}, {"load5": 31.0}), ({"diskFreeBytes": 19 * GIB}, {"diskFreeBytes": 21 * GIB})):
@@ -822,6 +842,155 @@ class PressureTests(MachineCase):
                                       _reading(swapUsedBytes=31 * GIB)])
         self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT)
         self.assertEqual(result["pressure"], [])
+
+
+def _load_machine():
+    path = ROOT / "skills/orchestrate-work/scripts/machine.py"
+    sys.path.insert(0, str(path.parent))
+    try:
+        spec = importlib.util.spec_from_file_location("machine_for_wait", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path.remove(str(path.parent))
+
+
+machine = _load_machine()
+ENQUEUED = 1_800_000_000.0
+
+
+class ClaimWaitTests(MachineCase):
+    """Scenarios 15a, 15b and the wait's half of 16c: the ledger in every wake, and a wake for a long wait on one of
+    this delivery's own claims, once per waiting stretch."""
+
+    def claim(self, slots: int, label: str, *, delivery: str | None, repository: str | None = None) -> object:
+        """A live claim in this test's ledger, enqueued at ENQUEUED, held by this process until the test ends."""
+        claim = machine.Ledger(self.machine, clock=lambda: ENQUEUED).request(
+            "run", label, label=label, slots=slots, delivery=delivery, repository=repository)
+        self.addCleanup(claim.release)
+        return claim
+
+    def wait_at(self, wall: float, **options) -> tuple[int, dict]:
+        return self.run_wait([_reading()], wall=lambda: wall, **options)
+
+    def test_every_wake_carries_the_ledger(self) -> None:
+        holder = self.claim(4, "suite", delivery="Another delivery")
+        waiter = self.claim(1, "probe", delivery="Another delivery")
+        code, result = self.wait_at(ENQUEUED + 10)
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT)
+        ledger = result["machine"]
+        self.assertEqual({key: ledger[key] for key in ("cores", "load5", "diskFreeBytes", "swapUsedBytes")}, _reading())
+        self.assertEqual((ledger["capacity"], ledger["used"]), (CAPACITY, 4))
+        self.assertEqual([claim["id"] for claim in ledger["running"]], [holder.id])
+        self.assertEqual([claim["id"] for claim in ledger["waiting"]], [waiter.id])
+        self.assertEqual(ledger["overrides"], [])
+        self.assertEqual(result["claimWaits"], [])
+
+    def test_a_long_wait_on_this_deliverys_claim_wakes_it_once_and_a_restart_stays_quiet(self) -> None:
+        self.claim(4, "suite", delivery="Another delivery")
+        own = self.claim(1, "lead-suite", delivery="Fixture")
+        code, early = self.wait_at(ENQUEUED + 899, claim_wait_seconds=900)
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "a wait shorter than the limit woke it")
+        code, result = self.wait_at(ENQUEUED + 901, claim_wait_seconds=900)
+        self.assertEqual(code, 0)
+        self.assertEqual(result["woke"], "claim")
+        [said] = result["claimWaits"]
+        self.assertEqual((said["id"], said["label"], said["delivery"], said["slots"], said["waitedSeconds"]),
+                         (own.id, "lead-suite", "Fixture", 1, 901.0))
+        self.assertIn(f"--seen-claim={own.id}", result["restart"])
+        self.assertEqual([claim["id"] for claim in result["machine"]["waiting"]], [own.id])
+        # Nothing is admitted on the lead's behalf.
+        self.assertEqual(machine.Ledger(self.machine).reading()["waiting"][0]["state"], "waiting")
+        code, quiet = self.restart([_reading()], result, wall=lambda: ENQUEUED + 2000)
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "a restart carrying the token woke on the same wait")
+        self.assertEqual(quiet["claimWaits"], [])
+        self.assertIn(f"--seen-claim={own.id}", quiet["restart"])
+
+    def test_a_claim_naming_this_repository_or_another_of_the_deliverys_names_wakes_it(self) -> None:
+        # The merge queue names the repository by its git common directory, as the record's own identity reads it.
+        self.claim(4, "suite", delivery="Another delivery")
+        with mock.patch.object(state_tool._machine_module(), "repository_identity", return_value="/work/app/.git"):
+            own = self.claim(1, "queue turn", delivery="Fixture", repository="/work/app/.git")
+            code, result = self.wait_at(ENQUEUED + 901, claim_wait_seconds=900)
+        self.assertEqual((code, result["woke"]), (0, "claim"))
+        self.assertEqual([said["id"] for said in result["claimWaits"]], [own.id])
+        own.release()
+        # The record's tracker parent and its state folder's name name it too.
+        version = self.record.tool("show")["state"]["version"]
+        self.record.tool("patch", "--writer", "lead", "--version", str(version),
+                         "--patch", json.dumps({"meta": {"trackerParent": "EPIC-1"}}))
+        for name in ("EPIC-1", self.record.directory.name):
+            with self.subTest(name=name):
+                named = self.claim(1, f"named {name}", delivery=name)
+                code, result = self.wait_at(ENQUEUED + 901, claim_wait_seconds=900)
+                self.assertEqual((code, result["woke"]), (0, "claim"))
+                self.assertEqual([said["id"] for said in result["claimWaits"]], [named.id])
+                named.release()
+
+    def test_a_claim_at_exactly_the_limit_stays_quiet_and_a_restart_keeps_its_limit(self) -> None:
+        self.claim(4, "suite", delivery="Another delivery")
+        self.claim(1, "lead-suite", delivery="Fixture")
+        code, result = self.wait_at(ENQUEUED + 900, claim_wait_seconds=900)
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "a claim at exactly the limit woke it")
+        code, short = self.wait_at(ENQUEUED + 61, claim_wait_seconds=60)
+        self.assertEqual(short["woke"], "claim")
+        arguments = short["restart"]
+        self.assertEqual(arguments[arguments.index("--claim-wait-seconds") + 1], "60")
+        self.assertEqual(state_tool.wait_arguments(arguments).claim_wait_seconds, 60.0)
+
+    def test_the_command_reads_its_limit_and_a_restart_carrying_the_token_stays_quiet(self) -> None:
+        # Through the real command: a claim two minutes old passes a 60-second limit and not the default.
+        holder = machine.Ledger(self.machine, clock=lambda: time.time() - 120).request(
+            "run", "suite", label="suite", slots=4, delivery="Another delivery")
+        self.addCleanup(holder.release)
+        own = machine.Ledger(self.machine, clock=lambda: time.time() - 120).request(
+            "run", "lead-suite", label="lead-suite", slots=1, delivery="Fixture")
+        self.addCleanup(own.release)
+        self.assertFalse(own.admitted)
+        code, quiet = self.record.wait()
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "the default limit woke on a two-minute wait")
+        code, result = self.record.wait("--claim-wait-seconds", "60")
+        self.assertEqual((code, result["woke"]), (0, "claim"))
+        self.assertEqual([said["id"] for said in result["claimWaits"]], [own.id])
+        code, again = self.record.wait(*result["restart"])
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "a restart carrying the token woke on the same wait")
+        self.assertEqual(again["claimWaits"], [])
+        for bad in ("-1", "inf", "nan"):
+            with self.subTest(limit=bad):
+                done = subprocess.run([sys.executable, "-B", str(TOOL), "--dir", str(self.record.directory), "wait",
+                                       f"--claim-wait-seconds={bad}", "--timeout", "0"],
+                                      capture_output=True, text=True, check=False)
+                self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+                self.assertEqual(json.loads(done.stdout)["code"], "wait_invalid")
+
+    def test_the_default_limit_is_fifteen_minutes(self) -> None:
+        self.claim(4, "suite", delivery="Another delivery")
+        self.claim(1, "lead-suite", delivery="Fixture")
+        self.assertEqual(self.wait_at(ENQUEUED + 899)[0], state_tool.WAIT_EXPIRED_EXIT)
+        self.assertEqual(self.wait_at(ENQUEUED + 901)[1]["woke"], "claim")
+        self.assertIn("--claim-wait-seconds", self.wait_at(ENQUEUED + 10)[1]["restart"])
+
+    def test_another_deliverys_long_wait_does_not_wake_it(self) -> None:
+        self.claim(4, "suite", delivery="Fixture")
+        self.claim(1, "probe", delivery="Another delivery")
+        self.claim(1, "elsewhere", delivery="Fixture", repository="/elsewhere/.git")
+        code, result = self.wait_at(ENQUEUED + 5000, claim_wait_seconds=900)
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT)
+        self.assertEqual(result["claimWaits"], [])
+        self.assertEqual(len(result["machine"]["waiting"]), 2)
+
+    def test_an_unusable_ledger_is_carried_as_unavailable_and_wakes_nothing(self) -> None:
+        unusable = Path(self.enterContext(tempfile.TemporaryDirectory())) / "a-file"
+        unusable.write_text("not a directory", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"AGENT_SKILLS_MACHINE_DIR": str(unusable)}):
+            code, result = self.wait_at(ENQUEUED + 5000)
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT)
+        self.assertEqual(set(result["machine"]) - set(_reading()), {"unavailable"})
+        self.assertIn("a-file", result["machine"]["unavailable"])
+        self.assertEqual(result["claimWaits"], [])
 
 
 class RealMachineTests(RecordCase):

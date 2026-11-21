@@ -378,6 +378,27 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py doc
 
 Fix the first line that isn't `ok` and run it again, until it exits 0.
 
+Every repository on the machine, this one and Athena alike, shares one machine
+ledger (orchestrate-work's guide, "The machine ledger"). Set the machine's
+capacity once, in slots, with the reason, or reset it to the core count:
+
+```bash
+python3 -B .agent-skills/current/skills/orchestrate-work/scripts/machine.py capacity --slots 8 --why "16 cores, keep half free for the editor and browsers"
+python3 -B .agent-skills/current/skills/orchestrate-work/scripts/machine.py status
+```
+
+A run that needs the machine to itself, such as a timing-sensitive suite, takes
+an exclusive claim. It waits for the machine to empty and nothing else starts
+while it runs:
+
+```bash
+python3 -B .agent-skills/current/skills/orchestrate-work/scripts/machine.py run --exclusive --label "full suite" -- .venv/bin/python scripts/run-tests.py --workers 4 --budget tests/suite-budget.json
+```
+
+The hand-kept suite slot, and waiting on Athena's quiet-machine lease, are
+retired once Athena claims through the same ledger. Until
+then, keep using them beside it.
+
 ## Hosted service verification
 
 The deployable service has its own locked package and CI workflow, described in
