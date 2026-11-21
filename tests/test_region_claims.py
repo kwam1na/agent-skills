@@ -240,6 +240,123 @@ class ReportTests(unittest.TestCase):
         self.assertIn("[1, 2), [18, 19) are outside", found["f.txt"])
 
 
+    def held(self, changed: list[str], mine: list[dict], others: list[dict]) -> list[tuple[str, bool]]:
+        head = self.repo.commit({"f.txt": changed})
+        _, rows = regions.change_report(self.repo.root, "f.txt", self.base, head, mine, others=others)
+        return [(row["where"], row["claim"] is not None) for row in rows]
+
+    def setUp(self) -> None:
+        self.repo = Repo(self)
+        self.lines = numbered(20)
+        self.base = self.repo.commit({"f.txt": self.lines})
+
+    def test_an_insertion_at_a_span_s_edge_is_its_unless_another_lane_claims_the_far_side(self) -> None:
+        lines, mine = self.lines, [claim("lane-1", self.base, 8, 13)]
+        above, below = claim("lane-2", self.base, 5, 8), claim("lane-2", self.base, 13, 16)
+        before, after = [*lines[:7], "new\n", *lines[7:]], [*lines[:12], "new\n", *lines[12:]]
+        self.assertEqual(self.held(before, mine, [below]), [("insertion before line 8", True)])
+        self.assertEqual(self.held(before, mine, [above]), [("insertion before line 8, next to lane-2's claim", False)])
+        self.assertEqual(self.held(after, mine, [above]), [("insertion before line 13", True)])
+        self.assertEqual(self.held(after, mine, [below]), [("insertion before line 13, next to lane-2's claim", False)])
+        # The span's last line replaced by that line and new ones: an insertion just past it, the span's.
+        more = [*lines[:12], "more\n", "and more\n", *lines[12:]]
+        self.assertEqual(self.held(more, mine, [above]), [("insertion before line 13", True)])
+        # A claim that ends where the other lane's begins is still another lane's: refused, naming it.
+        self.assertEqual(self.held(more, mine, [claim("lane-3", self.base, 13, 14)]),
+                         [("insertion before line 13, next to lane-3's claim", False)])
+
+    def test_an_insertion_at_the_file_s_edge_is_the_span_s(self) -> None:
+        lines = self.lines
+        self.assertEqual(self.held(["new\n", *lines], [claim("lane-1", self.base, 1, 4)], [claim("lane-2", self.base, 4, 8)]),
+                         [("insertion before line 1", True)])
+        self.assertEqual(self.held([*lines, "new\n"], [claim("lane-1", self.base, 18, 21)],
+                                   [claim("lane-2", self.base, 1, 18)]), [("insertion before line 21", True)])
+        # No line lies past the file's edge, so even another lane's claim that no longer maps can't cover it.
+        stale = claim("lane-2", self.repo.commit({"g.txt": ["elsewhere\n"]}, "a later base"), 4, 8)
+        self.repo.git("checkout", "-q", "--detach", self.base)
+        self.assertEqual(self.held(["new\n", *lines], [claim("lane-1", self.base, 1, 4)], [stale]),
+                         [("insertion before line 1", True)])
+        self.assertEqual(self.held([*lines, "new\n"], [claim("lane-1", self.base, 18, 21)], [stale]),
+                         [("insertion before line 21", True)])
+        self.assertEqual(self.held([*lines[:3], "new\n", *lines[3:]], [claim("lane-1", self.base, 1, 4)], [stale]),
+                         [("insertion before line 4, next to lane-2's claim", False)])
+
+    def test_an_insertion_between_spans_is_one_lane_s_and_refused_between_two_lanes(self) -> None:
+        between = [*self.lines[:7], "new\n", *self.lines[7:]]
+        ours = [claim("lane-1", self.base, 4, 8), claim("lane-1", self.base, 8, 13)]
+        self.assertEqual(self.held(between, ours, []), [("insertion before line 8", True)])
+        # The far side is the lane's own line, which no other lane's claim can cover, even one that no longer maps.
+        stale = claim("lane-2", self.repo.commit({"g.txt": ["elsewhere\n"]}, "a later base"), 15, 18)
+        self.repo.git("checkout", "-q", "--detach", self.base)
+        self.assertEqual(self.held(between, ours, [stale]), [("insertion before line 8", True)])
+        self.assertEqual(self.held(between, [claim("lane-1", self.base, 4, 8)], [claim("lane-2", self.base, 8, 13)]),
+                         [("insertion before line 8, next to lane-2's claim", False)])
+
+    def test_a_stale_claim_of_another_lane_refuses_only_an_edge_insertion_next_to_it(self) -> None:
+        moved = self.repo.commit({"f.txt": [*self.lines[:2], "moved\n", *self.lines[3:]]}, "the base moves")
+        stale = claim("lane-2", moved, 5, 8)  # not in the history of the base the change is judged at
+        with self.assertRaises(regions.RegionError):
+            regions.mapped(self.repo.root, stale, self.base)
+        mine = [claim("lane-1", self.base, 8, 13)]
+        self.repo.git("checkout", "-q", "--detach", self.base)
+        inside = [*self.lines[:9], "inside\n", *self.lines[10:]]
+        self.assertEqual(self.held(inside, mine, [stale]), [("[10, 11)", True)])
+        edge = [*self.lines[:12], "new\n", *self.lines[12:]]
+        self.assertEqual(self.held(edge, mine, [stale]), [("insertion before line 13, next to lane-2's claim", False)])
+        found = regions.problems(self.repo.root, "lane-1", self.base, self.repo.git("rev-parse", "HEAD"), ["f.txt"],
+                                 [*mine, stale])
+        self.assertIn("insertion before line 13, next to lane-2's claim is outside", found["f.txt"])
+
+
+class CarryTests(unittest.TestCase):
+    """Decision 5 on the claims alone: a stale span carried past base hunks that miss its lines, or refused."""
+
+    def setUp(self) -> None:
+        self.repo = Repo(self)
+        self.lines = numbered(20)
+        self.base = self.repo.commit({"f.txt": self.lines}, "base")
+
+    def test_a_span_the_base_shifted_but_did_not_touch_is_carried(self) -> None:
+        own = claim("lane-1", self.base, 8, 13)
+        moved = self.repo.commit({"f.txt": ["top\n", *self.lines[:6], *self.lines[7:]]}, "around it")
+        self.assertEqual(regions.carry_span(self.repo.root, own, moved), (8, 13))
+        edge = self.repo.commit({"f.txt": ["top\n", *self.lines[:6], *self.lines[7:], "end\n"]}, "at its edge")
+        self.assertEqual(regions.carry_span(self.repo.root, own, edge), (8, 13))
+        at_start = self.repo.commit({"f.txt": [*self.lines[:7], "x\n", "y\n", *self.lines[7:]]}, "before its first line")
+        with self.assertRaises(regions.RegionError):
+            regions.mapped(self.repo.root, own, at_start)  # the edge insertion makes it stale
+        self.assertEqual(regions.carry_span(self.repo.root, own, at_start), (10, 15))
+
+    def test_a_base_edit_starting_at_the_span_s_end_carries_it_unchanged(self) -> None:
+        own = claim("lane-1", self.base, 8, 13)
+        inserted = self.repo.commit({"f.txt": [*self.lines[:12], "past it\n", *self.lines[12:]]}, "just past its last line")
+        self.assertEqual(regions.carry_span(self.repo.root, own, inserted), (8, 13))
+        replaced = self.repo.commit({"f.txt": [*self.lines[:12], "line 13 changed\n", *self.lines[13:]]}, "its next line")
+        self.assertEqual(regions.carry_span(self.repo.root, claim("lane-1", inserted, 8, 13), replaced), (8, 13))
+
+    def test_a_carry_is_refused_across_unrelated_history_or_a_mode_change(self) -> None:
+        later = self.repo.commit({"f.txt": ["top\n", *self.lines]}, "a later base")
+        self.repo.git("checkout", "-q", "--detach", self.base)
+        elsewhere = self.repo.commit({"g.txt": ["other\n"]}, "off that history")
+        with self.assertRaisesRegex(regions.RegionError, "outside the target base's history"):
+            regions.carry_span(self.repo.root, claim("lane-1", later, 9, 14), elsewhere)
+        (self.repo.root / "f.txt").chmod(0o755)
+        moded = self.repo.commit({}, "make it executable")
+        with self.assertRaisesRegex(regions.RegionError, "the base changed the file mode"):
+            regions.carry_span(self.repo.root, claim("lane-1", self.base, 8, 13), moded)
+
+    def test_a_hunk_ending_just_before_the_first_line_carries_and_one_touching_a_line_is_named(self) -> None:
+        own = claim("lane-1", self.base, 8, 13)
+        ending = self.repo.commit({"f.txt": [*self.lines[:5], "six\n", "seven\n", *self.lines[7:]]}, "lines 6-7")
+        self.assertEqual(regions.carry_span(self.repo.root, own, ending), (8, 13))
+        touched = self.repo.commit({"f.txt": [*self.lines[:5], "six\n", "seven\n", "eight\n", *self.lines[8:]]})
+        with self.assertRaisesRegex(regions.RegionError, r"the base hunk \[6, 9\) since .* touches its lines"):
+            regions.carry_span(self.repo.root, own, touched)
+        inside = self.repo.commit({"f.txt": [*self.lines[:9], "in\n", *self.lines[9:]]}, "inside")
+        with self.assertRaisesRegex(regions.RegionError, "the insertion before line 10"):
+            regions.carry_span(self.repo.root, claim("lane-1", ending, 8, 13), inside)
+
+
 
 # -- the commands ------------------------------------------------------------------------------------------------
 
@@ -565,6 +682,50 @@ class GrantCarveTests(CommandCase):
         self.assertIn("overlaps lane-2's [15, 19)", out)
         self.unchanged("lib/e.txt", before)
 
+    def test_a_carry_moves_spans_a_base_edit_shifted_and_refuses_all_when_one_was_touched(self) -> None:
+        lines = numbered(30, "c")
+        base = self.push_base({"lib/c.txt": lines})
+        self.grant("lib/c.txt", "lane-1", base, 4, 8, "--story", "FX-5")
+        self.grant("lib/c.txt", "lane-1", base, 12, 16)
+        self.grant("lib/c.txt", "lane-2", base, 20, 24)
+        # The base inserts at the edge of both of lane-1's claims, touching neither one's lines: neither maps now.
+        newer = self.push_base({"lib/c.txt": [*lines[:3], "c above\n", *lines[3:11], "c between\n", *lines[11:]]})
+        since = self.last_id()
+        before = self.claims("lib/c.txt")
+        out = self.flow("lead-own", "--carry", "lib/c.txt", "--lane", "lane-1", "--story", "FX-5")
+        self.assertIn(f"carried lane-1's for FX-5 [4, 8) at {base[:12]} to lane-1's for FX-5 [5, 9) at {newer[:12]}", out)
+        self.assertIn("line 5: 'c 4' ... line 8: 'c 7'", out)
+        self.assertEqual(self.claims("lib/c.txt"), [claim("lane-1", newer, 5, 9, "FX-5", "lib/c.txt"), *before[1:]])
+        [carried] = self.entries("ownership.carried", since)
+        self.assertEqual((carried["lane"], carried["subject"]), ("lane-1", "FX-5"))
+        self.assertEqual(carried["data"], {"path": "lib/c.txt", "from": {"first": 4, "after": 8},
+                                           "to": {"first": 5, "after": 9}, "was": base,
+                                           "base": {"ref": "feature/FX-1", "head": newer}, "story": "FX-5", "by": "lead"})
+        # Another base edit touches the lane's other claim; a carry of the lane's claims writes neither.
+        touched = self.push_base({"lib/c.txt": [*lines[:3], "c above\n", *lines[3:11], "c between\n", *lines[11:13],
+                                                "c 14 changed\n", *lines[14:]]})
+        before = self.claims("lib/c.txt")
+        since = self.last_id()
+        out = self.flow("lead-own", "--carry", "lib/c.txt", "--lane", "lane-1", ok=False)
+        self.assertIn("the carry of lib/c.txt writes nothing: lane-1's [12, 16) at", out)
+        # The insertion before line 12 sits at the claim's edge, outside its lines: only the hunk inside is named.
+        self.assertIn("the base hunk [14, 15) since", out)
+        self.assertIn("touches its lines. Regrant it against the current base", out)
+        self.assertNotIn("FX-5", out)  # the claim carried to the base before maps: only the touched one is named
+        self.unchanged("lib/c.txt", before)
+        self.assertEqual(self.entries("ownership.carried", since), [])
+        for argv, said in ((("--lane", "lane-3"), "lane-3 has no region claim on lib/c.txt"),
+                           (("--lane", "lane-1", "--start", 1), "it takes --lane and --story only"),
+                           (("--lane", "lane-2", "--story", "FX-5"), "FX-5 is lane-1's story, not lane-2's")):
+            with self.subTest(argv=argv):
+                self.assertIn(said, self.flow("lead-own", "--carry", "lib/c.txt", *argv, ok=False))
+        # Another lane's span, shifted by the same edits, carries on its own, and carrying it again changes nothing.
+        out = self.flow("lead-own", "--carry", "lib/c.txt", "--lane", "lane-2")
+        self.assertIn(f"carried lane-2's [20, 24) at {base[:12]} to lane-2's [22, 26) at {touched[:12]}", out)
+        self.assertEqual(self.claims("lib/c.txt"), [*before[:2], claim("lane-2", touched, 22, 26, path="lib/c.txt")])
+        self.assertIn(f"lane-2's claims on lib/c.txt are already at {touched[:12]}",
+                      self.flow("lead-own", "--carry", "lib/c.txt", "--lane", "lane-2"))
+
     def test_a_carve_writes_the_whole_new_set_of_claims_or_nothing(self) -> None:
         lines = numbered(40, "f")
         base = self.push_base({"lib/f.txt": lines})
@@ -670,8 +831,9 @@ class ClaimsCheckTests(CommandCase):
         self.assertIn("nothing more to claim", self.flow("claims-check", "FX-5", cwd=wt))
         self.assertEqual(self.record(), doc)
         # Another lane's change lands on the base after the branch began.
-        self.push_base({"lib/k.txt": [*k[:21], "k landed\n", *k[22:]]})
-        (wt / "lib/k.txt").write_text("".join([*k[:6], "k inside\n", *k[7:14], "k outside\n", *k[15:]]))
+        self.push_base({"lib/k.txt": [*k[:27], "k landed\n", *k[28:]]})
+        (wt / "lib/k.txt").write_text("".join([*k[:6], "k inside\n", *k[7:9], "k at the edge\n", *k[9:14], "k outside\n",
+                                               *k[15:]]))
         (wt / "lib/new.txt").write_text("new\n")
         (wt / "lib/del.txt").unlink()
         (wt / "lib/mode.sh").chmod(0o755)
@@ -679,11 +841,12 @@ class ClaimsCheckTests(CommandCase):
         commit(wt, "FX-5: five changes")
         code, out = self.fx.flow("claims-check", "FX-5", cwd=wt)
         self.assertEqual(code, 1, out)
-        for said in ("lib/k.txt [7, 8): inside lane-1's", "lib/k.txt [15, 16): outside lane-1's spans",
+        for said in ("lib/k.txt [7, 8): inside lane-1's", "lib/k.txt insertion before line 10: inside lane-1's [5, 10)",
+                     "lib/k.txt [15, 16): outside lane-1's spans",
                      "lib/new.txt: needs a whole-file claim", "lib/del.txt: needs a whole-file claim",
                      "lib/mode.sh: needs a whole-file claim", "lib/whole.txt: needs a whole-file claim"):
             self.assertIn(said, out)
-        self.assertNotIn("[22, 23)", out)
+        self.assertNotIn("[28, 29)", out)
         requests = self.requests(out)
         self.assertEqual(len(requests), 5, out)
         for argv in requests:
@@ -693,6 +856,7 @@ class ClaimsCheckTests(CommandCase):
         out = self.flow("lead-claims", "FX-5")
         self.assertIn("FX-5 (lane-1), its pushed branch feature/FX-5", out)
         self.assertIn("the queue would accept its ownership", out)
+        self.assertIn("holds lib/k.txt insertion before line 10: inside lane-1's", out)
 
     def test_every_problem_is_refused_at_once_and_lead_claims_judges_as_the_queue_does(self) -> None:
         from tests.test_run_delivery import sh
