@@ -8341,7 +8341,7 @@ class ElementDigestPatchTests(unittest.TestCase):
         self.directory = Path(self.temporary.name) / "state"
         state_tool.init(self.directory, "Epic underway")
         state_tool.patch(self.directory, writer="lead", version=1, changes={
-            "lanes": [copy.deepcopy(self.LANE), {**self.LANE, "id": "lane-2", "title": "Queue"}],
+            "lanes": [copy.deepcopy(self.LANE), {**self.LANE, "id": "lane-2", "title": "Queue façade"}],
             "queue": [queue_item("pr-1")], "planned": [{"subject": "pr-2", "title": "Next", "lane": "lane-2",
                                                        "stage": "planned"}],
             "finish": [{"id": "deploy", "text": "Deployed", "met": False}]})
@@ -8370,6 +8370,13 @@ class ElementDigestPatchTests(unittest.TestCase):
         canonical = json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         self.assertEqual(shown["elementDigest"], hashlib.sha256(canonical).hexdigest())
         self.assertEqual(shown["selector"], "lanes[id=lane-1]")
+        # The element the selector picks, not the array's first, and its UTF-8 form, not an escaped one.
+        code, second = run_tool(self.directory, "show", "--element", "lanes[id=lane-2]")
+        self.assertEqual(code, 0, second)
+        row = state_tool.show(self.directory)["state"]["lanes"][1]
+        self.assertEqual((second["element"], second["element"]["title"]), (row, "Queue façade"))
+        canonical = json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        self.assertEqual(second["elementDigest"], hashlib.sha256(canonical).hexdigest())
         code, missing = run_tool(self.directory, "show", "--element", "lanes[id=lane-9]")
         self.assertEqual((code, missing["code"]), (1, "selector_unmatched"), missing)
 
@@ -8416,6 +8423,23 @@ class ElementDigestPatchTests(unittest.TestCase):
                              element_digest=digest, changes={"state": "blocked"}, between_read_and_write=moved)
         self.assertEqual(late.exception.code, "element_stale")
         self.assertEqual(state_tool.show(self.directory)["state"]["lanes"][0]["state"], "working")
+
+    def test_the_digest_pins_the_selected_element_not_the_first(self) -> None:
+        digest = self.digest("lanes[id=lane-2]")
+        state_tool.patch(self.directory, writer="lead", version=self.version(), selector="lanes[id=lane-1]",
+                         changes={"focus": "elsewhere"})
+        code, patched = run_tool(self.directory, "patch", "--writer", "lead", "--element", "lanes[id=lane-2]",
+                                 "--element-digest", digest, "--patch", json.dumps({"focus": "queue"}))
+        self.assertEqual(code, 0, patched)
+        self.assertEqual([row["focus"] for row in patched["state"]["lanes"]], ["elsewhere", "queue"])
+        digest = self.digest("lanes[id=lane-2]")
+        state_tool.patch(self.directory, writer="lead", version=self.version(), selector="lanes[id=lane-2]",
+                         changes={"focus": "moved"})
+        before = self.written()
+        code, refused = run_tool(self.directory, "patch", "--writer", "lead", "--element", "lanes[id=lane-2]",
+                                 "--element-digest", digest, "--patch", json.dumps({"state": "blocked"}))
+        self.assertEqual((code, refused["code"]), (1, "element_stale"), refused)
+        self.assertEqual(self.written(), before)
 
     def test_the_digest_without_an_element_or_beside_a_version_is_a_usage_error(self) -> None:
         digest = self.digest()
@@ -8520,6 +8544,25 @@ class ElementDigestPatchTests(unittest.TestCase):
                              changes={"zzzzzz": 1})
         self.assertIn(f"the allowed fields are {', '.join(allowed)}", str(far.exception))
         self.assertNotIn("did you mean", str(far.exception))
+        # An error that isn't about an unknown field keeps the validator's wording alone.
+        with self.assertRaises(state_tool.StateError) as wrong:
+            state_tool.patch(self.directory, writer="lead", version=self.version(), selector="lanes[id=lane-1]",
+                             changes={"state": "bogus"})
+        self.assertEqual(str(wrong.exception), "/lanes/0/state: not one of the allowed values")
+        # A closed object reached through a map's values, or through a $ref, names its own fields.
+        with self.assertRaises(state_tool.StateError) as ticket:
+            state_tool.patch(self.directory, writer="lead", version=self.version(),
+                             changes={"tickets": {"pr-1": {"title": "One", "titel": "typo"}}})
+        tickets = state_tool.load_schema("delivery-state/1")["properties"]["tickets"]["additionalProperties"]
+        self.assertIn(f"/tickets/pr-1/titel: no value is allowed here; the allowed fields are "
+                      f"{', '.join(sorted(tickets['properties']))}; did you mean title?", str(ticket.exception))
+        schema = state_tool.load_schema("delivery-state/1")
+        check = sorted(schema["$defs"]["check"]["properties"])
+        state = {"queue": [{"leadSelection": {"checks": [{"bogus": 1}]}}]}
+        self.assertEqual(state_tool._explained(["/queue/0/leadSelection/checks/0/bogus: no value is allowed here"],
+                                               state),
+                         [f"/queue/0/leadSelection/checks/0/bogus: no value is allowed here; the allowed fields are "
+                          f"{', '.join(check)}"])
         # The validator's own wording is unchanged.
         state = state_tool.show(self.directory)["state"]
         state["lanes"][0]["status"] = "blocked"

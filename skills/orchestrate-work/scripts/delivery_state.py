@@ -1075,22 +1075,24 @@ def _check_digest(state: dict, selector: str, digest: str) -> None:
                          "Read it again with show --element")
 
 
-def _schema_at(node: object, root: dict, value: object, path: tuple[object, ...]) -> list[dict]:
-    """The object schemas that hold ``value`` at ``path``, following refs, items, properties and anyOf."""
+def _schema_at(node: object, root: dict, value: object, path: tuple[object, ...]) -> dict | None:
+    """The object schema that holds ``value`` at ``path``, following refs, items and properties.
+
+    An error inside an ``anyOf`` option is reported as the option's mismatch, never by a deeper path, so the walk
+    never enters one."""
     if not isinstance(node, dict):
-        return []
+        return None
     if "$ref" in node:
         return _schema_at(root["$defs"][node["$ref"][len("#/$defs/"):]], root, value, path)
-    found = [held for option in node.get("anyOf", []) for held in _schema_at(option, root, value, path)]
     if not path:
-        return [node, *found] if "properties" in node else found
+        return node if "properties" in node else None
     part, rest = path[0], path[1:]
     if isinstance(value, list) and isinstance(part, int) and part < len(value):
-        return [*found, *_schema_at(node.get("items"), root, value[part], rest)]
+        return _schema_at(node.get("items"), root, value[part], rest)
     if isinstance(value, dict) and part in value:
         child = node.get("properties", {}).get(part, node.get("additionalProperties"))
-        return [*found, *_schema_at(child, root, value[part], rest)]
-    return found
+        return _schema_at(child, root, value[part], rest)
+    return None
 
 
 def _explained(errors: list[str], state: dict) -> list[str]:
@@ -1104,9 +1106,8 @@ def _explained(errors: list[str], state: dict) -> list[str]:
             explained.append(error)
             continue
         path = tuple(int(part) if part.isdigit() else part for part in where[1:].split("/"))
-        holders = [node for node in _schema_at(schema, schema, state, path[:-1])
-                   if node.get("additionalProperties") is False]
-        allowed = sorted({name for node in holders for name in node["properties"]})
+        holder = _schema_at(schema, schema, state, path[:-1])
+        allowed = sorted(holder["properties"]) if holder and holder.get("additionalProperties") is False else []
         if not allowed:
             explained.append(error)
             continue
