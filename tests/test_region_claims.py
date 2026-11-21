@@ -271,11 +271,22 @@ class ReportTests(unittest.TestCase):
                          [("insertion before line 1", True)])
         self.assertEqual(self.held([*lines, "new\n"], [claim("lane-1", self.base, 18, 21)],
                                    [claim("lane-2", self.base, 1, 18)]), [("insertion before line 21", True)])
+        # No line lies past the file's edge, so even another lane's claim that no longer maps can't cover it.
+        stale = claim("lane-2", self.repo.commit({"g.txt": ["elsewhere\n"]}, "a later base"), 4, 8)
+        self.repo.git("checkout", "-q", "--detach", self.base)
+        self.assertEqual(self.held(["new\n", *lines], [claim("lane-1", self.base, 1, 4)], [stale]),
+                         [("insertion before line 1", True)])
+        self.assertEqual(self.held([*lines[:3], "new\n", *lines[3:]], [claim("lane-1", self.base, 1, 4)], [stale]),
+                         [("insertion before line 4, next to lane-2's claim", False)])
 
     def test_an_insertion_between_spans_is_one_lane_s_and_refused_between_two_lanes(self) -> None:
         between = [*self.lines[:7], "new\n", *self.lines[7:]]
         ours = [claim("lane-1", self.base, 4, 8), claim("lane-1", self.base, 8, 13)]
         self.assertEqual(self.held(between, ours, []), [("insertion before line 8", True)])
+        # The far side is the lane's own line, which no other lane's claim can cover, even one that no longer maps.
+        stale = claim("lane-2", self.repo.commit({"g.txt": ["elsewhere\n"]}, "a later base"), 15, 18)
+        self.repo.git("checkout", "-q", "--detach", self.base)
+        self.assertEqual(self.held(between, ours, [stale]), [("insertion before line 8", True)])
         self.assertEqual(self.held(between, [claim("lane-1", self.base, 4, 8)], [claim("lane-2", self.base, 8, 13)]),
                          [("insertion before line 8, next to lane-2's claim", False)])
 
@@ -677,7 +688,9 @@ class GrantCarveTests(CommandCase):
         since = self.last_id()
         out = self.flow("lead-own", "--carry", "lib/c.txt", "--lane", "lane-1", ok=False)
         self.assertIn("the carry of lib/c.txt writes nothing: lane-1's [12, 16) at", out)
-        self.assertIn("the base hunks the insertion before line 12, [14, 15) since", out)
+        # The insertion before line 12 sits at the claim's edge, outside its lines: only the hunk inside is named.
+        self.assertIn("the base hunk [14, 15) since", out)
+        self.assertIn("touches its lines. Regrant it against the current base", out)
         self.assertNotIn("FX-5", out)  # the claim carried to the base before maps: only the touched one is named
         self.unchanged("lib/c.txt", before)
         self.assertEqual(self.entries("ownership.carried", since), [])
@@ -686,9 +699,12 @@ class GrantCarveTests(CommandCase):
                            (("--lane", "lane-2", "--story", "FX-5"), "FX-5 is lane-1's story, not lane-2's")):
             with self.subTest(argv=argv):
                 self.assertIn(said, self.flow("lead-own", "--carry", "lib/c.txt", *argv, ok=False))
+        # Another lane's span, shifted by the same edits, carries on its own, and carrying it again changes nothing.
+        out = self.flow("lead-own", "--carry", "lib/c.txt", "--lane", "lane-2")
+        self.assertIn(f"carried lane-2's [20, 24) at {base[:12]} to lane-2's [22, 26) at {touched[:12]}", out)
+        self.assertEqual(self.claims("lib/c.txt"), [*before[:2], claim("lane-2", touched, 22, 26, path="lib/c.txt")])
         self.assertIn(f"lane-2's claims on lib/c.txt are already at {touched[:12]}",
                       self.flow("lead-own", "--carry", "lib/c.txt", "--lane", "lane-2"))
-        self.unchanged("lib/c.txt", before)
 
     def test_a_carve_writes_the_whole_new_set_of_claims_or_nothing(self) -> None:
         lines = numbered(40, "f")
