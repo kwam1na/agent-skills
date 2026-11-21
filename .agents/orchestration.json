@@ -251,6 +251,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_delivery_key_collision",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_key_collision.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_key_collision.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_delivery_posture_vectors",
         "argv": [
           ".venv/bin/python",
