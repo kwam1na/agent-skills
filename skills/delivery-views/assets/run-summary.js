@@ -280,14 +280,23 @@ function runSummaryNode(summary, options) {
   function short(commit) { return typeof commit === "string" ? commit.slice(0, 7) : null; }
   // What later rounds said became of each finding, by its id: the first round to settle it wins.
   function fates(index) {
-    // Keyed by finding id, with no inherited names, so an id like "constructor" finds nothing it did not set.
+    // Keyed by finding id, with no inherited names, so an id like "constructor" finds nothing it did not set. Each id
+    // keeps every lens's first word on it, since only the lens that filed a finding settles it.
     var known = Object.create(null);
     rounds.slice(index + 1).forEach(function (later, offset) {
       (Array.isArray(later.settled) ? later.settled : []).forEach(function (entry) {
-        if (entry && typeof entry.id === "string" && !known[entry.id]) { known[entry.id] = { entry: entry, round: numberOf(later, index + 1 + offset) }; }
+        if (!entry || typeof entry.id !== "string") { return; }
+        var said = known[entry.id] || (known[entry.id] = []);
+        if (!said.some(function (other) { return other.entry.lens === entry.lens; })) { said.push({ entry: entry, round: numberOf(later, index + 1 + offset) }); }
       });
     });
     return known;
+  }
+  // A finding's fate from its own lens, or from a closure that names no lens, as a run's round report doesn't.
+  function fateFor(known, entry) {
+    var said = known[entry.id] || [];
+    return said.filter(function (other) { return other.entry.lens === entry.lens; })[0]
+      || said.filter(function (other) { return typeof other.entry.lens !== "string"; })[0] || null;
   }
   // A short commit, linked when the page can name its address and it is a full commit id.
   function commitNode(commit) {
@@ -353,7 +362,7 @@ function runSummaryNode(summary, options) {
   // What became of the notes this round raised, as a sentence: "All 5 of this round's notes were fixed in 61f086d, and
   // round 2 confirmed them."
   function outcomeOfNotes(raised, known) {
-    var fixed = raised.filter(function (entry) { return entry.state === "resolved" && known[entry.id] && known[entry.id].entry.state === "fixed"; });
+    var fixed = raised.filter(function (entry) { return entry.state === "resolved" && fateFor(known, entry) && fateFor(known, entry).entry.state === "fixed"; });
     var open = raised.filter(function (entry) { return entry.state === "unresolved"; }).length;
     if (!fixed.length) {
       if (!open) { return null; }
@@ -361,8 +370,8 @@ function runSummaryNode(summary, options) {
         : open + " of this round's notes " + (open === 1 ? "is" : "are") + " still open.");
     }
     var confirmed = [];
-    fixed.forEach(function (entry) { if (confirmed.indexOf(known[entry.id].round) < 0) { confirmed.push(known[entry.id].round); } });
-    var commits = commitsOf(fixed.map(function (entry) { return known[entry.id].entry; }));
+    fixed.forEach(function (entry) { if (confirmed.indexOf(fateFor(known, entry).round) < 0) { confirmed.push(fateFor(known, entry).round); } });
+    var commits = commitsOf(fixed.map(function (entry) { return fateFor(known, entry).entry; }));
     var head = fixed.length === raised.length ? (raised.length === 1 ? "This round's note was fixed" : "All " + raised.length + " of this round's notes were fixed")
       : fixed.length + " of this round's " + raised.length + " notes " + (fixed.length === 1 ? "was" : "were") + " fixed";
     return line("run-settled", [head + (commits.length ? " in " : ""), commits,
@@ -426,6 +435,168 @@ function runSummaryNode(summary, options) {
       row.appendChild(button);
     });
     return box;
+  }
+  // A deferral: a finding its lens filed as deferred, which the card says why it waited and how it ended. A P0 is never
+  // deferred, so one filed so is drawn as any other finding.
+  var REASONS = { P1: "Outside this round's change, so it doesn't block this story", P2: "Moderate, so it doesn't block",
+                  P3: "Minor, so it doesn't block" };
+  function severityOf(entry) { return SEVERITIES.indexOf(entry.severity) < 0 ? "P3" : entry.severity; }
+  function isDeferral(entry) { return entry.filed === "deferred" && Object.prototype.hasOwnProperty.call(REASONS, severityOf(entry)); }
+  // Why it waited, in full, from the same rule as its one-line reason.
+  function whyItWaited(entry) {
+    var lens = lensLabel(entry.lens), severity = severityOf(entry);
+    if (severity === "P1") { return "Serious (P1), filed new by a verification round against lines outside the round's change, so " + lens + " deferred it to a follow-up."; }
+    if (severity === "P2") { return "Moderate (P2). A finding at this level doesn't block landing, so " + lens + " deferred it to a follow-up."; }
+    return "Minor (P3). Minor findings never block landing, so " + lens + " deferred it to a follow-up.";
+  }
+  // The follow-up the close-out filed for a deferral, when the record names its key.
+  function filedAs(entry) {
+    var key = options && typeof options.followUpOf === "function" ? options.followUpOf(entry.id) : null;
+    return typeof key === "string" && key ? key : null;
+  }
+  // What became of a deferral, read from its own lens's later reports only, as review-work's convergence rule says; a
+  // closure that names no lens, as a run's round report gives it, is the finding's own.
+  // The first later round of that lens to fix, close or withdraw it ends it; one that lists it deferred or open, or
+  // leaves it out, left it waiting. A round without that lens, or one whose details could not be read and that holds no
+  // word of the lens on it, says nothing of it. `history` is each later round's word on it, for the detail.
+  function deferralFate(entry, index) {
+    var history = [], ended = null, last = null;
+    rounds.slice(index + 1).forEach(function (later, offset) {
+      if (ended) { return; }
+      var number = numberOf(later, index + 1 + offset);
+      last = number;
+      var own = (Array.isArray(later.settled) ? later.settled : []).filter(function (other) {
+        // A run's round report names no lens on its closures; an id is its raising lens's alone, so one counts there.
+        return other && other.id === entry.id && (other.lens === entry.lens || typeof other.lens !== "string");
+      })[0];
+      var verdicts = later.verdicts && typeof later.verdicts === "object" ? later.verdicts : {};
+      if (!own) {
+        // A round only leaves it out when the filing lens reported there and the round's details could be read; a
+        // round whose details are unavailable, as when another lens is missing, still counts its own closures above.
+        if (later.detailsUnavailable !== true && Object.prototype.hasOwnProperty.call(verdicts, entry.lens) && verdicts[entry.lens] !== "unavailable") { history.push({ round: number, words: "Left out of " + lensLabel(entry.lens) + "'s report, so it is still deferred." }); }
+        return;
+      }
+      var resolution = typeof own.resolution === "string" && own.resolution ? own.resolution : null;
+      // The renderer's words, or a round report's own: "closed" and "withdrawn" are kept as given there.
+      if (own.state === "fixed" || own.state === "closed") {
+        var closed = own.closedAs === "closed" || own.state === "closed";
+        ended = { kind: closed ? "closed" : "fixed", round: number };
+        history.push({ round: number, words: (closed ? "Closed" : "Fixed") + (resolution ? ": " + resolution : ".") });
+      } else if (own.state === "dropped" || own.state === "withdrawn") {
+        ended = { kind: "withdrawn", round: number };
+        history.push({ round: number, words: "Withdrawn" + (resolution ? ": " + resolution : ".") });
+      } else {
+        history.push({ round: number, words: "Still deferred" + (resolution ? ": " + resolution : ".") });
+      }
+    });
+    var fate = ended || (last === null ? { kind: "last", round: null } : { kind: "waiting", round: last });
+    var key = ended ? null : filedAs(entry);
+    if (key) { fate = { kind: "filed", round: fate.round, key: key }; }
+    fate.history = history;
+    return fate;
+  }
+  function fateNode(fate) {
+    var words = fate.kind === "fixed" ? "✓ fixed in round " + fate.round : fate.kind === "closed" ? "✓ closed in round " + fate.round
+      : fate.kind === "withdrawn" ? "withdrawn in round " + fate.round : fate.kind === "waiting" ? "still waiting after round " + fate.round
+      : fate.kind === "last" ? "no later round to check it · becomes a follow-up at close-out" : null;
+    var made = node("span", "run-fate is-" + fate.kind, words);
+    if (fate.kind === "filed") {
+      made.appendChild(document.createTextNode("Filed as "));
+      made.appendChild(issueNode(fate.key));
+    }
+    return made;
+  }
+  // A follow-up as text: linked when it is a ticket the page can address, or an address itself.
+  function issueNode(key) {
+    var href = /^https:\/\/\S+$/.test(key) ? key
+      : options && typeof options.issueHref === "function" && /^[A-Z][A-Z0-9]*-[0-9]+$/.test(key) ? options.issueHref(key) : null;
+    if (typeof href !== "string" || !/^https:\/\//.test(href)) { return document.createTextNode(key); }
+    var link = node("a", null, key);
+    link.setAttribute("href", href);
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+    link.addEventListener("click", function (event) { event.stopPropagation(); });
+    return link;
+  }
+  // A lens's deferrals and their fates, counted: "deferred 10: 7 fixed by round 2, 3 still waiting".
+  function deferralCount(fates) {
+    var parts = [];
+    [["fixed", "fixed by round "], ["closed", "closed by round "]].forEach(function (pair) {
+      var own = fates.filter(function (fate) { return fate.kind === pair[0]; });
+      if (own.length) { parts.push(own.length + " " + pair[1] + Math.max.apply(null, own.map(function (fate) { return fate.round; }))); }
+    });
+    [["withdrawn", "withdrawn"], ["filed", "filed"], ["waiting", "still waiting"], ["last", "with no later round"]].forEach(function (pair) {
+      var count = fates.filter(function (fate) { return fate.kind === pair[0]; }).length;
+      if (count) { parts.push(count + " " + pair[1]); }
+    });
+    return "deferred " + fates.length + ": " + parts.join(", ");
+  }
+  // One deferral's row: its text, a real button that opens its detail, then its reason and fate on one quiet line. The
+  // detail says why it waited, what could break, the change it proposes, its follow-up and how it ended, round by
+  // round. Closed, the row is as tall as it is with nothing open.
+  function deferralRow(round, index, entry) {
+    var severity = severityOf(entry);
+    var fate = deferralFate(entry, index);
+    var item = node("li", "run-finding is-" + severity.toLowerCase() + " is-deferral");
+    var key = "deferral:" + (summary.observationKey || summary.runId || "") + ":" + numberOf(round, index) + ":" + entry.lens + ":" + entry.id;
+    var open = runFoldOpen[key] === true;
+    var toggle = node("button", "run-deferral");
+    toggle.type = "button";
+    toggle.setAttribute("aria-expanded", String(open));
+    var said = node("span", "run-finding-line");
+    said.appendChild(node("span", "run-finding-text", sentenceOf(entry.summary)));
+    toggle.appendChild(said);
+    item.appendChild(toggle);
+    var meta = node("p", "run-deferral-said");
+    meta.appendChild(node("span", "run-reason", REASONS[severity]));
+    meta.appendChild(document.createTextNode(" · "));
+    meta.appendChild(fateNode(fate));
+    item.appendChild(meta);
+    var detail = node("dl", "run-deferral-detail");
+    detail.hidden = !open;
+    var recorded = entry.detail && typeof entry.detail === "object" ? entry.detail : {};
+    var field = function (label, value) {
+      detail.appendChild(node("dt", null, label));
+      var said = node("dd", null);
+      if (value === null || value === undefined) { said.className = "run-quiet"; said.textContent = "not recorded"; }
+      else if (typeof value === "string") { said.textContent = value; }
+      else { said.appendChild(value); }
+      detail.appendChild(said);
+    };
+    var text = function (value) { return typeof value === "string" && value ? value : null; };
+    field("Why it waited", whyItWaited(entry));
+    field("What could break", text(recorded.failureScenario));
+    field("Proposed change", text(recorded.proposedChange));
+    var follow = text(recorded.followUp);
+    field("Its follow-up", follow || (text(entry.deferredIssue) ? issueNode(entry.deferredIssue) : null));
+    var ended = node("ol", "run-deferral-history");
+    var step = function (number, words) {
+      var made = node("li", null);
+      made.appendChild(node("span", "run-deferral-round", number === null ? "—" : "R" + number));
+      made.appendChild(typeof words === "string" ? node("span", null, words) : words);
+      ended.appendChild(made);
+    };
+    step(numberOf(round, index), "Raised and deferred by " + lensLabel(entry.lens) + ".");
+    fate.history.forEach(function (said) { step(said.round, said.words); });
+    if (fate.kind === "last") { step(null, "No later round to check it; it becomes a follow-up at close-out."); }
+    if (fate.kind === "filed") {
+      var filed = node("span", null, "Filed as ");
+      filed.appendChild(issueNode(fate.key));
+      filed.appendChild(document.createTextNode(" at close-out."));
+      step(null, filed);
+    }
+    field("How it ended", ended);
+    item.appendChild(detail);
+    toggle.addEventListener("click", function (event) {
+      event.stopPropagation();
+      var from = runHeldHeight(item);
+      open = !open;
+      runFoldOpen[key] = open;
+      toggle.setAttribute("aria-expanded", String(open));
+      detail.hidden = !open;
+      runEaseHeight(item, from);
+    });
+    return item;
   }
   // The finding an earlier round raised, by its id: the latest round before this one that raised it, or null when
   // no round on the page holds it.
@@ -611,7 +782,7 @@ function runSummaryNode(summary, options) {
       Object.keys(briefsOf(round) || {}).forEach(function (lens) { if (lenses.indexOf(lens) < 0) { lenses.push(lens); } });
       var known = fates(index);
       // When every finding is fixed, or every one is still open, the footer says so once and the rows carry no fate.
-      var fixedAll = raised.length && raised.every(function (entry) { return fateOf(entry, known[entry.id]).kind === "fixed"; });
+      var fixedAll = raised.length && raised.every(function (entry) { return fateOf(entry, fateFor(known, entry)).kind === "fixed"; });
       var openAll = raised.length && raised.every(function (entry) { return entry.state === "unresolved"; });
       var uniform = Boolean(fixedAll || openAll);
       // A round that raised nothing is the reviewers in one row and one line, not a "nothing raised" each.
@@ -629,6 +800,8 @@ function runSummaryNode(summary, options) {
         var group = node("div", "run-reviewer");
         var top = reviewerHead("run-reviewer-head", lens, verdictOf(verdicts, lens), outcome);
         if (!own.length) { top.appendChild(node("span", "run-quiet", "nothing raised")); }
+        var deferrals = own.filter(isDeferral);
+        if (deferrals.length) { top.appendChild(node("span", "run-deferral-count", deferralCount(deferrals.map(function (entry) { return deferralFate(entry, index); })))); }
         group.appendChild(top);
         var record = recordNode(round, lens, false);
         if (record) { group.appendChild(record); }
@@ -641,16 +814,18 @@ function runSummaryNode(summary, options) {
           var severityOf = function (entry) { return SEVERITIES.indexOf(entry.severity) < 0 ? "P3" : entry.severity; };
           own.forEach(function (entry) {
             var severity = severityOf(entry);
-            var fate = fateOf(entry, known[entry.id]);
+            var fate = fateOf(entry, fateFor(known, entry));
             if (severity !== band) {
               band = severity;
               var members = own.filter(function (other) { return severityOf(other) === severity; });
-              var bands = members.map(function (other) { return fateOf(other, known[other.id]).band; });
-              shared = uniform ? null : bands.every(function (word) { return word === bands[0]; }) ? bands[0] : null;
+              var bands = members.map(function (other) { return fateOf(other, fateFor(known, other)).band; });
+              // A band holding a deferral says no shared fate: each deferral says its own beside its reason.
+              shared = uniform || members.some(isDeferral) ? null : bands.every(function (word) { return word === bands[0]; }) ? bands[0] : null;
               var name = WORDS[severity];
               list.appendChild(node("li", "run-band is-" + severity.toLowerCase(), name.charAt(0).toUpperCase() + name.slice(1)
                 + (members.length > 1 ? " · " + members.length : "") + (shared ? " · " + (members.length > 1 ? "all " : "") + shared : "")));
             }
+            if (isDeferral(entry)) { list.appendChild(deferralRow(round, index, entry)); return; }
             var item = node("li", "run-finding is-" + severity.toLowerCase());
             // Summaries are sentences; one stored without its full stop gets one here.
             var said = node("span", "run-finding-line");
@@ -660,7 +835,7 @@ function runSummaryNode(summary, options) {
               said.appendChild(node("span", "run-fate is-" + fate.kind, fate.words));
             }
             item.appendChild(said);
-            var issue = entry.deferredIssue || (known[entry.id] && known[entry.id].entry.deferredIssue);
+            var issue = entry.deferredIssue || (fateFor(known, entry) && fateFor(known, entry).entry.deferredIssue);
             if ((entry.filed === "deferred" || fate.kind === "deferred") && fate.kind !== "fixed" && typeof issue === "string" && issue) { item.appendChild(followUpNode(issue)); }
             list.appendChild(item);
           });

@@ -214,15 +214,15 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "f5db51a5133688f09884fe7944d4d65c6508336365b5c655193d7f15bcca5b61"
+          "sha256": "dcb43df88878562987e8570c92cd398edc2aa82c3bb82c39c237c4a4db0c0d96"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
-          "sha256": "d7109927fe6a32a116321d0cf20ffa8d5d3e35e5ed1dd0dab52e5a750b5308b5"
+          "sha256": "a92e810605794fa2dc54f2261f04c956c6c128b7074ecc9feabcc24a3798b949"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.js",
-          "sha256": "5f958959be3589cfb48663cd0aa2b5eb34b34bcb5fa9ed3cb19086e6f87abee2"
+          "sha256": "b87197a4cb0d3229bcb7ee8a0550e50e4dbc755ed6922e303aef2fdcb3dc55aa"
         },
         {
           "path": "skills/delivery-views/references/delivery-plan.schema.json",
@@ -246,7 +246,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
-          "sha256": "31970f3cc1ca30b32338f32dc3754fa125d8b24e64c6b530742aed264e5dea85"
+          "sha256": "97b21ab606ccffbb0f3ecaedc9b77f62a1f8ac465c92fd9fa490169b8bd68b70"
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",

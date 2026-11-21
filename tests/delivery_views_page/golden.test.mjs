@@ -72,7 +72,8 @@ async function deferredCards(document) {
   return snaps.slice(1).map((snap) => snap.app.querySelector("#detail .run-card"));
 }
 const pill = (card) => card.querySelector(".run-card-outcome").textContent;
-// What each band heading and each row says of its findings' fate: the band once, a row only where it differs.
+// What each band heading and each row says of its findings' fate: the band once, a row only where it differs, and
+// each deferral its own beside why it waited.
 const marks = (card) => [Array.from(card.querySelectorAll(".run-band"), (band) => band.textContent),
   Array.from(card.querySelectorAll("li.run-finding"), (row) => row.querySelector(".run-fate")?.textContent ?? null)];
 
@@ -82,8 +83,10 @@ test("a round that approved with deferred findings says so at its head and on ea
   assert.deepEqual(cards.map((card) => card.textContent), golden.rounds);
   const [first] = cards;
   assert.equal(pill(first), "Approved with 4 deferrable notes");
-  // Every note was fixed, so the footer says it once and no band or row repeats it.
-  assert.deepEqual(marks(first), [["Minor · 2", "Moderate", "Minor"], [null, null, null, null]]);
+  // Every note was fixed, so the footer says it once and no band repeats it; each deferral says the round that fixed it.
+  assert.deepEqual(marks(first), [["Minor · 2", "Moderate", "Minor"], Array(4).fill("\u2713 fixed in round 2")]);
+  assert.deepEqual(Array.from(first.querySelectorAll(".run-deferral-count"), (count) => count.textContent),
+    ["deferred 2: 2 fixed by round 2", "deferred 2: 2 fixed by round 2"]);
   assert.equal(first.querySelector(".run-settled").textContent, "All 4 of this round's notes were fixed in bbbbbbb, and round 2 confirmed them.");
 });
 
@@ -92,10 +95,11 @@ test("a deferred finding a later round leaves unfixed is still counted and marke
     outcomes[1].entries[1].result.resolvedFindings.pop();
   }));
   assert.equal(pill(first), "Approved with 4 deferrable notes");
-  // A band whose notes ended alike says it once; in the mixed band each row says its own, and the deferral left open
-  // keeps its follow-up beneath it.
-  assert.deepEqual(marks(first), [["Minor · 2", "Moderate · fixed", "Minor · fixed"], ["\u2713 fixed", "deferred", null, null]]);
-  assert.equal(first.querySelectorAll(".run-followup").length, 1);
+  // Each deferral says its own fate: the one round 2 left out of its lens's report still waits.
+  assert.deepEqual(marks(first), [["Minor · 2", "Moderate", "Minor"],
+    ["\u2713 fixed in round 2", "still waiting after round 2", "\u2713 fixed in round 2", "\u2713 fixed in round 2"]]);
+  assert.deepEqual(Array.from(first.querySelectorAll(".run-deferral-count"), (count) => count.textContent),
+    ["deferred 2: 1 fixed by round 2, 1 still waiting", "deferred 2: 2 fixed by round 2"]);
   assert.equal(first.querySelector(".run-settled").textContent, "3 of this round's 4 notes were fixed in bbbbbbb, and round 2 confirmed them.");
 });
 
@@ -107,7 +111,7 @@ test("a round that approved with one deferred finding says it in the singular", 
     outcomes[1].entries[1].result.resolvedFindings = [];
   }));
   assert.equal(pill(first), "Approved with 1 deferrable note");
-  assert.deepEqual(marks(first), [["Moderate"], [null]]);
+  assert.deepEqual(marks(first), [["Moderate"], ["\u2713 fixed in round 2"]]);
 });
 
 test("a round that raised nothing still reads Approved, and a round with notes open keeps its words", async () => {
@@ -123,7 +127,8 @@ test("a round that raised nothing still reads Approved, and a round with notes o
     document.reviewEvidence["WORK-1"].candidateRef = document.state.queue[0].head = "a".repeat(40);
   }));
   assert.equal(pill(open), "Approved, notes open");
-  // The three still deferred say so by their bands, the one left open by its own, and each deferral keeps its follow-up.
-  assert.deepEqual(marks(open), [["Minor · 2 · all deferred", "Moderate · deferred", "Minor · open"], [null, null, null, null]]);
-  assert.equal(open.querySelectorAll(".run-followup").length, 3);
+  // The three still deferred each say no later round checked them, and the one left open says so by its band.
+  const last = "no later round to check it \u00b7 becomes a follow-up at close-out";
+  assert.deepEqual(marks(open), [["Minor · 2", "Moderate", "Minor · open"], [last, last, last, null]]);
+  assert.equal(open.querySelectorAll("li.run-finding.is-deferral").length, 3);
 });
