@@ -174,14 +174,15 @@
     {
       "id": "stories",
       "label": "The stories",
-      "text": "V26-3666, V26-3667, V26-3668 and V26-3669 land on integrate/every-workflow-on-the-live-view through its merge queue",
+      "text": "V26-3666, V26-3667, V26-3668, V26-3675, V26-3686, V26-3690 and V26-3691 land on integrate/every-workflow-on-the-live-view through its merge queue",
       "covers": {
         "criteria": "all",
         "proofs": [
           "review",
           "merged"
         ]
-      }
+      },
+      "at": "2026-11-21T03:01:19.811940Z"
     },
     {
       "id": "local-suite",
