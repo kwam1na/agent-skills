@@ -766,15 +766,18 @@ describe("the hosted page draws what the local page draws", () => {
       dom.window.close();
     }
   });
-  it("draws the integration base, the rejoin and the four stops before it, and the story's words", () => {
+  it("draws the integration base, the rejoin bar's four stops, and the story's words", () => {
     const body = fullRecord();
     projection(body);
     const hosted = drawn(body, true);
     try {
       const words = chapters(hosted);
-      expect(words).toContain("Rejoined main");
-      expect(words).toContain("Before it rejoins");
-      expect(hosted.window.document.querySelectorAll(".rejoin-rows > li, .rejoin-rows > *").length).toBe(4);
+      expect(words).toContain("Rejoin main");
+      // The rejoin is drawn as the line's bar, one segment per step, as the local page draws it; the old
+      // "Before it rejoins" table is gone from both.
+      const steps = [...hosted.window.document.querySelectorAll("#line .mg-step")].map((step) => step.getAttribute("data-step"));
+      expect(steps).toEqual(["merged", "suite", "round", "requested"]);
+      expect(words).not.toContain("Before it rejoins");
       expect(words).toContain("integrate/app");
       const story = (body.document as Record<string, unknown>).story as Record<string, unknown>;
       expect(story).toBeTruthy();
