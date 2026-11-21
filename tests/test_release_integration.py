@@ -136,6 +136,8 @@ class ReleaseIntegrationTests(unittest.TestCase):
             "skills/delivery-views/assets/line-map.js",
             "skills/delivery-views/assets/run-summary.css",
             "skills/delivery-views/assets/run-summary.js",
+            "skills/delivery-views/assets/runs.css",
+            "skills/delivery-views/assets/runs.js",
             "skills/delivery-views/scripts/render.py",
             "skills/delivery-views/scripts/review_projection.py",
             "skills/delivery-views/scripts/views_common.py",

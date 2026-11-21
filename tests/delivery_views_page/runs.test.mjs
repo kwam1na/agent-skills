@@ -143,7 +143,8 @@ test("with no record, the line map and history say so, link the runs page's view
 
 test("the runs golden pins the page whole", async () => {
   const golden = path.join(RUNS_CORPUS, "golden.json");
-  const [shown] = await openPage(PAGE);
+  // The page says when each round ran relative to today, so the golden is read at the view's own asOf, not today.
+  const [shown] = await openPage(PAGE, { now: "2026-11-20T10:00:00Z" });
   const captured = { block: block(PAGE, "delivery-run-page"), view: block(PAGE, "delivery-run-page-view"), text: shown.text };
   if (process.env.RECAPTURE_RUNS_GOLDEN === "1" || !existsSync(golden)) {
     writeFileSync(golden, JSON.stringify(captured, null, 2) + "\n");
