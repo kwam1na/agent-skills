@@ -68,9 +68,9 @@ refused ("the span cuts the statement"). Only one lane can hold such a file at a
 
 ## Why This Matters
 
-In a later delivery with four lanes, three stories each added one word to `CATALOGUE_MODULES` or one row to the journal
-tables. The file passed from lane to lane after each merge. Two finished stories waited hours, with every
-other gate green, for a single line each.
+In a later delivery with four lanes, five stories from lanes that didn't hold the file each added one word to
+`CATALOGUE_MODULES` or one row to the journal tables. The file passed from lane to lane after each merge. Two finished
+stories waited hours, with every other gate green, for a single line each.
 
 A refused hand-off or a red registry test costs a lane a turn, and the lead another grant. With spans planned one line
 wide and the pinned tests granted up front, the lanes in that delivery would have needed none of the nine extra
