@@ -86,7 +86,10 @@ if lag:
     count = pathlib.Path(os.environ["MQ_LOG"] + ".lagged")
     reported = seen.read_text() if seen.exists() else head
     lagged = int(count.read_text()) if count.exists() else 0
-    if head != reported and (lag == "never" or lagged < int(lag)):
+    if head != reported and lag == "elsewhere":
+        # A forge that reports a head that is neither the one before the move nor the one after it.
+        head = "0" * 40
+    elif head != reported and (lag == "never" or lagged < int(lag)):
         count.write_text(str(lagged + 1))
         head = reported
     seen.write_text(head)
@@ -354,6 +357,10 @@ if os.environ.get("MQ_MERGE") == "loud":
                      + "token=ghx_keyedvalue123 Authorization: Bearer abc.def.ghi\\n"
                      # On a line of their own, so only the environment and token-shape rules can remove them.
                      + os.environ.get("MQ_FORGE_TOKEN", "") + " ghp_" + "A" * 36 + "\\nmerge refused: Head branch was modified. Review and try the merge again.\\n")
+    sys.exit(1)
+if os.environ.get("MQ_MERGE") == "delete":
+    # A forge that deletes the branch and still reports the merge refused.
+    git("push", "--quiet", remote, ":refs/heads/" + branch)
     sys.exit(1)
 if os.environ.get("MQ_MERGE") in ("refuse", "refuse " + branch) or tip(branch) != expected:
     sys.exit(1)
@@ -1300,15 +1307,109 @@ class QueueRefTests(MergeQueueTestCase):
         self.assertEqual(adopter.tip("feature"), head)
         self.assertFalse(any(line.startswith("forge ") for line in adopter.log_lines()))
 
-    def test_a_queue_ref_moved_off_the_synced_head_stops_the_check(self) -> None:
+    def test_a_queue_ref_moved_off_the_synced_head_stops_the_check_and_the_merge(self) -> None:
+        for step in ("check", "merge"):
+            with self.subTest(step=step):
+                self.fresh()
+                adopter = self.adopter()
+                head = self.candidate(adopter)
+                runner = adopter.runner()
+                self.assertEqual(runner.run_command("sync", ["feature"])[0].document()["outcome"], "synced")
+                if step == "merge":
+                    self.assertEqual(runner.run_command("check", ["feature"])[0].document()["outcome"], "checked")
+                run("push", "--quiet", "--force", str(adopter.remote), f"{head}:refs/merge-queue/feature",
+                    cwd=adopter.lane)
+                document = self.assertStopped(runner.run_command(step, ["feature"]), "candidate_moved")
+                self.assertIn("refs/merge-queue/feature is no longer at", document["stop"]["detail"])
+                self.assertEqual(adopter.tip("feature"), head)
+                self.assertFalse(any(line.startswith("forge ") for line in adopter.log_lines()))
+
+    def test_a_queue_ref_moved_during_the_sync_push_stops_as_moved(self) -> None:
         adopter = self.adopter()
         head = self.candidate(adopter)
-        runner = adopter.runner()
-        self.assertEqual(runner.run_command("sync", ["feature"])[0].document()["outcome"], "synced")
-        run("push", "--quiet", "--force", str(adopter.remote), f"{head}:refs/merge-queue/feature", cwd=adopter.lane)
-        document = self.assertStopped(runner.run_command("check", ["feature"]), "candidate_moved")
-        self.assertIn("refs/merge-queue/feature is no longer at", document["stop"]["detail"])
+        real = queue.Runner.remote_ref
+        reads: list[str] = []
+
+        def remote_ref(runner, ref):
+            held = real(runner, ref)
+            if ref == "refs/merge-queue/feature" and not reads:
+                # Someone writes the queue ref between the lease's read and the push.
+                reads.append(ref)
+                run("push", "--quiet", str(adopter.remote), f"{head}:{ref}", cwd=adopter.lane)
+            return held
+
+        with mock.patch.object(queue.Runner, "remote_ref", remote_ref):
+            document = self.assertStopped(self.run_queue(adopter, "feature"), "candidate_moved")
+        self.assertEqual(document["stop"]["detail"], "refs/merge-queue/feature moved during sync; nothing was pushed")
+        self.assertEqual(adopter.queued("feature"), head)
         self.assertEqual(adopter.tip("feature"), head)
+
+    def test_a_lane_push_just_before_the_branch_moves_stops_as_moved_and_stays(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.move_branch
+        pushed: list[str] = []
+
+        def move_branch(runner, branch, held, to):
+            if not pushed:
+                pushed.append(adopter.lane_push("feature", {"src/app.txt": "pushed before the move\n"}))
+            return real(runner, branch, held, to)
+
+        with mock.patch.object(queue.Runner, "move_branch", move_branch):
+            document = self.assertStopped(self.run_queue(adopter, "feature"), "candidate_moved")
+        self.assertIn("before the queue could move it; nothing was pushed", document["stop"]["detail"])
+        self.assertEqual(adopter.tip("feature"), pushed[0])
+        self.assertFalse(any(line.startswith("forge ") for line in adopter.log_lines()))
+
+    def test_a_failure_after_the_move_that_is_not_a_stop_moves_the_branch_back(self) -> None:
+        adopter = self.adopter()
+        head = self.candidate(adopter)
+
+        def breaks(runner, subject):
+            raise RuntimeError("the remote went away")
+
+        results = self.run_queue(adopter, "feature", seams={"after_branch_moved": breaks})
+        self.assertNotEqual(results[-1].document()["outcome"], "merged")
+        self.assertEqual(adopter.tip("feature"), head)
+        self.assertFalse(any(line.startswith("forge ") for line in adopter.log_lines()))
+
+    def test_a_move_back_retries_once_and_a_deleted_branch_leaves_nothing_named(self) -> None:
+        adopter = self.environment_adopter({"MQ_READY": "refuse"})
+        head = self.candidate(adopter)
+        real = queue.Runner.move_branch
+        backs: list[str] = []
+
+        def move_branch(runner, branch, held, to):
+            if to == head and not backs:
+                # The first move back fails though nobody pushed: a lease on no commit the branch holds.
+                backs.append(held)
+                return real(runner, branch, "0" * 40, to)
+            return real(runner, branch, held, to)
+
+        with mock.patch.object(queue.Runner, "move_branch", move_branch):
+            self.assertStopped(self.run_queue(adopter, "feature"), "ready_refused")
+        self.assertEqual(backs, [adopter.item("feature")["syncedHead"]])
+        self.assertEqual(adopter.tip("feature"), head)
+        self.assertNotIn("leftOnBranch", self.stop_entry(adopter)["data"])
+        self.fresh()
+        adopter = self.environment_adopter({"MQ_MERGE": "delete"})
+        self.candidate(adopter)
+        self.assertStopped(self.run_queue(adopter, "feature"), "merge_refused")
+        self.assertEqual(run("ls-remote", "--heads", str(adopter.remote), "refs/heads/feature", cwd=self.directory), "")
+        self.assertNotIn("leftOnBranch", self.stop_entry(adopter)["data"])
+
+    def test_a_candidate_step_reporting_a_third_head_stops_at_once_and_a_bad_subject_makes_no_queue_ref(self) -> None:
+        adopter = self.environment_adopter({"MQ_LAG": "elsewhere"})
+        head = self.candidate(adopter)
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "candidate_moved")
+        self.assertIn(f"feature moved to {'0' * 40} while the queue moved it to", document["stop"]["detail"])
+        self.assertEqual(adopter.tip("feature"), head)
+        runner = adopter.runner()
+        for subject in ("-feature", "a..b", "bad name"):
+            with self.subTest(subject=subject), self.assertRaises(queue.Stop) as raised:
+                runner.queue_ref(subject)
+            self.assertEqual(raised.exception.reason, "ref_invalid")
+        self.assertEqual(runner.queue_ref("V26-3643"), "refs/merge-queue/V26-3643")
 
     def test_the_merge_waits_for_a_late_candidate_step_and_stops_on_one_that_never_catches_up(self) -> None:
         adopter = self.environment_adopter({"MQ_LAG": "2"})

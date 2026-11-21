@@ -2424,14 +2424,20 @@ class Runner:
 
     def move_back(self, branch: str, synced: str, handed: str) -> str | None:
         """Drop the queue's synced commit from the lane's branch, or return it when the branch has moved since."""
-        if self.move_branch(branch, synced, handed).returncode == 0:
-            return None
-        # A branch the forge deleted holds nothing of the queue's; one someone pushed to keeps the synced commit, as
-        # does one the remote can't be asked about.
-        try:
-            return synced if self.remote_ref(f"refs/heads/{branch}") is not None else None
-        except RuntimeError:
-            return synced
+        for _ in range(2):
+            if self.move_branch(branch, synced, handed).returncode == 0:
+                return None
+            # A branch the forge deleted holds nothing of the queue's; one someone pushed to keeps the synced commit,
+            # as does one the remote can't be asked about. One still at the synced head is tried once more.
+            try:
+                tip = self.remote_ref(f"refs/heads/{branch}")
+            except RuntimeError:
+                return synced
+            if tip is None:
+                return None
+            if tip != synced:
+                return synced
+        return synced
 
     def await_candidate(self, subject: str, context: Context, cwd: Path, handed: str, synced: str) -> None:
         """Re-resolve the candidate until it reports the synced head, within checkTimeoutSeconds, as a forge that
