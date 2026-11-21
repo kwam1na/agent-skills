@@ -118,29 +118,6 @@
         }
       ]
     },
-    "V26-3669": {
-      "title": "Watch this repository's own runs",
-      "lane": "lane-1",
-      "after": [
-        "V26-3666",
-        "V26-3667",
-        "V26-3668"
-      ],
-      "criteria": [
-        {
-          "id": "v26-3669-1",
-          "text": "With the candidate applied, a directly invoked execute-work run here appears on the runs page and updates live through to its end."
-        },
-        {
-          "id": "v26-3669-2",
-          "text": "A deliver-work request through plan and execute appears as one run, its plan approval showing \"Needs you\" while it waits."
-        },
-        {
-          "id": "v26-3669-3",
-          "text": "What each watched run showed is recorded in the delivery's proof."
-        }
-      ]
-    },
     "V26-3675": {
       "title": "Record a merge when the candidate's own lane waits on another story",
       "lane": "lane-1",
