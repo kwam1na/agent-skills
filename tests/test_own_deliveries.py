@@ -19,7 +19,7 @@ TOOL = ".agent-skills/current/skills/run-delivery/scripts/run_delivery.py"
 # entry here and in the binding in the same diff, and both its hand-off and its acceptance can name it from its head.
 CATALOGUE_MODULES = (
     "adoption", "bootstrap_qualification", "catalog", "compound_learning_corpus", "core_boundary", "corpus_copy",
-    "cut_release", "declared_mechanics_corpus", "delivery_posture_vectors", "delivery_provider",
+    "cut_release", "declared_mechanics_corpus", "delivery_key_collision", "delivery_posture_vectors", "delivery_provider",
     "delivery_provider_rails_contract", "delivery_views", "delivery_views_adopter", "delivery_views_history",
     "delivery_views_hosted", "delivery_views_hosted_projection", "delivery_views_page", "delivery_views_plan", "delivery_views_plan_fixtures", "delivery_views_render",
     "delivery_views_review_projection", "delivery_views_snapshots", "diagnosis", "documented_install_surface",

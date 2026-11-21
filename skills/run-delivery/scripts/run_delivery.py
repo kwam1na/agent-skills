@@ -1033,12 +1033,41 @@ class Config:
         return {key: self.shelf.json(f"{self.deliveries_rel}/{key}.json") or {} for key in self.delivery_keys()}
 
     def state_of(self, key: str, d: dict) -> Path:
-        """Where a delivery's record is kept on this machine, as load_delivery finds it."""
+        """Where a delivery's record is kept on this machine, as load_delivery finds it.
+
+        By default it is in the lead's checkout, the lane checkout named by the delivery key. When that key is also a
+        story's, that folder is the story's own lane checkout, so the record goes under the work directory's
+        `deliveries/<key>/` instead. A record already at either default path stays there; one at both is refused."""
         if os.environ.get("DELIVERY_STATE"):
             return Path(os.environ["DELIVERY_STATE"])
         if d.get("stateDirectory"):
             return self.main / d["stateDirectory"]
-        return self.lane_checkout(key) / self.state_rel
+        # The binding's state.directory is the folder's name inside either default path, never a place of its own,
+        # unless it is absolute: then both paths are that one.
+        lead, apart = self.lane_checkout(key) / self.state_rel, self.record_apart(key)
+        if lead == apart:
+            return lead
+        held = [path for path in (lead, apart) if (path / "state.json").is_file()]
+        if len(held) == 2:
+            raise Stop(f"delivery {key} has a record at both {lead} and {apart}; keep the one it runs on, and move "
+                       "the other away")
+        if held:
+            return held[0]
+        return apart if key in (d.get("stories") or {}) else lead
+
+    def record_apart(self, key: str) -> Path:
+        """The default record folder of a delivery whose key is also a story's: beside the lanes, under the work
+        directory."""
+        return self.main / self.work / "deliveries" / key / self.state_rel
+
+    def record_apart_note(self) -> str | None:
+        """What doctor --delivery warns and lead-init prints when this delivery's record is kept apart: its key is
+        also a story's."""
+        if self.state != self.record_apart(self.delivery) or self.delivery not in self.stories:
+            return None
+        return (f"{self.delivery} is also a story's key, so its record is kept in {self.state}, beside the lane "
+                f"checkouts rather than in {self.lane_checkout(self.delivery)}, the story's own; to keep it elsewhere, "
+                f"set stateDirectory in {self.delivery_where}")
 
     def closed_here(self, key: str, d: dict) -> bool:
         """Whether this machine's flow log for the delivery holds the closed.json lead-close writes."""
@@ -1165,6 +1194,9 @@ class Config:
             self.sources["state"] = "DELIVERY_STATE"
         elif d.get("stateDirectory"):
             self.sources["state"] = path.name
+        elif self.state == self.record_apart(key):
+            self.sources["state"] = ("the work directory's deliveries/<key>/, " + (
+                "since the key is also a story's" if key in d["stories"] else "where the record already is"))
         else:
             self.sources["state"] = "the lead's checkout (laneCheckout with the delivery key) + the binding's state.directory"
         self.flow_log = self.state.parent / "flow-log"
@@ -7790,6 +7822,8 @@ def lead_init(args) -> None:
             rebuild_plan(c)
     print(f"initialized {c.state} with {len(planned)} planned stories across {len(c.lanes)} lanes"
           + (f"; wrote {c.state / PLAN_FILE}" if (c.state / PLAN_FILE).exists() else ""))
+    if (apart := c.record_apart_note()):
+        print(apart)
     record_session(c, "lead")
     for item in planned:
         if (outcome := refine_outcome(c, item["subject"])) is not None:
@@ -14829,6 +14863,7 @@ class Doctor:
             ("harness", "harness configuration", ("config", "generation", "node"), self.harness),
             ("knowledge", "knowledge library properties", ("platform",), self.knowledge),
             ("delivery", "delivery file", ("config", "binding"), self.check_delivery),
+            ("record", "delivery record folder", ("delivery",), self.record_folder),
             ("plan", "plan chapter", ("delivery",), self.check_plan),
             ("plan-reasons", "added stories' reasons", ("delivery",), self.plan_reasons),
             ("plan-sections", "plan sections", ("delivery",), self.stories_planned),
@@ -15440,6 +15475,20 @@ class Doctor:
             return "wrong", f"lanes own the same files: {'; '.join(overlaps)}; fix: make each lane's `owns` disjoint"
         self.delivery = d
         return "ok", f"{key}: {len(d.stories)} stories across {len(d.lanes)} lanes, each owning its own files"
+
+    def record_folder(self):
+        d = self.delivery
+        note = d.record_apart_note()
+        if note is None:
+            return "ok", f"{d.state} ({d.sources.get('state')})"
+        try:
+            relative = d.state.relative_to(d.main)
+        except ValueError:
+            return "warn", note
+        if run(["git", "check-ignore", "-q", str(relative)], cwd=d.main, check=False).returncode != 0:
+            return "wrong", (f"{relative}/ isn't ignored by git, so the record would show as untracked; fix: add "
+                             f"{d.work}/ to .gitignore, or set stateDirectory in {d.delivery_where}")
+        return "warn", note
 
     def check_plan(self):
         d = Config(self.root, self.args.doctor_delivery or self.args.delivery, tolerant=True)
