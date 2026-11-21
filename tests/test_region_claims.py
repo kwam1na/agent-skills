@@ -276,6 +276,8 @@ class ReportTests(unittest.TestCase):
         self.repo.git("checkout", "-q", "--detach", self.base)
         self.assertEqual(self.held(["new\n", *lines], [claim("lane-1", self.base, 1, 4)], [stale]),
                          [("insertion before line 1", True)])
+        self.assertEqual(self.held([*lines, "new\n"], [claim("lane-1", self.base, 18, 21)], [stale]),
+                         [("insertion before line 21", True)])
         self.assertEqual(self.held([*lines[:3], "new\n", *lines[3:]], [claim("lane-1", self.base, 1, 4)], [stale]),
                          [("insertion before line 4, next to lane-2's claim", False)])
 
@@ -324,6 +326,24 @@ class CarryTests(unittest.TestCase):
         with self.assertRaises(regions.RegionError):
             regions.mapped(self.repo.root, own, at_start)  # the edge insertion makes it stale
         self.assertEqual(regions.carry_span(self.repo.root, own, at_start), (10, 15))
+
+    def test_a_base_edit_starting_at_the_span_s_end_carries_it_unchanged(self) -> None:
+        own = claim("lane-1", self.base, 8, 13)
+        inserted = self.repo.commit({"f.txt": [*self.lines[:12], "past it\n", *self.lines[12:]]}, "just past its last line")
+        self.assertEqual(regions.carry_span(self.repo.root, own, inserted), (8, 13))
+        replaced = self.repo.commit({"f.txt": [*self.lines[:12], "line 13 changed\n", *self.lines[13:]]}, "its next line")
+        self.assertEqual(regions.carry_span(self.repo.root, claim("lane-1", inserted, 8, 13), replaced), (8, 13))
+
+    def test_a_carry_is_refused_across_unrelated_history_or_a_mode_change(self) -> None:
+        later = self.repo.commit({"f.txt": ["top\n", *self.lines]}, "a later base")
+        self.repo.git("checkout", "-q", "--detach", self.base)
+        elsewhere = self.repo.commit({"g.txt": ["other\n"]}, "off that history")
+        with self.assertRaisesRegex(regions.RegionError, "outside the target base's history"):
+            regions.carry_span(self.repo.root, claim("lane-1", later, 9, 14), elsewhere)
+        (self.repo.root / "f.txt").chmod(0o755)
+        moded = self.repo.commit({}, "make it executable")
+        with self.assertRaisesRegex(regions.RegionError, "the base changed the file mode"):
+            regions.carry_span(self.repo.root, claim("lane-1", self.base, 8, 13), moded)
 
     def test_a_hunk_ending_just_before_the_first_line_carries_and_one_touching_a_line_is_named(self) -> None:
         own = claim("lane-1", self.base, 8, 13)

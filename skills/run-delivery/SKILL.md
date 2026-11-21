@@ -72,8 +72,9 @@ journalled as `ownership.carried` with `by: lead`.
 Review preparation, hand-off and acceptance list every path and every hunk outside the lane's claims in one refusal.
 Before review, a lane runs `claims-check KEY` in its checkout: the committed change from its merge base, each path
 and hunk its claims hold, and each one it still needs a claim for, with the request for the lead to run: by
-`--around` and a quoted line, with `--insert` for an insertion at the edge of a span the lane holds, never by bare
-line numbers. It writes
+`--around` and a quoted line, never by bare line numbers. An insertion at the edge of a span the lane holds needs
+nothing unless another lane claims the far side: then the request overlaps that lane and only a carve gives it, and
+it carries `--insert` only when that claim no longer maps. It writes
 nothing, and exits 1 while anything is needed. `lead-claims [KEY...]` previews the queue's own ownership check on the
 tree the queue would sync, built with `git merge-tree --write-tree` against the current base head, from each story's
 handed head, or its pushed branch before a hand-off.

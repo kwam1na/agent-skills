@@ -300,6 +300,11 @@ class GrantLinesTests(CommandCase):
                 ((*region, "--anchor", "return", "--through", "def after"), "lines of lib/n.py at"),
                 ((*region, "--anchor", "def after", "--through", "def first"), "each before it"),
                 ((*region, "--anchor", "value,", "--through", "return 0"), "cuts the statement at lines 11-14"),
+                ((*region, "--anchor", "def first", "--through", ""), "--through names some text of a line"),
+                (("--claim", "lib/n.py", "--anchor", "def first", "--through", "return 1"), "use them with --region"),
+                (("--revoke-region", "lib/n.py", "--lane", "lane-1", "--base", base, "--start", 10, "--end", 18,
+                  "--anchor", "def first", "--through", "return 1"), "use them with --region"),
+                (("--carve", "lib/m.py", "--anchor", "def first", "--give", "lane-1:1-2"), "in its --give"),
                 (("--carve", "lib/m.py", "--give", "lane-1:anchor=        value,..through=return 0"),
                  "the carve of lib/m.py changes nothing: the span [12, 18) cuts the statement")):
             with self.subTest(argv=argv):

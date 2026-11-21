@@ -1091,7 +1091,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "f55edd2bf5a3164d081425ac8bd351220b5228a68b0c8961a8fc16ed303915f3"
+          "sha256": "3bcbe0bf19d98b50f8d50b234b1ad29c12d96e87005c6a8df6fcb4ef1692e701"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
