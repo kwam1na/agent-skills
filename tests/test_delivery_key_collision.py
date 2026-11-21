@@ -78,6 +78,11 @@ class StateOfTests(unittest.TestCase):
         self.assertEqual(self.state_of(self.config(work="work"), "KEY-1", d),
                          self.main / "work/deliveries/KEY-1" / STATE)
 
+    def test_a_default_folder_without_state_json_holds_no_record(self) -> None:
+        (self.main / ".orchestration/lanes/KEY-1" / STATE).mkdir(parents=True)
+        self.assertEqual(self.state_of(self.config(), "KEY-1", {"stories": {"KEY-1": {}}}),
+                         self.main / ".orchestration/deliveries/KEY-1" / STATE)
+
     def test_a_key_no_story_has_keeps_todays_default(self) -> None:
         self.assertEqual(self.state_of(self.config(), "EPIC-1", {"stories": {"KEY-1": {}}}),
                          self.main / ".orchestration/lanes/EPIC-1" / STATE)
@@ -128,12 +133,13 @@ class CollidingDeliveryTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.assertEqual(bytecode_under(self.generation), [], "the case left bytecode in the installed generation")
 
-    def fixture(self, key: str = "FX-2", planned: bool = False) -> Fixture:
+    def fixture(self, key: str = "FX-2", planned: bool = False, keep_state: bool = False) -> Fixture:
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
         path = setup_delivery(fx)
         d = json.loads(path.read_text())
-        del d["stateDirectory"]
+        if not keep_state:
+            del d["stateDirectory"]
         d["delivery"] = key
         path.unlink()
         (path.parent / f"{key}.json").write_text(json.dumps(d, indent=2))
@@ -166,6 +172,9 @@ class CollidingDeliveryTests(unittest.TestCase):
         # lead-init prints the record's folder, and how to choose another.
         self.assertIn(f"FX-2 is also a story's key, so its record is kept in {apart}", out)
         self.assertIn("set stateDirectory in", out)
+        code, out = fx.flow("--delivery", "FX-2", "config", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("the work directory's deliveries/<key>/, since the key is also a story's", out)
         code, out = fx.flow("--delivery", "FX-2", "lead-assign", "FX-2", "--lane", "lane-1", "--title", "lane-1",
                             cwd=fx.main)
         self.assertEqual(code, 0, out)
@@ -193,6 +202,11 @@ class CollidingDeliveryTests(unittest.TestCase):
         self.assertEqual(status, "ok", self.out)
         self.assertIn(f"{apart} (the work directory's deliveries/<key>/, where the record already is)", detail)
         self.assertFalse((fx.main / "lanes/FX-2" / STATE).exists())
+        # The record apart is still checked for git's ignore once its key no longer collides.
+        (fx.main / ".gitignore").write_text("out/\nlanes/\n")
+        status, detail = self.doctor(fx)
+        self.assertEqual(status, "wrong", self.out)
+        self.assertIn(".orchestration/deliveries/FX-2/.orchestration/state/ isn't ignored by git", detail)
 
     def test_doctor_warns_of_the_folder_and_says_wrong_when_git_does_not_ignore_it(self) -> None:
         fx = self.fixture()
@@ -204,6 +218,16 @@ class CollidingDeliveryTests(unittest.TestCase):
         status, detail = self.doctor(fx)
         self.assertEqual(status, "wrong", detail)
         self.assertIn(".orchestration/deliveries/FX-2/.orchestration/state/ isn't ignored by git", detail)
+
+    def test_a_colliding_key_given_a_state_directory_gets_no_warning(self) -> None:
+        fx = self.fixture(keep_state=True)
+        status, detail = self.doctor(fx)
+        self.assertEqual(status, "ok", self.out)
+        self.assertIn(str(fx.tmp / "record"), detail)
+        self.assertNotIn("also a story's key", self.out)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("also a story's key", out)
 
     def test_a_key_no_story_has_keeps_its_record_in_the_lead_checkout_and_doctor_warns_of_nothing(self) -> None:
         fx = self.fixture("FX-1")

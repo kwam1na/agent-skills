@@ -15572,17 +15572,18 @@ class Doctor:
 
     def record_folder(self):
         d = self.delivery
-        note = d.record_apart_note()
-        if note is None:
-            return "ok", f"{d.state} ({d.sources.get('state')})"
+        note, kept = d.record_apart_note(), f"{d.state} ({d.sources.get('state')})"
+        if d.state != d.record_apart(d.delivery):
+            return "ok", kept
+        # A record kept apart is checked for git's ignore while its key collides and after its story is removed.
         try:
             relative = d.state.relative_to(d.main)
         except ValueError:
-            return "warn", note
+            return ("warn", note) if note else ("ok", kept)
         if run(["git", "check-ignore", "-q", str(relative)], cwd=d.main, check=False).returncode != 0:
             return "wrong", (f"{relative}/ isn't ignored by git, so the record would show as untracked; fix: add "
                              f"{d.work}/ to .gitignore, or set stateDirectory in {d.delivery_where}")
-        return "warn", note
+        return ("warn", note) if note else ("ok", kept)
 
     def check_plan(self):
         d = Config(self.root, self.args.doctor_delivery or self.args.delivery, tolerant=True)
