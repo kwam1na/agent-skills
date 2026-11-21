@@ -9285,6 +9285,8 @@ def lead_assign(args) -> None:
         raise Stop("; ".join(unready) + "; nothing was assigned. Have the item made ready, or assign it anyway with --force")
     # Decision 6: the co-changed files' claims commit the delivery file as lead-plan does, so its checkout is checked
     # before anything is written.
+    if args.own_co_changed and "laneOwnership" not in c.record_state():
+        raise Stop("--own-co-changed claims files in the record: seed this record with lead-own --seed first")
     plan_root = lead_plan_checkout(c) if args.own_co_changed else None
     register_stories(c)
     row = {"id": args.lane, "title": args.title, "focus": f"assigned {', '.join(keys)}", "state": "assigned",
@@ -9353,7 +9355,8 @@ def lead_assign(args) -> None:
         for line in warnings:
             print(f"  {line}")
         if args.own_co_changed:
-            own_co_changed(c, args.lane, keys, tracked, plan_root)
+            with ownership_lock(c):
+                own_co_changed(c, args.lane, keys, tracked, plan_root)
             print()
         elif co_changes:
             print(f"Grant a named file with lead-own, or plan the story on the lane that owns it; claim the co-changed "
@@ -9398,12 +9401,11 @@ def grant_args(path: str, lane: str) -> argparse.Namespace:
 def own_co_changed(c, lane: str, keys: list[str], tracked: list[str], root: Path) -> list[str]:
     """Decision 6: each file the stories' co-change warnings name, claimed for ``lane`` in the record through
     lead-own --grant's checks and added to its owns in the delivery file, in one commit as lead-plan makes. A file
-    another lane holds is named with the --move that would take it, and one shared by lines or a declared shared
-    output is named and left; none of them is added. Returns the files added."""
+    another lane holds is named with the --move that would take it, and one shared by lines is named and left; neither
+    is added. The warning never names a declared shared output, which every lane may change. Returns the files added."""
     state = c.record_state()
     ownership = c.effective_ownership(state)
     regional = {claim["path"] for claim in state.get("laneRegions", [])}
-    shared = shared_outputs(c)
     added = []
     for path in dict.fromkeys(f for key in keys for f, *_ in co_change_files(c, key, tracked)):
         held = [(other, pattern) for other in owners_of(ownership, path) if other != lane
@@ -9415,8 +9417,6 @@ def own_co_changed(c, lane: str, keys: list[str], tracked: list[str], root: Path
         elif path in regional:
             print(f"  {path} is shared by lines, so it isn't added; ask for a span: {flow_command()} lead-own --region "
                   f"{shlex.quote(path)} --lane {lane} ...")
-        elif path in shared:
-            print(f"  {path} is a declared shared output, which no lane owns, so it isn't added")
         else:
             change_ownership(c, grant_args(path, lane))
             added.append(path)
@@ -9705,6 +9705,9 @@ def accept_story(c, args) -> None:
     item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
     waiting = next((p for p in doc["state"].get("planned", []) if p["subject"] == key and p.get("noChange")), None)
     if not item and waiting:
+        if takes:
+            raise Stop(f"--take {takes[0]}: {key} has a no-change hand-off, which changes no file, so there is nothing "
+                       "to take")
         if args.checks is not None:
             check_ids(c, args.checks, "--checks")  # refused as before; a no-change story runs no checks
         accept_no_change(c, key, waiting)

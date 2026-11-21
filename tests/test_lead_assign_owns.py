@@ -18,7 +18,7 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.fx, cls.delivery = command_fixture(cls, {"FX-5": "lane-1", "FX-6": "lane-1", "FX-7": "lane-2", "FX-8": "lane-3",
-                                                     "FX-9": "lane-2"})
+                                                     "FX-9": "lane-2", "FX-10": "lane-1", "FX-11": "lane-3"})
 
     def names(self, key: str, path: str) -> None:
         """The story's plan section names ``path``, so lead-assign reads it as one of the story's files."""
@@ -32,6 +32,18 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
         for k in range(4):
             self.push_base({named: [f"{k}\n"], **{path: [f"{path} {k}\n"] for path in partners}}, f"FX-1: change {k}")
 
+    def share(self, path: str) -> None:
+        """``path`` becomes a declared shared output of the binding, on the base."""
+        from tests.test_run_delivery import commit
+        binding_path = self.fx.main / ".agents/orchestration.json"
+        binding = json.loads(binding_path.read_text())
+        regenerable = binding.get("regenerable") or {}
+        binding["regenerable"] = {"paths": [*regenerable.get("paths", []), path], "regenerators": [["true"]],
+                                  "listings": [*regenerable.get("listings", []), {"path": path, "argv": ["true"]}]}
+        binding_path.write_text(json.dumps(binding, indent=2))
+        commit(self.fx.main, f"FX-1: {path} is a shared output")
+        self.git("push", "-q", "origin", "HEAD:feature/FX-1")
+
     def git(self, *argv: str) -> str:
         from tests.test_run_delivery import sh
         return sh("git", *argv, cwd=self.fx.main).stdout.strip()
@@ -39,7 +51,9 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
     def test_own_co_changed_claims_each_warned_file_in_one_commit_and_names_another_lane_s_move(self) -> None:
         self.flow("lead-own", "--grant", "lib/held5.txt", "--lane", "lane-2")
         self.names("FX-5", "lib/c5.txt")
-        self.co_change("lib/c5.txt", "lib/p5.txt", "lib/held5.txt")
+        self.co_change("lib/c5.txt", "lib/p5.txt", "lib/held5.txt", "lib/span5.txt", "gen/shared5.json")
+        self.grant("lib/span5.txt", "lane-3", self.git("rev-parse", "HEAD"), 1, 2)
+        self.share("gen/shared5.json")
         before, since = self.git("rev-parse", "HEAD"), self.last_id()
         out = self.flow("lead-assign", "FX-5", "--lane", "lane-1", "--title", "lane-1", "--own-co-changed")
         owns = self.record()["state"]["laneOwnership"]
@@ -47,12 +61,17 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
         self.assertNotIn("lib/held5.txt", owns["lane-1"])
         self.assertIn("lib/held5.txt", owns["lane-2"])
         self.assertIn("lead-own --lane lane-1 --move lib/held5.txt --from lane-2", out)
+        self.assertIn("lib/span5.txt is shared by lines, so it isn't added", out)
+        self.assertNotIn("gen/shared5.json", out)  # every lane may change a declared shared output: no warning names it
+        for left in ("lib/span5.txt", "gen/shared5.json"):
+            self.assertNotIn(left, owns["lane-1"])
         # One commit, of the delivery file alone, holding the same claim; nothing left for a hand edit.
         [made] = self.git("rev-list", f"{before}..HEAD").split()
         relative = self.delivery.relative_to(self.fx.main).as_posix()
         self.assertEqual(self.git("diff-tree", "--no-commit-id", "--name-only", "-r", made).split(), [relative])
         self.assertIn("lib/p5.txt", json.loads(self.delivery.read_text())["lanes"]["lane-1"]["owns"])
-        self.assertNotIn("lib/held5.txt", json.loads(self.delivery.read_text())["lanes"]["lane-1"]["owns"])
+        for left in ("lib/held5.txt", "lib/span5.txt", "gen/shared5.json"):
+            self.assertNotIn(left, json.loads(self.delivery.read_text())["lanes"]["lane-1"]["owns"])
         self.assertEqual(self.git("status", "--porcelain"), "")
         granted = [(entry["lane"], entry["data"]["path"]) for entry in self.entries("ownership.granted", since)]
         self.assertEqual(granted, [("lane-1", "lib/p5.txt")])
@@ -72,17 +91,48 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
         self.assertEqual(self.git("rev-parse", "HEAD"), before)
         self.assertEqual(self.entries("ownership.granted", since), [])
 
+    def test_own_co_changed_refuses_a_dirty_checkout_and_commits_nothing_when_every_file_is_another_lane_s(self) -> None:
+        self.flow("lead-own", "--grant", "lib/held10.txt", "--lane", "lane-2")
+        self.names("FX-10", "lib/c10.txt")
+        self.co_change("lib/c10.txt", "lib/held10.txt")
+        before, since = self.git("rev-parse", "HEAD"), self.last_id()
+        owns = self.record()["state"]["laneOwnership"]
+        stray = self.fx.main / "stray.txt"
+        stray.write_text("uncommitted\n")
+        try:
+            out = self.flow("lead-assign", "FX-10", "--lane", "lane-1", "--title", "lane-1", "--own-co-changed", ok=False)
+        finally:
+            stray.unlink()
+        self.assertIn("has uncommitted changes", out)
+        self.assertEqual((self.record()["state"]["laneOwnership"], self.git("rev-parse", "HEAD"), self.last_id()),
+                         (owns, before, since))
+        out = self.flow("lead-assign", "FX-10", "--lane", "lane-1", "--title", "lane-1", "--own-co-changed")
+        self.assertIn("lead-own --lane lane-1 --move lib/held10.txt --from lane-2", out)
+        self.assertNotIn("committed the delivery file", out)
+        self.assertEqual(self.git("rev-parse", "HEAD"), before)
+        self.assertEqual(self.entries("ownership.granted", since), [])
+        self.assertEqual(self.record()["state"]["laneOwnership"], owns)
+
+    def test_a_warning_of_named_files_alone_keeps_its_last_line(self) -> None:
+        self.names("FX-11", "lib/c11.txt")
+        out = self.flow("lead-assign", "FX-11", "--lane", "lane-3", "--title", "lane-3")
+        self.assertIn("FX-11 names lib/c11.txt (no lane's)\n"
+                      "Move each to lane-3's owns now, or plan the story on the lane that owns it.\n", out)
+        self.assertNotIn("--own-co-changed", out)
+        # A no-change hand-off changes no file, so --take has nothing to take, and is refused writing nothing.
+        wt = self.fx.lane("FX-11")
+        self.flow("handoff", "FX-11", "--no-change", "--evidence", "fx-11-works: it works at the base", cwd=wt)
+        state, length = self.record()["state"], len(self.record()["journal"])
+        out = self.flow("lead-accept", "FX-11", "--take", "lib/c11.txt", "--why", "a pin", ok=False)
+        self.assertIn("FX-11 has a no-change hand-off, which changes no file, so there is nothing to take", out)
+        self.assertEqual((self.record()["state"]["laneOwnership"], self.record()["state"]["planned"],
+                          len(self.record()["journal"])), (state["laneOwnership"], state["planned"], length))
+
     def test_take_accepts_a_pin_outside_the_lane_with_its_reason_and_refuses_what_it_can_t_take(self) -> None:
         from tests.test_run_delivery import commit, sh
         from tests.test_run_delivery_supervisor import hand_off
         m = self.fx.main
-        # A declared shared output, which no lane takes.
-        binding_path = m / ".agents/orchestration.json"
-        binding = json.loads(binding_path.read_text())
-        binding["regenerable"] = {"paths": ["gen/shared9.json"], "regenerators": [["true"]],
-                                  "listings": [{"path": "gen/shared9.json", "argv": ["true"]}]}
-        binding_path.write_text(json.dumps(binding, indent=2))
-        commit(m, "FX-1: a shared output")
+        self.share("gen/shared9.json")  # a declared shared output, which no lane takes
         base = self.push_base({"lib/pin1.txt": ["one\n"], "lib/pin2.txt": ["two\n"], "lib/held9.txt": ["held\n"],
                                "lib/untouched9.txt": ["untouched\n"], "gen/shared9.json": ["{}\n"],
                                "lib/span9.txt": numbered(6, "s")})
@@ -102,6 +152,7 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
                            (("--take", "lib/untouched9.txt", "--why", "a pin"), "FX-9 doesn't change lib/untouched9.txt"),
                            (("--take", "src/two.txt", "--why", "a pin"), "lane-2 holds src/two.txt already"),
                            (("--take", "lib/span9.txt", "--why", "a pin"), "lanes share lib/span9.txt by lines"),
+                           (("--take", "/lib/pin1.txt", "--why", "a pin"), "name a repository-relative file"),
                            (("--take", "lib/pin1.txt"), "--take needs --why")):
             with self.subTest(argv=argv):
                 self.assertIn(said, self.flow("lead-accept", "FX-9", *argv, ok=False))
