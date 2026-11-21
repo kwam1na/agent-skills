@@ -110,6 +110,7 @@ INVENTORY = {
         _key("change_carve", {"ownership.carved"}): 1,
         _key("settle_landings", {"ownership.released"}): 1,
         _key("settle_landings", {"ownership.carried"}): 1,
+        _key("change_carry", {"ownership.carried"}): 1,
         _key("change_ownership", {"ownership.granted", "ownership.revoked"}): 1,
         _key("lead_assign", {"lane.assigned"}): 1,
         _key("change_claims", {"ownership.claimed"}): 1,
