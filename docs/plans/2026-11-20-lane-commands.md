@@ -139,7 +139,9 @@ Checked against `main` at `9a084797` on 2026-11-20:
     delivery keeps today's default. `doctor --delivery` reports this as `warn`, naming the folder and
     `stateDirectory` to choose another. `lead-init` prints the same line. Whichever of the two default paths already
     holds a record is used, so a running delivery doesn't lose its record, and one whose colliding story is later
-    removed keeps the record it has.
+    removed keeps the record it has. When both hold one, every command refuses, naming both paths. `doctor
+    --delivery` reports `wrong` when the record's folder isn't ignored by git, as it does for the lane checkout
+    folder.
 11. **A lane added in one command** (V26-3628). `lead-add-lane --lane L [--grant PATTERN]... [--why T]` does three
     things in one commit in the lead's checkout. It adds `L` to the delivery file's `lanes`, with `owns` set to the
     grants. It adds the lane's row to the plan's `Units and order` table, at the highest tier, with no items. It
@@ -233,6 +235,10 @@ makes other tests in the same change cheaper. No budget number moves.
   and `leftOnBranch` is absent.
 - A batch in which one member's merge fails: that member's branch ends at its handed head.
 - A queue ref moved off the synced head stops the check with `candidate_moved`.
+- A candidate step that reports the handed head for its first reads after the push, and the synced head after that:
+  the queue waits and merges.
+- A candidate step that never reports the synced head within a short `checkTimeoutSeconds`: the candidate stops as
+  `candidate_moved`, the branch is at the handed head, and `leftOnBranch` is absent.
 - The sync push to `refs/merge-queue/<key>` is under a lease on that ref.
 - The same with a commit pushed to the branch after the queue moved it: the branch is left alone, and
   `candidate.stopped` names `leftOnBranch`.
@@ -261,7 +267,7 @@ makes other tests in the same change cheaper. No budget number moves.
 - `lead-claims` reports an accepted edge insertion as held, not as needing a claim.
 - The edge cases hold at each entry point, each with an allow and a deny row: the queue's `check_regions`
   (`tests/test_merge_queue.py`), review preparation and `claims-check` (`tests/test_region_grants.py`), the hand-off's
-  `laneOutside` items (`tests/test_lane_changes.py`), and `lead-accept`.
+  `laneOutside` items (`tests/test_lane_changes.py`), and `lead-accept` (`tests/test_lead_assign_owns.py`).
 - `--carry` carries a span whose lines a base edit shifted but didn't touch, journalling `ownership.carried` with
   `by: lead`. It refuses one whose lines the edit touched, naming the hunk, and writes nothing.
 - With two claims on the path, one touched and one not, `--carry` writes neither.
@@ -297,6 +303,8 @@ makes other tests in the same change cheaper. No budget number moves.
 - A delivery whose key is no story's keeps today's default, and `doctor` warns of nothing.
 - After the colliding story is removed with `lead-plan change`, the record at the new path is still found.
 - Under a configured `workDirectory`, the record goes under that folder's `deliveries/`.
+- With a record at both paths, the command refuses, naming both.
+- A record folder git doesn't ignore is reported `wrong` by `doctor --delivery`.
 - `lead-init` prints the record's folder for a colliding key.
 
 `tests/test_lead_add_lane.py` (V26-3628):
@@ -310,8 +318,9 @@ makes other tests in the same change cheaper. No budget number moves.
 - `--lane extra` is refused, naming the `lane-N` form, and nothing is written.
 - c3: `lead-plan change --kind added --lane L` then adds a story on the new lane, and before it the refusal names
   `lead-add-lane`.
-- c4: the record's journal gains exactly one patch entry for the command, written by the state tool, carrying both
-  `/laneOwnership/L` and the new `lanes[]` row.
+- c4: the command makes exactly one state-tool patch, so the record's version moves by one for it, carrying both
+  `/laneOwnership/L` and the new `lanes[]` row in the state tool's changes file, and it writes the record by no
+  other path.
 
 `tests/test_run_delivery_hooks.py` (V26-3676):
 - A lane session, recorded at `lane-start`, whose Stop payload's `cwd` is the lead's checkout is allowed and told
@@ -326,7 +335,7 @@ makes other tests in the same change cheaper. No budget number moves.
 - `review-wait` returns 0 once every result path holds JSON that parses, and exits 4 naming the lenses still out
   when its seconds run out.
 - With one result path holding truncated JSON, `review-wait --seconds 1` exits 4 and names that lens.
-- With no `--seconds`, it waits 540 seconds.
+- With no `--seconds`, its deadline is 540 seconds, read through an injected clock rather than a real wait.
 - The rendered round brief names the result path as the lens's one permitted write.
 - `review-prepare`'s output names `review-wait`, and its prompts tell the reviewer to write its result.
 - The lane brief's "Your turn" names `review-wait`.
@@ -340,7 +349,7 @@ Docs (Decision 14), in each story's own test module:
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3643 | `skills/orchestrate-work/scripts/merge_queue.py`, `tests/test_merge_queue.py`, `tests/fixtures/journal-kinds/vectors.json`, `tests/test_journal_kinds.py`, `tests/test_journal_shape.py` |
+| 1 | 1 | V26-3643 | `skills/orchestrate-work/scripts/merge_queue.py`, `tests/fixtures/journal-kinds/vectors.json`, `tests/test_journal_kinds.py`, `tests/test_journal_shape.py` |
 | 1 | 2 | V26-3649, V26-3640, V26-3432 | `skills/orchestrate-work/scripts/region_ownership.py`, `tests/test_lane_changes.py`, `tests/test_region_grants.py`, `tests/test_region_claims.py`, `tests/test_lead_assign_owns.py` |
 | 1 | 3 | V26-3434, V26-3578, V26-3628 | `skills/orchestrate-work/scripts/delivery_state.py`, `tests/test_orchestration_state.py`, `tests/test_delivery_key_collision.py`, `tests/test_lead_add_lane.py`, `tests/test_lead_plan_changes.py`, `tests/test_lane_rows.py` |
 | 1 | 4 | V26-3676, V26-3427 | `skills/run-delivery/templates/lane-brief.md`, `skills/run-delivery/templates/round-brief.md`, `tests/test_run_delivery_hooks.py`, `tests/test_run_delivery_review_wait.py`, `tests/test_round_brief_template_corpus.py`, `tests/test_waits_review.py` |
@@ -360,7 +369,10 @@ against the integration base's head at `lead-init`:
     `change_ownership`; its parser beside `lead-own`'s.
   - Lane 4: `seat_of` through `orientation`; `lane_start`'s start record; `lead_wait`'s lease write; `review_prepare`'s
     printed prompts; a new `review_wait` beside `review_reduce`; its parser beside `review-reduce`'s.
-- `tests/test_merge_queue.py`: lane 2 the `RegionDiffTests` class, for Decision 4's edge pins.
+- `tests/test_merge_queue.py`: lane 2 the `RegionDiffTests` class, for Decision 4's edge pins; lane 1 everything
+  else, as two spans, one from the file's first line to the line before `class RegionDiffTests`, and one from the
+  class after it to the file's end. The lead writes the three claims in one `lead-own --carve`. Lane 1's new tests go
+  strictly inside its spans, and either lane asks for an `--insert` widening at a span's edge.
 - `tests/test_run_delivery.py`: none at start. A lane whose change moves an existing assertion asks the lead for a
   region over it and fixes it in the same change. An assertion is never left red or deleted.
 - `skills/orchestrate-work/references/journal-kinds.json`: lane 1 `candidate.stopped`; lane 2 `ownership.carried`.
