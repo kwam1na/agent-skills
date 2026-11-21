@@ -1051,6 +1051,71 @@ def _select(state: dict, selector: str) -> tuple[str, str, int]:
     return array, key, found[0]
 
 
+def element_digest(element: object) -> str:
+    """The sha256 of an element's canonical JSON: sorted keys, no spaces, UTF-8."""
+    text = json.dumps(element, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _pins(version: int | None, selector: str | None, digest: str | None) -> None:
+    """A patch is pinned to the record's version, or to its one element's digest, never both."""
+    if digest is not None and selector is None:
+        raise StateError("patch_invalid", "--element-digest needs --element, the element it pins")
+    if digest is not None and version is not None:
+        raise StateError("patch_invalid", "give --version or --element-digest, not both")
+    if digest is None and version is None:
+        raise StateError("patch_invalid", "give --version, or --element with --element-digest")
+
+
+def _check_digest(state: dict, selector: str, digest: str) -> None:
+    array, _, index = _select(state, selector)
+    current = element_digest(state[array][index])
+    if current != digest:
+        raise StateError("element_stale", f"patch is pinned to {selector} at digest {digest}; it is at {current}. "
+                         "Read it again with show --element")
+
+
+def _schema_at(node: object, root: dict, value: object, path: tuple[object, ...]) -> list[dict]:
+    """The object schemas that hold ``value`` at ``path``, following refs, items, properties and anyOf."""
+    if not isinstance(node, dict):
+        return []
+    if "$ref" in node:
+        return _schema_at(root["$defs"][node["$ref"][len("#/$defs/"):]], root, value, path)
+    found = [held for option in node.get("anyOf", []) for held in _schema_at(option, root, value, path)]
+    if not path:
+        return [node, *found] if "properties" in node else found
+    part, rest = path[0], path[1:]
+    if isinstance(value, list) and isinstance(part, int) and part < len(value):
+        return [*found, *_schema_at(node.get("items"), root, value[part], rest)]
+    if isinstance(value, dict) and part in value:
+        child = node.get("properties", {}).get(part, node.get("additionalProperties"))
+        return [*found, *_schema_at(child, root, value[part], rest)]
+    return found
+
+
+def _explained(errors: list[str], state: dict) -> list[str]:
+    """Each unknown-field error with the fields its object allows, and the closest one."""
+    import difflib
+    schema = load_schema("delivery-state/1")
+    explained = []
+    for error in errors:
+        where, _, said = error.partition(": ")
+        if said != "no value is allowed here" or where == "/":
+            explained.append(error)
+            continue
+        path = tuple(int(part) if part.isdigit() else part for part in where[1:].split("/"))
+        holders = [node for node in _schema_at(schema, schema, state, path[:-1])
+                   if node.get("additionalProperties") is False]
+        allowed = sorted({name for node in holders for name in node["properties"]})
+        if not allowed:
+            explained.append(error)
+            continue
+        error += f"; the allowed fields are {', '.join(allowed)}"
+        closest = difflib.get_close_matches(str(path[-1]), allowed, n=1)
+        explained.append(error + (f"; did you mean {closest[0]}?" if closest else ""))
+    return explained
+
+
 def _assign(target: dict, pointer: str, value: object) -> None:
     """Set the field a JSON Pointer names, keeping null as a value."""
     if not pointer.startswith("/") or pointer == "/":
@@ -2676,14 +2741,19 @@ def patch(
     directory: Path,
     *,
     writer: str,
-    version: int,
+    version: int | None,
     changes: object = None,
     selector: str | None = None,
     assignments: object = None,
     between_read_and_write: Callable[[], None] | None = None,
     lane: str | None = None,
+    element_digest: str | None = None,
 ) -> dict:
     """Apply ``changes`` as ``writer``, pinned to ``version``; a lane's write names its ``lane``.
+
+    Pinned instead to ``element_digest``, the digest of the element ``selector`` names, the patch takes no version:
+    it is refused only when that element changed, and is applied to the record as it is under the lock, so a write
+    elsewhere in the record, such as the queue's, neither refuses it nor is lost.
 
     ``between_read_and_write`` runs after the state is read and the patch is
     prepared, and before the lock is taken for the write: a deterministic seam
@@ -2693,16 +2763,20 @@ def patch(
         raise StateError("writer_invalid", f"writer must be one of {', '.join(WRITERS)}")
     if writer == "lane" and not lane:
         raise StateError("writer_invalid", "a lane's write names its lane")
+    _pins(version, selector, element_digest)
     with file_lock(directory / STATE_LOCK):
         state = read_state(directory, for_write=True)
-    if state["version"] != version:
+    if version is not None and state["version"] != version:
         raise StateError("version_stale", f"patch is pinned to version {version}; state is at {state['version']}")
     updated = apply_patch(state, changes, selector, assignments)
     if between_read_and_write is not None:
         between_read_and_write()
     with file_lock(directory / STATE_LOCK):
         current = read_state(directory, for_write=True)
-        if current["version"] != version:
+        if element_digest is not None:
+            _check_digest(current, selector, element_digest)  # type: ignore[arg-type]
+            updated = apply_patch(current, changes, selector, assignments)
+        elif current["version"] != version:
             raise StateError("version_stale", f"patch is pinned to version {version}; state is at {current['version']}")
         if writer == "lane":
             violations = lane_violations(current, updated, lane)
@@ -2727,12 +2801,12 @@ def patch(
             _stamp_waiting(current, updated, writer, _written_field(selector, changes, assignments, "waitingOn"))
             _stamp_focus(current, updated, writer, None)
             _stamp_wait_rows(current, updated)
-        updated["version"] = version + 1
+        updated["version"] = current["version"] + 1
         if isinstance(updated.get("meta"), dict):
             updated["meta"]["updatedAt"] = now()
         errors = state_errors(updated)
         if errors:
-            raise StateError("patch_invalid", "; ".join(errors))
+            raise StateError("patch_invalid", "; ".join(_explained(errors, updated)))
         _require_unicode(updated, "patch_invalid")
         _write_atomically(directory / STATE_FILE, dumps(updated))
         _note_change(directory, "patch", version=updated["version"])
@@ -6478,8 +6552,10 @@ def main(argv: list[str] | None = None) -> int:
     change = commands.add_parser("patch", help="apply a JSON merge patch, pinned to a version")
     change.add_argument("--writer", choices=WRITERS, required=True)
     change.add_argument("--lane", help="the lane a lane's write is for")
-    change.add_argument("--version", type=int, required=True, help="the state version the patch was written against")
+    change.add_argument("--version", type=int, help="the state version the patch was written against")
     change.add_argument("--element", help="apply the patch to one element, such as queue[subject=...]")
+    change.add_argument("--element-digest", help="with --element, in place of --version: the element's digest, from "
+                        "show --element; refused only when the element changed")
     change.add_argument("--patch", help="a JSON merge patch, or - to read it from stdin")
     change.add_argument(
         "--set", dest="assignments",
@@ -6499,6 +6575,7 @@ def main(argv: list[str] | None = None) -> int:
     entry.add_argument("--element", help="the lead's: patch this element, such as finish[id=...], in the same write")
     entry.add_argument("--patch", help="with --element: the element's JSON merge patch")
     entry.add_argument("--version", type=int, help="with --element: the state version the patch was written against")
+    entry.add_argument("--element-digest", help="with --element, in place of --version: the element's digest")
     finished = commands.add_parser("close-finished", help="mark the close of delivery.closed entry N finished, once its archive has landed")
     finished.add_argument("--entry", type=int, required=True)
     _add_wait_arguments(commands.add_parser("wait", help="read the record and the machine until something needs the lead"))
@@ -6582,6 +6659,8 @@ def main(argv: list[str] | None = None) -> int:
     binding_run.add_argument("--run", required=True, help="the id of the run, in the adopter's delivery product")
     display = commands.add_parser("show", help="print the validated state and journal, and any recovery pending")
     display.add_argument("--binding", type=Path, help="the repository binding, which must keep its state in --dir")
+    display.add_argument("--element", help="print one element, such as lanes[id=...], and its digest for patch "
+                         "--element-digest")
     sync = commands.add_parser("reconcile", help="bring the record up to date with forge and tracker snapshots")
     sync.add_argument("--snapshot", action="append", type=Path, required=True, help="a work-snapshot/1 file")
     sync.add_argument("--max-age", type=float,
@@ -6646,14 +6725,20 @@ def main(argv: list[str] | None = None) -> int:
                     selector=args.element,
                     assignments=_json_argument(args.assignments, "set"),
                     lane=args.lane,
+                    element_digest=args.element_digest,
                 ),
             }
-        elif args.command == "journal" and (args.element, args.patch, args.version) != (None, None, None):
-            if None in (args.element, args.patch, args.version) or args.writer != "lead" or args.lane:
+        elif args.command == "journal" and (args.element, args.patch, args.version, args.element_digest) != (
+                None, None, None, None):
+            if args.element_digest is not None and args.element is None:
+                _pins(None, None, args.element_digest)
+            pinned = args.version if args.element_digest is None else args.element_digest
+            if None in (args.element, args.patch, pinned) or args.writer != "lead" or args.lane:
                 raise StateError("patch_invalid", "a journalled patch is the lead's, and gives --element, --patch and "
-                                 "--version together")
+                                 "--version together, or --element-digest in place of --version")
             result = {"ok": True, **journal_patched(
-                args.dir, version=args.version, selector=args.element, changes=_json_argument(args.patch, "patch"),
+                args.dir, version=args.version, element_digest=args.element_digest, selector=args.element,
+                changes=_json_argument(args.patch, "patch"),
                 kind=args.kind, data=_journal_data(args), subject=args.subject,
                 because=_links(args.because, "--because"), answers=_links(args.answers, "--answers"))}
         elif args.command == "journal":
@@ -6734,7 +6819,13 @@ def main(argv: list[str] | None = None) -> int:
             if args.binding is not None:
                 require_bound(args.binding, binding_state(args.binding), args.dir)
             shown = show(args.dir)
-            result = {**shown, "publication": publication(args.dir)}
+            if args.element is not None:
+                array, _, index = _select(shown["state"], args.element)
+                element = shown["state"][array][index]
+                result = {"ok": True, "selector": args.element, "element": element,
+                          "elementDigest": element_digest(element)}
+            else:
+                result = {**shown, "publication": publication(args.dir)}
     except StateError as error:
         emit({"ok": False, "code": error.code, "error": str(error)})
         return 1
@@ -6743,14 +6834,18 @@ def main(argv: list[str] | None = None) -> int:
 
 
 @writer_operation
-def journal_patched(directory: Path, *, version: int, selector: str, changes: object, kind: str, data: dict,
+def journal_patched(directory: Path, *, version: int | None, selector: str, changes: object, kind: str, data: dict,
                     subject: str | None = None, because: list[int] | None = None,
-                    answers: list[int] | None = None) -> dict:
+                    answers: list[int] | None = None, element_digest: str | None = None) -> dict:
     """The lead's element patch and the journal entry that says why, as one write under the state lock: both land or
-    neither does. The patch is pinned to ``version`` and checked as the lead's patch is; the entry as the journal's."""
+    neither does. The patch is pinned to ``version``, or to the element's ``element_digest`` as ``patch`` takes it,
+    and checked as the lead's patch is; the entry as the journal's."""
+    _pins(version, selector, element_digest)
 
     def change(updated: dict, journal: list[dict]) -> tuple[None, list[dict]]:
-        if updated["version"] != version:
+        if element_digest is not None:
+            _check_digest(updated, selector, element_digest)
+        elif updated["version"] != version:
             raise StateError("version_stale", f"patch is pinned to version {version}; state is at {updated['version']}")
         current = copy.deepcopy(updated)
         patched = apply_patch(current, changes, selector)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import datetime
+import hashlib
 import importlib.util
 import json
 import os
@@ -8325,6 +8326,204 @@ class ElementWriteTests(unittest.TestCase):
                 self.assertEqual((code, refused["code"]), (1, "patch_invalid"), refused)
                 self.assertIn("gives --element, --patch and --version together", refused["error"])
                 self.assertEqual(self.written(), before)
+
+
+class ElementDigestPatchTests(unittest.TestCase):
+    """A patch pinned to one element's digest, not the record's version: the queue's writes elsewhere don't refuse it,
+    a change to the element does, and an unknown field is refused naming the fields the object allows."""
+
+    LANE = {"id": "lane-1", "title": "Renderer", "focus": "views", "state": "working", "waitingOn": None,
+            "since": "2026-10-20T10:00:00Z"}
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name) / "state"
+        state_tool.init(self.directory, "Epic underway")
+        state_tool.patch(self.directory, writer="lead", version=1, changes={
+            "lanes": [copy.deepcopy(self.LANE), {**self.LANE, "id": "lane-2", "title": "Queue"}],
+            "queue": [queue_item("pr-1")], "planned": [{"subject": "pr-2", "title": "Next", "lane": "lane-2",
+                                                       "stage": "planned"}],
+            "finish": [{"id": "deploy", "text": "Deployed", "met": False}]})
+
+    def written(self) -> tuple[bytes, bytes]:
+        return ((self.directory / state_tool.STATE_FILE).read_bytes(),
+                (self.directory / state_tool.JOURNAL_FILE).read_bytes())
+
+    def version(self) -> int:
+        return state_tool.show(self.directory)["state"]["version"]
+
+    def digest(self, selector: str = "lanes[id=lane-1]") -> str:
+        code, shown = run_tool(self.directory, "show", "--element", selector)
+        self.assertEqual(code, 0, shown)
+        return shown["elementDigest"]
+
+    def queue_moves(self) -> None:
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=pr-1]",
+                         changes={"stage": "checking"})
+
+    def test_show_element_prints_the_element_and_the_sha256_of_its_canonical_json(self) -> None:
+        code, shown = run_tool(self.directory, "show", "--element", "lanes[id=lane-1]")
+        self.assertEqual(code, 0, shown)
+        row = state_tool.show(self.directory)["state"]["lanes"][0]
+        self.assertEqual(shown["element"], row)
+        canonical = json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        self.assertEqual(shown["elementDigest"], hashlib.sha256(canonical).hexdigest())
+        self.assertEqual(shown["selector"], "lanes[id=lane-1]")
+        code, missing = run_tool(self.directory, "show", "--element", "lanes[id=lane-9]")
+        self.assertEqual((code, missing["code"]), (1, "selector_unmatched"), missing)
+
+    def test_an_element_patch_lands_after_the_queue_writes_another_part_of_the_record(self) -> None:
+        digest = self.digest()
+        before = self.version()
+        self.queue_moves()
+        code, patched = run_tool(self.directory, "patch", "--writer", "lead", "--element", "lanes[id=lane-1]",
+                                 "--element-digest", digest, "--patch", json.dumps({"state": "blocked"}),
+                                 "--set", json.dumps({"/waitingOn": "lead"}))
+        self.assertEqual(code, 0, patched)
+        state = patched["state"]
+        self.assertEqual(state["version"], before + 2)
+        self.assertEqual((state["lanes"][0]["state"], state["lanes"][0]["waitingOn"]), ("blocked", "lead"))
+        self.assertEqual(state["queue"][0]["stage"], "checking", "the queue's write is kept")
+        self.assertEqual(state_tool.show(self.directory)["state"], state)
+
+    def test_a_queue_write_between_read_and_write_is_kept(self) -> None:
+        digest = state_tool.element_digest(state_tool.show(self.directory)["state"]["lanes"][0])
+        patched = state_tool.patch(self.directory, writer="lead", version=None, selector="lanes[id=lane-1]",
+                                   element_digest=digest, changes={"focus": "maps"},
+                                   between_read_and_write=self.queue_moves)
+        self.assertEqual(patched["lanes"][0]["focus"], "maps")
+        self.assertEqual(patched["queue"][0]["stage"], "checking")
+        self.assertEqual(state_tool.show(self.directory)["state"], patched)
+
+    def test_a_changed_element_is_refused_and_nothing_is_written(self) -> None:
+        digest = self.digest()
+        state_tool.patch(self.directory, writer="lead", version=self.version(), selector="lanes[id=lane-1]",
+                         changes={"focus": "elsewhere"})
+        before = self.written()
+        code, refused = run_tool(self.directory, "patch", "--writer", "lead", "--element", "lanes[id=lane-1]",
+                                 "--element-digest", digest, "--patch", json.dumps({"state": "blocked"}))
+        self.assertEqual((code, refused["code"]), (1, "element_stale"), refused)
+        self.assertIn("lanes[id=lane-1]", refused["error"])
+        self.assertIn(digest, refused["error"])
+        self.assertEqual(self.written(), before)
+        # The row changing between read and write is refused too, under the lock.
+        digest = self.digest()
+        moved = lambda: state_tool.patch(self.directory, writer="lead", version=self.version(),
+                                         selector="lanes[id=lane-1]", changes={"focus": "again"})
+        with self.assertRaises(state_tool.StateError) as late:
+            state_tool.patch(self.directory, writer="lead", version=None, selector="lanes[id=lane-1]",
+                             element_digest=digest, changes={"state": "blocked"}, between_read_and_write=moved)
+        self.assertEqual(late.exception.code, "element_stale")
+        self.assertEqual(state_tool.show(self.directory)["state"]["lanes"][0]["state"], "working")
+
+    def test_the_digest_without_an_element_or_beside_a_version_is_a_usage_error(self) -> None:
+        digest = self.digest()
+        before = self.written()
+        cases = [(["--element-digest", digest], "--element-digest needs --element"),
+                 (["--element", "lanes[id=lane-1]", "--element-digest", digest, "--version", str(self.version())],
+                  "give --version or --element-digest, not both"),
+                 (["--element", "lanes[id=lane-1]"], "give --version, or --element with --element-digest")]
+        for argv, said in cases:
+            with self.subTest(argv=argv):
+                code, refused = run_tool(self.directory, "patch", "--writer", "lead", *argv,
+                                         "--patch", json.dumps({"state": "blocked"}))
+                self.assertEqual((code, refused["code"]), (1, "patch_invalid"), refused)
+                self.assertIn(said, refused["error"])
+                self.assertEqual(self.written(), before)
+        code, refused = run_tool(self.directory, "journal", "--kind", "finish.met", "--subject", "deploy",
+                                 "--data", json.dumps({"finish": "deploy", "evidence": "applied", "by": "lead"}),
+                                 "--patch", json.dumps({"met": True}), "--element-digest", digest)
+        self.assertEqual((code, refused["code"]), (1, "patch_invalid"), refused)
+        self.assertIn("--element-digest needs --element", refused["error"])
+        self.assertEqual(self.written(), before)
+
+    def test_the_selector_patches_run_delivery_sends_still_pass(self) -> None:
+        sent = [
+            ["--writer", "lane", "--lane", "lane-2", "--element", "planned[subject=pr-2]",
+             "--patch", json.dumps({"stage": "building"})],
+            ["--writer", "lead", "--element", "queue[subject=pr-1]",
+             "--set", json.dumps({"/stage": "queued", "/checks": []})],
+            ["--writer", "lead", "--element", "lanes[id=lane-1]", "--set", json.dumps({"/waitingOn": None})],
+        ]
+        for argv in sent:
+            with self.subTest(argv=argv):
+                version = self.version()
+                code, patched = run_tool(self.directory, "patch", "--version", str(version), *argv)
+                self.assertEqual(code, 0, patched)
+                self.assertEqual(patched["state"]["version"], version + 1)
+        self.assertEqual(state_tool.show(self.directory)["state"]["planned"][0]["stage"], "building")
+        code, done = run_tool(self.directory, "journal", "--kind", "finish.met", "--subject", "deploy", "--data",
+                              json.dumps({"finish": "deploy", "evidence": "applied", "by": "lead"}),
+                              "--element", "finish[id=deploy]", "--patch", json.dumps({"met": True}),
+                              "--version", str(self.version()))
+        self.assertEqual(code, 0, done)
+        self.assertTrue(done["state"]["finish"][0]["met"])
+
+    def test_a_version_patch_behaves_as_today(self) -> None:
+        version = self.version()
+        self.queue_moves()
+        before = self.written()
+        code, refused = run_tool(self.directory, "patch", "--writer", "lead", "--version", str(version),
+                                 "--element", "lanes[id=lane-1]", "--patch", json.dumps({"focus": "maps"}))
+        self.assertEqual((code, refused["code"]), (1, "version_stale"), refused)
+        self.assertIn(f"patch is pinned to version {version}; state is at {version + 1}", refused["error"])
+        self.assertEqual(self.written(), before)
+        code, patched = run_tool(self.directory, "patch", "--writer", "lead", "--version", str(version + 1),
+                                 "--element", "lanes[id=lane-1]", "--patch", json.dumps({"focus": "maps"}))
+        self.assertEqual(code, 0, patched)
+        self.assertEqual(patched["state"]["version"], version + 2)
+
+    def test_journal_patched_takes_the_element_and_its_digest(self) -> None:
+        data = {"finish": "deploy", "evidence": "applied", "by": "lead"}
+        digest = self.digest("finish[id=deploy]")
+        self.queue_moves()
+        code, done = run_tool(self.directory, "journal", "--kind", "finish.met", "--subject", "deploy",
+                              "--data", json.dumps(data), "--element", "finish[id=deploy]",
+                              "--patch", json.dumps({"met": True}), "--element-digest", digest)
+        self.assertEqual(code, 0, done)
+        self.assertTrue(done["state"]["finish"][0]["met"])
+        self.assertEqual(done["state"]["queue"][0]["stage"], "checking")
+        self.assertEqual(state_tool.show(self.directory)["journal"], [done["entry"]])
+        # The element changed since: neither the patch nor the entry is written.
+        before = self.written()
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.journal_patched(self.directory, version=None, element_digest=digest,
+                                       selector="finish[id=deploy]", changes={"met": False}, kind="finish.met",
+                                       subject="deploy", data=data)
+        self.assertEqual(refused.exception.code, "element_stale")
+        self.assertEqual(self.written(), before)
+        # Neither, or both, of a version and a digest is refused.
+        for pins in ({}, {"version": self.version(), "element_digest": digest}):
+            with self.subTest(pins=pins):
+                with self.assertRaises(state_tool.StateError) as refused:
+                    state_tool.journal_patched(self.directory, selector="finish[id=deploy]", changes={"met": True},
+                                               kind="finish.met", subject="deploy", data=data,
+                                               **{"version": None, **pins})
+                self.assertEqual(refused.exception.code, "patch_invalid")
+                self.assertEqual(self.written(), before)
+
+    def test_an_unknown_field_names_the_allowed_fields_and_the_closest(self) -> None:
+        before = self.written()
+        code, refused = run_tool(self.directory, "patch", "--writer", "lead", "--element", "lanes[id=lane-1]",
+                                 "--element-digest", self.digest(), "--patch", json.dumps({"status": "blocked"}))
+        self.assertEqual((code, refused["code"]), (1, "patch_invalid"), refused)
+        self.assertIn("/lanes/0/status: no value is allowed here", refused["error"])
+        allowed = sorted(state_tool.load_schema("delivery-state/1")["properties"]["lanes"]["items"]["properties"])
+        self.assertIn("state", allowed)
+        self.assertIn(f"the allowed fields are {', '.join(allowed)}", refused["error"])
+        self.assertIn("did you mean state?", refused["error"])
+        self.assertEqual(self.written(), before)
+        # A name close to none still lists the fields, and names no match.
+        with self.assertRaises(state_tool.StateError) as far:
+            state_tool.patch(self.directory, writer="lead", version=self.version(), selector="lanes[id=lane-1]",
+                             changes={"zzzzzz": 1})
+        self.assertIn(f"the allowed fields are {', '.join(allowed)}", str(far.exception))
+        self.assertNotIn("did you mean", str(far.exception))
+        # The validator's own wording is unchanged.
+        state = state_tool.show(self.directory)["state"]
+        state["lanes"][0]["status"] = "blocked"
+        self.assertEqual(state_tool.state_errors(state), ["/lanes/0/status: no value is allowed here"])
 
 
 
