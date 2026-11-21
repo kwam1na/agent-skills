@@ -1087,7 +1087,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "599bd03b4b1bfe241026d139a7b97da67c11d803708b7b059172563b4509d85b"
+          "sha256": "be6af1f43da8bbbe53cadc6cf931fd244dcb4028b4c79a90fae0b6e67375b9d3"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1119,7 +1119,7 @@
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "57772cff25aef78a7ffc0a837144d8ff574a0a44bdfad8ab919f1adb75c9c90e"
+          "sha256": "d254582fcc4ebd869a6c973bd9825a1dc2e5952d27c0f600afba12c181a26bc8"
         },
         {
           "path": "skills/run-delivery/scripts/gaps.py",
@@ -1131,7 +1131,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "1b3c69d8f2729a62ae3ea07efd29bb5759c4b4dd3d804c6b4ec900c1a1740628"
+          "sha256": "926940c120c28ab4a4c59491b75c6db01e412b572ada2151c6252d86122cdf1d"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
@@ -1147,11 +1147,11 @@
         },
         {
           "path": "skills/run-delivery/templates/lane-brief.md",
-          "sha256": "deaea4d008562dbc83da3fd429cee7f1d335a9f12a5677faf2fa40409786d34d"
+          "sha256": "17e71f30ef9a7becc8baa30c24fe4f2f7b061617343ef9779940d6e85614967c"
         },
         {
           "path": "skills/run-delivery/templates/round-brief.md",
-          "sha256": "000855081c10e9df5e78af137397c5ab946e123828345e335968e19e5cfa8e12"
+          "sha256": "5702aedb84e09838f8a0419ee43f76b2c2bb4bff4e722aa67af2a899d90bcec1"
         }
       ],
       "owner": "delivery-agent/user-delegated",
