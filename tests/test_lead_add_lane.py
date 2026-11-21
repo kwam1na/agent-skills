@@ -138,7 +138,17 @@ class LeadAddLaneTests(unittest.TestCase):
                 self.assertEqual(code, 2, out)
                 self.assertIn(said, out)
                 self.assertEqual(self.held(fx), before)
-        # A lane the record holds but the delivery file doesn't is held too.
+        # A lane the delivery file holds but the record doesn't yet is held too, and so is one only the record holds.
+        path = fx.main / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        d["lanes"]["lane-5"] = {"owns": []}
+        path.write_text(json.dumps(d, indent=2) + "\n")
+        commit(fx.main, "FX-1: lane-5 in the delivery file alone")
+        before = self.held(fx)
+        code, out = self.add(fx, "--lane", "lane-5")
+        self.assertEqual(code, 2, out)
+        self.assertIn("lane-5 is already a lane of FX-1", out)
+        self.assertEqual(self.held(fx), before)
         state = self.state(fx)
         sh("python3", "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py", "--dir", self.record(fx),
            "patch", "--writer", "lead", "--version", str(state["version"]), "--set",
