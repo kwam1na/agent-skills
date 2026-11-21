@@ -116,6 +116,7 @@ INVENTORY = {
         _key("change_claims", {"ownership.claimed"}): 1,
         _key("accept_no_change", {"handoff.checked"}): 1,
         _key("accept_story", {"handoff.checked"}): 1,
+        _key("accept_story", {"decision.recorded"}): 1,
         _key("clean_story", {"cleanup.done"}): 1,
         _key("journal_finish_met", {"finish.met"}): 1,
         _key("lead_finish", {"finish.met"}): 1,

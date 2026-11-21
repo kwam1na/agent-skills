@@ -7072,9 +7072,18 @@ def co_changed(c, path: str, ref: str) -> tuple[int, collections.Counter]:
 
 
 def co_change_warning(c, key: str, tracked: list[str]) -> str | None:
+    """The warning of a story's co-changed files (co_change_files), each with the named file it changes with most."""
+    often = co_change_files(c, key, tracked)
+    if not often:
+        return None
+    return (f"{key}'s files often change with "
+            + ", ".join(f"{f} ({owner_words(c, f)}; with {path} in {n} of {count} changes)" for f, n, count, path in often))
+
+
+def co_change_files(c, key: str, tracked: list[str]) -> list[tuple[str, int, int, str]]:
     """The files outside a story's lane that changed with a file it names in at least CO_CHANGE['support'] and
-    CO_CHANGE['share'] of that file's changes: the CO_CHANGE['shown'] most coupled, each with the named file it
-    changes with most."""
+    CO_CHANGE['share'] of that file's changes: the CO_CHANGE['shown'] most coupled, each as (file, changes together,
+    the named file's changes, the named file it changes with most)."""
     lane = c.lane_of(key)
     named = story_named_files(c, key, tracked)
     ref, present = files_ref(c), set(tracked)
@@ -7087,12 +7096,8 @@ def co_change_warning(c, key: str, tracked: list[str]) -> str | None:
             if (n >= CO_CHANGE["support"] and n >= CO_CHANGE["share"] * count and f in present and f not in named
                     and not owned_by(c, lane, f) and (n / count, n) > best.get(f, (0, 0))[:2]):
                 best[f] = (n / count, n, count, path)
-    if not best:
-        return None
     often = sorted(best.items(), key=lambda item: (-item[1][0], -item[1][1], item[0]))[:CO_CHANGE["shown"]]
-    return (f"{key}'s files often change with "
-            + ", ".join(f"{f} ({owner_words(c, f)}; with {path} in {n} of {count} changes)"
-                        for f, (_, n, count, path) in often))
+    return [(f, n, count, path) for f, (_, n, count, path) in often]
 
 
 def context_problems(c) -> list[str]:
@@ -9399,6 +9404,11 @@ def lead_assign(args) -> None:
     unready = [line for state, line in readiness.values() if state == "not-ready"]
     if unready and not args.force:
         raise Stop("; ".join(unready) + "; nothing was assigned. Have the item made ready, or assign it anyway with --force")
+    # Decision 6: the co-changed files' claims commit the delivery file as lead-plan does, so its checkout is checked
+    # before anything is written.
+    if args.own_co_changed and "laneOwnership" not in c.record_state():
+        raise Stop("--own-co-changed claims files in the record: seed this record with lead-own --seed first")
+    plan_root = lead_plan_checkout(c) if args.own_co_changed else None
     register_stories(c)
     row = {"id": args.lane, "title": args.title, "focus": f"assigned {', '.join(keys)}", "state": "assigned",
            "waitingOn": None, "since": now()}
@@ -9458,13 +9468,22 @@ def lead_assign(args) -> None:
                 if path in regional_paths:
                     print(f"{key} names a region-owned file {path} ({owner_words(c, path)}). "
                           f"{args.lane} may change only its mapped spans.")
+    co_changes = [line for key in keys if (line := co_change_warning(c, key, tracked))]
     warnings = [*(named_outside(c, key, outside) for key in keys if (outside := outside_lane(c, key, tracked))),
-                *(line for key in keys if (line := co_change_warning(c, key, tracked)))]
+                *co_changes]
     if warnings:
         print(f"Files outside {args.lane}'s owns, before it starts (lead-accept refuses a change to any of them):")
         for line in warnings:
             print(f"  {line}")
-        print(f"Move each to {args.lane}'s owns now, or plan the story on the lane that owns it.\n")
+        if args.own_co_changed:
+            with ownership_lock(c):
+                own_co_changed(c, args.lane, keys, tracked, plan_root)
+            print()
+        elif co_changes:
+            print(f"Grant a named file with lead-own, or plan the story on the lane that owns it; claim the co-changed "
+                  f"files for {args.lane} by assigning with --own-co-changed.\n")
+        else:
+            print(f"Move each to {args.lane}'s owns now, or plan the story on the lane that owns it.\n")
     print_peer_claims(c, [path for key in keys for path in story_named_files(c, key, tracked)])
     # One entry per story, so each ticket's start is its own, made when its lane begins it.
     for key in keys:
@@ -9491,6 +9510,49 @@ def lead_assign(args) -> None:
           "key and the outcome (handed off, or blocked and on what): the lead sees its first lines. Then the branch, "
           "PR, reviewed head, review rounds and verdicts, gates, in-app checks, and any decision you need from the "
           "lead. The lead checks the hand-off and tells you when to start your next story.")
+
+def grant_args(path: str, lane: str) -> argparse.Namespace:
+    """lead-own --grant PATH --lane LANE's arguments, for a command that grants through change_ownership's checks."""
+    return argparse.Namespace(
+        grant=path, lane=lane, carve=None, give=None, carry=None, anchor=None, through=None, region=None,
+        revoke_region=None, claim=None, base=None, start=None, end=None, story=None, seed=False, source=None,
+        move=None, revoke=None, around=None, insert=None)
+
+
+def own_co_changed(c, lane: str, keys: list[str], tracked: list[str], root: Path) -> list[str]:
+    """Decision 6: each file the stories' co-change warnings name, claimed for ``lane`` in the record through
+    lead-own --grant's checks and added to its owns in the delivery file, in one commit as lead-plan makes. A file
+    another lane holds is named with the --move that would take it, and one shared by lines is named and left; neither
+    is added. The warning never names a declared shared output, which every lane may change. Returns the files added."""
+    state = c.record_state()
+    ownership = c.effective_ownership(state)
+    regional = {claim["path"] for claim in state.get("laneRegions", [])}
+    added = []
+    for path in dict.fromkeys(f for key in keys for f, *_ in co_change_files(c, key, tracked)):
+        held = [(other, pattern) for other in owners_of(ownership, path) if other != lane
+                for pattern in ownership[other] if fnmatch.fnmatchcase(path, pattern)]
+        if held:
+            for other, pattern in held:
+                print(f"  {path} is {other}'s, so it isn't added; to take it: {flow_command()} lead-own --lane {lane} "
+                      f"--move {shlex.quote(pattern)} --from {other}")
+        elif path in regional:
+            print(f"  {path} is shared by lines, so it isn't added; ask for a span: {flow_command()} lead-own --region "
+                  f"{shlex.quote(path)} --lane {lane} ...")
+        else:
+            change_ownership(c, grant_args(path, lane))
+            added.append(path)
+    if not added:
+        return added
+    raw = json.loads(c.delivery_path.read_text())
+    owns = raw["lanes"][lane].setdefault("owns", [])
+    owns += [path for path in added if path not in owns]
+    c.delivery_path.write_text(json.dumps(raw, indent=2) + "\n")
+    git("add", str(c.delivery_path), cwd=root)
+    tool_commit("commit", "-q", "-m", f"{c.delivery}: {lane} owns {', '.join(added)} (lead-assign --own-co-changed)",
+                cwd=root)
+    print(f"committed the delivery file with {lane}'s owns; push it so lanes see it: {plan_publish_command(c)}")
+    return added
+
 
 # A delivery's claims on its base, kept in its own record's extensions for its peers to read (Decision 29).
 def change_claims(c, args) -> None:
@@ -9747,12 +9809,15 @@ def accept_story(c, args) -> None:
         raise Stop("the binding doesn't enable lead selection (selection.lead), so the queue selects the checks: "
                    "accept with neither --checks nor --full-suite")
     reuse, why = getattr(args, "reuse", None), getattr(args, "why", None)
+    takes = list(dict.fromkeys(getattr(args, "take", None) or []))
     if reuse is not None and args.checks is None:
         raise Stop("--reuse goes with --checks: the grant lives in the lead's selection at the handed head")
     if reuse is not None and not (why or "").strip():
         raise Stop("--reuse needs --why, why that reuse is safe, which select journals as the lead's decision")
-    if why and reuse is None:
-        raise Stop("--why goes with --reuse")
+    if takes and not (why or "").strip():
+        raise Stop("--take needs --why: why the lane takes each file, journalled as the lead's decision")
+    if why and reuse is None and not takes:
+        raise Stop("--why goes with --reuse or --take")
     if args.full_suite and provider_selects(c):
         raise Stop("the binding names a provider, so a candidate with no lead selection runs the provider's answer, "
                    "and the fallback only when the provider can't give one: --full-suite can't promise the fallback; "
@@ -9761,6 +9826,9 @@ def accept_story(c, args) -> None:
     item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
     waiting = next((p for p in doc["state"].get("planned", []) if p["subject"] == key and p.get("noChange")), None)
     if not item and waiting:
+        if takes:
+            raise Stop(f"--take {takes[0]}: {key} has a no-change hand-off, which changes no file, so there is nothing "
+                       "to take")
         if args.checks is not None:
             check_ids(c, args.checks, "--checks")  # refused as before; a no-change story runs no checks
         accept_no_change(c, key, waiting)
@@ -9878,7 +9946,11 @@ def accept_story(c, args) -> None:
             problems.append(f"review carry refused: {error}")
     # Once merged, the base holds the head or a squash of it, so a diff against it no longer says what the work changed.
     lane = item["lane"] if "laneOwnership" in doc["state"] else c.lane_of(key, doc["state"])
-    changed, outside = ([], []) if merged else candidate_ownership(c, lane, base, head, doc["state"])
+    # Decision 7: the candidate is judged as if the lane held each file it takes; the grant is written once accepted.
+    judged = taken_state(c, key, lane, base, head, doc["state"], takes) if takes and not merged else doc["state"]
+    if takes and merged:
+        raise Stop(f"{key} has merged: --take grants a file to a candidate waiting for acceptance")
+    changed, outside = ([], []) if merged else candidate_ownership(c, lane, base, head, judged)
     if outside:
         problems.append(f"the branch changes files outside {lane}'s: {outside}")
     proposal = None
@@ -9991,6 +10063,13 @@ def accept_story(c, args) -> None:
         # A selection still standing would be what the runner runs: the fallback the lead chose wouldn't.
         state_tool("select", "--subject", key, "--clear")
         decisions.append(f"cleared the lead selection recorded at {str(before.get('head'))[:10]}, so the fallback runs")
+    for path in takes:
+        change_ownership(c, grant_args(path, lane))
+    if takes:
+        state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--text",
+                   f"{lane} takes {', '.join(takes)}, which {key} changes, into its owns at acceptance", "--why",
+                   why.strip())
+        decisions.append(f"{lane} took {', '.join(takes)} into its owns: {why.strip()}")
     review_note = (f"review captured at {carried_review['from']} and carried to {head}"
                    if carried_review else "review evidence captured at that head")
     # The check is journaled first, naming the hand-off, so the acceptance after it can name the check.
@@ -9998,7 +10077,8 @@ def accept_story(c, args) -> None:
                    {"head": head, "rounds": len(set(numbers)), "afterMerge": merged, "noChange": False,
                     "notes": [review_note, *decisions]}))
     if not merged:
-        authorization = _validator().handoff_authorization(doc["state"], item)
+        # Read again after a --take's grants, which the authorization's ownership then holds.
+        authorization = _validator().handoff_authorization(load_state()["state"] if takes else doc["state"], item)
         region_paths = {claim["path"] for claim in doc["state"].get("laneRegions", [])}
         state_tool("handoff", "--accept", key, "--authorization", json.dumps(authorization),
                    *(arg for path in changed if path in region_paths for arg in ("--region-path", path)))
@@ -10016,6 +10096,35 @@ def accept_story(c, args) -> None:
     if needs_video(key):
         print("  once it merges: lead-evidence page, republish the page (same address), lead-evidence published --url, "
               "and link its section from the story in the tracker")
+
+
+def taken_state(c, key: str, lane: str, base: str, head: str, state: dict, takes: list[str]) -> dict:
+    """Decision 7: the record as acceptance judges it with ``lane`` holding each file ``takes`` names, refused when
+    another lane holds one, lanes share it by lines, it is a declared shared output, the lane holds it already, or the
+    candidate doesn't change it. Writes nothing."""
+    if "laneOwnership" not in state:
+        raise Stop("--take grants a claim in the record: seed this record with lead-own --seed first")
+    ownership = c.effective_ownership(state)
+    regional = {claim["path"] for claim in state.get("laneRegions", [])}
+    shared = shared_outputs(c)
+    changed = set(filter(None, run(["git", "diff", "--no-renames", "--name-only", "-z", base, head]).stdout.split("\0")))
+    for path in takes:
+        if Path(path).is_absolute() or any(part in ("", ".", "..") for part in path.split("/")):
+            raise Stop(f"--take {path}: name a repository-relative file")
+        others = [other for other in owners_of(ownership, path) if other != lane]
+        if others:
+            raise Stop(f"--take {path}: {path} is {' and '.join(others)}'s; move it with lead-own --move, or plan the "
+                       "change on that lane")
+        if path in regional:
+            raise Stop(f"--take {path}: lanes share {path} by lines; grant a span with lead-own --region")
+        if path in shared:
+            raise Stop(f"--take {path}: {path} is a declared shared output, which no lane takes")
+        if lane in owners_of(ownership, path):
+            raise Stop(f"--take {path}: {lane} holds {path} already; accept without --take")
+        if path not in changed:
+            raise Stop(f"--take {path}: {key} doesn't change {path}, so there is nothing to take")
+    return {**state, "laneOwnership": {name: [*patterns, *(takes if name == lane else [])]
+                                       for name, patterns in ownership.items()}}
 
 
 def lead_base_broken(args) -> None:
@@ -16104,6 +16213,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--title", required=True); p.add_argument("--note")
     p.add_argument("--force", action="store_true",
                    help="assign a story whose tracker item doesn't offer its next start move")
+    p.add_argument("--own-co-changed", action="store_true",
+                   help="claim each file the co-change warning names for the lane, in the record and the delivery file")
     p.set_defaults(fn=lead_assign)
     p = command(sub, "lead-accept"); p.add_argument("key", nargs="?"); p.add_argument("--accept-blocked", action="append")
     p.add_argument("--requeue", metavar="KEY", help="re-queue a stopped candidate you resolved, with no new hand-off")
@@ -16116,7 +16227,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--reason", help="with --checks or --full-suite: why")
     p.add_argument("--reuse", help="with --checks: check ids whose hand-off records the queue may reuse across paths the "
                    "candidate doesn't change, recorded through select as the lead's grant; needs --why")
-    p.add_argument("--why", help="with --reuse: why that reuse is safe"); p.set_defaults(fn=lead_accept)
+    p.add_argument("--take", action="append", metavar="PATH",
+                   help="grant the lane a whole-file claim on a file the candidate changes outside its owns, then "
+                   "accept; repeatable, and needs --why")
+    p.add_argument("--why", help="with --reuse: why that reuse is safe; with --take: why the lane takes each file, "
+                   "journalled as the lead's decision"); p.set_defaults(fn=lead_accept)
     p = command(sub, "lead-base-broken", help="name the base broken before a base re-run's verdict, ending a re-run at "
                 "that head")
     p.add_argument("--head", required=True, help="the base head that is broken")
