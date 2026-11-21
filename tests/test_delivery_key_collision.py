@@ -236,6 +236,11 @@ class CollidingDeliveryTests(unittest.TestCase):
         self.assertIn(str(fx.main.resolve() / "lanes/FX-1" / STATE), detail)
         code, out = fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=fx.main)
         self.assertNotIn("also a story's key", out)
+        # A record that isn't apart isn't this row's to check for git's ignore: the lane checkouts row says that.
+        (fx.main / ".gitignore").write_text("/.orchestration/\nout/\n")
+        status, detail = self.doctor(fx, "FX-1")
+        self.assertEqual(status, "ok", self.out)
+        self.assertIn(str(fx.main.resolve() / "lanes/FX-1" / STATE), detail)
 
 
 if __name__ == "__main__":
