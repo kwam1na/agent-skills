@@ -11334,8 +11334,11 @@ def record_session(c, role: str, story: str | None = None) -> None:
                 return
             sessions[session] = entry
             staging = path.with_name(f".{path.name}.{os.getpid()}")
-            staging.write_text(json.dumps({"sessions": sessions}, indent=2) + "\n")
-            os.replace(staging, path)
+            try:
+                staging.write_text(json.dumps({"sessions": sessions}, indent=2) + "\n")
+                os.replace(staging, path)
+            finally:
+                staging.unlink(missing_ok=True)  # gone once replaced; a failed write leaves the file as it was
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
 

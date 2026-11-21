@@ -394,6 +394,36 @@ class SessionSeatTests(HookCase):
                 self.assertNotIn("lead-wait", json.dumps(verdict))
         self.assertEqual(len(self.held(fx)), held)
 
+    def test_lane_start_run_again_records_a_session_taking_the_story_over_and_leaves_a_known_one_untouched(self) -> None:
+        fx = self.fixture()
+        self.lane_started(fx)
+        path = self.state(fx) / "sessions.json"
+        before = path.read_bytes(), path.stat().st_mtime_ns
+        again = ("lane-start", "FX-2", "--base", "feature/FX-1")
+        code, out = fx.flow(*again, cwd=fx.main, env={**fx.env, "CLAUDE_CODE_SESSION_ID": LANE_SESSION})
+        self.assertEqual(code, 0, out)
+        self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), before)
+        code, out = fx.flow(*again, cwd=fx.main, env={**fx.env, "CLAUDE_CODE_SESSION_ID": "takeover-session"})
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.sessions(fx)["takeover-session"], {"role": "lane", "story": "FX-2"})
+        self.mode(fx, lead_may_stop="enforce")
+        self.assertEqual(self.stop(fx, session_id="takeover-session"), {"verdict": "allow"})
+
+    def test_a_recorded_lane_on_a_story_the_delivery_doesnt_hold_is_seated_by_cwd(self) -> None:
+        fx = self.fixture()
+        lane = self.lane_started(fx)
+        path = self.state(fx) / "sessions.json"
+        doc = json.loads(path.read_text())
+        doc["sessions"]["stale-lane"] = {"role": "lane", "story": "FX-9"}
+        path.write_text(json.dumps(doc, indent=2) + "\n")
+        self.mode(fx, lead_may_stop="enforce")
+        self.assertEqual(self.stop(fx, lane, session_id="stale-lane"), {"verdict": "allow"})
+        self.assertEqual(self.stop(fx, session_id="stale-lane")["verdict"], "block")  # by cwd: the lead's checkout
+        context = self.hook(fx, "delivery-orient", self.payload(lane, "SessionStart", source="resume",
+                                                                session_id="stale-lane"))["context"]
+        self.assertIn("run-delivery: this session is lane-1 of delivery FX-1, on story FX-2.", context)
+        self.assertNotIn("FX-9", context)
+
     def test_the_leads_recorded_session_in_a_lane_checkout_is_still_held_while_a_lane_works(self) -> None:
         fx = self.fixture()
         lane = self.lane_started(fx)
@@ -488,6 +518,14 @@ class SessionSeatTests(HookCase):
             second.join(10)
         self.assertEqual(json.loads((state / "sessions.json").read_text())["sessions"],
                          {"lane-a": {"role": "lane", "story": "FX-2"}, "lane-b": {"role": "lane", "story": "FX-3"}})
+        self.assertEqual(sorted(path.name for path in state.iterdir()), ["sessions.json", "state.lock"])
+        # A replace that fails leaves the file as it was, and no staging file beside it.
+        before = (state / "sessions.json").read_bytes()
+        with mock.patch.object(module.os, "replace", side_effect=OSError("planted")), \
+                mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "lane-c"}):
+            with self.assertRaises(OSError):
+                module.record_session(c, "lane", "FX-4")
+        self.assertEqual((state / "sessions.json").read_bytes(), before)
         self.assertEqual(sorted(path.name for path in state.iterdir()), ["sessions.json", "state.lock"])
 
 
