@@ -265,5 +265,63 @@ class FiledStateTests(unittest.TestCase):
         self.assertFalse(any("filed" in note for entry in plan for note in entry["raised"]))
 
 
+
+class DeferralDetailTests(unittest.TestCase):
+    """A deferral carries what its card's detail shows, a closure of it keeps the word it was closed with, and a
+    finding's state is its own lens's; the hosted cut publishes all of it within its schema."""
+
+    def outcomes(self) -> list[dict]:
+        outcomes = json.loads(DEFERRED.read_text(encoding="utf-8"))["reviewEvidence"]["WORK-1"]["outcomes"]
+        first = outcomes[0]["entries"][0]["result"]["findings"][0]
+        first.update(failureScenario="A stale head\nis kept.", proposedChange="Rebase, then assert the head.",
+                     deferredIssue="Pin that the queue line reads the head after a rebase, whatever the branch.")
+        outcomes[1]["entries"][0]["result"]["resolvedFindings"][0]["state"] = "closed"
+        return outcomes
+
+    def test_a_deferral_carries_its_detail_and_its_closure_the_word_it_was_closed_with(self) -> None:
+        rounds = review_projection.round_detail(self.outcomes())
+        detailed, plain = rounds[0]["raised"][0], rounds[0]["raised"][1]
+        self.assertEqual(detailed["detail"], {"failureScenario": "A stale head is kept.",
+                                              "proposedChange": "Rebase, then assert the head.",
+                                              "followUp": "Pin that the queue line reads the head after a rebase, whatever the branch."})
+        # A follow-up too long for a key is the detail's prose, not a key the card would link.
+        self.assertIsNone(detailed["deferredIssue"])
+        # A deferral that records nothing more has no detail, so the native cards' entries stay as they were.
+        self.assertNotIn("detail", plain)
+        closed, fixed = rounds[1]["settled"][0], rounds[1]["settled"][1]
+        self.assertEqual((closed["state"], closed["closedAs"]), ("fixed", "closed"))
+        self.assertNotIn("closedAs", fixed)
+
+    def test_an_open_finding_carries_no_detail_and_its_closure_no_word(self) -> None:
+        outcomes = self.outcomes()
+        outcomes[0]["entries"][0]["result"]["findings"][0]["state"] = "open"
+        rounds = review_projection.round_detail(outcomes)
+        self.assertNotIn("detail", rounds[0]["raised"][0])
+        self.assertNotIn("closedAs", rounds[1]["settled"][0])
+
+    def test_a_long_detail_text_is_cut_at_its_cap(self) -> None:
+        outcomes = self.outcomes()
+        outcomes[0]["entries"][0]["result"]["findings"][0]["failureScenario"] = "x" * 5000
+        detail = review_projection.round_detail(outcomes)[0]["raised"][0]["detail"]
+        self.assertEqual(len(detail["failureScenario"]), review_projection.DETAIL_LENGTH)
+
+    def test_the_hosted_cut_publishes_a_deferrals_detail_within_its_schema(self) -> None:
+        import importlib.util
+        from jsonschema import Draft202012Validator
+        from tests.delivery_views_fixtures import config
+        spec = importlib.util.spec_from_file_location("public_projection_for_detail",
+                                                      render.__file__.replace("render.py", "public_projection.py"))
+        public = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(public)
+        document = json.loads(DEFERRED.read_text(encoding="utf-8"))
+        document["reviewEvidence"]["WORK-1"]["outcomes"] = self.outcomes()
+        value = public.project(document, {}, config(), source_fingerprint="1" * 64)
+        Draft202012Validator(public.SCHEMA).validate(value)
+        public.validate(value)
+        rounds = value["reviews"]["WORK-1"]["roundDetail"]
+        self.assertEqual(rounds[0]["raised"][0]["detail"]["proposedChange"], "Rebase, then assert the head.")
+        self.assertEqual(rounds[1]["settled"][0]["closedAs"], "closed")
+
+
 if __name__ == "__main__":
     unittest.main()

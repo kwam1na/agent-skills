@@ -31,6 +31,8 @@ SEVERITIES = ("P0", "P1", "P2", "P3")
 SUMMARY_LENGTH = 280
 ISSUE_LENGTH = 64
 RESOLUTION_LENGTH = 2048
+# A deferral's detail texts: what could break, the change it proposes, and its follow-up when that is prose, not a key.
+DETAIL_LENGTH = 1024
 CONTROL_RUN = re.compile("[\u0000-\u001f\u007f]+")
 CLOSURE_STATES = {"closed": "fixed", "fixed": "fixed", "withdrawn": "dropped", "dropped": "dropped",
                   "deferred": "deferred", "open": "open"}
@@ -59,6 +61,19 @@ def issue(value: object) -> str | None:
     return issue if issue is not None and len(issue) <= ISSUE_LENGTH and not CONTROL_RUN.search(issue) else None
 
 
+def deferral_detail(finding: dict) -> dict:
+    """What a deferred finding records beyond its summary, for the card's detail: each text only when the lens gave one,
+    and its follow-up only when it is prose that ``issue`` would not keep as a follow-up key."""
+    detail = {}
+    for key in ("failureScenario", "proposedChange"):
+        if isinstance(finding.get(key), str) and finding[key].strip():
+            detail[key] = plain(finding[key])[:DETAIL_LENGTH]
+    follow = finding.get("deferredIssue")
+    if isinstance(follow, str) and follow.strip() and issue(follow) is None:
+        detail["followUp"] = plain(follow)[:DETAIL_LENGTH]
+    return detail
+
+
 def _plan_text(value: object, cap: int) -> str:
     """A text the plan contract accepts: no control character or line separator, never empty, at most `cap`."""
     said = views_common.CONTROL.sub(" ", value if isinstance(value, str) else "").strip()
@@ -70,9 +85,12 @@ def round_detail(outcomes: list[dict], commits: dict[int, str] | None = None) ->
     """One `roundDetail` entry per review outcome. With `commits`, each round's candidate commit, it is a plan
     review's: fixed closures carry their closing round's commit, the round's time is when it finished, and no entry
     says it is deferred, how it was filed or that its details are unavailable. Otherwise each raised finding's
-    `filed` keeps how its lens filed it, `deferred` or `open`, whatever its `state` became."""
+    `filed` keeps how its lens filed it, `deferred` or `open`, whatever its `state` became; a deferred one carries its
+    recorded `detail` when it has any, and a later closure of it by the same lens keeps the word it was closed with
+    as `closedAs` where that differs from its `state`. A finding's state is its own lens's: another lens reporting
+    the same id never settles it."""
     plan = commits is not None
-    rounds, states, severities = [], {}, {}
+    rounds, states, severities, deferrals = [], {}, {}, set()
     for outcome in outcomes:
         raised, settled, verdicts = [], [], {}
         candidate, complete = None, True
@@ -86,37 +104,47 @@ def round_detail(outcomes: list[dict], commits: dict[int, str] | None = None) ->
             verdicts[lens] = outcome_word(result["outcome"])
             for finding in result["findings"]:
                 state = "deferred" if finding.get("state") == "deferred" else "unresolved"
-                states[finding["id"]] = state
+                states[(lens, finding["id"])] = state
                 # A filed severity is a floor: the strongest filing stands, as the delivery state keeps it.
-                severities[finding["id"]] = min(finding["severity"], severities.get(finding["id"], finding["severity"]))
+                severities[(lens, finding["id"])] = min(finding["severity"], severities.get((lens, finding["id"]), finding["severity"]))
                 if plan:
                     raised.append({"id": finding["id"], "lens": lens, "severity": finding["severity"],
                                    "summary": _plan_text(finding["summary"], SUMMARY_LENGTH), "state": state})
                     continue
                 # How the lens filed it stays beside the state later rounds give it.
-                raised.append({"id": finding["id"], "lens": lens, "severity": finding["severity"],
-                               "summary": plain(finding["summary"])[:SUMMARY_LENGTH], "state": state,
-                               "filed": "deferred" if state == "deferred" else "open",
-                               "deferredIssue": issue(finding.get("deferredIssue"))})
+                note = {"id": finding["id"], "lens": lens, "severity": finding["severity"],
+                        "summary": plain(finding["summary"])[:SUMMARY_LENGTH], "state": state,
+                        "filed": "deferred" if state == "deferred" else "open",
+                        "deferredIssue": issue(finding.get("deferredIssue"))}
+                if state == "deferred":
+                    deferrals.add((lens, finding["id"]))
+                    detail = deferral_detail(finding)
+                    if detail:
+                        note["detail"] = detail
+                raised.append(note)
             for closure in result.get("resolvedFindings", result.get("resolutions", [])):
                 state = CLOSURE_STATES[closure["state"]]
-                states[closure["id"]] = "resolved" if state in ("fixed", "dropped") else "deferred" if state == "deferred" else "unresolved"
+                states[(lens, closure["id"])] = "resolved" if state in ("fixed", "dropped") else "deferred" if state == "deferred" else "unresolved"
                 said = closure.get("resolution", closure.get("reason", ""))
                 if plan:
                     settled.append({"id": closure["id"], "lens": lens, "state": state,
                                     "fixCommit": commits[outcome["round"]] if state == "fixed" else None,
                                     "resolution": _plan_text(said, views_common.PLAN_TEXT)})
                     continue
-                settled.append({"id": closure["id"], "lens": lens, "state": state,
-                                "fixCommit": closure.get("fixCommit"), "deferredIssue": issue(closure.get("deferredIssue")),
-                                "resolution": plain(said)[:RESOLUTION_LENGTH]})
+                note = {"id": closure["id"], "lens": lens, "state": state,
+                        "fixCommit": closure.get("fixCommit"), "deferredIssue": issue(closure.get("deferredIssue")),
+                        "resolution": plain(said)[:RESOLUTION_LENGTH]}
+                # A deferral's card says "closed" apart from "fixed", so its closure keeps the word it was given.
+                if (lens, closure["id"]) in deferrals and closure["state"] != state:
+                    note["closedAs"] = closure["state"]
+                settled.append(note)
         counts = {severity: sum(note["severity"] == severity for note in raised) for severity in SEVERITIES}
         agreed = complete and all(word == "approve" for word in verdicts.values())
         approved = agreed and outcome.get("outcome") == "aligned"
         # Every lens approved and the round isn't closed: a stated result when a note is open, and one that blocks still needs changes.
         unsettled = agreed and outcome.get("outcome") in ("unresolved", "blocked")
-        still_open = [ident for ident, state in states.items() if state == "unresolved"]
-        blocking = any(severities.get(ident) in ("P0", "P1") for ident in still_open)
+        still_open = [key for key, state in states.items() if state == "unresolved"]
+        blocking = any(severities.get(key) in ("P0", "P1") for key in still_open)
         row = {"round": outcome["round"], "candidateRef": candidate, "at": None,
                "outcome": "approve" if approved else "changes" if "changes" in verdicts.values() or (unsettled and blocking)
                           else "notes-open" if unsettled and still_open else None,
@@ -129,7 +157,7 @@ def round_detail(outcomes: list[dict], commits: dict[int, str] | None = None) ->
         rounds.append(row)
     for row in rounds:
         for raised in row["raised"]:
-            raised["state"] = states[raised["id"]]
+            raised["state"] = states[(raised["lens"], raised["id"])]
     return rounds
 
 
