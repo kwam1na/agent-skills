@@ -275,3 +275,86 @@ test("a run's round report, whose closures name no lens, ends its deferrals in i
   expect(deferrals(shown).map((row) => row[2])).toEqual(["✓ closed in round 2", "withdrawn in round 2"]);
   expect(detailOf(shown.querySelectorAll("li.is-deferral")[1])["How it ended"]).toBe("R1Raised and deferred by Adversarial testing.R2Withdrawn.");
 });
+
+// A later round in which a lens other than the filing one is missing: the projection marks its details unavailable.
+const missing = (lens, candidate, round) => ({ lens, state: "missing", binding: { subjectRef: "WORK-1", candidateRef: candidate, round } });
+
+test("a later round missing another lens still counts the filing lens's own fix, as the footer does", async () => {
+  const shown = await card([
+    { round: 1, outcome: "aligned", entries: [entry(AT, A, 1, "aligned", [finding("at-1", "P2", "Fixed beside a missing lens.")]),
+                                              entry(OC, A, 1, "aligned", [])] },
+    { round: 2, outcome: "unresolved", entries: [entry(AT, B, 2, "aligned", [], [{ id: "at-1", state: "fixed", fixCommit: B, resolution: "Fixed." }]),
+                                                 missing(OC, B, 2)] }],
+    B, [{ click: ".run-pick", index: 0 }]);
+  expect(deferrals(shown).map((row) => row[2])).toEqual(["✓ fixed in round 2"]);
+  expect(counts(shown)).toEqual(["deferred 1: 1 fixed by round 2"]);
+  expect(shown.querySelector(".run-settled").textContent).toBe("This round's note was fixed in bbbbbbb, and round 2 confirmed it.");
+});
+
+test("a later round in which the filing lens itself is missing leaves the deferral waiting, and says nothing of it", async () => {
+  const shown = await card([
+    { round: 1, outcome: "aligned", entries: [entry(AT, A, 1, "aligned", [finding("at-1", "P2", "Its lens went missing.")]),
+                                              entry(OC, A, 1, "aligned", [])] },
+    { round: 2, outcome: "unresolved", entries: [missing(AT, B, 2), entry(OC, B, 2, "aligned", [])] }],
+    B, [{ click: ".run-pick", index: 0 }]);
+  expect(deferrals(shown).map((row) => row[2])).toEqual(["still waiting after round 2"]);
+  expect(detailOf(shown.querySelector("li.is-deferral"))["How it ended"]).toBe("R1Raised and deferred by Adversarial testing.");
+});
+
+test("an opened deferral stays open through a live redraw of its card", async () => {
+  const document = record(tenDeferrals(), B);
+  const snaps = await openPage(pageWithRuns(document, {}, { config: CONFIG }), { steps: [{ click: '[data-subject="WORK-1"]' },
+    { click: "#detail .run-pick", index: 0 }, { click: "#detail li.is-deferral .run-deferral", index: 2 }, { push: document }] });
+  const rowsAfter = [...snaps.at(-1).app.querySelectorAll("#detail .run-card li.is-deferral")];
+  expect(rowsAfter.map((row) => row.querySelector(".run-deferral").getAttribute("aria-expanded")))
+    .toEqual(["false", "false", "true", ...Array(7).fill("false")]);
+  expect(rowsAfter.map((row) => row.querySelector(".run-deferral-detail").hidden)).toEqual([true, true, false, ...Array(7).fill(true)]);
+});
+
+test("a fixed deferral never reads Filed as, a follow-up naming itself is no key, and the count says the latest fixing round", async () => {
+  const shown = await card([
+    { round: 1, outcome: "aligned", entries: [entry(AT, A, 1, "aligned", [finding("at-1", "P2", "Fixed, though filed."),
+      finding("at-2", "P2", "Fixed later."), finding("at-3", "P3", "Names itself.")])] },
+    { round: 2, outcome: "aligned", entries: [entry(AT, B, 2, "aligned", [], [{ id: "at-1", state: "fixed", fixCommit: B, resolution: "Fixed." },
+      { id: "at-2", state: "deferred", resolution: "Next round.", deferredIssue: "WORK-9" }, { id: "at-3", state: "deferred", resolution: "Waits.", deferredIssue: "WORK-9" }])] },
+    { round: 3, outcome: "aligned", entries: [entry(AT, B, 3, "aligned", [], [{ id: "at-2", state: "fixed", fixCommit: B, resolution: "Fixed." },
+      { id: "at-3", state: "deferred", resolution: "Waits.", deferredIssue: "WORK-9" }])] }],
+    B, [{ click: ".run-pick", index: 0 }], (document) => {
+      document.state.followups = [{ id: "WORK-1-at-1", title: "Filed", reference: "WORK-9" }, { id: "WORK-1-at-3", title: "Itself", reference: "WORK-1-at-3" }];
+    });
+  expect(deferrals(shown).map((row) => row[2])).toEqual(["✓ fixed in round 2", "✓ fixed in round 3", "still waiting after round 3"]);
+  expect(counts(shown)).toEqual(["deferred 3: 2 fixed by round 3, 1 still waiting"]);
+});
+
+test("a round report's P0 filed deferred is an ordinary finding, and a later round without the filing lens adds no step", async () => {
+  const raised = [{ id: "at-0", lens: AT, severity: "P0", summary: "Critical.", state: "deferred", filed: "deferred", deferredIssue: null },
+                  { id: "at-1", lens: AT, severity: "P2", summary: "Waits.", state: "deferred", filed: "deferred", deferredIssue: null }];
+  const runs = { "run-1": { runId: "run-1", ticket: null, open: false, status: "complete", startedAt: null, lastAt: null, durationSeconds: null,
+    rounds: 2, findings: null, roundDetail: [
+      { round: 1, at: "2026-10-22T04:40:00Z", outcome: "approve", findings: { P0: 1, P1: 0, P2: 1, P3: 0 }, verdicts: { [AT]: "approve" }, raised, settled: [] },
+      { round: 2, at: "2026-10-22T04:58:00Z", outcome: "approve", findings: { P0: 0, P1: 0, P2: 0, P3: 0 }, verdicts: { [OC]: "approve" }, raised: [], settled: [] }] } };
+  const document = { state: { lanes: [], queue: [{ subject: "WORK-1", title: "Work", stage: "merged", head: B, runId: "run-1" }] }, journal: [] };
+  const snaps = await openPage(pageWithRuns(document, runs, { config: { ...CONFIG, runs: REPLAYED_RUNS } }),
+    { steps: [{ click: '[data-subject="WORK-1"]' }, { click: "#detail .run-pick", index: 0 }] });
+  const shown = snaps.at(-1).app.querySelector("#detail .run-card");
+  const critical = [...shown.querySelectorAll("li.run-finding")].find((row) => row.textContent.includes("Critical."));
+  expect(critical.classList.contains("is-deferral")).toBe(false);
+  expect(critical.querySelector(".run-reason")).toBeNull();
+  expect(deferrals(shown)).toEqual([["Waits.", "Moderate, so it doesn't block", "still waiting after round 2"]]);
+  expect(detailOf(shown.querySelector("li.is-deferral"))["How it ended"]).toBe("R1Raised and deferred by Adversarial testing.");
+});
+
+test("a later round report that could not be read is no check, though its lens gave a verdict", async () => {
+  const raised = [{ id: "at-1", lens: AT, severity: "P2", summary: "Unread.", state: "deferred", filed: "deferred", deferredIssue: null }];
+  const runs = { "run-1": { runId: "run-1", ticket: null, open: false, status: "complete", startedAt: null, lastAt: null, durationSeconds: null,
+    rounds: 2, findings: null, roundDetail: [
+      { round: 1, at: "2026-10-22T04:40:00Z", outcome: "approve", findings: { P0: 0, P1: 0, P2: 1, P3: 0 }, verdicts: { [AT]: "approve" }, raised, settled: [] },
+      { round: 2, at: "2026-10-22T04:58:00Z", outcome: "approve", findings: { P0: 0, P1: 0, P2: 0, P3: 0 }, verdicts: { [AT]: "approve" },
+        raised: [], settled: [], detailsUnavailable: true }] } };
+  const document = { state: { lanes: [], queue: [{ subject: "WORK-1", title: "Work", stage: "merged", head: B, runId: "run-1" }] }, journal: [] };
+  const snaps = await openPage(pageWithRuns(document, runs, { config: { ...CONFIG, runs: REPLAYED_RUNS } }),
+    { steps: [{ click: '[data-subject="WORK-1"]' }, { click: "#detail .run-pick", index: 0 }] });
+  const shown = snaps.at(-1).app.querySelector("#detail .run-card");
+  expect(deferrals(shown).map((row) => row[2])).toEqual(["still waiting after round 2"]);
+  expect(detailOf(shown.querySelector("li.is-deferral"))["How it ended"]).toBe("R1Raised and deferred by Adversarial testing.");
+});

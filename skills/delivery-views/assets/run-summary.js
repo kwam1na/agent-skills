@@ -457,22 +457,23 @@ function runSummaryNode(summary, options) {
   // What became of a deferral, read from its own lens's later reports only, as review-work's convergence rule says; a
   // closure that names no lens, as a run's round report gives it, is the finding's own.
   // The first later round of that lens to fix, close or withdraw it ends it; one that lists it deferred or open, or
-  // leaves it out, left it waiting. A round of another lens, or one whose details could not be read, says nothing of
-  // it. `history` is each later round's word on it, for the detail.
+  // leaves it out, left it waiting. A round without that lens, or one whose details could not be read and that holds no
+  // word of the lens on it, says nothing of it. `history` is each later round's word on it, for the detail.
   function deferralFate(entry, index) {
     var history = [], ended = null, last = null;
     rounds.slice(index + 1).forEach(function (later, offset) {
       if (ended) { return; }
       var number = numberOf(later, index + 1 + offset);
       last = number;
-      if (later.detailsUnavailable === true) { return; }
       var own = (Array.isArray(later.settled) ? later.settled : []).filter(function (other) {
         // A run's round report names no lens on its closures; an id is its raising lens's alone, so one counts there.
         return other && other.id === entry.id && (other.lens === entry.lens || typeof other.lens !== "string");
       })[0];
       var verdicts = later.verdicts && typeof later.verdicts === "object" ? later.verdicts : {};
       if (!own) {
-        if (Object.prototype.hasOwnProperty.call(verdicts, entry.lens)) { history.push({ round: number, words: "Left out of " + lensLabel(entry.lens) + "'s report, so it is still deferred." }); }
+        // A round only leaves it out when the filing lens reported there and the round's details could be read; a
+        // round whose details are unavailable, as when another lens is missing, still counts its own closures above.
+        if (later.detailsUnavailable !== true && Object.prototype.hasOwnProperty.call(verdicts, entry.lens) && verdicts[entry.lens] !== "unavailable") { history.push({ round: number, words: "Left out of " + lensLabel(entry.lens) + "'s report, so it is still deferred." }); }
         return;
       }
       var resolution = typeof own.resolution === "string" && own.resolution ? own.resolution : null;
