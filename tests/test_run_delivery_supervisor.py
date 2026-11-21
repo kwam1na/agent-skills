@@ -753,8 +753,10 @@ class LeadSuiteWordingTests(unittest.TestCase):
                        "`<delivery>.suite.jsonl`."):
             with self.subTest(phrase=phrase[:40]):
                 self.assertIn(phrase, step)
-        self.assertIn("| Lead | `lead-suite [--at COMMIT] [-- ARG...]` | Runs the binding's `fullHealth`",
-                      normal("skills/run-delivery/SKILL.md"))
+        skill = normal("skills/run-delivery/SKILL.md")
+        self.assertIn("| Lead | `lead-suite [--at COMMIT] [--now --why T] [-- ARG...]` | Claims machine slots (`suite` / "
+                      "`lead-suite`) before its checkout is made", skill)
+        self.assertIn("and holds the claim until its checkout is gone. Runs the binding's `fullHealth`", skill)
 
 
 class FinishMarkOrderTests(unittest.TestCase):
