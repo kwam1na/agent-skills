@@ -845,6 +845,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_lead_add_lane",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_lead_add_lane.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_lead_add_lane.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_lead_wait",
         "argv": [
           ".venv/bin/python",

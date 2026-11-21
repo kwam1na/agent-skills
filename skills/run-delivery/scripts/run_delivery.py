@@ -6353,7 +6353,8 @@ def lead_plan(args) -> None:
             raise Stop(f"{key} isn't a story of {c.delivery} yet: --kind added adds it whole with --title, --text (its "
                        "first criterion) and --lane, with --after for the stories it comes after")
         if args.lane not in c.lanes:
-            raise Stop(f"--lane {args.lane} isn't a lane of {c.delivery}: {', '.join(c.lanes)}")
+            raise Stop(f"--lane {args.lane} isn't a lane of {c.delivery}: {', '.join(c.lanes)}; add it first with "
+                       f"lead-add-lane --lane {args.lane}")
         after = args.after or []
         held = sibling_story_keys(getattr(c, "state", None))
         strangers = [other for other in after if other not in stories and other not in held]
@@ -9270,7 +9271,7 @@ def change_ownership(c, args) -> None:
         if ownership is None:
             raise Stop("seed this record with lead-own --seed first")
         if args.lane not in ownership or args.source and args.source not in ownership:
-            raise Stop("name lanes recorded for this delivery")
+            raise Stop("name lanes recorded for this delivery; add a new one with lead-add-lane --lane L")
         if args.source:
             if pattern not in ownership[args.source]:
                 raise Stop(f"{args.source} has no claim for {pattern}")
@@ -9300,6 +9301,92 @@ def change_ownership(c, args) -> None:
     print(change)
 
 
+# The plan's Units table and its lane sentences read only numbered lanes.
+LANE_NAME = re.compile(r"lane-[1-9][0-9]*")
+
+
+def lead_add_lane(args) -> None:
+    """Add a lane to a running delivery: to the delivery file's `lanes` and the plan's Units table in one commit in the
+    lead's checkout, and its ownership and `lanes[]` row in one state-tool patch. Each grant takes lead-own --grant's
+    checks, and any refusal writes nothing."""
+    c = cfg()
+    lane = args.lane
+    if not LANE_NAME.fullmatch(lane):
+        raise Stop(f"name the lane lane-N, such as lane-{len(c.lanes) + 1}, not {lane!r}: the plan's Units table and "
+                   "its lane sentences read only numbered lanes")
+    require_lead_checkout(c)
+    if not (c.state / "state.json").is_file():
+        raise Stop("initialize the delivery record before adding a lane")
+    grants = list(dict.fromkeys(args.grant or []))
+    for pattern in grants:
+        if Path(pattern).is_absolute() or any(part in ("", ".", "..") for part in pattern.split("/")):
+            raise Stop(f"name a repository-relative file or pattern, not {pattern!r}")
+    with ownership_lock(c), plan_lock(c):
+        root = lead_plan_checkout(c)
+        raw = json.loads(c.delivery_path.read_text())
+        if lane in raw["lanes"] or lane in c.effective_ownership(c.record_state()):
+            raise Stop(f"{lane} is already a lane of {c.delivery}; give it files with lead-own --lane {lane} --grant "
+                       "PATTERN")
+        plan_path = root / c.plan
+        plan_text = plan_with_lane(plan_path.read_text(), lane, grants)
+        files, shared = tracked_at_base(c), shared_outputs(c)
+        for pattern in grants:
+            outputs = sorted(path for path in shared if fnmatch.fnmatchcase(path, pattern))
+            if outputs:
+                raise Stop(f"{', '.join(outputs)} is a shared output, which every lane refreshes and none owns; "
+                           f"leave it out of {lane}'s grants")
+        row = {"id": lane, "title": lane, "focus": "", "state": "idle", "waitingOn": None}
+
+        def compute(doc: dict) -> list[str]:
+            state = doc["state"]
+            ownership = copy.deepcopy(state.get("laneOwnership"))
+            if ownership is None:
+                raise Stop("seed this record with lead-own --seed first")
+            if lane in ownership or any(entry["id"] == lane for entry in state["lanes"]):
+                raise Stop(f"{lane} is already a lane of {c.delivery}")
+            conflicts = sorted({claim["path"] for claim in state.get("laneRegions", [])
+                                if any(fnmatch.fnmatchcase(claim["path"], pattern) for pattern in grants)})
+            if conflicts:
+                raise Stop(f"whole-file claim conflicts with region claims for {', '.join(conflicts)}")
+            ownership[lane] = grants
+            overlaps = ownership_overlaps(ownership, files, shared)
+            if overlaps:
+                raise Stop(f"lanes own the same files: {'; '.join(overlaps)}")
+            return ["--set", json.dumps({"/laneOwnership": ownership,
+                                         "/lanes": [*state["lanes"], {**row, "since": now()}]})]
+
+        patch_from(compute, f"{lane}'s addition")
+        raw["lanes"][lane] = {"owns": grants}
+        c.delivery_path.write_text(json.dumps(raw, indent=2) + "\n")
+        plan_path.write_text(plan_text)
+        git("add", str(c.delivery_path), str(plan_path), cwd=root)
+        tool_commit("commit", "-q", "-m", f"{c.delivery}: add lane {lane}", *(["-m", args.why] if args.why else []),
+                    cwd=root)
+    print(f"added {lane} to {c.delivery}" + (f", owning {', '.join(grants)}" if grants else ", owning nothing yet"))
+    print(f"committed the delivery file and the plan; push it so lanes see it: {plan_publish_command(c)}")
+
+
+def plan_with_lane(text: str, lane: str, grants: list[str]) -> str:
+    """The plan with the lane's row added to the end of its Units table, at the highest tier, with no items."""
+    rows, missing = units_rows(text)
+    if rows is None:
+        raise Stop(f"{missing}, so there is no row to add the lane to")
+    body = next(b for level, title, b in plan_sections(text) if level == 2 and title == UNITS_SECTION)
+    lines = body.splitlines(keepends=True)
+    first = next(index for index, line in enumerate(lines) if line.strip().startswith("|"))
+    last = first
+    while last + 1 < len(lines) and lines[last + 1].strip().startswith("|"):
+        last += 1
+    header = [cell.strip() for cell in lines[first].strip().strip("|").split("|")]
+    values = {"Tier": str(max((tier for tier, _, _ in rows), default=1)), "Lane": lane[len("lane-"):],
+              "Owns": ", ".join(f"`{pattern}`" for pattern in grants)}
+    added = "| " + " | ".join(values.get(name, "") for name in header) + " |"
+    # After the table's last row, keeping whatever follows it as it was: a last row the section ends on has no newline.
+    added = added + "\n" if lines[last].endswith("\n") else "\n" + added
+    start = text.index(body)
+    return text[:start] + "".join(lines[:last + 1]) + added + "".join(lines[last + 1:]) + text[start + len(body):]
+
+
 def lead_assign(args) -> None:
     c = cfg()
     keys = [c.require(k) for k in args.keys]
@@ -9319,7 +9406,7 @@ def lead_assign(args) -> None:
     def assign(doc: dict) -> dict:
         state = doc["state"]
         if args.lane not in c.effective_ownership(state):
-            raise Stop(f"{args.lane} is not a lane of {c.delivery}")
+            raise Stop(f"{args.lane} is not a lane of {c.delivery}; add it first with lead-add-lane --lane {args.lane}")
         # The row is replaced where it stands: an assignment never reorders the lanes.
         rows = state["lanes"]
         changes = {"lanes": [row if entry["id"] == args.lane else entry for entry in rows]
@@ -16005,6 +16092,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--start", type=int, metavar="LINE", help="first owned line, starting at 1")
     p.add_argument("--end", type=int, metavar="LINE", help="first line after the owned span")
     p.set_defaults(fn=lead_own)
+    p = command(sub, "lead-add-lane", help="add a lane to a running delivery: its delivery file entry, its Units row "
+                "and its record ownership and row, in one commit and one patch")
+    p.add_argument("--lane", required=True, help="the new lane, lane-N")
+    p.add_argument("--grant", action="append", metavar="PATTERN", help="a whole-file claim for it; repeatable")
+    p.add_argument("--why", help="why the lane joins, in the commit's message")
+    p.set_defaults(fn=lead_add_lane)
     p = command(sub, "lead-claims", help="whether the queue would accept each story's ownership after syncing it")
     p.add_argument("keys", nargs="*"); p.set_defaults(fn=lead_claims)
     p = command(sub, "lead-assign"); p.add_argument("keys", nargs="+"); p.add_argument("--lane", required=True)
