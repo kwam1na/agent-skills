@@ -6726,7 +6726,7 @@ DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candida
                  "host hooks", "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot scope", "tracker snapshot token",
                  "snapshots and publishers", "hosted delivery", "in-app adapters", "in-app adapter contract", "video evidence tools",
-                 "Node", "harness configuration", "knowledge library properties", "delivery file", "plan chapter", "added stories' reasons",
+                 "Node", "harness configuration", "knowledge library properties", "delivery file", "delivery record folder", "plan chapter", "added stories' reasons",
                  "plan sections", "story files", "story readiness", "story summaries", "context sections", "finish lines",
                  "configuration on the remote base", "pull requests marked ready", "delivery supervisor", "deliveries on this base", "merge slot",
                  "gates on the base"]
