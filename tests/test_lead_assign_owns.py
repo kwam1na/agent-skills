@@ -7,7 +7,7 @@ import unittest
 from tests.test_region_claims import CommandCase, command_fixture, numbered
 
 
-class AcceptEdgeTests(CommandCase):
+class AcceptEdgeTests(CommandCase, unittest.TestCase):
     """Decision 4 at acceptance: an insertion at a span's edge is the span's unless another lane claims the far side."""
 
     run_quietly = True
