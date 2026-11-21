@@ -579,3 +579,4 @@ The operator then ruled, the same day, to remove the hosted page's privacy redac
 ### V26-3695. Say why a review finding was deferred, and how it ended, in the round card
 
 Lane 3, tier 2, not blocked. Added mid-delivery: The operator added it on 2026-11-21 after reviewing the deferral-reason mockups (direction B with C's detail): the round card says findings were deferred but not why, nor what became of them.
+Files: `skills/delivery-views/assets/run-summary.js`, `skills/delivery-views/assets/run-summary.css`, `tests/delivery_views_page/` and delivery-views' catalog line. The design is direction "B with C's detail" on the Deferral reasons canvas; the ticket, [V26-3695](https://linear.app/v26-technologies/issue/V26-3695), holds its scope, criteria, scenarios and sensors.
