@@ -1123,7 +1123,7 @@
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "57772cff25aef78a7ffc0a837144d8ff574a0a44bdfad8ab919f1adb75c9c90e"
+          "sha256": "72702d779eedeec7bbe9abe6f17ea8aa47480245a0a43d17bdac6c70c6682724"
         },
         {
           "path": "skills/run-delivery/scripts/gaps.py",
@@ -1135,7 +1135,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "1b3c69d8f2729a62ae3ea07efd29bb5759c4b4dd3d804c6b4ec900c1a1740628"
+          "sha256": "b2d856b7c21d2fc48477f2fe4c45512180870d4176db99ed49c9c5e26f3004ce"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
