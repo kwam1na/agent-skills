@@ -206,6 +206,17 @@
       "after": [
         "V26-3693"
       ]
+    },
+    "V26-3695": {
+      "title": "Say why a review finding was deferred, and how it ended, in the round card",
+      "lane": "lane-3",
+      "why": "The operator added it on 2026-11-21 after reviewing the deferral-reason mockups (direction B with C's detail): the round card says findings were deferred but not why, nor what became of them.",
+      "criteria": [
+        {
+          "id": "v26-3695-1",
+          "text": "Each deferred finding in the round card shows its rule-derived reason and its fate from the filing lens's later rounds (fixed, closed, withdrawn, still waiting, no later round, or filed), opens to its failure scenario, proposed change, follow-up and round history, and rounds without deferrals render as today."
+        }
+      ]
     }
   },
   "finish": [
