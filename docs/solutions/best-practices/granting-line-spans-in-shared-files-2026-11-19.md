@@ -1,6 +1,7 @@
 ---
 title: "Grant line spans one line wider than the edit, and grant the registry-pinned tests with them"
 date: 2026-11-19
+last_updated: 2026-11-21
 category: best-practices
 module: run-delivery
 problem_type: best_practice
@@ -54,7 +55,22 @@ When a story does one of the following, grant these with its files:
 
   The catalogue's ids must come in exactly `CATALOGUE_MODULES`' order, so both edits go at matching positions.
 
+These registries can't be split between lanes by span. `CATALOGUE_MODULES`, the table in
+`tests/test_journal_kinds.py` and the inventory in `tests/test_journal_shape.py` are each one multi-line Python literal.
+In a Python file a span's edges must start a logical line, so a carve that gives one lane a line inside the literal is
+refused ("the span cuts the statement"). Only one lane can hold such a file at a time, as a whole-file claim.
+
+- In the plan, name one lane for each of these files, and the order in which the other lanes get it.
+- Move it with `lead-own --move` as soon as the holder's story merges, and tell the next lane.
+- Every other lane builds and gates its story meanwhile, keeping its one-line addition as it is. It reviews once it
+  holds the file, because review preparation refuses a change to a file the lane doesn't hold.
+- Assign the waiting lane its next story in the meantime, when that story doesn't touch the file.
+
 ## Why This Matters
+
+In a later delivery with four lanes, five stories from lanes that didn't hold the file each added one word to
+`CATALOGUE_MODULES` or one row to the journal tables. The file passed from lane to lane after each merge. Two finished
+stories waited hours, with every other gate green, for a single line each.
 
 A refused hand-off or a red registry test costs a lane a turn, and the lead another grant. With spans planned one line
 wide and the pinned tests granted up front, the lanes in that delivery would have needed none of the nine extra
@@ -67,6 +83,8 @@ the repository forbids.
   module.
 - `lead-assign` warns about files that often change with the story's files. Read its list before the lane starts, and
   grant from it.
+- Count the stories that add a test module or a journal field. When more than one lane does, give those registry files
+  to one lane in the plan, or sequence the stories so the moves are planned rather than discovered.
 
 ## Examples
 

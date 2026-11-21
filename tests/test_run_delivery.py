@@ -1497,7 +1497,8 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                       "tools/fake_check.py (no lane's), tools/fake_forge.py (no lane's)\n"
                       "  FX-2's files often change with docs/pair.md (no lane's; with src/one.txt in 4 of 5 changes), "
                       f"docs/guide.md {shared}, docs/z1.md {shared}, docs/z2.md {shared}\n"
-                      "Move each to lane-1's owns now, or plan the story on the lane that owns it.\n", out)
+                      "Grant a named file with lead-own, or plan the story on the lane that owns it; claim the "
+                      "co-changed files for lane-1 by assigning with --own-co-changed.\n", out)
         for quiet in ("docs/rare.md", "docs/log.md", "src/one-extra.txt", "docs/gone.md", "docs/x/a.md",
                       "yx/notes2.md", "tools/s10.py", "Makefile", "./tools", "tools/local-only.py"):
             self.assertNotIn(quiet, out)
@@ -6726,7 +6727,7 @@ DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candida
                  "host hooks", "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot scope", "tracker snapshot token",
                  "snapshots and publishers", "hosted delivery", "in-app adapters", "in-app adapter contract", "video evidence tools",
-                 "Node", "harness configuration", "knowledge library properties", "delivery file", "plan chapter", "added stories' reasons",
+                 "Node", "harness configuration", "knowledge library properties", "delivery file", "delivery record folder", "plan chapter", "added stories' reasons",
                  "plan sections", "story files", "story readiness", "story summaries", "context sections", "finish lines",
                  "configuration on the remote base", "pull requests marked ready", "delivery supervisor", "deliveries on this base", "merge slot",
                  "gates on the base"]

@@ -614,6 +614,18 @@ DIVERGENCES = (
         "run-delivery names the ids its reduce carries, so a lens never has to work them out from the entries.",
     ),
     (
+        'Result shape',
+        (),
+        (
+            (
+                'Its one permitted write, when its prompt asks for it, is its final JSON to `<result>` as its last '
+                'step, before it replies with the same JSON: an exception to the read-only rule and to touching no '
+                'checkout but its own.'
+            ),
+        ),
+        "run-delivery's lane waits on its lenses' result files in the foreground, so each lens writes its own.",
+    ),
+    (
         'Observation binding and selected output',
         (
             'Capture actual review, dissent, clarification and available partial-output bytes before cleanup.',
@@ -1050,10 +1062,12 @@ def _tool():
     return _TOOL
 
 
-def _render(brief_template: str, no_deferrals: bool = False, prior: list[dict] | None = None) -> list[str]:
+def _render(brief_template: str, no_deferrals: bool = False, prior: list[dict] | None = None,
+            results: bool = False) -> list[str]:
     """run-delivery's brief as run_delivery.py renders it from `brief_template`, for every round it writes: a story's
     assessment, verification and grace rounds, and a plan review's assessment and verification rounds. Only what a
-    delivery would read from its release, settings, review folder and git is stood in for."""
+    delivery would read from its release, settings, review folder and git is stood in for. Each result path is
+    `<result>`, or with `results`, the real one: in the story's review folder, or its `plan` folder for a plan."""
     tool = _tool()
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder)
@@ -1067,11 +1081,15 @@ def _render(brief_template: str, no_deferrals: bool = False, prior: list[dict] |
         release = {name: "<value>" for name in ("releaseId", "profile", "archiveSha256", "metadataSha256")}
         prior = prior or [{"binding": {"round": 1}, "state": "obtained", "result": {"outcome": "aligned"}}]
         story = ("EX-1", "lens.example", "<candidate>", "<tree>", "<merge base>", Path("<checkout>"))
+        stubs = {} if results else {"result_path": lambda folder, n, short: Path("<result>")}
         with mock.patch.multiple(tool, TOOL=root, cfg=lambda: config, release_tuple=lambda: release,
-                                 graph_digest=lambda: "<graph>", review_dir=lambda key, root=None: Path(folder),
+                                 graph_digest=lambda: "<graph>",
+                                 review_dir=lambda key, root=None: Path(folder),
                                  in_app_summary=lambda key: "<in-app evidence>",
                                  git=lambda *args, **kwargs: "tests/test_example.py",
-                                 plan_review_subject=lambda c: "EX-1.plan"):
+                                 plan_review_subject=lambda c: "EX-1.plan",
+                                 plan_review_dir=lambda c: Path(folder) / "plan" if results else Path(folder),
+                                 **stubs):
             key, lens, candidate, tree, merge_base, checkout = story
             return [
                 tool.brief(key, 1, lens, candidate, tree, merge_base, checkout, [], None),
@@ -1156,6 +1174,23 @@ class NoDeferralsBriefTests(unittest.TestCase):
             self.assertIn(NO_DEFERRALS_EVIDENCE, text)
         for text in [" ".join(text.split()) for text in _render(template)] + under[3:]:  # without it, or a plan review
             self.assertNotIn("nothing left unfixed", text)
+
+
+class PermittedWriteTests(unittest.TestCase):
+    """Each round brief names its own round's result path, in its review folder, as the lens's one permitted write."""
+
+    def test_story_and_plan_briefs_name_their_rounds_result_path(self) -> None:
+        renders = _render((ROOT / RUN_DELIVERY_BRIEF).read_text(encoding="utf-8"), results=True)
+        said = re.compile(r"Its one permitted write, when its prompt asks for it, is its final JSON to `(/[^`]+)` as its "
+                          r"last step")
+        for render, (folder, name) in zip(renders, (("", "result-r1-example.json"), ("", "result-r2-example.json"),
+                                                    ("", "result-r5-example.json"), ("plan", "result-r1-example.json"),
+                                                    ("plan", "result-r2-example.json"))):
+            with self.subTest(folder=folder, name=name):
+                path = Path(said.search(" ".join(render.split())).group(1))
+                self.assertEqual(path.name, name)
+                # The plan's store is its own `plan` folder; a story's result sits in the review folder itself.
+                self.assertEqual(path.parent.name == "plan", bool(folder), path)
 
 
 class CarriedFindingIdsTests(unittest.TestCase):
