@@ -63,7 +63,6 @@ refuses it, changing nothing. A give may name its lines by anchor and widen them
 `LANE[+before|+after]:around=TEXT[@KEY]` or `LANE[+before|+after]:anchor=TEXT..through=TEXT[@KEY]`. B defaults to the current base head. Only the claims the carve cuts or merges
 are anchored at B; the others keep their own base. It journals one `ownership.carved` with the claims
 removed and added. Revoke-then-grant still works.
-
 `lead-own --carry PATH --lane L [--story KEY]` carries each claim of that lane on the path, of that story when named,
 from its own base to the current base head, when every base hunk since lies wholly outside its lines: for a span a
 base edit shifted, or one an insertion at its edge left needing a regrant. A hunk that touches any of them refuses
