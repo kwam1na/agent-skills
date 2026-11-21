@@ -11,6 +11,7 @@ import datetime
 import errno
 import fcntl
 import html
+import io
 import importlib.util
 import json
 import os
@@ -38,6 +39,7 @@ from tests.test_run_delivery import (PATTERN, POSIX_ONLY, Fixture, add_story, co
                                      write_results)
 from tests.test_run_delivery import stop_and_reap  # a process the case started: stopped, then waited for
 from tests.test_run_delivery import kept_fixture, watch_case
+from tests.test_run_delivery import case_machine, machine, set_capacity  # the case's own machine ledger
 from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills" / "orchestrate-work" / "scripts"))
@@ -675,6 +677,40 @@ class MovedHeadTests(unittest.TestCase):
                                                   "base_broken: lint also fails on the base")))
 
 
+class FullHealthClaimWaitTests(unittest.TestCase):
+    """fullHealth's claim waits with no cap: with the clock advanced past an hour it is still waiting, gives nothing
+    up, and is admitted once the claim ahead of it is released."""
+
+    def test_the_claim_still_waits_past_an_hour_and_is_admitted_once_the_machine_frees(self) -> None:
+        tool = loaded_run_delivery(self, "run_delivery_for_full_health_claims")
+        directory = Path(tempfile.mkdtemp(prefix="full-health-claim-"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        set_capacity(directory, 1)
+        holder = machine.Ledger(directory).acquire("run", "holder", label="holder", slots=1)
+        self.addCleanup(holder.release)
+        clock = [1_000_000.0]
+        began = clock[0]
+
+        def sleep(seconds: float) -> None:
+            clock[0] += 60
+            if clock[0] - began > 3700:
+                holder.release()
+        ledger = machine.Ledger(directory, clock=lambda: clock[0], sleep=sleep)
+        recorded: dict = {}
+        with mock.patch.multiple(tool, machine_module=lambda: machine, machine_ledger=lambda: ledger,
+                                 machine_repository=lambda: None), \
+                contextlib.redirect_stdout(io.StringIO()) as said, mock.patch.object(ledger, "say"):
+            claim = tool.claim_full_health(types.SimpleNamespace(delivery="FX-1"), "a" * 40, recorded.update)
+        self.addCleanup(claim.release)
+        self.assertGreater(clock[0] - began, 3600)
+        self.assertEqual((claim.record["kind"], claim.record["state"], claim.record["admittedBy"]),
+                         ("fullHealth", "running", "capacity"))
+        self.assertEqual(recorded, {"claim": claim.id})
+        self.assertIn(f"fullHealth at aaaaaaaaaa waits for the machine (claim {claim.id})", said.getvalue())
+        events = [e["event"] for e in ledger.read_history()]
+        self.assertNotIn("gave-up", events)
+
+
 class FlakyFullHealthWordingTests(unittest.TestCase):
     """The guide's close-out and run-delivery's skill say what a flaky fullHealth is and what lead-resolve names."""
 
@@ -717,8 +753,10 @@ class LeadSuiteWordingTests(unittest.TestCase):
                        "`<delivery>.suite.jsonl`."):
             with self.subTest(phrase=phrase[:40]):
                 self.assertIn(phrase, step)
-        self.assertIn("| Lead | `lead-suite [--at COMMIT] [-- ARG...]` | Runs the binding's `fullHealth`",
-                      normal("skills/run-delivery/SKILL.md"))
+        skill = normal("skills/run-delivery/SKILL.md")
+        self.assertIn("| Lead | `lead-suite [--at COMMIT] [--now --why T] [-- ARG...]` | Claims machine slots (`suite` / "
+                      "`lead-suite`) before its checkout is made", skill)
+        self.assertIn("and holds the claim until its checkout is gone. Runs the binding's `fullHealth`", skill)
 
 
 class FinishMarkOrderTests(unittest.TestCase):
@@ -5949,6 +5987,44 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         self.assertEqual(len(self.results(fx)), 1)
         self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.verified"])
 
+    def test_a_run_waits_for_the_machine_in_its_own_process_and_is_still_the_one_run(self) -> None:
+        fx = self.merged_fixture()
+        ledger = case_machine(fx, 1)
+        holder = ledger.acquire("run", "holder", label="a lane's suite", slots=1, delivery="FX-9")
+        self.addCleanup(holder.release)
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        waiting = lambda: [c for c in ledger.reading()["waiting"] if c["kind"] == "fullHealth"]
+        wait_for(lambda: self.run_lock(fx).get("claim") and waiting(), "the run's claim to wait", 60)
+        run = self.run_lock(fx)
+        [claim] = waiting()
+        self.assertEqual((claim["id"], claim["subject"], claim["delivery"], claim["pid"]),
+                         (run["claim"], "fullHealth", "FX-1", run["pid"]))
+        # The supervisor started it with no cap on the wait.
+        started = sh("ps", "-o", "command=", "-p", str(run["pid"])).stdout
+        self.assertIn("full-health-run", started)
+        self.assertNotIn("--wait-seconds", started)
+        # A second start runs nothing, and the waiting run is the one each pass reports.
+        code, out = fx.flow("full-health-run", "--head", run["head"], "--record", self.identity(fx), cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("already runs", out)
+        wait_for(lambda: passes(fx) and passes(fx)[-1]["fullHealth"].endswith("(waiting for the machine)"),
+                 "a pass to report the waiting run", 30)
+        self.assertEqual(health_runs(fx), 0, "fullHealth ran while it waited")
+        self.assertEqual([c["kind"] for c in ledger.reading()["waiting"] + ledger.reading()["running"]].count(
+            "fullHealth"), 1)
+        holder.release()
+        wait_for(lambda: self.results(fx), "the run's result once admitted", 90)
+        self.assertEqual(health_runs(fx), 1)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.verified"])
+        wait_for(lambda: not self.run_lock(fx)["held"], "the run to let its lock go", 30)
+        self.assertEqual(ledger.reading()["running"] + ledger.reading()["waiting"], [])
+        admitted = [e for e in ledger.read_history() if e.get("kind") == "fullHealth"]
+        self.assertEqual([(e["event"], e["admittedBy"]) for e in admitted], [("admitted", "capacity")])
+        self.assertNotIn("gave-up", [e["event"] for e in ledger.read_history()])
+        [cost] = [e for e in ledger.costs()["entries"] if e["kind"] == "fullHealth"]
+        self.assertEqual([r["result"] for r in cost["passed"]], ["passed"])
+
     def identity(self, fx: Fixture) -> str:
         return record(fx)["journal"][0]["at"]
 
@@ -6549,6 +6625,7 @@ class LeadSuiteTests(unittest.TestCase):
 
     def test_a_run_at_a_commit_is_that_commit_s_whatever_the_lead_s_checkout_does_and_leaves_one_line_a_run(self) -> None:
         fx = self.fixture()
+        ledger = case_machine(fx, 4)
         m = fx.main
         at = self.remote_head(fx)
         (fx.tmp / "suite-mode").write_text("wait")
@@ -6586,8 +6663,26 @@ class LeadSuiteTests(unittest.TestCase):
         moved = declare(fx, "landed elsewhere\n", path="src/elsewhere.txt")
         self.assertNotIn(sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip(), (at, moved))
         (fx.tmp / "suite-mode").write_text("pass")
-        code, out = fx.flow("lead-suite", cwd=m, env={**fx.env, "FX_STUB_VERSION": ""})
+        # The machine full, the run steps off its wait with --now --why, which is recorded and journaled.
+        holder = ledger.acquire("run", "holder", label="holder", slots=4)
+        code, out = fx.flow("lead-suite", "--now", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("--now needs --why", out)
+        try:
+            code, out = fx.flow("lead-suite", "--now", "--why", "the lead's own call", cwd=m,
+                                env={**fx.env, "FX_STUB_VERSION": ""})
+        finally:
+            holder.release()
         self.assertEqual(code, 0, out)
+        claims = [(e["event"], e["kind"], e["subject"], e.get("admittedBy"), e.get("why")) for e in ledger.read_history()
+                  if e.get("subject") == "lead-suite"]
+        self.assertEqual(claims, [("admitted", "suite", "lead-suite", "capacity", None),
+                                  ("override", "suite", "lead-suite", "now", "the lead's own call")])
+        self.assertEqual(kinds(fx, "decision.recorded")[-1]["data"],
+                         {"text": f"ran lead-suite at {moved[:10]} at once, stepping off the machine's wait",
+                          "why": "the lead's own call"})
+        [cost] = [e for e in ledger.costs()["entries"] if (e["kind"], e["subject"]) == ("suite", "lead-suite")]
+        self.assertEqual([run["result"] for run in cost["passed"]], ["passed", "passed"])
         first, second = self.lines(fx)
         self.assertEqual(first, line)
         self.assertEqual(second["commit"], moved)
