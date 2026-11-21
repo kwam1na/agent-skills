@@ -284,8 +284,17 @@ class LaneChangesTests(unittest.TestCase):
         lines = list(SHARED_LINES)
         lines[held - 1:held - 1] = ["# at the edge\n"]
         d.push(checkout, {SHARED: "".join(lines)})
-        _, items = d.one_pass()
+        # No other lane claims the line above the span: the insertion at its edge is the span's.
+        changes, items = d.one_pass()
+        self.assertEqual(items, [])
+        self.assertEqual(changes["lanes"]["lane-1"]["files"][0]["holds"], "span")
+        # Another lane claims the line above it: the insertion is outside, as acceptance refuses it.
+        d.state["laneRegions"].append({"lane": "lane-2", "path": SHARED, "baseHead": d.base, "start": held - 4,
+                                       "end": held})
+        changes, items = d.one_pass()
         self.assertEqual(self.texts(items), [f"Lane 1 added 1 line before line {held} of `{SHARED}`, outside its span."])
+        self.assertEqual(changes["lanes"]["lane-1"]["files"][0]["holds"], "span")
+        d.state["laneRegions"].pop()
         # A mode change with a hunk outside the span beside it: the mode is what no span holds.
         git(checkout, "checkout", "-q", "origin/main", "--", SHARED)
         (checkout / SHARED).chmod(0o755)

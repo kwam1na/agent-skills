@@ -874,23 +874,47 @@ class CandidatePinningTests(MergeQueueTestCase):
 
 
 class RegionDiffTests(MergeQueueTestCase):
-    def test_insertions_at_edges_and_changes_spanning_claims_are_refused(self) -> None:
+    def test_an_insertion_at_an_edge_is_the_span_s_unless_another_lane_claims_the_far_side(self) -> None:
         adopter = self.adopter()
         path = "src/shared[1].txt"
         lines = [f"line {number}\n" for number in range(1, 13)]
         anchor = adopter.advance_base({path: "".join(lines)})
-        claims = [{"path": path, "baseHead": anchor, "start": 3, "end": 6},
-                  {"path": path, "baseHead": anchor, "start": 6, "end": 9}]
-        for name, changed in {
+        claims = [{"lane": "lane-1", "path": path, "baseHead": anchor, "start": 3, "end": 6},
+                  {"lane": "lane-1", "path": path, "baseHead": anchor, "start": 6, "end": 9}]
+        above = {"lane": "lane-2", "path": path, "baseHead": anchor, "start": 1, "end": 3}
+        below = {"lane": "lane-2", "path": path, "baseHead": anchor, "start": 9, "end": 13}
+        heads = {name: adopter.lane_commit(name, {path: "".join(changed)}) for name, changed in {
             "start": lines[:2] + ["inserted\n"] + lines[2:],
             "edge-between-claims": lines[:5] + ["inserted\n"] + lines[5:],
             "end": lines[:8] + ["inserted\n"] + lines[8:],
+            "last-line-replaced-with-more": lines[:7] + [lines[7], "more\n"] + lines[8:],
             "spanning": lines[:4] + ["replaced\n"] + lines[7:],
-        }.items():
-            with self.subTest(name=name):
-                head = adopter.lane_commit(name, {path: "".join(changed)})
-                with self.assertRaisesRegex(queue.region_ownership.RegionError, "outside a single owned span"):
-                    queue.region_ownership.check_change(adopter.lane, path, anchor, head, claims)
+        }.items()}
+        for name in ("start", "edge-between-claims", "end", "last-line-replaced-with-more"):
+            with self.subTest(allowed=name):
+                queue.region_ownership.check_change(adopter.lane, path, anchor, heads[name], claims)
+                queue.region_ownership.check_change(adopter.lane, path, anchor, heads[name], claims,
+                                                    others=[below] if name == "start" else [above])
+        for name, others, lane in (("start", [above], "lane-2"), ("end", [below], "lane-2"),
+                                   ("last-line-replaced-with-more", [below], "lane-2"), ("spanning", [], None)):
+            with self.subTest(refused=name):
+                with self.assertRaisesRegex(queue.region_ownership.RegionError, "outside a single owned span") as caught:
+                    queue.region_ownership.check_change(adopter.lane, path, anchor, heads[name], claims, others=others)
+                if lane:
+                    self.assertIn(f"next to {lane}'s claim", str(caught.exception))
+        # The queue's own check reads the other lanes' claims from the record, and judges alike.
+        state = {"laneRegions": [*claims, above, below]}
+        from types import SimpleNamespace
+        runner = SimpleNamespace(state=lambda: state)
+        item = {"lane": "lane-1"}
+        queue.Runner.check_regions(runner, item, adopter.lane, anchor, heads["edge-between-claims"])
+        for name in ("start", "end"):
+            with self.subTest(queue=name), self.assertRaises(queue.Stop) as caught:
+                queue.Runner.check_regions(runner, item, adopter.lane, anchor, heads[name])
+            self.assertEqual(caught.exception.reason, "unreviewed_change")
+            self.assertIn("next to lane-2's claim", caught.exception.detail)
+        state["laneRegions"] = claims
+        queue.Runner.check_regions(runner, item, adopter.lane, anchor, heads["start"])
 
     def test_base_edits_to_the_region_or_its_boundary_require_a_regrant(self) -> None:
         adopter = self.adopter()
