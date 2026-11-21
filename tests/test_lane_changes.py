@@ -292,6 +292,7 @@ class LaneChangesTests(unittest.TestCase):
         d.push(checkout, {SHARED: "".join(lines)})
         _, items = d.one_pass()
         self.assertEqual(self.texts(items), [f"Lane 1 added 1 line before line {held} of `{SHARED}`, outside its span."])
+        self.assertEqual(items[0]["fields"]["detail"], f"It added 1 line before line {held}, outside its span.")
         # A mode change with a hunk outside the span beside it: the mode is what no span holds.
         git(checkout, "checkout", "-q", "origin/main", "--", SHARED)
         (checkout / SHARED).chmod(0o755)
