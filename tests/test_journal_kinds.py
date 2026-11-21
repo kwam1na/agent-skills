@@ -79,7 +79,7 @@ TABLE = {
     "check.reused": ("S", "note", "check head from", "", "-"),
     "check.carried": ("S", "note", "checks ranAgain base commits", "", "-"),
     "candidate.merged": ("H", "landed", "head recovery? acceptanceSkipped?", "", "ticket: Merged"),
-    "candidate.stopped": ("H", "problem", "reason *detail* requeued? stage?", "opens-unless:requeued", "ticket: Stopped"),
+    "candidate.stopped": ("H", "problem", "reason *detail* requeued? stage? leftOnBranch?", "opens-unless:requeued", "ticket: Stopped"),
     "base.rerun.started": ("S", "note", "checks base", "cause", "-"),
     "base.rerun.finished": ("S", "note", "base seconds verdict results", "cause", "-"),
     "base.rerun.stopped": ("S", "problem", "base head seconds *why*", "cause", "-"),

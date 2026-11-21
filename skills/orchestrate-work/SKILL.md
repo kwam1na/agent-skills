@@ -306,7 +306,9 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
 
 - `sync <candidate>` merges the base into the reviewed head, runs the named
   lead inputs, the regenerators and the post-sync steps, proves the result
-  differs from the reviewed head only in declared paths, and pushes it.
+  differs from the reviewed head only in declared paths, and pushes it to
+  the queue's own ref, `refs/merge-queue/<candidate>`, leaving the lane's
+  branch where the lane pushed it.
 - `check <candidate>` runs the checks the repository's affected-checks
   provider selects, plus `alwaysRun`, plus `fallback` when impact is unknown,
   on a fresh checkout of the synced head. Each check's elapsed time shows
@@ -349,8 +351,10 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   `selection.refusalStops`, a provider that exits non-zero stops the candidate
   with `provider_refused` and runs no check, until the lead's selection is checked
   in its place.
-- `merge <candidate>` merges the checked head through the binding's `ready`
-  and `merge` commands and confirms the new base.
+- `merge <candidate>` moves the lane's branch to the checked head, under a
+  lease on the handed head, merges it through the binding's `ready` and
+  `merge` commands and confirms the new base. A refusal moves the branch back
+  to the handed head, and a merged candidate's queue ref is deleted.
 - `run <candidate>...` does sync, check and merge in order for each candidate,
   stopping at the first failure. When the base moves after a sync, `run`
   re-syncs and re-checks once; a second move stops with `base_moved`. A

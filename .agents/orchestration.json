@@ -1669,6 +1669,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_run_delivery_review_wait",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_review_wait.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_review_wait.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_run_delivery_supervisor",
         "argv": [
           ".venv/bin/python",
