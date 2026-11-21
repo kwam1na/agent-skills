@@ -49,7 +49,10 @@
         "head": "Getting started",
         "line": "Lane 1 picked up A and B.",
         "standing": []
-      }
+      },
+      "setbacks": [
+        "s1"
+      ]
     },
     {
       "id": "c2",
@@ -63,21 +66,14 @@
       "beats": [
         "b6"
       ],
-      "standing": [
-        "t1"
-      ],
+      "standing": [],
       "notLanded": [],
       "words": {
         "head": "A landed",
         "line": "29m after it was picked up.",
-        "standing": [
-          {
-            "thread": "t1",
-            "text": "A setback still stands: the main line broke.",
-            "until": null
-          }
-        ]
-      }
+        "standing": []
+      },
+      "setbacks": []
     },
     {
       "id": "c3",
@@ -91,21 +87,14 @@
       "beats": [
         "b7"
       ],
-      "standing": [
-        "t1"
-      ],
+      "standing": [],
       "notLanded": [],
       "words": {
         "head": "B landed",
         "line": "48m after it was picked up.",
-        "standing": [
-          {
-            "thread": "t1",
-            "text": "A setback still stands: the main line broke.",
-            "until": null
-          }
-        ]
-      }
+        "standing": []
+      },
+      "setbacks": []
     },
     {
       "id": "c4",
@@ -119,21 +108,14 @@
       "beats": [
         "b8"
       ],
-      "standing": [
-        "t1"
-      ],
+      "standing": [],
       "notLanded": [],
       "words": {
         "head": "Finishing",
         "line": "C is still to land.",
-        "standing": [
-          {
-            "thread": "t1",
-            "text": "A setback still stands: the main line broke.",
-            "until": null
-          }
-        ]
-      }
+        "standing": []
+      },
+      "setbacks": []
     }
   ],
   "beats": [
@@ -335,6 +317,7 @@
       "closedAt": null,
       "cost": null,
       "state": "open",
+      "endedBy": null,
       "entries": [
         4
       ],
@@ -349,6 +332,35 @@
       "words": {
         "head": "A setback: the main line broke",
         "line": "The full run failed at d7daad0: The full run failed on the main line. It still stands."
+      }
+    }
+  ],
+  "ledger": [
+    {
+      "id": "s1",
+      "subject": null,
+      "kind": "base.broken",
+      "reason": null,
+      "threads": [
+        "t1"
+      ],
+      "count": 1,
+      "firstOpenedAt": "2026-11-16T09:10:00Z",
+      "lastOpenedAt": "2026-11-16T09:10:00Z",
+      "state": "open",
+      "since": "2026-11-16T09:10:00Z",
+      "endedAt": null,
+      "endedBy": null,
+      "ending": null,
+      "cost": null,
+      "waitingOn": null,
+      "chapters": {
+        "opened": "c1",
+        "ended": null
+      },
+      "words": {
+        "head": "The main line broke.",
+        "line": "It still stands."
       }
     }
   ],

@@ -1,0 +1,683 @@
+{
+  "list": {
+    "spec": "run-inventory/1",
+    "labels": "self-attested; observability, not evidence; unbound to a record",
+    "runsDir": "/private/fixture/.git/managed-delivery/runs",
+    "current": null,
+    "runs": [
+      {
+        "runId": "run-0000000000000002",
+        "status": "incomplete",
+        "open": false,
+        "current": false,
+        "durationSeconds": 0,
+        "bytes": 2051
+      },
+      {
+        "runId": "run-0000000000000001",
+        "status": "incomplete",
+        "open": true,
+        "current": false,
+        "durationSeconds": 0,
+        "bytes": 981
+      }
+    ],
+    "total": {
+      "count": 2,
+      "bytes": 3032
+    },
+    "returned": 2,
+    "truncated": false
+  },
+  "runs": {
+    "run-0000000000000001": {
+      "view": {
+        "spec": "run-view/1",
+        "historical": false,
+        "asOf": "2026-11-20T09:00:00.873Z",
+        "authority": "Self-attested observations. Applicability unknown; no permission or candidate approval is granted.",
+        "sections": [
+          {
+            "id": "waiting",
+            "title": "Waiting and required action",
+            "empty": "No current waiting observation. Unreported waits remain unknown.",
+            "items": []
+          },
+          {
+            "id": "work",
+            "title": "Current work",
+            "empty": "No active work in the latest observations. Retained attempts appear in history.",
+            "items": [
+              {
+                "id": "stage-execute-1",
+                "label": "stage-execute",
+                "fields": [
+                  {
+                    "label": "Owner",
+                    "value": "claude-code"
+                  },
+                  {
+                    "label": "Phase",
+                    "value": "execute"
+                  },
+                  {
+                    "label": "State",
+                    "value": "running (reported)"
+                  },
+                  {
+                    "label": "Freshness",
+                    "value": "recent"
+                  },
+                  {
+                    "label": "Last observed",
+                    "value": "2026-11-20T09:00:00Z"
+                  },
+                  {
+                    "label": "Elapsed since start",
+                    "value": "0s"
+                  },
+                  {
+                    "label": "Next step",
+                    "value": "Unreported"
+                  },
+                  {
+                    "label": "Candidate",
+                    "value": "053fbcf66ede02d645f177faad1d70a9ce89bc8c"
+                  },
+                  {
+                    "label": "Lifecycle history",
+                    "value": "Incomplete"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "reviews",
+            "title": "Reviewer attempts and history",
+            "empty": "No reviewer attempt observations.",
+            "items": []
+          },
+          {
+            "id": "findings",
+            "title": "Current unresolved findings",
+            "empty": "Unknown — detailed finding observations were not recorded.",
+            "items": []
+          },
+          {
+            "id": "evidence",
+            "title": "Evidence and candidate",
+            "empty": "No evidence observations. Applicability unknown.",
+            "items": []
+          },
+          {
+            "id": "reports",
+            "title": "Retained reports",
+            "empty": "No report references recorded.",
+            "items": []
+          },
+          {
+            "id": "finish",
+            "title": "Declared finish line",
+            "empty": "Finish steps unreported; delivery completion unknown.",
+            "items": []
+          },
+          {
+            "id": "cost",
+            "title": "Reported cost",
+            "empty": "Cost unreported.",
+            "items": [
+              {
+                "id": "review-cost",
+                "label": "Review totals",
+                "fields": [
+                  {
+                    "label": "Coverage",
+                    "value": "unreported"
+                  },
+                  {
+                    "label": "Unreported round entries",
+                    "value": "0"
+                  },
+                  {
+                    "label": "Measurement",
+                    "value": "Unreported"
+                  }
+                ]
+              },
+              {
+                "id": "run-cost",
+                "label": "Run total",
+                "fields": [
+                  {
+                    "label": "Coverage",
+                    "value": "unreported"
+                  },
+                  {
+                    "label": "Measurement",
+                    "value": "unreported"
+                  },
+                  {
+                    "label": "Reported by",
+                    "value": "Unreported"
+                  },
+                  {
+                    "label": "Accounting",
+                    "value": "Run totals can include review and attempt costs. These totals are shown separately and are not added together."
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "activity-history",
+            "title": "Activity history",
+            "empty": "No completed, failed, interrupted or superseded activity observations.",
+            "items": []
+          },
+          {
+            "id": "finding-history",
+            "title": "Finding history",
+            "empty": "No detailed finding history.",
+            "items": []
+          }
+        ]
+      },
+      "show": {
+        "spec": "delivery-run-export/2",
+        "labels": "self-attested; observability, not evidence; unbound to a record",
+        "runId": "run-0000000000000001",
+        "events": [
+          {
+            "version": "run-event/2",
+            "eventId": "start",
+            "runId": "run-0000000000000001",
+            "seq": 1,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "run.started",
+            "actor": {
+              "role": "executor"
+            },
+            "attestation": "self",
+            "payload": {
+              "host": "claude-code",
+              "workflow": {
+                "releaseId": "linear-v0.0.0",
+                "profile": "linear"
+              }
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "execute-in",
+            "runId": "run-0000000000000001",
+            "seq": 2,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "activity.observed",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "stage-execute",
+              "attemptId": "stage-execute-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "phase": "execute",
+              "state": "running",
+              "owner": "claude-code"
+            }
+          }
+        ],
+        "summary": {
+          "ticket": "",
+          "open": true,
+          "startedAt": "2026-11-20T09:00:00Z",
+          "lastAt": "2026-11-20T09:00:00Z",
+          "durationSeconds": 0,
+          "phases": {
+            "implementationSeconds": 0,
+            "reviewSeconds": 0,
+            "tailSeconds": 0,
+            "rounds": 0,
+            "gate": {
+              "totalMs": 0,
+              "counted": 0,
+              "unreadable": 0,
+              "unseen": true
+            }
+          },
+          "roundsOpened": 0,
+          "roundsClosed": 0,
+          "findings": {
+            "P0": 0,
+            "P1": 0,
+            "P2": 0,
+            "P3": 0
+          }
+        },
+        "costs": {
+          "review": {
+            "coverage": "unreported",
+            "unreportedEntries": 0,
+            "totals": []
+          },
+          "run": {
+            "coverage": "unreported"
+          }
+        },
+        "readout": {
+          "status": "incomplete",
+          "present": [
+            "run.started"
+          ],
+          "missing": [
+            "ticket.read",
+            "posture.declared",
+            "lens.selected",
+            "review.round.opened",
+            "review.round.closed",
+            "command.completed:gate",
+            "command.completed:record",
+            "pr.opened",
+            "run.ended",
+            "gate.reported"
+          ],
+          "violations": []
+        },
+        "refusedAppends": [],
+        "progress": {
+          "asOf": "2026-11-20T09:00:00Z",
+          "activities": [
+            {
+              "activityId": "stage-execute",
+              "currentAttemptId": "stage-execute-1",
+              "attempts": [
+                {
+                  "activityId": "stage-execute",
+                  "attemptId": "stage-execute-1",
+                  "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+                  "state": "running",
+                  "owner": "claude-code",
+                  "phase": "execute",
+                  "firstObservedAt": "2026-11-20T09:00:00Z",
+                  "lastObservedAt": "2026-11-20T09:00:00Z",
+                  "lifecycleIncomplete": true,
+                  "superseded": false,
+                  "freshness": "recent",
+                  "waits": [],
+                  "startedAt": "2026-11-20T09:00:00Z"
+                }
+              ]
+            }
+          ],
+          "waits": [],
+          "findings": [],
+          "reports": [],
+          "artifacts": [],
+          "finishSteps": [],
+          "currentFindings": [],
+          "findingsCoverage": "unreported"
+        }
+      }
+    },
+    "run-0000000000000002": {
+      "view": {
+        "spec": "run-view/1",
+        "historical": false,
+        "asOf": "2026-11-20T09:00:01.052Z",
+        "authority": "Self-attested observations. Applicability unknown; no permission or candidate approval is granted.",
+        "sections": [
+          {
+            "id": "waiting",
+            "title": "Waiting and required action",
+            "empty": "No current waiting observation. Unreported waits remain unknown.",
+            "items": []
+          },
+          {
+            "id": "work",
+            "title": "Current work",
+            "empty": "No active work in the latest observations. Retained attempts appear in history.",
+            "items": []
+          },
+          {
+            "id": "reviews",
+            "title": "Reviewer attempts and history",
+            "empty": "No reviewer attempt observations.",
+            "items": []
+          },
+          {
+            "id": "findings",
+            "title": "Current unresolved findings",
+            "empty": "Unknown — detailed finding observations were not recorded.",
+            "items": []
+          },
+          {
+            "id": "evidence",
+            "title": "Evidence and candidate",
+            "empty": "No evidence observations. Applicability unknown.",
+            "items": []
+          },
+          {
+            "id": "reports",
+            "title": "Retained reports",
+            "empty": "No report references recorded.",
+            "items": []
+          },
+          {
+            "id": "finish",
+            "title": "Declared finish line",
+            "empty": "Finish steps unreported; delivery completion unknown.",
+            "items": []
+          },
+          {
+            "id": "cost",
+            "title": "Reported cost",
+            "empty": "Cost unreported.",
+            "items": [
+              {
+                "id": "review-cost",
+                "label": "Review totals",
+                "fields": [
+                  {
+                    "label": "Coverage",
+                    "value": "unreported"
+                  },
+                  {
+                    "label": "Unreported round entries",
+                    "value": "0"
+                  },
+                  {
+                    "label": "Measurement",
+                    "value": "Unreported"
+                  }
+                ]
+              },
+              {
+                "id": "run-cost",
+                "label": "Run total",
+                "fields": [
+                  {
+                    "label": "Coverage",
+                    "value": "unreported"
+                  },
+                  {
+                    "label": "Measurement",
+                    "value": "unreported"
+                  },
+                  {
+                    "label": "Reported by",
+                    "value": "claude-code"
+                  },
+                  {
+                    "label": "Accounting",
+                    "value": "Run totals can include review and attempt costs. These totals are shown separately and are not added together."
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "activity-history",
+            "title": "Activity history",
+            "empty": "No completed, failed, interrupted or superseded activity observations.",
+            "items": [
+              {
+                "id": "stage-execute-1",
+                "label": "stage-execute",
+                "fields": [
+                  {
+                    "label": "Attempt",
+                    "value": "stage-execute-1"
+                  },
+                  {
+                    "label": "Owner",
+                    "value": "claude-code"
+                  },
+                  {
+                    "label": "Phase",
+                    "value": "execute"
+                  },
+                  {
+                    "label": "State",
+                    "value": "interrupted (reported)"
+                  },
+                  {
+                    "label": "History",
+                    "value": "Latest observed attempt"
+                  },
+                  {
+                    "label": "Freshness",
+                    "value": "recent"
+                  },
+                  {
+                    "label": "Last observed",
+                    "value": "2026-11-20T09:00:00Z"
+                  },
+                  {
+                    "label": "Candidate",
+                    "value": "053fbcf66ede02d645f177faad1d70a9ce89bc8c"
+                  },
+                  {
+                    "label": "Lifecycle history",
+                    "value": "Incomplete"
+                  },
+                  {
+                    "label": "Cost",
+                    "value": "unreported"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "finding-history",
+            "title": "Finding history",
+            "empty": "No detailed finding history.",
+            "items": []
+          }
+        ]
+      },
+      "show": {
+        "spec": "delivery-run-export/2",
+        "labels": "self-attested; observability, not evidence; unbound to a record",
+        "runId": "run-0000000000000002",
+        "events": [
+          {
+            "version": "run-event/2",
+            "eventId": "start-again",
+            "runId": "run-0000000000000002",
+            "seq": 1,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "run.started",
+            "actor": {
+              "role": "executor"
+            },
+            "attestation": "self",
+            "payload": {
+              "host": "claude-code",
+              "workflow": {
+                "releaseId": "linear-v0.0.0",
+                "profile": "linear"
+              },
+              "displacedRunId": "run-0000000000000001"
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "execute-in-again",
+            "runId": "run-0000000000000002",
+            "seq": 2,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "activity.observed",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "stage-execute",
+              "attemptId": "stage-execute-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "phase": "execute",
+              "state": "running",
+              "owner": "claude-code",
+              "nextStep": "Implement the slice."
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "execute-stopped",
+            "runId": "run-0000000000000002",
+            "seq": 3,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "activity.observed",
+            "actor": {
+              "role": "executor"
+            },
+            "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+            "attestation": "self",
+            "payload": {
+              "activityId": "stage-execute",
+              "attemptId": "stage-execute-1",
+              "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+              "phase": "execute",
+              "state": "interrupted",
+              "owner": "claude-code"
+            }
+          },
+          {
+            "version": "run-event/2",
+            "eventId": "end",
+            "runId": "run-0000000000000002",
+            "seq": 4,
+            "at": "2026-11-20T09:00:00Z",
+            "repo": {
+              "commonDir": "/private/fixture/.git"
+            },
+            "kind": "run.ended",
+            "actor": {
+              "role": "executor"
+            },
+            "attestation": "self",
+            "payload": {
+              "result": "partial",
+              "cost": {
+                "coverage": "unreported",
+                "reportedBy": "claude-code"
+              }
+            }
+          }
+        ],
+        "summary": {
+          "ticket": "",
+          "open": false,
+          "startedAt": "2026-11-20T09:00:00Z",
+          "lastAt": "2026-11-20T09:00:00Z",
+          "durationSeconds": 0,
+          "phases": {
+            "implementationSeconds": 0,
+            "reviewSeconds": 0,
+            "tailSeconds": 0,
+            "rounds": 0,
+            "gate": {
+              "totalMs": 0,
+              "counted": 0,
+              "unreadable": 0,
+              "unseen": true
+            }
+          },
+          "roundsOpened": 0,
+          "roundsClosed": 0,
+          "findings": {
+            "P0": 0,
+            "P1": 0,
+            "P2": 0,
+            "P3": 0
+          },
+          "result": "partial"
+        },
+        "costs": {
+          "review": {
+            "coverage": "unreported",
+            "unreportedEntries": 0,
+            "totals": []
+          },
+          "run": {
+            "coverage": "unreported",
+            "reportedBy": "claude-code"
+          }
+        },
+        "readout": {
+          "status": "incomplete",
+          "present": [
+            "run.started",
+            "run.ended"
+          ],
+          "missing": [
+            "ticket.read",
+            "posture.declared",
+            "lens.selected",
+            "review.round.opened",
+            "review.round.closed",
+            "command.completed:gate",
+            "command.completed:record",
+            "pr.opened",
+            "gate.reported"
+          ],
+          "violations": []
+        },
+        "refusedAppends": [],
+        "progress": {
+          "asOf": "2026-11-20T09:00:00Z",
+          "activities": [
+            {
+              "activityId": "stage-execute",
+              "currentAttemptId": "stage-execute-1",
+              "attempts": [
+                {
+                  "activityId": "stage-execute",
+                  "attemptId": "stage-execute-1",
+                  "candidateTreeSha": "053fbcf66ede02d645f177faad1d70a9ce89bc8c",
+                  "state": "interrupted",
+                  "owner": "claude-code",
+                  "phase": "execute",
+                  "firstObservedAt": "2026-11-20T09:00:00Z",
+                  "lastObservedAt": "2026-11-20T09:00:00Z",
+                  "lifecycleIncomplete": true,
+                  "superseded": false,
+                  "freshness": "recent",
+                  "waits": [],
+                  "startedAt": "2026-11-20T09:00:00Z",
+                  "nextStep": "Implement the slice."
+                }
+              ]
+            }
+          ],
+          "waits": [],
+          "findings": [],
+          "reports": [],
+          "artifacts": [],
+          "finishSteps": [],
+          "currentFindings": [],
+          "findingsCoverage": "unreported"
+        }
+      }
+    }
+  }
+}

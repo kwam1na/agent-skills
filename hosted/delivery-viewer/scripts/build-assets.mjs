@@ -24,8 +24,8 @@ patch(
   'function hostedLine(node) { var hook = globalThis.deliveryHostedLine; if (typeof hook === "function") { try { hook(node); } catch (error) { /* the line stands as drawn */ } } return node; }\n  function runFor(doc, item) {',
 );
 patch(
-  "  function refreshRuns() {",
-  '  function refreshRuns() { if (globalThis.deliveryStateStore && typeof globalThis.deliveryStateStore.projection === "function") { return; }',
+  "  function refreshRuns(wait) {",
+  '  function refreshRuns(wait) { if (globalThis.deliveryStateStore && typeof globalThis.deliveryStateStore.projection === "function") { return; }',
 );
 patch(
   "  function servedLive() {",

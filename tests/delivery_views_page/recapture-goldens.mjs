@@ -26,7 +26,7 @@ for (const name of readdirSync(CORPUS).filter((entry) => existsSync(path.join(CO
     golden.folds[fold] = opened.app.querySelector(selector).textContent;
   }
   for (const subject of Object.keys(golden.details)) {
-    const stop = `.stop-btn[data-subject="${subject}"]`;
+    const stop = `:is(.stop-btn, .mg-tick)[data-subject="${subject}"]`;
     const [, shown] = await openPage(page, { now: golden.now, steps: [{ click: stop }] });
     const picks = shown.app.querySelectorAll("#detail .run-pick").length;
     const entry = { detail: shown.app.querySelector("#detail").textContent };

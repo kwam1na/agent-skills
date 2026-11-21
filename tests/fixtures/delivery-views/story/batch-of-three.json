@@ -51,7 +51,8 @@
         "head": "Getting started",
         "line": "Lane 1 picked up A, B, C and D.",
         "standing": []
-      }
+      },
+      "setbacks": []
     }
   ],
   "beats": [
@@ -221,6 +222,7 @@
     }
   ],
   "threads": [],
+  "ledger": [],
   "tones": [
     {
       "tone": "landed",

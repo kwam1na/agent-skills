@@ -161,15 +161,21 @@ test("a setback is one quiet sheet: why, what it held up, how it ended, and its 
   expect(open_.querySelector(".setback-cost b").textContent).toBe("Still standing");
 });
 
-test("a setback carried into a later chapter says it still stands there, and one that ended there says until when", async () => {
+test("a setback still standing is not carried into a later chapter, and one that ended there says until when", async () => {
   const [shown] = await open(storied("standing-break"));
   const carried = [...shown.app.querySelectorAll("#happened .chapter-standing")].map((line) => line.textContent);
-  expect(carried).toEqual(["A setback still stands: the main line broke.", "A setback still stands: the main line broke.",
-    "A setback still stands: the main line broke."]);
+  expect(carried).toEqual([]);
+  // With the story's ledger the setback is its row, and its chapter's line leads there; no chapter draws a standing line.
+  expect([...shown.app.querySelectorAll("#happened .ledger-row")].map((row) => row.getAttribute("data-row"))).toEqual(["s1"]);
+  expect([...shown.app.querySelectorAll('#happened [data-chapter="c1"] .chapter-setback a')].map((link) => link.getAttribute("href"))).toEqual(["#setback-s1"]);
   const document = storied("standing-break");
   const story = structuredClone(document.story);
   story.chapters[1].words.standing = [{ thread: "t1", text: "The main line broke", until: "2026-11-16T09:40:00Z" }];
   document.story = story;
+  const [withLedger] = await open(document);
+  expect(withLedger.app.querySelector("#happened .chapter-standing")).toBe(null);
+  // A story told before the ledger keeps the line it carried, saying until when.
+  delete story.ledger;
   const [ended] = await open(document);
   expect(ended.app.querySelector(`#happened [data-chapter="c2"] .chapter-standing`).textContent).toBe("The main line broke, until 9:40 am.");
 });

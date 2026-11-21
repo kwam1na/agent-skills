@@ -26,10 +26,12 @@ function noChange(subject, stage = "settled") {
 
 test("a story settled with no change reads closed, counts as landed at the close, and its card shows the evidence", async () => {
   const document = record({ queue: [item("A", "merged")], planned: [noChange("S")], journal: journal([...landed("A"), close]) });
-  const [shown, card] = await open(render(document), { steps: [{ click: '.stop-btn[data-subject="S"]' }] });
-  const stop = shown.app.querySelector('.stop-btn[data-subject="S"]');
-  expect(stop.className).not.toContain("unlanded");
-  expect(stop.getAttribute("aria-label")).toBe("Work S, Closed, no change needed");
+  const [shown, card] = await open(render(document), { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="S"]' }] });
+  // Landed, it folds out of its row and is its tick on the line, named in its stop's words.
+  expect(shown.app.querySelector('#line .stop-btn[data-subject="S"]')).toBeNull();
+  const tick = shown.app.querySelector('.mg-tick[data-subject="S"]');
+  expect(tick.getAttribute("data-state")).toBe("landed");
+  expect(tick.getAttribute("aria-label")).toBe("Work S, S, Closed, no change needed");
   expect(shown.app.querySelector("#now .now-count").textContent).not.toContain("1 of 2");
   expect(shown.app.querySelector("#left .say").textContent).toBe("2 of 2 pieces have landed.");
   expect(card.app.querySelector("#detail").textContent)
@@ -39,8 +41,8 @@ test("a story settled with no change reads closed, counts as landed at the close
 
 test("a no-change hand-off waiting for the lead reads as handed over, not in review, and holds the count open", async () => {
   const document = record({ queue: [item("A", "merged")], planned: [noChange("W", "review")], journal: journal(landed("A")) });
-  const [shown, card] = await open(render(document), { steps: [{ click: '.stop-btn[data-subject="W"]' }] });
-  const stop = shown.app.querySelector('.stop-btn[data-subject="W"]');
+  const [shown, card] = await open(render(document), { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="W"]' }] });
+  const stop = shown.app.querySelector(':is(.stop-btn, .mg-tick)[data-subject="W"]');
   expect(stop.getAttribute("aria-label")).toBe("Work W, Handed over with no change needed, waiting for the lead");
   expect(card.app.querySelector("#detail").textContent).toContain("Evidence, run at the main line's");
   expect(shown.app.querySelector("#left .left-number").firstChild.textContent).toBe("1");
@@ -68,19 +70,18 @@ test("the plan counts every proof of a unit settled with no change done, and say
 
 test("on an open delivery a settled story counts as landed everywhere the line map counts", async () => {
   const document = record({ queue: [item("A", "merged")], planned: [noChange("S")], journal: journal(landed("A")) });
-  const [shown, card] = await open(render(document), { steps: [{ click: '.stop-btn[data-subject="S"]' }] });
+  const [shown, card] = await open(render(document), { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="S"]' }] });
   expect(shown.app.querySelector("#now .now-count").textContent).toBe("Every piece has landed");
   expect(shown.app.querySelector("#left .left-number").firstChild.textContent).toBe("0");
   expect([...shown.app.querySelectorAll("#line .line .name")].map((name) => name.textContent)).toEqual(["Lane one2 of 2 landed"]);
   expect(shown.app.querySelector("svg[aria-label^='Every lane merges']").getAttribute("aria-label")).toContain("2 of 2 pieces landed");
   expect([...shown.app.querySelectorAll("#left .dots i")].map((dot) => dot.className)).toEqual(["", ""]);
-  // The rule between the merged stop and the settled one is drawn as both landed.
+  // The merged story and the settled one fold together, as both landed, and the rule is solid through.
   const segs = [...shown.app.querySelectorAll("#line .line .stops .seg")];
-  expect(segs.map((seg) => seg.querySelector(".stop-btn").getAttribute("data-subject"))).toEqual(["A", "S"]);
-  expect(segs[0].classList.contains("link-right")).toBe(true);
-  expect(segs[1].classList.contains("link-left")).toBe(true);
-  // Its stop is drawn landed, and its card dates it from the lead's acceptance, not the hand-off.
-  expect(shown.app.querySelector('.stop-btn[data-subject="S"]').className.trim()).toBe("stop-btn merged");
+  expect(segs.map((seg) => [seg.className, seg.textContent])).toEqual([["seg fold", "2 in"]]);
+  expect(shown.app.querySelector("#line .line .stops").style.getPropertyValue("--solid")).toBe("100%");
+  // Its tick is drawn landed, and its card dates it from the lead's acceptance, not the hand-off.
+  expect(shown.app.querySelector('.mg-tick[data-subject="S"]').getAttribute("data-state")).toBe("landed");
   expect(card.app.querySelector("#detail .d-stage-time").getAttribute("aria-label")).toContain("2026-10-30T11:00:00Z");
   expect(card.app.querySelector("#detail .d-stage-time").getAttribute("aria-label")).not.toContain("2026-10-30T10:00:00Z");
 });

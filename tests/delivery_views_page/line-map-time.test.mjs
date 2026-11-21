@@ -18,7 +18,7 @@ test("a page read just after local midnight says yesterday for the evening befor
   // 00:10 on Oct 22 in Los Angeles is 07:10 UTC; PAY-1 landed at 22:00 the evening before, local time.
   const now = "2026-10-22T07:10:00Z";
   const [, first, second] = await openPage(page, { now, steps: [
-    { click: '.stop-btn[data-subject="PAY-1"]' }, { click: '.stop-btn[data-subject="PAY-2"]' }] });
+    { click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-1"]' }, { click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-2"]' }] });
   expect(first.app.querySelector("#detail .d-meta").textContent).toContain("Landed yesterday at 10:00 pm");
   expect(second.app.querySelector("#detail .d-meta").textContent).toContain("Landed 15 minutes ago");
 });
@@ -93,7 +93,7 @@ test("recovered landings show source time, unknowns, and sit in the story at the
   ] };
   const page = pageWithRuns(document, {}, { config: { spec: "delivery-views-config/1", runs: REPLAYED_RUNS } });
   const [initial, earlier, unknown] = await openPage(page, { now: "2026-10-22T07:10:00Z", steps: [
-    { click: '.stop-btn[data-subject="PAY-1"]' }, { click: '.stop-btn[data-subject="PAY-3"]' }] });
+    { click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-1"]' }, { click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-3"]' }] });
   expect(initial.app.querySelector("#now .facts > .fact:nth-child(2)")?.textContent).toBe("Last landedLatest mergePAY-2 · 15 minutes ago");
   expect(earlier.app.querySelector("#detail .d-meta").textContent).toContain("Landed yesterday at 10:00 pm");
   expect(unknown.app.querySelector("#detail .d-meta").textContent).toContain("Landed · time unknown");

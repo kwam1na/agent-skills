@@ -54,7 +54,10 @@
         "head": "Getting started",
         "line": "Lane 1 picked up A.",
         "standing": []
-      }
+      },
+      "setbacks": [
+        "s1"
+      ]
     }
   ],
   "beats": [
@@ -302,6 +305,7 @@
       "closedAt": "2026-11-16T09:20:00Z",
       "cost": 720,
       "state": "closed",
+      "endedBy": "answer",
       "entries": [
         4,
         5,
@@ -323,6 +327,35 @@
       "words": {
         "head": "A setback: A was stopped",
         "line": "tests.test_one failed. Its checks failed. It ended when lane 1 handed off A."
+      }
+    }
+  ],
+  "ledger": [
+    {
+      "id": "s1",
+      "subject": "A",
+      "kind": "candidate.stopped",
+      "reason": "check_failed",
+      "threads": [
+        "t1"
+      ],
+      "count": 1,
+      "firstOpenedAt": "2026-11-16T09:08:00Z",
+      "lastOpenedAt": "2026-11-16T09:08:00Z",
+      "state": "closed",
+      "since": null,
+      "endedAt": "2026-11-16T09:20:00Z",
+      "endedBy": 7,
+      "ending": "answer",
+      "cost": 720,
+      "waitingOn": null,
+      "chapters": {
+        "opened": "c1",
+        "ended": "c1"
+      },
+      "words": {
+        "head": "A was stopped.",
+        "line": "It ended when lane 1 handed off A."
       }
     }
   ],

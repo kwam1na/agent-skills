@@ -78,7 +78,7 @@ test("c3: a row draws its stop and its blocker's as the line does, then its word
   const stops = [...blocked.querySelectorAll(".nr-stop")];
   // The story's stop takes its lane's colour and the line's own mark for its state; the blocker's takes its own lane's.
   expect(stops.map((stop) => stop.style.getPropertyValue("--c"))).toEqual(["var(--l2)", "var(--l1)"]);
-  const lineMark = (subject) => page.app.querySelector(`.stop-btn[data-subject="${subject}"]`).className.replace("stop-btn ", "");
+  const lineMark = (subject) => page.app.querySelector(`:is(.stop-btn, .mg-tick)[data-subject="${subject}"]`).className.replace("stop-btn ", "");
   expect(stops.map((stop) => stop.querySelector(".stop-btn").className)).toEqual([`stop-btn ${lineMark("APP-2")}`, `stop-btn ${lineMark("APP-1")}`]);
   expect(blocked.querySelector(".nr-hair")).not.toBeNull();
   expect(stops.map((stop) => stop.querySelector(".nr-key").textContent)).toEqual(["2", "1"]);

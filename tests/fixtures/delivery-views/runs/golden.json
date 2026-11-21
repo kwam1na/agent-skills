@@ -1,0 +1,508 @@
+{
+  "block": {
+    "runs": [
+      {
+        "runId": "run-open-execute-inside-plan-1",
+        "ticket": null,
+        "startedAt": "2026-11-20T08:00:00Z",
+        "lastAt": "2026-11-20T08:00:02Z",
+        "stages": [
+          "plan",
+          "execute",
+          "review"
+        ],
+        "currentStage": "execute",
+        "activity": {
+          "activityId": "execute-slice-2",
+          "phase": "execute",
+          "state": "running",
+          "nextStep": "Fix the round's finding.",
+          "at": "2026-11-20T08:00:02Z"
+        },
+        "waits": [
+          {
+            "waitId": "push-approval",
+            "waitingOn": "human",
+            "reason": "Pushing the branch needs the operator's grant.",
+            "nextAction": "Grant the push or keep the branch local.",
+            "owner": "operator",
+            "since": "2026-11-20T08:00:02Z",
+            "needsYou": true
+          }
+        ],
+        "needsYou": true,
+        "gates": [
+          {
+            "command": "scripts/validate-registry.py",
+            "outcome": "pass",
+            "durationMs": 3900
+          }
+        ],
+        "decisions": [],
+        "blockers": [],
+        "changeRequest": null,
+        "result": null,
+        "displaces": null,
+        "summary": {
+          "runId": "run-open-execute-inside-plan-1",
+          "ticket": null,
+          "open": true,
+          "status": "incomplete",
+          "startedAt": null,
+          "lastAt": "2026-11-20T08:00:02Z",
+          "durationSeconds": 2,
+          "rounds": 1,
+          "findings": null,
+          "roundDetail": [
+            {
+              "round": 1,
+              "at": null,
+              "outcome": null,
+              "findings": null,
+              "verdicts": {
+                "lens.outcome-correctness": "Unreported"
+              }
+            }
+          ],
+          "waits": [
+            {
+              "label": "Pushing the branch needs the operator's grant.",
+              "detail": "Human action required: Yes — human · Next action: Grant the push or keep the branch local. · Scope: This request only; it grants no authority. · Observed: 2026-11-20T08:00:02Z"
+            }
+          ],
+          "work": [
+            {
+              "label": "plan",
+              "detail": "State: running (reported) · Next step: Plan the change."
+            },
+            {
+              "label": "execute",
+              "detail": "State: running (reported) · Next step: Implement the first slice."
+            },
+            {
+              "label": "execute",
+              "detail": "State: running (reported) · Next step: Fix the round's finding."
+            }
+          ],
+          "activity": {
+            "label": "execute · running (reported)",
+            "at": "2026-11-20T08:00:02Z"
+          }
+        },
+        "open": true,
+        "status": "incomplete",
+        "current": true,
+        "durationSeconds": 2,
+        "displacedBy": null,
+        "section": "now",
+        "piece": null
+      },
+      {
+        "runId": "run-open-execute-entered-again-1",
+        "ticket": null,
+        "startedAt": "2026-11-20T07:00:00Z",
+        "lastAt": "2026-11-20T07:00:01Z",
+        "stages": [
+          "plan",
+          "execute",
+          "review"
+        ],
+        "currentStage": "execute",
+        "activity": {
+          "activityId": "stage-execute",
+          "phase": "execute",
+          "state": "running",
+          "nextStep": "Fix round 1's finding.",
+          "at": "2026-11-20T07:00:01Z"
+        },
+        "waits": [],
+        "needsYou": false,
+        "gates": [],
+        "decisions": [],
+        "blockers": [],
+        "changeRequest": null,
+        "result": null,
+        "displaces": null,
+        "summary": {
+          "runId": "run-open-execute-entered-again-1",
+          "ticket": null,
+          "open": true,
+          "status": "incomplete",
+          "startedAt": null,
+          "lastAt": "2026-11-20T07:00:01Z",
+          "durationSeconds": 1,
+          "rounds": null,
+          "findings": null,
+          "roundDetail": [],
+          "waits": [],
+          "work": [
+            {
+              "label": "execute",
+              "detail": "State: running (reported) · Next step: Fix round 1's finding."
+            }
+          ],
+          "activity": {
+            "label": "review · completed (reported)",
+            "at": "2026-11-20T07:00:01Z"
+          }
+        },
+        "open": true,
+        "status": "incomplete",
+        "current": true,
+        "durationSeconds": 1,
+        "displacedBy": null,
+        "section": "now",
+        "piece": null
+      },
+      {
+        "runId": "run-open-review-entered-again-1",
+        "ticket": null,
+        "startedAt": "2026-11-20T06:00:00Z",
+        "lastAt": "2026-11-20T06:00:01Z",
+        "stages": [
+          "plan",
+          "execute",
+          "review"
+        ],
+        "currentStage": "review",
+        "activity": {
+          "activityId": "stage-review",
+          "phase": "review",
+          "state": "running",
+          "nextStep": "Run round 2.",
+          "at": "2026-11-20T06:00:01Z"
+        },
+        "waits": [],
+        "needsYou": false,
+        "gates": [],
+        "decisions": [],
+        "blockers": [],
+        "changeRequest": null,
+        "result": null,
+        "displaces": null,
+        "summary": {
+          "runId": "run-open-review-entered-again-1",
+          "ticket": null,
+          "open": true,
+          "status": "incomplete",
+          "startedAt": null,
+          "lastAt": "2026-11-20T06:00:01Z",
+          "durationSeconds": 1,
+          "rounds": null,
+          "findings": null,
+          "roundDetail": [],
+          "waits": [],
+          "work": [
+            {
+              "label": "execute",
+              "detail": "State: running (reported) · Next step: Unreported"
+            },
+            {
+              "label": "review",
+              "detail": "State: running (reported) · Next step: Run round 2."
+            }
+          ],
+          "activity": {
+            "label": "execute · completed (reported)",
+            "at": "2026-11-20T06:00:01Z"
+          }
+        },
+        "open": true,
+        "status": "incomplete",
+        "current": true,
+        "durationSeconds": 1,
+        "displacedBy": null,
+        "section": "now",
+        "piece": null
+      },
+      {
+        "runId": "run-open-waiting-on-an-agent-1",
+        "ticket": null,
+        "startedAt": "2026-11-20T05:00:00Z",
+        "lastAt": "2026-11-20T05:00:00Z",
+        "stages": [
+          "diagnose"
+        ],
+        "currentStage": "diagnose",
+        "activity": {
+          "activityId": "stage-diagnose",
+          "phase": "diagnose",
+          "state": "running",
+          "nextStep": "Trace the failing assertion.",
+          "at": "2026-11-20T05:00:00Z"
+        },
+        "waits": [
+          {
+            "waitId": "reproduction",
+            "waitingOn": "agent",
+            "reason": "A subagent is reproducing the failure.",
+            "nextAction": "Compare its observation with the prediction.",
+            "owner": "claude-code",
+            "since": "2026-11-20T05:00:00Z",
+            "needsYou": false
+          }
+        ],
+        "needsYou": false,
+        "gates": [],
+        "decisions": [],
+        "blockers": [],
+        "changeRequest": null,
+        "result": null,
+        "displaces": null,
+        "summary": {
+          "runId": "run-open-waiting-on-an-agent-1",
+          "ticket": null,
+          "open": true,
+          "status": "incomplete",
+          "startedAt": null,
+          "lastAt": "2026-11-20T05:00:00Z",
+          "durationSeconds": 0,
+          "rounds": null,
+          "findings": null,
+          "roundDetail": [],
+          "waits": [
+            {
+              "label": "A subagent is reproducing the failure.",
+              "detail": "Human action required: No — agent · Next action: Compare its observation with the prediction. · Scope: This request only; it grants no authority. · Observed: 2026-11-20T05:00:00Z"
+            }
+          ],
+          "work": [
+            {
+              "label": "diagnose",
+              "detail": "State: running (reported) · Next step: Trace the failing assertion."
+            }
+          ],
+          "activity": {
+            "label": "diagnose · running (reported)",
+            "at": "2026-11-20T05:00:00Z"
+          }
+        },
+        "open": true,
+        "status": "incomplete",
+        "current": true,
+        "durationSeconds": 0,
+        "displacedBy": null,
+        "section": "now",
+        "piece": null
+      },
+      {
+        "runId": "run-ended-plan-then-execute-1",
+        "ticket": "V26-0001",
+        "startedAt": "2026-11-20T04:00:00Z",
+        "lastAt": "2026-11-20T04:00:01Z",
+        "stages": [
+          "plan",
+          "execute",
+          "review"
+        ],
+        "currentStage": null,
+        "activity": null,
+        "waits": [],
+        "needsYou": false,
+        "gates": [
+          {
+            "command": "scripts/validate-registry.py",
+            "outcome": "pass",
+            "durationMs": 4200
+          },
+          {
+            "command": "scripts/run-tests.py",
+            "outcome": "fail",
+            "durationMs": 615000
+          }
+        ],
+        "decisions": [
+          {
+            "fork": "the branch name",
+            "choice": "claude/V26-0001, the repository's convention",
+            "text": null,
+            "why": null
+          }
+        ],
+        "blockers": [
+          {
+            "code": "review.deferral-untracked",
+            "summary": "One deferral has no tracked follow-up."
+          }
+        ],
+        "changeRequest": "https://github.com/example/repository/pull/1",
+        "result": {
+          "result": "complete",
+          "unit": "subagent-tokens",
+          "total": 152352,
+          "coverage": "partial"
+        },
+        "displaces": null,
+        "summary": {
+          "runId": "run-ended-plan-then-execute-1",
+          "ticket": null,
+          "open": false,
+          "status": "incomplete",
+          "startedAt": null,
+          "lastAt": "2026-11-20T04:00:01Z",
+          "durationSeconds": 1,
+          "rounds": 1,
+          "findings": null,
+          "roundDetail": [
+            {
+              "round": 1,
+              "at": "2026-11-20T04:00:01Z",
+              "outcome": "approve",
+              "findings": {
+                "P0": 0,
+                "P1": 0,
+                "P2": 1,
+                "P3": 0
+              },
+              "verdicts": {
+                "lens.outcome-correctness": "Unreported"
+              }
+            }
+          ],
+          "waits": [],
+          "work": [],
+          "activity": {
+            "label": "review · completed (reported)",
+            "at": "2026-11-20T04:00:01Z"
+          }
+        },
+        "open": false,
+        "status": "incomplete",
+        "current": false,
+        "durationSeconds": 1,
+        "displacedBy": null,
+        "section": "ended",
+        "piece": null
+      },
+      {
+        "runId": "run-displaced-then-partial-1",
+        "ticket": null,
+        "startedAt": "2026-11-20T03:00:00Z",
+        "lastAt": "2026-11-20T03:00:00Z",
+        "stages": [
+          "execute"
+        ],
+        "currentStage": "execute",
+        "activity": {
+          "activityId": "stage-execute",
+          "phase": "execute",
+          "state": "running",
+          "nextStep": null,
+          "at": "2026-11-20T03:00:00Z"
+        },
+        "waits": [],
+        "needsYou": false,
+        "gates": [],
+        "decisions": [],
+        "blockers": [],
+        "changeRequest": null,
+        "result": null,
+        "displaces": null,
+        "summary": {
+          "runId": "run-displaced-then-partial-1",
+          "ticket": null,
+          "open": true,
+          "status": "incomplete",
+          "startedAt": null,
+          "lastAt": "2026-11-20T03:00:00Z",
+          "durationSeconds": 0,
+          "rounds": null,
+          "findings": null,
+          "roundDetail": [],
+          "waits": [],
+          "work": [
+            {
+              "label": "execute",
+              "detail": "State: running (reported) · Next step: Unreported"
+            }
+          ],
+          "activity": {
+            "label": "execute · running (reported)",
+            "at": "2026-11-20T03:00:00Z"
+          }
+        },
+        "open": true,
+        "status": "incomplete",
+        "current": false,
+        "durationSeconds": 0,
+        "displacedBy": "run-displaced-then-partial-2",
+        "section": "ended",
+        "piece": null
+      },
+      {
+        "runId": "run-displaced-then-partial-2",
+        "ticket": null,
+        "startedAt": "2026-11-20T03:00:00Z",
+        "lastAt": "2026-11-20T03:00:00Z",
+        "stages": [
+          "execute"
+        ],
+        "currentStage": null,
+        "activity": null,
+        "waits": [],
+        "needsYou": false,
+        "gates": [],
+        "decisions": [],
+        "blockers": [],
+        "changeRequest": null,
+        "result": {
+          "result": "partial",
+          "unit": null,
+          "total": null,
+          "coverage": "unreported"
+        },
+        "displaces": "run-displaced-then-partial-1",
+        "summary": {
+          "runId": "run-displaced-then-partial-2",
+          "ticket": null,
+          "open": false,
+          "status": "incomplete",
+          "startedAt": null,
+          "lastAt": "2026-11-20T03:00:00Z",
+          "durationSeconds": 0,
+          "rounds": null,
+          "findings": null,
+          "roundDetail": [],
+          "waits": [],
+          "work": [],
+          "activity": {
+            "label": "execute · interrupted (reported)",
+            "at": "2026-11-20T03:00:00Z"
+          }
+        },
+        "open": false,
+        "status": "incomplete",
+        "current": false,
+        "durationSeconds": 0,
+        "displacedBy": null,
+        "section": "ended",
+        "piece": null
+      }
+    ],
+    "notes": []
+  },
+  "view": {
+    "lineMap": "line-map.html",
+    "history": "delivery-history.html",
+    "own": "runs.html",
+    "runs": true,
+    "asOf": "2026-11-20T10:00:00Z",
+    "watched": null,
+    "lenses": {
+      "lens.outcome-correctness": {
+        "name": "Outcome correctness",
+        "icon": "bullseye"
+      },
+      "lens.adversarial-testing": {
+        "name": "Adversarial testing",
+        "icon": "spy"
+      }
+    },
+    "links": {
+      "issues": {},
+      "changes": {},
+      "commits": {}
+    }
+  },
+  "text": "RunsThe line mapThe delivery historyWhat every workflow is doing.Every run of every workflow in this repository, as of 2026-11-20 10:00 UTC.Nowrun-open-execute-inside-plan-1PlanExecuteReviewFix the round's finding.Started 2026-11-20 08:00Needs you Pushing the branch needs the operator's grant. Next: Grant the push or keep the branch local.Gatesscripts/validate-registry.py pass 4sDecisionsNo decision recorded.BlockersNo blocker recorded.Change requestNo change request opened.Review1 review round · findings not reported1Round 1Outcome not reportedOutcome correctnessFindings not reportedWaiting on Pushing the branch needs the operator's grant.Now: plan (+2 more)ResultStill running.run-open-execute-entered-again-1PlanExecuteReviewFix round 1's finding.Started 2026-11-20 07:00GatesNo gate reported.DecisionsNo decision recorded.BlockersNo blocker recorded.Change requestNo change request opened.ReviewNo review rounds yetNow: executeResultStill running.run-open-review-entered-again-1PlanExecuteReviewRun round 2.Started 2026-11-20 06:00GatesNo gate reported.DecisionsNo decision recorded.BlockersNo blocker recorded.Change requestNo change request opened.ReviewNo review rounds yetNow: execute (+1 more)ResultStill running.run-open-waiting-on-an-agent-1DiagnoseTrace the failing assertion.Started 2026-11-20 05:00Waiting on agent A subagent is reproducing the failure. Next: Compare its observation with the prediction.GatesNo gate reported.DecisionsNo decision recorded.BlockersNo blocker recorded.Change requestNo change request opened.ReviewNo review rounds yetWaiting on A subagent is reproducing the failure.Now: diagnoseResultStill running.EndedV26-0001run-ended-plan-then-execute-1PlanExecuteReviewEnded complete · 2026-11-20 04:00Gatesscripts/validate-registry.py pass 4sscripts/run-tests.py fail 10m 15sDecisionsthe branch name: claude/V26-0001, the repository's conventionBlockersOne deferral has no tracked follow-up. review.deferral-untrackedChange requesthttps://github.com/example/repository/pull/1ReviewApproved on the first round · 1 moderate note raised114:00 amRound 1ApprovedOutcome correctnessUnreported1 note1 moderateResultcomplete · 152352 subagent-tokens · coverage partialIn the delivery historyrun-displaced-then-partial-1ExecuteLeft open, replaced · 2026-11-20 03:00GatesNo gate reported.DecisionsNo decision recorded.BlockersNo blocker recorded.Change requestNo change request opened.ReviewNo review rounds yetNow: executeResultNo result recorded.In the delivery historyrun-displaced-then-partial-2ExecuteEnded partial · 2026-11-20 03:00GatesNo gate reported.DecisionsNo decision recorded.BlockersNo blocker recorded.Change requestNo change request opened.ReviewNo review rounds yetResultpartial · cost unreported · coverage unreportedIn the delivery history"
+}

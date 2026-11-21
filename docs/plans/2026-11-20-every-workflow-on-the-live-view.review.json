@@ -1,0 +1,131 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-20-every-workflow-on-the-live-view.md",
+  "planSha256": "7560ea45fa050e126b64f06416baf8f90ca153e16ac8b774de729ebbcbfda3de",
+  "planCommit": "b6e286cce4bdbce7339649bf03c2263412e5e90f",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "ffdff93647c3f9c457ae32cccdae6990af196f89",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-20T16:24:00.171715Z",
+      "finishedAt": "2026-11-20T16:28:45.708975Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "outcome-correctness-r1-5",
+        "outcome-correctness-r1-6",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "20c210a069d100c33b1ed8c6eac7270c3b5bf4a5",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-20T16:32:48.001688Z",
+      "finishedAt": "2026-11-20T16:35:08.220647Z",
+      "open": [
+        "outcome-correctness-r2-1",
+        "outcome-correctness-r2-2",
+        "adversarial-testing-r2-1",
+        "adversarial-testing-r2-2",
+        "adversarial-testing-r2-3"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "b121eb0d38a23330d34ed88a08414d1f6e0b1058",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-20T16:36:16.024252Z",
+      "finishedAt": "2026-11-20T16:37:23.527886Z",
+      "open": [
+        "adversarial-testing-r3-1"
+      ]
+    },
+    {
+      "round": 4,
+      "candidate": "b6e286cce4bdbce7339649bf03c2263412e5e90f",
+      "outcome": "aligned",
+      "startedAt": "2026-11-20T16:37:41.122044Z",
+      "finishedAt": "2026-11-20T16:38:22.013012Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "every-workflow-on-the-live-view.plan",
+        "candidateRef": "b6e286cce4bdbce7339649bf03c2263412e5e90f",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree SHA b6e11f089eee8b4b762570a6b5c4b71697904c43. The start check passed (`git rev-parse HEAD^{tree}` matched at HEAD b6e286cce4bdbce7339649bf03c2263412e5e90f, `git status --porcelain` empty), and so did the end check (same tree, porcelain empty).",
+          "Delta derived: `git diff b121eb0d38a23330d34ed88a08414d1f6e0b1058..b6e286cce4bdbce7339649bf03c2263412e5e90f`, which touches only docs/plans/2026-11-20-every-workflow-on-the-live-view.md. It makes two changes. Decision 9's per-PID entry now records whether the server has `liveRuns`. The KEY-2 two-server scenario now runs over different state directories and adds a `live --stop` check: it stops only its own state directory's server, leaves the other verified with its PID alive and its entry in place, and the test stops the second server by its recorded PID.",
+          "Carried findings re-checked: none are still open. outcome-correctness-r1-1 to r1-6 and r2-1 to r2-2 were closed in earlier rounds and are not re-listed. Round 3 was aligned with no findings.",
+          "Delta review: no P0 or P1. The new `liveRuns` field in each entry removes the round-3 P3: `--if-absent` can now prefer a server with `liveRuns` from recorded data. The added `--stop` scenario proves that stopping one server spares another, and it stops only processes it started, by recorded PID. Nothing load-bearing was weakened.",
+          "Model class: Claude Opus 5.5, run as a native subagent. The host exposes no progress or permission signals to the lens; that limitation is recorded here. No run ID, because the repository declares no run-event command.",
+          "Realization basis: host-convention.",
+          "No checks were run: a plan review has no scoped sensors or test files. No mutation or fault injection was done, and nothing was added or modified in the checkout.",
+          "P2 still noted, not filed: a request abandoned without an end, in a worktree where nothing starts again, stays under 'Now' with 'Needs you' indefinitely. That is the runtime's open state, and the plan correctly declines to synthesize an end.",
+          "Approval conditions: no findings raised in this round, so none apply."
+        ]
+      },
+      "resultSha256": "542b46a791b222b3fa179e0f532c77b66e77fe07aaa7399d6a26991fe2ac41fe"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "every-workflow-on-the-live-view.plan",
+        "candidateRef": "b6e286cce4bdbce7339649bf03c2263412e5e90f",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r3-1",
+            "state": "fixed",
+            "resolution": "The KEY-2 two-server row now uses different state directories and, with both servers up, runs `live --stop` for one server's state directory. It asserts that server stops and its entry goes, while the other still answers `/health` as this repository's live server, its PID alive and its entry in place, and the test then stops the second server by its recorded PID. A mutation that signals every verified entry now fails this row. Adopted as proposed."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA b6e11f089eee8b4b762570a6b5c4b71697904c43. Start identity check: `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty in the private checkout. End identity check: both matched again, the checkout clean. No probes or mutants were planted, so nothing needed reverting.",
+          "Delta derived with `git diff b121eb0d38a23330d34ed88a08414d1f6e0b1058..b6e286cce4bdbce7339649bf03c2263412e5e90f`: one file, docs/plans/2026-11-20-every-workflow-on-the-live-view.md. Decision 9's entry now records whether the server has `liveRuns`, and the KEY-2 two-server row is extended with a scoped `live --stop` case.",
+          "Carried findings re-checked: adversarial-testing-r3-1 is fixed, adopted as its approval condition proposed (see resolvedFindings).",
+          "Rest of the delta reviewed with no finding. The entry's new `liveRuns` member feeds `--if-absent`'s preference, which the two-server row already checks by asserting that `--if-absent` prints the `liveRuns` server's address over the record-only one.",
+          "Model class: Claude Opus-class model (claude-opus-5-5), run as a native subagent.",
+          "Realization basis: host-convention. Host limitation: a native subagent with no progress or permission signals; no run-event command declared, so no run ID.",
+          "Scope: plan review only. The brief names no sensor commands and no test files, so no tests were run and no mutation was executed. The mutation check is reasoned against the revised KEY-2 rows and Decision 9.",
+          "Approval conditions: no findings raised this round, so none apply."
+        ]
+      },
+      "resultSha256": "efa5ca8adc3984167fd19373c8e6846292a9f1081c97c813daf26b8214212860"
+    }
+  ],
+  "residualRisks": [
+    "4 review rounds; findings open after each round: 12, 5, 1, 0."
+  ]
+}

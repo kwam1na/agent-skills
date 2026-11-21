@@ -400,3 +400,28 @@ class HistoryCommandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoRecordHistoryTests(unittest.TestCase):
+    """The history while the live server has no record, and its link to the runs page."""
+
+    def history(self, document: object, renderers: list) -> str:
+        with tempfile.TemporaryDirectory() as folder:
+            repository = Repository(Path(folder), {"spec": views_common.CONFIG_SPEC}, renderers)
+            done = subprocess.run([sys.executable, "-B", str(RENDER), "history", "--config", ".agents/delivery-views.json",
+                                   "--binding", ".agents/orchestration.json", "--now", "2026-11-20T10:00:00Z"],
+                                  cwd=repository.root, input=json.dumps(document).encode("utf-8"), capture_output=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout.decode("utf-8")
+
+    def test_with_no_record_it_says_no_delivery_is_under_way_and_links_the_runs_page(self) -> None:
+        absent = {"spec": "delivery-state-absent/1"}
+        runs = {"id": "runs", "argv": ["python3", "-B", "render.py", "runs"], "output": "views/all runs.html"}
+        page = self.history(absent, [runs])
+        self.assertIn("No delivery is under way.", page)
+        self.assertIn('href="views/all%20runs.html" data-output="views/all runs.html"', page)
+        self.assertIsNone(block(page, "delivery-history"))
+        self.assertIn("No runs page is configured.", self.history(absent, []))
+        # With a record, the history links the runs page beside the line map.
+        self.assertEqual(block(self.history({"state": {}}, [runs]), "delivery-history-view")["runsPage"], "views/all runs.html")
+        self.assertNotIn("runsPage", block(self.history({"state": {}}, []), "delivery-history-view"))

@@ -46,13 +46,13 @@ function landed() {
 const ORDER = "Waits for APP-1 to land. It is in review, round 2.";
 const LANE = "Lane 1 is next on APP-2, which waits for APP-1 to land.";
 const HOLDING = "Waited on by APP-2.";
-const stop = (app, key) => app.querySelector(`.stop-btn[data-subject="${key}"]`);
+const stop = (app, key) => app.querySelector(`:is(.stop-btn, .mg-tick)[data-subject="${key}"]`);
 const leftRow = (app, key) => [...app.querySelectorAll(".left-groups li")].find((row) => row.querySelector(`[data-ticket="${key}"]`));
 const person = (app, id) => [...app.querySelectorAll(".person")].find((row) => row.querySelector("h3").textContent === (id === "lane-1" ? "Waits" : "Renderer"));
 
 test("a waiting stop says what it waits on, where it is shown, and the story it names is linked", async () => {
   const [, picked, holder] = await openPage(pageWithRuns(record(), {}, { config: CONFIG }), { now: NOW, steps: [
-    { click: '.stop-btn[data-subject="APP-2"]' }, { click: '.stop-btn[data-subject="APP-1"]' }] });
+    { click: ':is(.stop-btn, .mg-tick)[data-subject="APP-2"]' }, { click: ':is(.stop-btn, .mg-tick)[data-subject="APP-1"]' }] });
   expect(stop(picked.app, "APP-2").getAttribute("aria-label")).toBe(`Say what a story waits on, Not started. ${ORDER}`);
   const [wait] = picked.app.querySelectorAll("#detail .d-wait");
   expect(wait.textContent).toBe(ORDER);
@@ -68,7 +68,7 @@ test("a waiting stop says what it waits on, where it is shown, and the story it 
 
 test("once what frees it happens, every wait is gone with no reload", async () => {
   const snaps = await openPage(pageWithRuns(record(), {}, { config: CONFIG }), { now: NOW, steps: [
-    { click: '.stop-btn[data-subject="APP-2"]' }, { push: landed() }] });
+    { click: ':is(.stop-btn, .mg-tick)[data-subject="APP-2"]' }, { push: landed() }] });
   expect(snaps[1].text.includes(ORDER)).toBe(true);
   const after = snaps[2];
   for (const words of [ORDER, LANE, HOLDING]) { expect(after.text.includes(words)).toBe(false); }
@@ -84,7 +84,7 @@ test("the page prints the sentences it is given, each with its own marker, and w
       { subject: "lane-1", on: "APP-2", cause: "order", stage: "planned", frees: "landed", needsSomeone: false, words: "⟦lanes.order⟧ APP-2 next" },
     ],
     waitedOn: [{ subject: "APP-1", by: ["APP-2"], words: "⟦holding.story⟧ by APP-2" }] };
-  const [, picked] = await openPage(pageWithRuns(marked, {}, { config: CONFIG }), { now: NOW, steps: [{ click: '.stop-btn[data-subject="APP-2"]' }] });
+  const [, picked] = await openPage(pageWithRuns(marked, {}, { config: CONFIG }), { now: NOW, steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="APP-2"]' }] });
   const lines = [...picked.app.querySelectorAll(".d-wait, .left-wait, .wait")];
   expect(lines.length).toBe(4);
   for (const line of lines) { expect(/^⟦[a-z]+\.[a-z]+⟧ /i.test(line.textContent)).toBe(true); }

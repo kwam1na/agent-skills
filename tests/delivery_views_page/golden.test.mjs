@@ -35,7 +35,7 @@ for (const name of CASES) {
       assert.equal(opened.app.querySelector(fold).textContent, expected, name);
     }
     for (const [subject, expected] of Object.entries(golden.details)) {
-      const stop = `.stop-btn[data-subject="${subject}"]`;
+      const stop = `:is(.stop-btn, .mg-tick)[data-subject="${subject}"]`;
       const [, shown] = await openPage(page, { now: golden.now, steps: [{ click: stop }] });
       assert.equal(shown.app.querySelector("#detail").textContent, expected.detail, subject);
       const picks = shown.app.querySelectorAll("#detail .run-pick").length;

@@ -6,7 +6,7 @@ import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { CORPUS, RENDER, REPLAYED_RUNS, ROOT, block, embedded, expect, openPage, pageWithRuns, readJson, renderIn, repository, runSync, summarize, told } from "./support.mjs";
+import { CORPUS, RENDER, REPLAYED_RUNS, ROOT, block, embedded, expect, openPage, pageWithRuns, readJson, renderIn, repository, runSync, served, summarize, told } from "./support.mjs";
 import { FIX, readings, reportView } from "./round-reports.mjs";
 
 const SOURCE = path.join(CORPUS, "source");
@@ -118,10 +118,17 @@ test("draws the run as a line map, chapter by chapter", async () => {
   const line = chapter("line");
   expect([...line.querySelectorAll(".line .name b")].map((name) => name.textContent)).toEqual(
     ["Payments", "Storefront", "Backend", "Not yet assigned"]);
+  // An open piece keeps its stop; the landed one folds into its row's bar, and every piece is a tick on the main line.
   const stops = Object.fromEntries([...line.querySelectorAll(".stop-btn")].map((stop) => [stop.getAttribute("data-subject"), stop.className.replace("stop-btn ", "").trim()]));
   expect(stops).toEqual({
-    "PAY-2358": "merged", "PAY-2361": "now", "PAY-2360": "held", "PAY-2362": "now", "PAY-2364": "active",
+    "PAY-2361": "now", "PAY-2360": "held", "PAY-2362": "now", "PAY-2364": "active",
     "PAY-2363": "ready", "PAY-2365": "active", "PAY-2366": "later",
+  });
+  expect([...line.querySelectorAll(".seg.fold")].map((fold) => fold.textContent)).toEqual(["1 in"]);
+  const ticks = Object.fromEntries([...line.querySelectorAll(".mg-tick")].map((tick) => [tick.getAttribute("data-subject"), tick.getAttribute("data-state")]));
+  expect(ticks).toEqual({
+    "PAY-2358": "landed", "PAY-2361": "queued", "PAY-2360": "stopped", "PAY-2362": "queued", "PAY-2364": "review",
+    "PAY-2363": "queued", "PAY-2365": "building", "PAY-2366": "planned",
   });
   // The detail starts on what is being checked, in the tracker's own words.
   const detail = line.querySelector("#detail").textContent;
@@ -172,7 +179,8 @@ test("What's left lists eight pieces and counts the rest, and a row picks its pi
   for (const number of [2380, 2381, 2382]) {
     document.state.queue.push({ ...queued, subject: `PAY-${number}`, title: `Piece ${number}`, order: number, head: null, changeRequest: null });
   }
-  const pressed = (snapshot) => [...snapshot.app.querySelectorAll('.stop-btn[aria-pressed="true"]')].map((stop) => stop.getAttribute("data-subject"));
+  // A piece is chosen on its stop and its tick alike; landed, its tick is what is chosen and focused.
+  const pressed = (snapshot) => [...new Set([...snapshot.app.querySelectorAll('#line :is(.stop-btn, .mg-tick)[aria-pressed="true"]')].map((stop) => stop.getAttribute("data-subject")))];
   const [shown, picked] = await open(document, { steps: [{ click: "#left .left-groups li:nth-child(3) .left-title" }] });
   const rows = [...shown.app.querySelectorAll("#left .left-groups > li:not(.left-more)")];
   expect(rows).toHaveLength(8);
@@ -394,7 +402,7 @@ test("names each check by the title its provider gave, by its id where none was 
   const titles = { "webapp typecheck": "Webapp typecheck (tsc)", "storefront build": "Storefront build <img src=x onerror=alert(1)>", "checkout end-to-end": long };
   now.steps.forEach((step) => { if (titles[step.label]) { step.title = titles[step.label]; } });
   document.state.queue[1].checks[0].title = "Webapp e2e (Playwright)";
-  const [{ app }, stopped] = await open(document, { steps: [{ click: '.stop-btn[data-subject="PAY-2360"]' }] });
+  const [{ app }, stopped] = await open(document, { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-2360"]' }] });
   const checking = app.querySelector(".checking");
   // Titled checks show their title; the old ones beside them, with no title, keep their id.
   const shown = [...checking.querySelectorAll(".ck-step")].map((step) => step.textContent);
@@ -509,14 +517,14 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
     { at: "2026-10-22T05:07:00Z", id: 12, kind: "base.rerun.started", lane: "payments", subject: "PAY-2361", because: [11],
       data: { checks: ["storefront build"], base: { ref: "main", head: "a".repeat(40) } } },
   );
-  const steps = [{ click: '.stop-btn[data-subject="PAY-2361"]' }];
+  const steps = [{ click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-2361"]' }];
   const [first, shown] = await open(document, { steps });
   const checking = first.app.querySelector(".checking");
   expect(checking.querySelector(".ck-h-words")?.textContent).toBe("Failed, waiting on the main line's rerun · PAY-2361");
   expect(checking.querySelector(".ck-rerun")?.textContent)
     .toBe("Rerunning storefront build on the main line, to tell whether it fails there too · started 3 minutes ago");
   expect(checking.querySelector(".ck-verdict")?.textContent).toMatch(/^Won't merge from this run\./);
-  const stop = first.app.querySelector('.stop-btn[data-subject="PAY-2361"]');
+  const stop = first.app.querySelector(':is(.stop-btn, .mg-tick)[data-subject="PAY-2361"]');
   expect(stop.getAttribute("aria-label")).toBe("Retry card payments once on a dropped connection, Failed, waiting on the main line's rerun");
   const meta = shown.app.querySelector("#detail .d-meta");
   expect(meta.querySelector(".d-stage").textContent).toContain("Failed, waiting on the main line's rerun · Waiting on the rerun since 3 minutes ago");
@@ -542,7 +550,7 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   const settled = JSON.parse(JSON.stringify(document));
   settled.state.queue[2].stage = "checked";
   const [settledShown] = await open(settled);
-  expect(settledShown.app.querySelector('.stop-btn[data-subject="PAY-2361"]').getAttribute("aria-label"))
+  expect(settledShown.app.querySelector(':is(.stop-btn, .mg-tick)[data-subject="PAY-2361"]').getAttribute("aria-label"))
     .toBe("Retry card payments once on a dropped connection, Checked, about to merge");
   // A batch keeps its own header, and the rerun line still says the run is waiting on the main line.
   const batch = JSON.parse(JSON.stringify(document));
@@ -563,13 +571,13 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   const [before] = await open(document);
   expect(before.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Checking · PAY-2361");
   expect(before.app.querySelector(".checking .ck-rerun")).toBeNull();
-  expect(before.app.querySelector('.stop-btn[data-subject="PAY-2361"]').getAttribute("aria-label"))
+  expect(before.app.querySelector(':is(.stop-btn, .mg-tick)[data-subject="PAY-2361"]').getAttribute("aria-label"))
     .toBe("Retry card payments once on a dropped connection, Being checked before merge");
   // A rerun the panel names for another piece says nothing about this one.
   document.state.meta.checking.now.baseRerun = { startedAt: "2026-10-22T05:07:00Z", checks: ["storefront build"] };
   document.state.meta.checking.now.subject = "PAY-2362";
   const [other] = await open(document);
-  expect(other.app.querySelector('.stop-btn[data-subject="PAY-2361"]').getAttribute("aria-label"))
+  expect(other.app.querySelector(':is(.stop-btn, .mg-tick)[data-subject="PAY-2361"]').getAttribute("aria-label"))
     .toBe("Retry card payments once on a dropped connection, Being checked before merge");
 });
 
@@ -664,7 +672,7 @@ test("shows a stop's run in its detail: rounds, verdicts, findings, waits and ti
   // The timing bar below says how long it took in all, so the run block does not repeat it.
   expect(text).not.toContain("In all");
   // A stop with no run shows the state alone, as before.
-  const [, merged] = await open(fixtureDocument(), { steps: [{ click: '.stop-btn[data-subject="PAY-2358"]' }] }, render(fixtureDocument(), { "run-7": summary }));
+  const [, merged] = await open(fixtureDocument(), { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-2358"]' }] }, render(fixtureDocument(), { "run-7": summary }));
   expect(merged.app.querySelector("#detail .d1")?.textContent).toBe("Hold the cart through a payment redirect");
   expect(merged.app.querySelector("#detail .d-run")).toBeNull();
   expect(merged.text).not.toContain("Run unavailable");
@@ -885,7 +893,7 @@ test("tells each round's time from the round before it, and colours each badge b
   const landedCard = async (runs) => {
     const landed = fixtureDocument();
     landed.state.queue.find((entry) => entry.subject === "PAY-2361").stage = "merged";
-    const [, shown] = await open(landed, { steps: [{ click: '.stop-btn[data-subject="PAY-2361"]' }] }, render(landed, { "run-7": runs }));
+    const [, shown] = await open(landed, { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-2361"]' }] }, render(landed, { "run-7": runs }));
     expect(shown.app.querySelector("#detail .d-state")).toBeNull();
     return shown.app.querySelector("#detail .d-run .run-story")?.textContent;
   };
@@ -965,9 +973,10 @@ test("marks what changed since the last update, as the earlier map did", async (
   // Pushed as the live server sends a record: with the story the narrator tells of it.
   const [, pushed] = await open(fixtureDocument(), { store: { read: "pending" }, steps: [{ push: told(later) }] });
   const app = pushed.app;
-  // The stop that just landed lands, and the line between it and the one before draws itself in.
-  expect(app.querySelector('.stop-btn[data-subject="PAY-2361"]')?.className).toContain("landing");
-  expect(app.querySelector('.stop-btn[data-subject="PAY-2361"]')?.parentElement?.className).toContain("drawing");
+  // The story that just landed lands as its tick on the line, and its row's folded bar grows to take it in.
+  expect(app.querySelector('#line .stop-btn[data-subject="PAY-2361"]')).toBeNull();
+  expect(app.querySelector('.mg-tick[data-subject="PAY-2361"]')?.getAttribute("class")).toBe("mg-tick landed landing");
+  expect([...app.querySelectorAll("#line .seg.fold")].map((fold) => [fold.className, fold.textContent])).toEqual([["seg fold grew", "2 in"]]);
   expect(app.querySelector(".journey .mark")?.className).toContain("moved");
   expect(app.querySelector(".left-number")?.textContent).toBe("6pieces to go");
   expect(app.querySelectorAll(".dots i.closing")).toHaveLength(1);
@@ -1050,11 +1059,11 @@ test("keeps a hand-over the lead has not accepted apart from the work ready to c
   document.state.queue[4].pending = true;
   document.state.meta.checking = { now: null, next: [] };
   const [{ app }] = await open(document);
-  expect(app.querySelector('.stop-btn[data-subject="PAY-2363"]')?.className).toBe("stop-btn ready pending");
+  expect(app.querySelector(':is(.stop-btn, .mg-tick)[data-subject="PAY-2363"]')?.className).toBe("stop-btn ready pending");
   const checking = app.querySelector(".checking").textContent;
   expect(checking).not.toContain("ready to be checked");
   expect(checking).toContain("1 more is waiting for the lead to accept the hand-over.");
-  expect(app.querySelector('.stop-btn[data-subject="PAY-2363"]')?.getAttribute("aria-label")).toContain("Handed over, waiting for the lead to accept");
+  expect(app.querySelector(':is(.stop-btn, .mg-tick)[data-subject="PAY-2363"]')?.getAttribute("aria-label")).toContain("Handed over, waiting for the lead to accept");
 });
 
 test("shows a lead's status whole, and a broken main line as needing attention", async () => {
@@ -1088,10 +1097,11 @@ test("keeps the chosen stop, the open history, every open fold and keyboard focu
   // Opening the history by its summary moves focus there; focus goes back to the stop before the update.
   const [, chosen, opened, , pushed] = await open(fixtureDocument(), {
     store: { read: "pending" },
-    steps: [{ click: '.stop-btn[data-subject="PAY-2358"]' }, { click: "#detail details.mh summary" },
-      { click: '.stop-btn[data-subject="PAY-2358"]' }, { push: later }],
+    steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-2358"]' }, { click: "#detail details.mh summary" },
+      { click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-2358"]' }, { push: later }],
   }, page);
-  const pressed = (snapshot) => [...snapshot.app.querySelectorAll('.stop-btn[aria-pressed="true"]')].map((stop) => stop.getAttribute("data-subject"));
+  // A piece is chosen on its stop and its tick alike; landed, its tick is what is chosen and focused.
+  const pressed = (snapshot) => [...new Set([...snapshot.app.querySelectorAll('#line :is(.stop-btn, .mg-tick)[aria-pressed="true"]')].map((stop) => stop.getAttribute("data-subject")))];
   expect(pressed(chosen)).toEqual(["PAY-2358"]);
   expect(chosen.app.querySelector("#detail .d1")?.textContent).toBe("Hold the cart through a payment redirect");
   expect(opened.app.querySelector("#detail details.mh")?.hasAttribute("open")).toBe(true);
@@ -1122,7 +1132,7 @@ test("draws again on a status only when the connection changes, so an open card 
 test("keeps a stop chosen by pointing at it through an update", async () => {
   const later = fixtureDocument();
   later.state.meta.headline = "Later";
-  const [, pointed, pushed] = await open(fixtureDocument(), { store: { read: "pending" }, steps: [{ hover: '.stop-btn[data-subject="PAY-2358"]' }, { push: later }] });
+  const [, pointed, pushed] = await open(fixtureDocument(), { store: { read: "pending" }, steps: [{ hover: ':is(.stop-btn, .mg-tick)[data-subject="PAY-2358"]' }, { push: later }] });
   expect(pointed.focused).toBeNull();
   expect(pushed.app.querySelector("#detail .d1")?.textContent).toBe("Hold the cart through a payment redirect");
 });
@@ -1133,14 +1143,16 @@ test("links only the configured tracker's ids and the first forge's change reque
   document.state.queue[0].changeRequest = "evil#1";
   document.state.queue[1].changeRequest = "shop #2";
   document.state.queue[3].changeRequest = "shop#1/../x";
-  const [{ app }] = await open(document);
+  const subjects = ["PAY-2358", "PAY-2360", "PAY-2362"];
+  const [{ app }, ...panels] = await open(document, { steps: subjects.map((subject) => ({ click: `#line :is(.stop-btn, .mg-tick)[data-subject="${subject}"]` })) });
   for (const reference of ["PAY-1x", " PAY-2370"]) {
     const node = [...app.querySelectorAll("#parked [data-ticket]")].find((id) => id.getAttribute("data-ticket") === reference);
     expect(node.tagName).toBe("SPAN");
     expect(node.getAttribute("tabindex")).toBe("0");
   }
-  const number = (subject) => app.querySelector(`.stop-btn[data-subject="${subject}"]`).parentElement.querySelector(".pr-num");
-  expect([number("PAY-2358"), number("PAY-2360"), number("PAY-2362")].map((node) => [node.tagName, node.textContent])).toEqual(
+  // Each piece's change request, as its panel names it, opened from its stop or, once landed, its tick.
+  const numbers = panels.map((panel) => panel.app.querySelector("#detail .d-meta .pr-num"));
+  expect(numbers.map((node) => [node.tagName, node.textContent])).toEqual(
     [["SPAN", "evil#1"], ["SPAN", "shop #2"], ["SPAN", "shop#1/../x"]]);
   const outside = [...app.querySelectorAll("a[href^='https://']")];
   expect(outside.length).toBeGreaterThan(10);
@@ -1158,9 +1170,12 @@ test("labels same-forge pull request URLs by number with repository-aware access
   document.state.queue[2].changeRequest = "https://bitbucket.org/acme/web/pull-requests/42";
   document.state.queue[3].changeRequest = "https://github.com.evil.example/acme/shop/pull/9";
   document.state.queue[4].changeRequest = "https://github.com/acme/elsewhere/pull/7";
-  const [{ app }] = await open(document, {}, render(document, {}, { config }));
   const subjects = document.state.queue.slice(0, 5).map((element) => element.subject);
-  const number = (subject) => app.querySelector(`.stop-btn[data-subject="${subject}"]`).parentElement.querySelector(".pr-num");
+  const [, ...panels] = await open(document, { steps: subjects.map((subject) => ({ click: `#line :is(.stop-btn, .mg-tick)[data-subject="${subject}"]` })) },
+    render(document, {}, { config }));
+  // Each piece's change request, as its panel names it.
+  const byPanel = Object.fromEntries(subjects.map((subject, i) => [subject, panels[i].app.querySelector("#detail .d-meta .pr-num")]));
+  const number = (subject) => byPanel[subject];
   expect(subjects.map(number).map((node) => [node.tagName, node.textContent, node.getAttribute("href")])).toEqual([
     ["A", "#1147", "https://github.com/acme/shop/pull/1147"],
     ["A", "#122", "https://github.com/acme/tools/pull/122"],
@@ -1179,9 +1194,8 @@ test("leaves a pull request URL with a trailing slash, and a URL off the forge's
   const document = fixtureDocument();
   document.state.queue[0].changeRequest = "https://github.com/acme/shop/pull/1147/";
   document.state.queue[1].changeRequest = "https://github.com/acme/shop/pull-requests/5";
-  const [{ app }] = await open(document);
-  const number = (subject) => app.querySelector(`.stop-btn[data-subject="${subject}"]`).parentElement.querySelector(".pr-num");
-  expect(["PAY-2358", "PAY-2360"].map(number).map((node) => [node.tagName, node.textContent, node.getAttribute("href")])).toEqual([
+  const [, ...panels] = await open(document, { steps: ["PAY-2358", "PAY-2360"].map((subject) => ({ click: `#line :is(.stop-btn, .mg-tick)[data-subject="${subject}"]` })) });
+  expect(panels.map((panel) => panel.app.querySelector("#detail .d-meta .pr-num")).map((node) => [node.tagName, node.textContent, node.getAttribute("href")])).toEqual([
     // The configured pull path has no trailing slash, so the URL is not one it matches.
     ["SPAN", "https://github.com/acme/shop/pull/1147/", null],
     ["SPAN", "https://github.com/acme/shop/pull-requests/5", null],
@@ -1233,10 +1247,10 @@ test("finds nothing for record values that name built-in properties, and keeps t
   expect([...app.querySelectorAll(".chip")].map((chip) => chip.className)).toEqual(["chip handed", "chip", "chip", "chip idle"]);
   expect(new Set([...app.querySelectorAll(".ck-step")].map((step) => step.className))).toEqual(new Set(["ck-step pending"]));
   // An unknown stage is neither ready nor being checked.
-  expect(app.querySelector('.stop-btn[data-subject="PAY-2360"]')?.className.trim()).toBe("stop-btn unknown");
+  expect(app.querySelector(':is(.stop-btn, .mg-tick)[data-subject="PAY-2360"]')?.className.trim()).toBe("stop-btn unknown");
   // A number for a subject still names its stop and is still the one being checked.
-  expect(app.querySelector('.stop-btn[data-subject="2361"]')?.className.trim()).toBe("stop-btn now");
-  expect(app.querySelector('.stop-btn[data-subject="2361"]')?.getAttribute("aria-pressed")).toBe("true");
+  expect(app.querySelector(':is(.stop-btn, .mg-tick)[data-subject="2361"]')?.className.trim()).toBe("stop-btn now");
+  expect(app.querySelector(':is(.stop-btn, .mg-tick)[data-subject="2361"]')?.getAttribute("aria-pressed")).toBe("true");
 });
 
 test("reads unreadable times as unknown, never as the start of time", async () => {
@@ -1389,4 +1403,13 @@ test("shows a planned story's bound run's rounds before its hand-off", async () 
   expect(unbound.app.querySelector("#detail .run-card")).toBeNull();
   expect(unbound.app.querySelector("#detail .d-run-none")?.textContent)
     .toBe("No review rounds yet. Each round shows here as soon as the lane reduces it, before the hand-off.");
+});
+
+test("a runs event re-fetches the line map's runs at once, without the three seconds a push waits", async () => {
+  const page = render(fixtureDocument());
+  const live = served(page);
+  // Quickened: the three-second wait is held and never runs, so only a re-read that waits for nothing is seen.
+  const result = await open(fixtureDocument(), { store: undefined, server: { document: fixtureDocument() }, rendered: live, quicker: 1,
+    steps: [{ wait: 20 }, { runs: '{"generation": 1}' }, { asked: 1 }] }, live);
+  expect(result.fetched.length >= 1).toBe(true);
 });

@@ -41,9 +41,13 @@ const count = (app) => app.querySelector("#now .now-count").textContent;
 const drift = (app) => app.querySelector("#now .say-drift")?.textContent ?? null;
 const steps = (app) => [...app.querySelectorAll("#line .mg-step")].map((stop) => [stop.getAttribute("data-step"), stop.getAttribute("data-state")]);
 const states = (app) => steps(app).map(([, state]) => state);
-const row = (app, name) => app.querySelector(`#line .rj-row[data-row="${name}"]`);
-const said = (app, name) => row(app, name).querySelector(".rj-said").textContent;
-const struck = (app, name) => [...row(app, name).querySelectorAll(".rj-head")].map((head) => [head.textContent, head.tagName === "S"]);
+// Each step of the rejoin bar names itself, "<step>: <what its latest fact shows>", as the "Before it rejoins" rows did.
+const STEP_OF = { caught: "merged", suite: "suite", review: "round", rejoin: "requested" };
+const segment = (app, name) => app.querySelector(`#line .mg-step[data-step="${STEP_OF[name]}"]`);
+const said = (app, name) => { const label = segment(app, name).getAttribute("aria-label"); return label.slice(label.indexOf(": ") + 2); };
+// The heads a step's words name, each with whether a later fact moved the integration on from it.
+const struck = (app, name) => [...said(app, name).matchAll(/\b([0-9a-f]{7})(, since moved on)?/g)].map((found) => [found[1], Boolean(found[2])]);
+const under = (app) => [...app.querySelectorAll("#line .mg-step-said")].map((line) => line.textContent).join(" ");
 const share = (app) => parseFloat(app.querySelector("#now .journey .done").style.width);
 const short = (head) => head.slice(0, 7);
 const near = (actual, expected) => expect(Math.round(actual * 1000)).toBe(Math.round(expected * 1000));
@@ -58,6 +62,8 @@ test("the count says the two beats once every piece has landed, today's count wh
   const done = await shown(delivery([merged(30, M), suite(31, M), round(32, M), requested(33, M), rejoined(34)]));
   expect(count(done)).toBe("Every piece landed");
   expect(done.querySelector("#line .rejoin")).toBe(null);
+  // Rejoined, nothing waits on a change request any more: none is offered under the bar.
+  expect(done.querySelector("#line .mg-change-label")).toBe(null);
   expect(drift(done)).toBe(null);
 });
 
@@ -79,18 +85,26 @@ test("a page that polls takes in the renderer's new drift counts, with no reload
   expect(drift(snapshots[2].app)).toBe("main moved 9 commits while this worked. The lead has caught up 1 time, and the gap is 6.");
 });
 
-test("the line draws four stops past the join, labelled by the base, and the target beneath to the finish post", async () => {
+test("the line draws one bar of four steps past the ticks, labelled by the step it is on, and bends into the target at the finish post", async () => {
   const app = await shown(delivery([]));
   expect(steps(app)).toEqual([["merged", "next"], ["suite", "hollow"], ["round", "hollow"], ["requested", "hollow"]]);
-  expect([...app.querySelectorAll("#line .mg-step-label")].map((label) => label.textContent)).toEqual(["main in", "suite", "review", "change request"]);
-  expect(app.querySelector("#line .mg-base").textContent).toBe("integrate/app");
-  expect(app.querySelector("#line .mg-target-label").textContent).toBe("main");
+  expect([...app.querySelectorAll("#line .mg-step-label")].map((label) => label.textContent)).toEqual(["Rejoin main · main in"]);
+  expect([...app.querySelectorAll("#line .mg-step")].map((step) => step.getAttribute("aria-label").split(":")[0]))
+    .toEqual(["Main in", "Suite", "Review", "Change request"]);
+  // The target is drawn once, from the post, so its name is not repeated and the base's name is not drawn.
+  expect([...app.querySelectorAll("#line .mg-target-label")].map((label) => label.textContent)).toEqual(["main"]);
+  expect(app.querySelector("#line .mg-base")).toBe(null);
   const target = app.querySelector("#line .mg-target").getAttribute("d");
   const post = app.querySelector("#line .mg-post").getAttribute("d");
-  // The post stands across the target's end, beneath the main line.
-  const [, targetY, endX] = /^M(\d+(?:\.\d+)?) (\d+(?:\.\d+)?)H(\d+(?:\.\d+)?)$/.exec(target).slice(1).map(Number);
+  const trunk = app.querySelector("#line .mg-trunk").getAttribute("d");
+  // The post stands across the target's start, beneath the main line, where the main line bends into it.
+  const [startX, targetY] = /^M(\d+(?:\.\d+)?) (\d+(?:\.\d+)?)H/.exec(target).slice(1).map(Number);
   const [postX, postTop, postBottom] = /^M(\d+(?:\.\d+)?) (\d+(?:\.\d+)?)V(\d+(?:\.\d+)?)$/.exec(post).slice(1).map(Number);
-  expect([postX, (postTop + postBottom) / 2]).toEqual([endX, targetY]);
+  expect([postX, (postTop + postBottom) / 2]).toEqual([startX, targetY]);
+  expect(trunk.endsWith(` ${postX} ${targetY}`)).toBe(true);
+  // The bar starts past the last tick.
+  const lastTick = Math.max(...[...app.querySelectorAll("#line .mg-tick-mark")].map((mark) => Number(mark.getAttribute("x"))));
+  expect(Number(app.querySelector("#line .mg-step").getAttribute("x"))).toBeGreaterThan(lastTick);
   expect(app.querySelector("#line .lines-track").classList.contains("rejoining")).toBe(true);
 });
 
@@ -126,6 +140,8 @@ test("a catch-up after a fix strikes the suite, the round and the earlier merge"
 test("a request superseded by a later suite is struck and its stop hollow", async () => {
   const app = await shown(delivery([merged(30, M), requested(31, H1), suite(32, H2)]));
   expect(states(app)).toEqual(["filled", "filled", "next", "hollow"]);
+  // A request that no longer stands at the current head is not offered as the open one.
+  expect(app.querySelector("#line .mg-change-label")).toBe(null);
   expect(said(app, "rejoin")).toBe("Needs an approving round at the current head.");
 });
 
@@ -138,7 +154,6 @@ test("what stands at the current head rings its stop and says what the rejoin st
   const changes = await shown(delivery([merged(30, M), suite(31, M), round(32, M, { [LENSES[0]]: "approve", [LENSES[1]]: "changes" })]));
   expect(states(changes)).toEqual(["filled", "filled", "warning", "next"]);
   expect(said(changes, "review")).toBe(`round 1 ${LENSES[1]} asks for changes, at ${short(M)}`);
-  expect([...row(changes, "review").querySelectorAll(".rj-dot")].map((dot) => dot.className)).toEqual(["rj-dot approve", "rj-dot changes"]);
   expect(said(changes, "rejoin")).toBe("Needs an approving round at the current head.");
 
   const over = await shown(delivery([merged(30, M), suite(31, M, "over-budget", { budgetSeconds: 1000 }), round(32, M)]));
@@ -154,6 +169,24 @@ test("what stands at the current head rings its stop and says what the rejoin st
   const ready = await shown(delivery([merged(30, M), suite(31, H1), round(32, H1), requested(33, H1)]));
   expect(states(ready)).toEqual(["filled", "filled", "filled", "filled"]);
   expect(said(ready, "rejoin")).toBe(`Ready. The change request https://github.com/acme/app/pull/7 is open at ${short(H1)}. The merge is the operator's.`);
+  // Every step is in but it hasn't rejoined: the bar is on its change request, says what it waits on, and links it.
+  expect(ready.querySelector("#line .mg-bar-label").textContent).toBe("Rejoin main · change request");
+  expect(under(ready)).toBe(`Change request. Ready. The change request https://github.com/acme/app/pull/7 is open at ${short(H1)}. The merge is the operator's.`
+    .split(" ").reduce((lines, word) => { const last = lines[lines.length - 1]; if (last && (last + " " + word).length > 34) lines.push(word); else lines[lines.length - 1] = last ? last + " " + word : word; return lines; }, [""])
+    .slice(0, 3).join(" "));
+  // With no forge configured it is named as text, as every change request on the page is; with one, it is linked.
+  expect([ready.querySelector("#line a.mg-change"), ready.querySelector("#line .mg-change-label").textContent])
+    .toEqual([null, "Change request https://github.com/acme/app/pull/7"]);
+  const forge = { name: "GitHub", repository: "acme/app", pullUrl: "https://github.com/{repository}/pull/{number}",
+    commitUrl: "https://github.com/{repository}/commit/{sha}" };
+  const readyDoc = delivery([merged(30, M), suite(31, H1), round(32, H1), requested(33, H1)]);
+  const [{ app: linked }] = await openPage(pageWithRuns(readyDoc, {}, { config: { ...CONFIG, forges: [forge] } }), { now: NOW, store: false });
+  const link = linked.querySelector("#line a.mg-change");
+  expect([link.getAttribute("href"), link.getAttribute("target"), link.getAttribute("rel"), link.textContent])
+    .toEqual(["https://github.com/acme/app/pull/7", "_blank", "noopener noreferrer", "Change request #7"]);
+  expect(link.getAttribute("aria-label")).toBe("Open the change request into main #7");
+  // Only the step the bar is on reads now: a failed suite is "now", the review after it "later".
+  expect([...failed.querySelectorAll("#line .mg-step")].map((step) => step.getAttribute("data-state"))).toEqual(["filled", "danger", "next", "hollow"]);
 
   const apart = await shown(delivery([merged(30, M), suite(31, H1), round(32, H2)]));
   expect(said(apart, "rejoin")).toBe("Needs a passing suite and an approving round at one head.");
@@ -162,13 +195,18 @@ test("what stands at the current head rings its stop and says what the rejoin st
   expect(said(moved, "rejoin")).toBe("Needs a passing suite at the current head and an approving round at it.");
 });
 
-test("a row with no fact yet says what will make it", async () => {
+test("a step with no fact yet says what will make it, and the bar's own status is the current step's", async () => {
   const app = await shown(delivery([]));
   expect(["caught", "suite", "review", "rejoin"].map((name) => said(app, name))).toEqual([
     "Not yet: the lead merges main in and records it.", "Not yet: the lead runs the full suite at the integration's head.",
     "Not yet: the integration review records its first round.",
     "Needs a passing suite at the current head and an approving round at it."]);
-  expect(app.querySelector("#line .rejoin-title").textContent).toBe("Before it rejoins");
+  expect(under(app)).toBe("Main in. Not yet: the lead merges main in and records it.");
+  const suiteNext = await shown(delivery([merged(30, M)]));
+  expect(under(suiteNext)).toBe("Suite. Not yet: the lead runs the full suite at the integration's head.");
+  // The "Before it rejoins" table is gone: the bar holds what it said.
+  expect(app.querySelector("#line .rejoin, #line .rejoin-title, #line .rj-row")).toBe(null);
+  expect(app.textContent).not.toContain("Before it rejoins");
 });
 
 test("the journey's share counts the filled stops, gives back a superseded one, and is full after the landing", async () => {
@@ -206,7 +244,7 @@ test("a delivery with a same-epic sibling draws the rejoin while it rejoins, and
     const app = await shown(withSibling(facts));
     expect(app.querySelector("#line .lines-track").classList.contains("rejoining")).toBe(true);
     expect(steps(app).length).toBe(4);
-    expect(width(app)).toBe("478px");
+    expect(width(app)).toBe(app.querySelector("#line .line-merge").getAttribute("width") + "px");
     expect([app.querySelector("#line .mg-epic"), app.querySelector("#line .mg-epic-post"), app.querySelector("#line .line.sibling")])
       .toEqual([null, null, null]);
     expect(app.querySelector("#line .line-merge").getAttribute("aria-label")).not.toContain("the epic");
@@ -214,7 +252,7 @@ test("a delivery with a same-epic sibling draws the rejoin while it rejoins, and
   const closed = await shown(withSibling([merged(30, M), suite(31, M), round(32, M, approved), requested(33, M), rejoined(34), [40, "delivery.closed", null]]));
   expect(closed.querySelector("#line .lines-track").classList.contains("rejoining")).toBe(false);
   expect(closed.querySelector("#line .mg-step")).toBe(null);
-  expect(width(closed)).toBe("304px");
+  expect(width(closed)).toBe(closed.querySelector("#line .line-merge").getAttribute("width") + "px");
   expect(closed.querySelector("#line .mg-epic-post") !== null).toBe(true);
   expect(closed.querySelectorAll("#line .line.sibling").length).toBe(1);
 });
