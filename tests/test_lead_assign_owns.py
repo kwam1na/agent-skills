@@ -83,9 +83,11 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
                                   "listings": [{"path": "gen/shared9.json", "argv": ["true"]}]}
         binding_path.write_text(json.dumps(binding, indent=2))
         commit(m, "FX-1: a shared output")
-        self.push_base({"lib/pin1.txt": ["one\n"], "lib/pin2.txt": ["two\n"], "lib/held9.txt": ["held\n"],
-                        "lib/untouched9.txt": ["untouched\n"], "gen/shared9.json": ["{}\n"]})
+        base = self.push_base({"lib/pin1.txt": ["one\n"], "lib/pin2.txt": ["two\n"], "lib/held9.txt": ["held\n"],
+                               "lib/untouched9.txt": ["untouched\n"], "gen/shared9.json": ["{}\n"],
+                               "lib/span9.txt": numbered(6, "s")})
         self.flow("lead-own", "--grant", "lib/held9.txt", "--lane", "lane-1")
+        self.grant("lib/span9.txt", "lane-1", base, 1, 3)
         # The lane held both pins when it handed off; the lead narrowed its claims since.
         for path in ("lib/pin1.txt", "lib/pin2.txt"):
             self.flow("lead-own", "--grant", path, "--lane", "lane-2")
@@ -98,6 +100,8 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
         for argv, said in ((("--take", "lib/held9.txt", "--why", "a pin"), "lib/held9.txt is lane-1's"),
                            (("--take", "gen/shared9.json", "--why", "a pin"), "gen/shared9.json is a declared shared output"),
                            (("--take", "lib/untouched9.txt", "--why", "a pin"), "FX-9 doesn't change lib/untouched9.txt"),
+                           (("--take", "src/two.txt", "--why", "a pin"), "lane-2 holds src/two.txt already"),
+                           (("--take", "lib/span9.txt", "--why", "a pin"), "lanes share lib/span9.txt by lines"),
                            (("--take", "lib/pin1.txt"), "--take needs --why")):
             with self.subTest(argv=argv):
                 self.assertIn(said, self.flow("lead-accept", "FX-9", *argv, ok=False))
