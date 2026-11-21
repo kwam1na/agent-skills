@@ -9346,10 +9346,11 @@ def plan_with_lane(text: str, lane: str, grants: list[str]) -> str:
     header = [cell.strip() for cell in lines[first].strip().strip("|").split("|")]
     values = {"Tier": str(max((tier for tier, _, _ in rows), default=1)), "Lane": lane[len("lane-"):],
               "Owns": ", ".join(f"`{pattern}`" for pattern in grants)}
-    added = "| " + " | ".join(values.get(name, "") for name in header) + " |\n"
-    ending = "" if lines[last].endswith("\n") else "\n"
+    added = "| " + " | ".join(values.get(name, "") for name in header) + " |"
+    # After the table's last row, keeping whatever follows it as it was: a last row the section ends on has no newline.
+    added = added + "\n" if lines[last].endswith("\n") else "\n" + added
     start = text.index(body)
-    return text[:start] + "".join(lines[:last + 1]) + ending + added + "".join(lines[last + 1:]) + text[start + len(body):]
+    return text[:start] + "".join(lines[:last + 1]) + added + "".join(lines[last + 1:]) + text[start + len(body):]
 
 
 def lead_assign(args) -> None:

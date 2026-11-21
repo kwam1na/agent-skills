@@ -8,14 +8,17 @@ the plan chapter on and a Units table in its plan.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import sys
 import unittest
 from pathlib import Path
 
 from tests.test_run_delivery import POSIX_ONLY, Fixture, commit, installed_release, plan_delivery, sh
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "skills/run-delivery/scripts/run_delivery.py"
 
 UNITS = """
 ## Units and order
@@ -35,15 +38,16 @@ class LeadAddLaneTests(unittest.TestCase):
         for name, value in vars(installed_release()).items():
             setattr(cls, name, value)
 
-    def lead(self, tiers: int = 1) -> Fixture:
+    def lead(self, tiers: int = 1, units: bool = True) -> Fixture:
         """The fixture delivery with a Units table in its plan, lane-2's row at tier `tiers`, started."""
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
         plan_delivery(fx)
-        plan = fx.main / "docs/plan.md"
-        plan.write_text(plan.read_text() + UNITS.format(tier=tiers))
-        commit(fx.main, "FX-1: the plan's units")
-        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        if units:
+            plan = fx.main / "docs/plan.md"
+            plan.write_text(plan.read_text() + UNITS.format(tier=tiers))
+            commit(fx.main, "FX-1: the plan's units")
+            sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
         code, out = fx.flow("lead-init", cwd=fx.main)
         self.assertEqual(code, 0, out)
         return fx
@@ -130,7 +134,9 @@ class LeadAddLaneTests(unittest.TestCase):
         fx = self.lead()
         cases = [(["--lane", "lane-2"], "lane-2 is already a lane of FX-1"),
                  (["--lane", "extra"], "name the lane lane-N"),
-                 (["--lane", "lane-03"], "name the lane lane-N")]
+                 (["--lane", "lane-03"], "name the lane lane-N"),
+                 (["--lane", "lane-3x"], "name the lane lane-N"),
+                 (["--lane", "lane-3", "--grant", "../outside"], "name a repository-relative file or pattern")]
         for argv, said in cases:
             with self.subTest(argv=argv):
                 before = self.held(fx)
@@ -158,6 +164,33 @@ class LeadAddLaneTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("lane-4 is already a lane of FX-1", out)
         self.assertEqual(self.held(fx), before)
+        # A lanes[] row alone holds its lane too: the patch's own read refuses it.
+        state = self.state(fx)
+        row = {"id": "lane-6", "title": "lane-6", "focus": "", "state": "idle", "waitingOn": None,
+               "since": "2026-11-21T00:00:00Z"}
+        sh("python3", "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py", "--dir", self.record(fx),
+           "patch", "--writer", "lead", "--version", str(state["version"]), "--set",
+           json.dumps({"/lanes": [*state["lanes"], row]}), env=fx.env)
+        before = self.held(fx)
+        code, out = self.add(fx, "--lane", "lane-6")
+        self.assertEqual(code, 2, out)
+        self.assertIn("lane-6 is already a lane of FX-1", out)
+        self.assertEqual(self.held(fx), before)
+        # A checkout with uncommitted work is refused, as lead-plan refuses it.
+        (fx.main / "src/scratch.txt").write_text("scratch\n")
+        before = self.held(fx)
+        code, out = self.add(fx, "--lane", "lane-7")
+        self.assertEqual(code, 2, out)
+        self.assertIn("has uncommitted changes", out)
+        self.assertEqual(self.held(fx), before)
+
+    def test_a_plan_with_no_units_table_is_refused_and_nothing_is_written(self) -> None:
+        fx = self.lead(units=False)
+        before = self.held(fx)
+        code, out = self.add(fx, "--lane", "lane-3", "--grant", "src/three*")
+        self.assertEqual(code, 2, out)
+        self.assertIn("so there is no row to add the lane to", out)
+        self.assertEqual(self.held(fx), before)
 
     def test_in_a_plan_with_two_tiers_the_row_goes_at_tier_two(self) -> None:
         fx = self.lead(tiers=2)
@@ -175,6 +208,16 @@ class LeadAddLaneTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("--lane lane-3 isn't a lane of FX-1", out)
         self.assertIn("lead-add-lane --lane lane-3", out)
+        # lead-own and lead-assign refuse the new lane too, naming the command, and write nothing.
+        for argv, said in ((["lead-own", "--lane", "lane-3", "--grant", "src/nine*"], "lead-add-lane --lane L"),
+                           (["lead-assign", "FX-3", "--lane", "lane-3", "--title", "Third"],
+                            "lane-3 is not a lane of FX-1; add it first with lead-add-lane --lane lane-3")):
+            with self.subTest(argv=argv):
+                before = self.held(fx)
+                code, out = fx.flow(*argv, cwd=fx.main)
+                self.assertEqual(code, 2, out)
+                self.assertIn(said, out)
+                self.assertEqual(self.held(fx), before)
         code, out = self.add(fx, "--lane", "lane-3", "--grant", "src/nine*")
         self.assertEqual(code, 0, out)
         code, out = fx.flow(*story, cwd=fx.main)
@@ -182,6 +225,24 @@ class LeadAddLaneTests(unittest.TestCase):
         committed = json.loads(sh("git", "show", "HEAD:.agents/deliveries/FX-1.json", cwd=fx.main).stdout)
         self.assertEqual(committed["stories"]["FX-9"]["lane"], "lane-3")
         self.assertEqual(next(p["lane"] for p in self.state(fx)["planned"] if p["subject"] == "FX-9"), "lane-3")
+
+
+class PlanWithLaneTests(unittest.TestCase):
+    """The added row fills the Units table's cells in the table's own column order."""
+
+    def test_the_row_follows_the_headers_order(self) -> None:
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec = importlib.util.spec_from_file_location("run_delivery_add_lane", SCRIPT)
+            flow = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(flow)
+        finally:
+            sys.dont_write_bytecode = previous
+        text = ("# Plan\n\n## Units and order\n\n| Lane | Owns | Tier | Items, in order |\n| --- | --- | --- | --- |\n"
+                "| 1 | `src/one*` | 1 | FX-2 |\n| 2 | `src/two*` | 3 | FX-3 |\n\n## Stories\n")
+        self.assertEqual(flow.plan_with_lane(text, "lane-4", ["src/four*", "docs/four.md"]),
+                         text.replace("| FX-3 |\n", "| FX-3 |\n| 4 | `src/four*`, `docs/four.md` | 3 |  |\n"))
 
 
 class LeadAddLaneDocumentationTests(unittest.TestCase):
