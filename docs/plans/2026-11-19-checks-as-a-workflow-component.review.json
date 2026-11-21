@@ -1,0 +1,129 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-19-checks-as-a-workflow-component.md",
+  "planSha256": "dbad303a6b962ae4562b5fb37dae1b7e6dd2d1c853bd9d9ac26ad63e792d54a1",
+  "planCommit": "e805cf59356ba73eccbb48fe2f1b553c39db05fc",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "8fe7033fb9f2b6fc82ce8acab0372e6eed311e67",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-20T01:07:20.590561Z",
+      "finishedAt": "2026-11-20T01:15:07.391591Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "outcome-correctness-r1-5",
+        "outcome-correctness-r1-6",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "69dd2daf6c413edcb077e7a170eff96bf25de524",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-20T01:20:09.641656Z",
+      "finishedAt": "2026-11-20T01:22:23.563273Z",
+      "open": [
+        "outcome-correctness-r2-1",
+        "adversarial-testing-r2-1"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "a640ede3ca0b6a14806ad869c87ef121e78669c2",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-20T01:22:53.540307Z",
+      "finishedAt": "2026-11-20T01:24:09.009110Z",
+      "open": [
+        "adversarial-testing-r3-1"
+      ]
+    },
+    {
+      "round": 4,
+      "candidate": "e805cf59356ba73eccbb48fe2f1b553c39db05fc",
+      "outcome": "aligned",
+      "startedAt": "2026-11-20T01:24:21.370352Z",
+      "finishedAt": "2026-11-20T01:25:09.642931Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "checks-as-a-workflow-component.plan",
+        "candidateRef": "e805cf59356ba73eccbb48fe2f1b553c39db05fc",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree SHA 0f90df22b79adee523cc2aa00fc10873489b63fe. The start identity check passed: HEAD^{tree} matched and git status --porcelain was empty. The end identity check after the review passed the same way. No probe or mutant was made.",
+          "Delta derived with git diff a640ede3ca0b6a14806ad869c87ef121e78669c2..e805cf59356ba73eccbb48fe2f1b553c39db05fc. It touches only docs/plans/2026-11-19-checks-as-a-workflow-component.md: Decision 5's grant exemption and one new Scenario 14 row.",
+          "Carried findings: none are open. r1-1 to r1-6 and r2-1 closed in earlier rounds and are not listed again.",
+          "Decision 5 now takes the candidate's own paths at both ends: the diff from merge-base(base head, record head) to the record head, joined with the diff from merge-base(base head, handed head) to the handed head. This closes the revert case my round-3 evidence noted below the bar: a path the candidate had changed before the record and later reverted to the base's content is now in the record-end diff, so it counts and the granted check runs. The new Scenario 14 row pins that.",
+          "The V26-3614 shape still holds under the new rule, so finish line 3 does too. The path the lane's base merge brought in (.agents/deliveries/V26-3623.json) is in neither diff: the record-end diff runs from the fork point to H1, and the handed-end diff runs from the merged base to H2. It is therefore exempt under a grant, and Scenario 14's first row still pins the grant applying.",
+          "If the lane had merged the base before the record, the merge-base at the record end is that merged base commit, so the record-end diff still holds only the candidate's own changes. I found no new failure in the delta.",
+          "Model class: Claude Opus (claude-opus-5-5), run as a native subagent. The host exposes no progress or permission signals to this lens. Run ID: none. activityId review-checks-as-a-workflow-component.plan, attemptId 1, roundId checks-as-a-workflow-component.plan-r4.",
+          "Realization basis: host-convention.",
+          "Checks: none, as the brief says for a plan review.",
+          "Approval conditions: this round raises no findings, so none are pending."
+        ]
+      },
+      "resultSha256": "e13213de009a88eea077cd3aeec85d3336ad661a536500caf2fef7b30f6b0bdf"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "checks-as-a-workflow-component.plan",
+        "candidateRef": "e805cf59356ba73eccbb48fe2f1b553c39db05fc",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r3-1",
+            "state": "fixed",
+            "resolution": "Decision 5 now joins the candidate's diff against the base at both ends: `git diff --name-only --no-renames $(git merge-base &lt;base head&gt; &lt;record head&gt;) &lt;record head&gt;` and the same at the handed head. A differing path is exempt only when it lies outside both diffs, and the decision names a revert as a case that makes the check run. Scenario 14 adds the row where a lane commit after the record reverts a path to the base's content, and the granted check runs and names that path. This matches the approval condition."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA 0f90df22b79adee523cc2aa00fc10873489b63fe at candidate e805cf59356ba73eccbb48fe2f1b553c39db05fc. Start identity check passed (git rev-parse HEAD^{tree} matched, git status --porcelain was empty). End identity check passed with the same tree and a clean status.",
+          "Delta derived from git diff a640ede3ca0b6a14806ad869c87ef121e78669c2..e805cf59356ba73eccbb48fe2f1b553c39db05fc. It touches only docs/plans/2026-11-19-checks-as-a-workflow-component.md: Decision 5's exemption, which now joins the two diffs, and Scenario 14's new revert row.",
+          "Re-check of carried finding: adversarial-testing-r3-1 is fixed as its approval condition describes (details in resolvedFindings).",
+          "Delta review: checked one remaining edge of the joined exemption. After the record, a lane commit sets a path the candidate never touched to exactly the content the base later brings in. That path is outside both diffs, so it is exempted, but its handed content is the base's own, which is the case the grant exists to cover. No surviving mutation, so not filed.",
+          "Scenario 14 now pins the allow side (row 1, the V26-3614 shape) and the deny side (later change in the diff, revert, stale grant, and checkout, facts, definition or failed records). So neither an exempt-everything nor an exempt-nothing grant survives.",
+          "Model class: Claude Opus 5.5 (claude-opus-5-5), run as a native subagent. The host exposes no progress or permission signals to this lens, and that limitation is recorded here.",
+          "Realization basis: host-convention.",
+          "Scope: a plan review. No checks, test files or mutants were run, as the brief names none. Any mutations described are thought experiments on the plan's changed lines.",
+          "Approval conditions: no findings raised this round, so none are pending."
+        ]
+      },
+      "resultSha256": "e99e4e5dcba580070e3277ec82a135be91e97b820016202be1960fcd947bacd4"
+    }
+  ],
+  "residualRisks": [
+    "4 review rounds; findings open after each round: 11, 2, 1, 0."
+  ]
+}

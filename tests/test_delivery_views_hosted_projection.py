@@ -575,6 +575,36 @@ class ProjectionTests(unittest.TestCase):
         self.assertTrue(value['plan']['clipped']['overShare'])
         self.assertTrue(value['plan']['plan']['planReview']['rounds'])
 
+    def test_plan_review_prose_naming_repository_paths_is_omitted_and_raw_paths_still_refused(self):
+        base = ROOT / 'tests/fixtures/delivery-views/line-map/plan-review'
+        doc = json.loads((base / 'document.json').read_text())
+        plan = render.plan_block(json.loads((base / 'plan.json').read_text()))
+        review = plan['plan']['planReview']
+        settled = next(row for row in review['rounds'] if row['settled'])['settled'][0]
+        settled['resolution'] = 'Covered by a new case in tests/test_merge_queue.py'
+        review['endedReason'] = 'Ended after scripts/run-tests.py passed'
+        value = public.project(doc, {}, config(), source_fingerprint='1' * 64, plan=plan)
+        published = value['plan']['plan']['planReview']
+        row = next(row for row in published['rounds'] if row['settled'])['settled'][0]
+        self.assertEqual((row['id'], row['state'], row['resolution']),
+                         (settled['id'], settled['state'], public.OMITTED_LOCAL_REFERENCE))
+        self.assertEqual(published['endedReason'], public.OMITTED_LOCAL_REFERENCE)
+        Draft202012Validator(public.SCHEMA).validate(value); public.validate(value)
+        raw = copy.deepcopy(value)
+        next(row for row in raw['plan']['plan']['planReview']['rounds'] if row['settled'])['settled'][0]['resolution'] = \
+            settled['resolution']
+        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.local_path$'): public.validate(raw)
+        settled['resolution'] = 'KNOWN-CANARY in tests/test_merge_queue.py'
+        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.configured_secret$'):
+            public.project(doc, {}, config(), source_fingerprint='1' * 64, plan=plan, secret_values=['KNOWN-CANARY'])
+        # A lane review's settled resolution is the same prose.
+        doc, runs = source()
+        runs['run-1']['roundDetail'][0]['settled'] = [{'id': 'f1', 'lens': 'lens.security', 'state': 'fixed',
+                                                       'fixCommit': None, 'resolution': 'Pinned in tests/test_a.py'}]
+        value = public.project(doc, runs, config(), source_fingerprint='1' * 64)
+        self.assertEqual(value['runs']['run-1']['roundDetail'][0]['settled'][0]['resolution'],
+                         public.OMITTED_LOCAL_REFERENCE)
+
     def test_secrets_in_plan_review_and_needs_are_rejected_recursively(self):
         base = ROOT / 'tests/fixtures/delivery-views/line-map/plan-review'
         doc = json.loads((base / 'document.json').read_text())

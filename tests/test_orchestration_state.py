@@ -4231,6 +4231,14 @@ class LaneWriterTests(unittest.TestCase):
         found.update(changes)
         return found
 
+    @classmethod
+    def record(cls, **changes: object) -> dict:
+        """A run-checks record: the five fields, and where it ran, its facts, how long and when."""
+        return {**cls.evidence(), "where": "runner", "seconds": 12.5, "at": "2026-11-19T10:00:00.250Z",
+                "environment": {"names": ["HOME", "LANG", "PATH"], "digest": "sha256:" + "1" * 64},
+                "host": {"platform": "Darwin 25.5.0 arm64", "tools": {"git": "sha256:" + "2" * 64, "npm": None}},
+                **changes}
+
     def test_a_hand_off_records_the_lanes_suite_evidence_for_that_candidate(self) -> None:
         item = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40,
                                   change_request="cr", evidence=[self.evidence()])
@@ -4251,6 +4259,25 @@ class LaneWriterTests(unittest.TestCase):
                                    evidence=[self.evidence(head="b" * 40, result="failed")])
         self.assertEqual([(entry["head"], entry["result"]) for entry in third["evidence"]], [("b" * 40, "failed")])
 
+    def test_a_run_checks_record_keeps_its_facts_through_the_hand_off_and_its_replay(self) -> None:
+        records = [self.record(), self.record(check="lint", where="checkout", seconds=0)]
+        item = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40,
+                                  change_request="cr", evidence=records)
+        self.assertEqual([{key: value for key, value in entry.items() if key != "recordedAt"}
+                          for entry in item["evidence"]], records)
+        handed = state_tool.read_journal(self.directory)[-1]
+        self.assertEqual((handed["kind"], handed["data"]["evidence"]), ("candidate.handed", records))
+        self.assertEqual(state_tool.journal_errors(state_tool.read_journal(self.directory)), [])
+        # A hand-off waiting on a failed run is the row its journaled facts make, those facts included.
+        state = state_tool.read_state(self.directory)
+        waiting = next(entry for entry in state["queue"] if entry["subject"] == "work-a")
+        waiting.update(pending=True, head="f" * 40, evidence=[])
+        replayed = state_tool.handed_item(state, state_tool.read_journal(self.directory), "work-a")
+        self.assertEqual(replayed["evidence"], [{**entry, "recordedAt": handed["at"]} for entry in records])
+        # The facts are recorded, not judged: a record from another host or a lane's own checkout is taken as given.
+        self.assertEqual(state_tool.evidence_errors([self.record(where="checkout",
+                                                                 host={"platform": "Linux 6.1 x86_64", "tools": {}})]), [])
+
     def test_malformed_suite_evidence_is_refused(self) -> None:
         cases = {
             "a missing tree": {key: value for key, value in self.evidence().items() if key != "tree"},
@@ -4261,6 +4288,15 @@ class LaneWriterTests(unittest.TestCase):
             "a short tree": self.evidence(tree="abc"),
             "an empty check": self.evidence(check=""),
             "the same check twice": None,
+            "an unknown place": self.record(where="laptop"),
+            "a negative duration": self.record(seconds=-1),
+            "a duration in words": self.record(seconds="fast"),
+            "a time without its zone": self.record(at="2026-11-19T10:00:00"),
+            "an environment with a value": self.record(environment={"names": ["HOME"], "digest": "sha256:" + "1" * 64,
+                                                                    "values": {"HOME": "/x"}}),
+            "a bare environment digest": self.record(environment={"names": ["HOME"], "digest": "1" * 64}),
+            "a host without its platform": self.record(host={"tools": {}}),
+            "a tool's bare digest": self.record(host={"platform": "Darwin", "tools": {"git": "2" * 64}}),
         }
         for name, entry in cases.items():
             with self.subTest(name):
@@ -6339,7 +6375,10 @@ class CarryReviewTests(unittest.TestCase):
 class StateToolFactsTests(unittest.TestCase):
     """The state tool's own entries carry their kind's facts and links, and no sentence."""
 
-    EVIDENCE = [{"check": "full", "definition": "sha256:" + "d" * 64, "head": HEAD_A, "tree": "e" * 40, "result": "passed"}]
+    EVIDENCE = [{"check": "full", "definition": "sha256:" + "d" * 64, "head": HEAD_A, "tree": "e" * 40, "result": "passed",
+                 "where": "runner", "seconds": 3.25, "at": "2026-11-19T10:00:00Z",
+                 "environment": {"names": ["PATH"], "digest": "sha256:" + "1" * 64},
+                 "host": {"platform": "Darwin 25.5.0 arm64", "tools": {"git": None}}}]
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -7075,6 +7114,73 @@ class LeadSelectionTests(unittest.TestCase):
         for name, checks in cases.items():
             with self.subTest(name):
                 self.assertEqual(self.refused(lambda: self.select(checks)), "select_invalid")
+
+    def handed(self) -> None:
+        """A candidate handed off with the lane's record of its full run, ready for the lead's selection."""
+        state = state_tool.read_state(self.directory)
+        state_tool.patch(self.directory, writer="lead", version=state["version"], changes={
+            "planned": [{"subject": "work-h", "title": "H", "lane": "lane-1", "stage": "review"}]})
+        record = {"check": "full", "definition": "sha256:" + "d" * 64, "head": HEAD_A, "tree": "e" * 40,
+                  "result": "passed", "where": "runner"}
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-h", head=HEAD_A, change_request="cr",
+                           evidence=[record])
+
+    def grant(self, **changes: object) -> dict:
+        arguments = {"binding": self.BINDING, "head": HEAD_A, "checks": [selected_check("parser")],
+                     "reason": "only the parser changed", "reuse": ["full"], "why": "the base merge brought in only docs"}
+        arguments.update(changes)
+        return state_tool.select_checks(self.directory, "work-h", **arguments)
+
+    def test_a_reuse_grant_is_kept_in_the_selection_and_journaled_as_its_decision(self) -> None:
+        self.handed()
+        before = len(state_tool.read_journal(self.directory))
+        item = self.grant()
+        reuse = item["leadSelection"]["reuse"]
+        self.assertEqual(reuse, {"checks": ["full"], "why": "the base merge brought in only docs", "decision": before + 1})
+        decision, selected = state_tool.read_journal(self.directory)[before:]
+        self.assertEqual((decision["id"], decision["kind"], decision["subject"], decision["lane"]),
+                         (reuse["decision"], "decision.recorded", "work-h", "lane-1"))
+        self.assertEqual(decision["data"]["why"], "the base merge brought in only docs")
+        self.assertIn("full", decision["data"]["text"])
+        self.assertEqual((selected["kind"], selected["data"]["checks"]), ("check.selected", ["parser"]))
+        # A selection without a grant keeps none.
+        self.assertNotIn("reuse", self.grant(reuse=None, why=None)["leadSelection"])
+
+    def test_a_grant_names_only_checks_the_hand_off_has_a_record_of_and_says_why(self) -> None:
+        self.handed()
+        journal = (self.directory / state_tool.JOURNAL_FILE).read_bytes()
+        for name, changes in (("no record of it", {"reuse": ["full", "lint"]}), ("no why", {"why": " "}),
+                              ("a why alone", {"reuse": None}), ("an empty grant", {"reuse": []}),
+                              ("a check twice", {"reuse": ["full", "full"]}), ("a wrong head", {"head": "f" * 40})):
+            with self.subTest(name):
+                self.assertEqual(self.refused(lambda: self.grant(**changes)), "select_invalid")
+                self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), journal)
+        # A subject that isn't queued, or that is merging, is refused before the grant's decision is journaled.
+        with self.subTest("an unqueued subject"):
+            with self.assertRaises(state_tool.StateError) as caught:
+                state_tool.select_checks(self.directory, "work-none", binding=self.BINDING, head=HEAD_A,
+                                         checks=[selected_check("parser")], reason="r", reuse=["full"], why="w")
+            self.assertEqual((caught.exception.code, (self.directory / state_tool.JOURNAL_FILE).read_bytes()),
+                             ("select_invalid", journal))
+        with self.subTest("a merging subject"):
+            state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                             selector="queue[subject=work-h]", assignments={"/stage": "merging"})
+            self.assertEqual(self.refused(lambda: self.grant()), "select_invalid")
+            self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), journal)
+            state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                             selector="queue[subject=work-h]", assignments={"/stage": "queued"})
+        with self.assertRaises(state_tool.StateError) as caught:
+            self.grant(reuse=["full", "lint"])
+        self.assertIn("no record of lint", str(caught.exception))
+        binding = Path(self.directory.parent) / "orchestration.json"
+        binding.write_text(json.dumps(self.BINDING), encoding="utf-8")
+        code, result = run_tool(self.directory, "select", "--subject", "work-h", "--clear", "--reuse", "full")
+        self.assertEqual((code, result["code"]), (1, "select_invalid"))
+        code, result = run_tool(self.directory, "select", "--subject", "work-h", "--binding", str(binding),
+                                "--head", HEAD_A, "--checks", "-", "--reason", "parser only", "--reuse", "full",
+                                "--why", "only docs came in", stdin=json.dumps([selected_check("parser")]))
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["item"]["leadSelection"]["reuse"]["checks"], ["full"])
 
     def test_only_the_select_command_writes_a_selection(self) -> None:
         self.select()

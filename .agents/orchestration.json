@@ -2312,5 +2312,12 @@
     "refreshSeconds": 180,
     "liveHome": "line-map"
   },
-  "fullHealthTimeoutSeconds": 5400
+  "fullHealthTimeoutSeconds": 5400,
+  "reuse": {
+    "tools": [
+      "git",
+      "node",
+      "npm"
+    ]
+  }
 }

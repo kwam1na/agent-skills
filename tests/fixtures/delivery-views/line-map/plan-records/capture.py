@@ -9,7 +9,8 @@ are synced (the first has merged by then, the second is checked), and once both 
     python3 tests/fixtures/delivery-views/line-map/plan-records/capture.py [<out directory>]
 
 Commit ids and times differ on every run, so the capture writes them as they came; tests compare the documents'
-shapes, not those values. Temporary paths never reach the record.
+shapes, not those values. Temporary paths never reach the record. A check's platform, the tools it found and the
+environment names it got are the machine's: the capture writes placeholders for them, keeping their keys.
 """
 
 from __future__ import annotations
@@ -45,6 +46,17 @@ def outcome(subject: str, number: int, candidate: str) -> dict:
             "schemaVersion": "review-lens-result/1", "lensId": lens, **binding, "outcome": "aligned",
             "findings": [], "resolvedFindings": [], "evidence": {"startCommit": candidate}}})
     return {"round": number, "outcome": "aligned", "entries": entries}
+
+
+def without_machine(document: dict) -> dict:
+    """The document with each queue check's machine facts replaced by placeholders, its environment digest kept."""
+    for item in document["state"]["queue"]:
+        for check in item["checks"]:
+            if "environment" in check:
+                check["environment"]["names"] = ["<names>"]
+            if "host" in check:
+                check["host"] = {"platform": "<platform>", "tools": {"<tool>": "<digest>"}}
+    return document
 
 
 def capture(out: Path) -> None:
@@ -84,7 +96,7 @@ def capture(out: Path) -> None:
         for name, document in shown.items():
             for item in document["state"]["queue"]:
                 assert name == "handed" or item["syncedHead"] not in (None, item["head"]), (name, item)
-            text = json.dumps(document, indent=2, ensure_ascii=False) + "\n"
+            text = json.dumps(without_machine(document), indent=2, ensure_ascii=False) + "\n"
             assert str(work) not in text, "a temporary path reached the record"
             (out / f"{name}.json").write_text(text, encoding="utf-8")
     finally:

@@ -25,17 +25,19 @@ SECONDS = re.compile(r'"(?:\w*[Ss]econds|runs)": (?:\d+|\[[\d\s,]*\])')
 # The Node a check ran under, and whether it was below the runtime's minimum, are the machine's, not the record's shape.
 NODE = re.compile(r'"node": (?:"[^"]*"|null)')
 BELOW = re.compile(r'\n *"nodeBelowMinimum": (?:true|false),?')
+# So are a check's platform, the tools it found and the environment names it got; the environment's digest is a digest.
+MACHINE = re.compile(r'"platform": "[^"]*"|"tools": \{[^{}]*\}|"names": \[[^\[\]]*\]')
 
 
 def shape(text: str) -> str:
     """A captured document with its commit ids, digests and times replaced by their order of first appearance, and the
-    Node each check ran under left out."""
+    Node each check ran under, its platform, tools and environment names left out."""
     seen: dict[str, str] = {}
 
     def token(match: re.Match) -> str:
         return seen.setdefault(match.group(0), f"<{len(seen)}>")
 
-    text = NODE.sub('"node": <node>', BELOW.sub("", text))
+    text = MACHINE.sub(lambda match: match.group(0).split(":")[0] + ": <machine>", NODE.sub('"node": <node>', BELOW.sub("", text)))
     return SECONDS.sub(lambda match: re.sub(r"\d+", "0", match.group(0)), TIME.sub("<time>", HEX.sub(token, text)))
 
 
@@ -75,6 +77,14 @@ class PlanFixtureTests(unittest.TestCase):
                 with self.subTest(record=name):
                     fresh = (out / f"{name}.json").read_text(encoding="utf-8")
                     committed = (RECORDS / f"{name}.json").read_text(encoding="utf-8")
+                    # The capture itself keeps the machine out, so no regeneration commits this host's facts.
+                    host = importlib.import_module("platform").uname().system
+                    self.assertNotIn(host, fresh)
+                    for item in json.loads(fresh)["state"]["queue"]:
+                        for check in item["checks"]:
+                            self.assertEqual(check.get("host", {"platform": "<platform>", "tools": {"<tool>": "<digest>"}}),
+                                             {"platform": "<platform>", "tools": {"<tool>": "<digest>"}})
+                            self.assertEqual(check.get("environment", {"names": ["<names>"]})["names"], ["<names>"])
                     self.assertEqual(shape(committed), shape(fresh))
 
     def test_a_shape_holds_no_duration_however_long_a_check_took(self) -> None:

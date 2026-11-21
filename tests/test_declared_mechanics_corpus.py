@@ -150,6 +150,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "It never raises a number in the budget; only the operator does",
         "is marked `run_quietly`, never `run_serially`",
         "A run over its budget does not hold the release: the tag's annotation says the run went over",
+        "A flaky test does not hold a release: it is one the release doesn't change, and it passes when rerun on its"
+        " own at the tagged commit",
         "A lens's follow-up does not outrank a binding ruling",
         "must include the case where nothing observes the clear",
         "by mutating a file `provenance.lock.json` covers takes the digests"

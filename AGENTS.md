@@ -60,7 +60,10 @@ python3 scripts/bootstrap-test-environment.py
 That run is checked against the suite's time budget, described below, and exits 3
 when every test passed and it went over. A run over its budget does not hold the
 release: the tag's annotation says the run went over, and by how much. Any other exit
-but 0 means the suite did not pass, and nothing is tagged.
+but 0 means the suite did not pass, and nothing is tagged, unless every failure is a
+flaky test. A flaky test does not hold a release: it is one the release doesn't change,
+and it passes when rerun on its own at the tagged commit. The tag's annotation names each
+such failure and its passing rerun, and a ticket is filed to make the test steady.
 
 Windows is not validated. Its code fixes and guards stay, unproven, and CI does not
 run it.
