@@ -1,0 +1,117 @@
+{
+  "note": "Font files the hosted page serves from its own origin, in place of the local view's Google Fonts link. Each file is copied unchanged from the npm package named, at the version and integrity given; sha256 is the file's own digest, which the asset build checks.",
+  "families": [
+    {
+      "family": "Newsreader",
+      "license": {
+        "id": "OFL-1.1",
+        "path": "newsreader/OFL.txt",
+        "source": "@fontsource-variable/newsreader@5.3.0/LICENSE",
+        "sha256": "26028ec4e13b650065fa525a09532176f8a668b76ff849ea01c564a7480f91e7"
+      },
+      "package": {
+        "name": "@fontsource-variable/newsreader",
+        "version": "5.3.0",
+        "integrity": "sha512-rrzYi43qMpbzwuFtf9OkWH8sxAPVPcQQQEwXpPtwaKYeJ8yVg5aLs5kawmo1f2Q1t1M38TLmEKCkGVDsYwgdFw=="
+      },
+      "files": [
+        {
+          "path": "newsreader/newsreader-latin-opsz-normal.woff2",
+          "style": "normal",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD",
+          "source": "@fontsource-variable/newsreader@5.3.0/files/newsreader-latin-opsz-normal.woff2",
+          "sha256": "6e4f2958c3a7c4a80acde4e5a679abe7e01bc1e30b92be3c7a8b696ef401d101"
+        },
+        {
+          "path": "newsreader/newsreader-latin-ext-opsz-normal.woff2",
+          "style": "normal",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF",
+          "source": "@fontsource-variable/newsreader@5.3.0/files/newsreader-latin-ext-opsz-normal.woff2",
+          "sha256": "45683de03de37187604102316c0b42c0cb2d8dc9c4140a20ad471c3148cc1278"
+        },
+        {
+          "path": "newsreader/newsreader-latin-opsz-italic.woff2",
+          "style": "italic",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD",
+          "source": "@fontsource-variable/newsreader@5.3.0/files/newsreader-latin-opsz-italic.woff2",
+          "sha256": "5dfcd10d24af8c82927ba57f7983dd997f7b200594c09c35a1b1ed9fc4597506"
+        },
+        {
+          "path": "newsreader/newsreader-latin-ext-opsz-italic.woff2",
+          "style": "italic",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF",
+          "source": "@fontsource-variable/newsreader@5.3.0/files/newsreader-latin-ext-opsz-italic.woff2",
+          "sha256": "bb24f6648f75d909eb74535916015c97ef72a1344e532ec7bbaf3f80eb6f389f"
+        }
+      ]
+    },
+    {
+      "family": "Geist",
+      "license": {
+        "id": "OFL-1.1",
+        "path": "geist/OFL.txt",
+        "source": "@fontsource-variable/geist@5.3.0/LICENSE",
+        "sha256": "71609cbb5c78b5870d712eab73a31d76622635c6ed034ab5cee3b9ecbda8685f"
+      },
+      "package": {
+        "name": "@fontsource-variable/geist",
+        "version": "5.3.0",
+        "integrity": "sha512-j0m+vLQuG5XAYoHtGCVu0spvlGreR3EzpECUVzkFmI1mTVnAO38l/NEPDCFgZ177JxzYJCLSmTQibIiYPilGrA=="
+      },
+      "files": [
+        {
+          "path": "geist/geist-latin-wght-normal.woff2",
+          "style": "normal",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD",
+          "source": "@fontsource-variable/geist@5.3.0/files/geist-latin-wght-normal.woff2",
+          "sha256": "19f9c92546aa300c312235e3125af1b81394d8db9a4bc4a425cd5b641d2d54e1"
+        },
+        {
+          "path": "geist/geist-latin-ext-wght-normal.woff2",
+          "style": "normal",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF",
+          "source": "@fontsource-variable/geist@5.3.0/files/geist-latin-ext-wght-normal.woff2",
+          "sha256": "824f485b5d26e2f2da3c2b236132ece1bc8e4e43373452950bb0e40548b4313f"
+        }
+      ]
+    },
+    {
+      "family": "Geist Mono",
+      "license": {
+        "id": "OFL-1.1",
+        "path": "geist-mono/OFL.txt",
+        "source": "@fontsource-variable/geist-mono@5.3.0/LICENSE",
+        "sha256": "cc815ed4fc045f0e991abb10395b7932bd028c6a067deb13316d6002105074e6"
+      },
+      "package": {
+        "name": "@fontsource-variable/geist-mono",
+        "version": "5.3.0",
+        "integrity": "sha512-vBbuwDEo9AkrqADMXOrlAR3DFcJi4/JxeuU43FoiQERnNwsfXNnvxvReZG02cQKmyk4DZkZdBZX3oTDvy2zBAw=="
+      },
+      "files": [
+        {
+          "path": "geist-mono/geist-mono-latin-wght-normal.woff2",
+          "style": "normal",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD",
+          "source": "@fontsource-variable/geist-mono@5.3.0/files/geist-mono-latin-wght-normal.woff2",
+          "sha256": "684ad5b531f81d43c1e8c7038262d5db7cdc1f68006e04d6c7769efa8d33c8cc"
+        },
+        {
+          "path": "geist-mono/geist-mono-latin-ext-wght-normal.woff2",
+          "style": "normal",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF",
+          "source": "@fontsource-variable/geist-mono@5.3.0/files/geist-mono-latin-ext-wght-normal.woff2",
+          "sha256": "1a189eb997c3e2ece68373e387afaec9e8617424186c4b1ab3cff7c54ba6223b"
+        }
+      ]
+    }
+  ]
+}

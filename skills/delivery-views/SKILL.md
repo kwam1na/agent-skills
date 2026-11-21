@@ -159,7 +159,8 @@ each lane's stretches and changes, a change outside its lane's span marked, and
 per lane the functions it changed with their sizes. A lane whose branch can't be
 read is said so, and none of its files is drawn as changed. Before any pass has
 read the branches, or with a file that can't be read, the view says so. With no
-region claims the page has no such view, and a published cut carries none.
+region claims the page has no such view. The hosted page shows the same view from
+the same reads.
 
 A piece whose queue or planned element names a `runId` shows that run in its
 detail: its review rounds as a track, and a card for the picked round. With
@@ -1033,37 +1034,30 @@ reacquire or take over another owner, even with that flag. Operator takeover is
 not offered by this command.
 
 Every send comes from a fresh coherent cut of canonical state/journal, optional
-plan/Needs you paths (including absence), selected native review artifacts and
-fresh run inventory/view/artifact reads checked again after collection. Never use
-previously rendered HTML or a cached run byte count as freshness proof. The
-uploader scans all projected text for its configured secret values before writing
-pending bytes or sending them; collection and run-command children receive none
-of those credentials. Projection rejects recognizable local paths in structural
-references and raw uploads; named prose fields use a visible omission marker.
-The journal publishes each entry's id, time, occurrence time, kind, lane and
-subject, the kind one the registry of kinds lists, and none of its facts, links or
-words: only a review round keeps its round, times, verdicts and finding counts. No
-link the page offers comes from an entry's facts, and a batch's membership is not
-published. A kind the registry gains later publishes no facts until the snapshot's
-schema names them. The projection is what publishes only registered kinds; the
-receiver does not police kinds, so a new kind needs no service deploy. The story
-is not published, so the hosted page says what happened is not published there.
-The schema is `hosted-delivery-snapshot/2`; a reader given the older version
-refuses it.
-No-change settlement evidence is ordinary prose: local references use that marker
-without changing the private evidence or the recorded settlement identity and times.
-This includes option-assigned Unix, Windows, home and explicit relative paths,
-and installed executable references under `.agent-skills/current/`;
-All ASCII punctuation, whitespace and typographic quotes delimit local
-references, including Markdown emphasis. HTTPS tokens accepted by the existing public-link rules and their path
-components remain public prose, including punctuation wrappers. Malformed
-HTTPS-like strings and adjoining path prose receive no URL exception. An
-unmatched closing parenthesis, bracket or brace ends a URL span; balanced
-nested URL punctuation and comma/semicolon URI components remain inside it;
-configured-secret scans still inspect the full original text.
-Benign option values remain ordinary prose.
-It keeps the shared allowlist, candidate/review identity and unavailable/clipping indicators.
-No scanner claims to identify every secret someone types into public prose.
+plan/Needs you paths (including absence), the files view's `lane-changes.json`,
+selected native review artifacts and fresh run inventory/view/artifact reads checked
+again after collection. Never use previously rendered HTML or a cached run byte
+count as freshness proof.
+
+The hosted page shows what the local live view shows, from the same record. The
+snapshot is the cut the local page renders from: every chapter, the story, each
+journal entry with its facts, the integration step and how far its target moved,
+the plan, Needs you, review evidence with its briefs and results, the files view and
+what a closed delivery left open, with the paths and commands its prose holds. The
+hosted page draws it with the same `line-map.js`, so the two views tell the same
+delivery. The one rule kept is that no credential is published. The uploader
+scans every projected string and key for its configured secret values before
+writing pending bytes or sending them, and a field named password, token, secret,
+API key, credential, authorization or cookie, at any depth, is refused; either
+refuses the cut with its bounded code (`snapshot.configured_secret`,
+`snapshot.credential_field`), which the retried status names. Collection and
+run-command children receive none of those credentials. A sibling delivery's hosted
+link grants read access to that delivery, so it is a credential too, and the cut
+names the sibling without it.
+Byte, text and list bounds keep a cut within what the service accepts. The schema
+is `hosted-delivery-snapshot/3`, sent as renderer `delivery-line-map/3`; a reader
+given another version refuses it. No scanner claims to identify every secret
+someone types into prose.
 
 Pending bytes use immutable `hosted-pending-<sha256>.json` files. The identity
 pointer and its exact digest/epoch/sequence commit only after those bytes are

@@ -6295,6 +6295,11 @@ WAIT_LOAD_MULTIPLE = 2.0
 WAIT_MIN_FREE_BYTES = 20 * 2**30
 WAIT_SWAP_GROWTH_BYTES = 4 * 2**30
 WAIT_QUIET_SECONDS = 3600.0
+# How long one of this delivery's own machine claims may wait before the lead is woken for it, once per waiting stretch.
+WAIT_CLAIM_SECONDS = 900.0
+# The ledger's part of a wait's ``machine``: what any agent reads, capacity, the running claims, the waiters in order
+# and the last five overrides.
+LEDGER_FIELDS = ("capacity", "used", "running", "waiting", "overrides")
 # A held signal clears only this far inside its limit, so a value hovering at the limit doesn't wake the lead each time.
 WAIT_CLEAR_MARGIN = 0.9
 SWAP_UNITS = {"K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40}
@@ -6361,6 +6366,58 @@ def _quiet_token(lane: dict) -> str:
     return f"{lane['id']}@{hashlib.sha256(stretch.encode('utf-8')).hexdigest()[:16]}"
 
 
+def _machine_module():
+    """The machine ledger's module, which imports this one, so it is imported only when first needed."""
+    folder = str(Path(__file__).resolve().parent)
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
+    import machine
+    return machine
+
+
+def ledger_reading() -> dict:
+    """The machine ledger's part of a wait's ``machine``, or ``{unavailable}`` with the reason when it can't be read."""
+    reading = _machine_module().Ledger().reading()
+    if "unavailable" in reading:
+        return {"unavailable": reading["unavailable"]}
+    return {key: reading[key] for key in LEDGER_FIELDS}
+
+
+def _enqueued_at(claim: dict) -> float | None:
+    try:
+        return datetime.datetime.strptime(claim["enqueuedAt"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+            tzinfo=datetime.timezone.utc).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _own_claim_waits(ledger: dict, names: set[str], repository: str | None, limit: float, at: float) -> dict[str, dict]:
+    """This delivery's own waiting claims that have waited longer than ``limit`` seconds, by claim id: the id names one
+    waiting stretch, since a claim waits once. A claim is this delivery's when it names one of its names as its
+    delivery and names this repository, or none."""
+    long = {}
+    for claim in ledger.get("waiting") or []:
+        if not isinstance(claim, dict) or claim.get("delivery") not in names:
+            continue
+        if claim.get("repository") not in (None, repository):
+            continue
+        enqueued = _enqueued_at(claim)
+        if enqueued is None or at - enqueued <= limit:
+            continue
+        long[claim["id"]] = {"id": claim["id"], "label": claim.get("label"), "delivery": claim.get("delivery"),
+                             "kind": claim.get("kind"), "slots": claim.get("slots"), "enqueuedAt": claim.get("enqueuedAt"),
+                             "waitedSeconds": round(at - enqueued, 3)}
+    return long
+
+
+def _delivery_names(state: dict, directory: Path) -> set[str]:
+    """The names a claim may give this delivery: its headline, as the merge queue names it, its tracker parent and its
+    state folder's name."""
+    meta = state.get("meta") or {}
+    return {name for name in (meta.get("headline"), meta.get("trackerParent"), Path(directory).name)
+            if isinstance(name, str) and name}
+
+
 def _quiet_lanes(state: dict, limit: float, at: float) -> dict[str, dict]:
     """The active lanes whose row hasn't moved for more than ``limit`` seconds, by stretch, with how long."""
     quiet = {}
@@ -6392,8 +6449,12 @@ def wait_for_lead(
     swap_growth_bytes: int = WAIT_SWAP_GROWTH_BYTES,
     seen_quiet: list[str] | None = None,
     quiet_seconds: float = WAIT_QUIET_SECONDS,
+    seen_claims: list[str] | None = None,
+    claim_wait_seconds: float = WAIT_CLAIM_SECONDS,
     read_machine: Callable[[Path], dict] = machine_reading,
+    read_ledger: Callable[[], dict] = ledger_reading,
     clock: Callable[[], float] = time.monotonic,
+    wall: Callable[[], float] = time.time,
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[int, dict]:
     """Read the record and the machine until something needs the lead, or the time is up. Writes nothing.
@@ -6405,6 +6466,10 @@ def wait_for_lead(
     deadline = clock() + timeout
     held_blocked = set(seen_blocked or ())
     held_pressure = set(seen_pressure or ())
+    held_claims = set(seen_claims or ())
+    repository = None
+    with contextlib.suppress(Exception):
+        repository = _machine_module().repository_identity(directory)
     baseline = swap_baseline
     said_unavailable = False
     while True:
@@ -6450,9 +6515,17 @@ def wait_for_lead(
                 pressure.append({"signal": "swap", "value": used, "baseline": baseline, "limit": baseline + swap_growth_bytes})
                 baseline = used
 
+        # The ledger the lead reads in every wake, and this delivery's own claims that have waited too long. The lead
+        # decides whether to admit one: nothing is admitted here.
+        ledger = read_ledger()
+        long_claims = _own_claim_waits(ledger, _delivery_names(state, directory), repository, claim_wait_seconds, wall())
+        newly_long = sorted(set(long_claims) - held_claims)
+        held_claims = set(long_claims)
+
         remaining = deadline - clock()
-        if events or newly_blocked or pressure or remaining <= 0:
-            woke = "event" if events or newly_blocked else "pressure" if pressure else "expired"
+        if events or newly_blocked or pressure or newly_long or remaining <= 0:
+            woke = ("event" if events or newly_blocked else "pressure" if pressure else "claim" if newly_long
+                    else "expired")
             restart = ["--after", str(through), "--timeout", repr(timeout), "--poll", repr(poll),
                        "--load-multiple", repr(load_multiple), "--min-free-bytes", str(min_free_bytes),
                        "--swap-growth-bytes", str(swap_growth_bytes)]
@@ -6464,6 +6537,8 @@ def wait_for_lead(
             restart += [f"--seen-quiet={token}" for token in sorted(quiet)]
             if baseline is not None:
                 restart += ["--swap-baseline", str(baseline)]
+            restart += ["--claim-wait-seconds", repr(claim_wait_seconds)]
+            restart += [f"--seen-claim={claim}" for claim in sorted(held_claims)]
             return (WAIT_EXPIRED_EXIT if woke == "expired" else 0), {
                 "ok": True,
                 "woke": woke,
@@ -6471,7 +6546,8 @@ def wait_for_lead(
                 "blockedLanes": [{key: lanes[token].get(key) for key in ("id", "focus", "waitingOn")} for token in newly_blocked],
                 "pressure": pressure,
                 "quietLanes": [quiet[token] for token in sorted(set(quiet) - set(seen_quiet or ()))],
-                "machine": reading,
+                "claimWaits": [long_claims[claim] for claim in newly_long],
+                "machine": {**reading, **ledger},
                 "unavailable": unavailable,
                 "through": through,
                 "restart": restart,
@@ -6487,6 +6563,9 @@ def _add_wait_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seen-pressure", action="append", choices=("load", "disk"), help="a held signal the lead already knows of")
     parser.add_argument("--seen-quiet", action="append", metavar="LANE@TOKEN", help="a quiet stretch the lead already knows of")
     parser.add_argument("--quiet-seconds", type=float, default=WAIT_QUIET_SECONDS, help="how long a row may stand still before the lane is reported quiet")
+    parser.add_argument("--claim-wait-seconds", type=float, default=WAIT_CLAIM_SECONDS,
+                        help="how long one of this delivery's machine claims may wait before the lead is woken for it")
+    parser.add_argument("--seen-claim", action="append", metavar="CLAIM", help="a long claim wait the lead already knows of, as restart prints it")
     parser.add_argument("--swap-baseline", type=int, metavar="BYTES", help="swap in use to measure growth from")
     parser.add_argument("--load-multiple", type=float, default=WAIT_LOAD_MULTIPLE, help="five-minute load, as a multiple of the cores")
     parser.add_argument("--min-free-bytes", type=int, default=WAIT_MIN_FREE_BYTES, help="free disk under the state directory")
@@ -6524,6 +6603,8 @@ def _wait_command(args: argparse.Namespace) -> tuple[int, dict]:
         raise StateError("wait_invalid", "--seen-quiet takes the lane@token that restart prints")
     if not math.isfinite(args.quiet_seconds) or args.quiet_seconds < 0:
         raise StateError("wait_invalid", "--quiet-seconds must be finite and not negative")
+    if not math.isfinite(args.claim_wait_seconds) or args.claim_wait_seconds < 0:
+        raise StateError("wait_invalid", "--claim-wait-seconds must be finite and not negative")
     if not bounded or not thresholds or (args.after is not None and args.after < 0):
         raise StateError("wait_invalid", "--timeout, --poll, --after and the thresholds must be finite and not negative, and --poll above zero")
     return wait_for_lead(
@@ -6539,6 +6620,8 @@ def _wait_command(args: argparse.Namespace) -> tuple[int, dict]:
         swap_growth_bytes=args.swap_growth_bytes,
         seen_quiet=args.seen_quiet,
         quiet_seconds=args.quiet_seconds,
+        seen_claims=args.seen_claim,
+        claim_wait_seconds=args.claim_wait_seconds,
     )
 
 

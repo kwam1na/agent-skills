@@ -224,11 +224,11 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(len([call for call in self.api.calls if call[1]=='session']),1)
 
     def test_a_refused_cut_names_the_projection_code_in_the_retried_status(self):
-        def refuse():raise hosted.public.ProjectionError('snapshot.local_path')
-        with self.assertRaisesRegex(hosted.PublishError,'^snapshot.local_path$') as caught:self.publisher.step(refuse)
+        def refuse():raise hosted.public.ProjectionError('snapshot.credential_field')
+        with self.assertRaisesRegex(hosted.PublishError,'^snapshot.credential_field$') as caught:self.publisher.step(refuse)
         self.assertTrue(caught.exception.transient)
-        bad=copy.deepcopy(VALID);bad['view']['title']='Open tests/test_merge_queue.py'
-        with self.assertRaisesRegex(hosted.PublishError,'^snapshot.local_path$'):self.publisher.step(lambda:bad)
+        bad=copy.deepcopy(VALID);bad['document']['state']['meta']['token']='a credential'
+        with self.assertRaisesRegex(hosted.PublishError,'^snapshot.credential_field$'):self.publisher.step(lambda:bad)
         # A code the projection does not define, and every other unavailable source, stays generic.
         for error in (hosted.public.ProjectionError('/Users/operator/private'),OSError('x')):
             def fail(error=error):raise error
@@ -236,18 +236,18 @@ class PublisherTests(unittest.TestCase):
                 self.publisher.step(fail)
         args=SimpleNamespace(config='views.json',binding='binding.json',state_dir=str(self.state),key='APP-1')
         inputs=views_common.Inputs(self.root,self.config,{},self.state)
-        for answer,code in (({'refused':'snapshot.local_path'},'^snapshot.local_path$'),
+        for answer,code in (({'refused':'snapshot.credential_field'},'^snapshot.credential_field$'),
                             ({'refused':'TOKEN-shaped words'},'^source_unavailable$'),({'refused':7},'^source_unavailable$')):
             with self.subTest(answer=answer),mock.patch.object(hosted.views,'run_json',return_value=answer), \
                  self.assertRaisesRegex(hosted.PublishError,code):hosted.child_collect(args,inputs)
-        hosted.atomic(self.state/hosted.STATUS,{'spec':'hosted-delivery-status/1','state':'retrying','code':'snapshot.local_path'})
-        self.assertEqual(hosted.status(self.state,self.config['hosted'],'APP-1')['code'],'snapshot.local_path')
+        hosted.atomic(self.state/hosted.STATUS,{'spec':'hosted-delivery-status/1','state':'retrying','code':'snapshot.credential_field'})
+        self.assertEqual(hosted.status(self.state,self.config['hosted'],'APP-1')['code'],'snapshot.credential_field')
         # The collect child answers a refusal with the code alone.
         with mock.patch.object(hosted,'load_inputs',return_value=SimpleNamespace(state_directory=self.state,config=self.config)), \
-             mock.patch.object(hosted,'collect',side_effect=hosted.public.ProjectionError('snapshot.local_path')),mock.patch('builtins.print') as printed:
+             mock.patch.object(hosted,'collect',side_effect=hosted.public.ProjectionError('snapshot.credential_field')),mock.patch('builtins.print') as printed:
             self.assertEqual(hosted.main(['collect','--config','views.json','--binding','binding.json',
                                           '--state-dir',str(self.state),'--key','APP-1']),0)
-        self.assertEqual(json.loads(printed.call_args.args[0]),{'refused':'snapshot.local_path'})
+        self.assertEqual(json.loads(printed.call_args.args[0]),{'refused':'snapshot.credential_field'})
 class ConfigTests(unittest.TestCase):
     def test_explicit_origins_and_environment_names_fail_closed(self):
         self.assertIsNone(views_common.validate_config({'spec':'delivery-views-config/1'})['hosted'])
@@ -282,7 +282,7 @@ class ReceiverTests(unittest.TestCase):
                 if fixture.mode=='oversize':answer={'padding':'x'*(hosted.MAX_RESPONSE+1)}
                 else:
                     if operation in ('snapshots','confirm'):
-                        if self.headers.get('X-Renderer-Version')!='delivery-line-map/2':
+                        if self.headers.get('X-Renderer-Version')!='delivery-line-map/3':
                             self.send_response(422);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(b'{"error":"unsupported_renderer"}');return
                         if operation=='snapshots' and self.headers.get('X-Snapshot-Digest')!=hashlib.sha256(body).hexdigest():
                             self.send_error(422);return
@@ -292,9 +292,9 @@ class ReceiverTests(unittest.TestCase):
                         self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(json.dumps({'error':error.code}).encode());return
                     if isinstance(answer,dict) and 'protocolVersion' in answer:
                         answer['protocolVersion']='hosted-delivery-api/1'
-                        if 'rendererVersion' in answer:answer['rendererVersion']='delivery-line-map/2'
+                        if 'rendererVersion' in answer:answer['rendererVersion']='delivery-line-map/3'
                         if answer.get('receipt'):
-                            answer['receipt']['protocolVersion']='hosted-delivery-api/1';answer['receipt']['rendererVersion']='delivery-line-map/2'
+                            answer['receipt']['protocolVersion']='hosted-delivery-api/1';answer['receipt']['rendererVersion']='delivery-line-map/3'
                 if fixture.mode=='lost' and operation=='snapshots':
                     fixture.mode='normal';self.connection.shutdown(socket.SHUT_RDWR);self.connection.close();return
                 self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(json.dumps(answer).encode())
@@ -347,7 +347,7 @@ class ReceiverTests(unittest.TestCase):
         with mock.patch.dict(os.environ,{'FIXTURE_PUBLISH_TOKEN':TOKEN,'PYTHONPATH':str(self.state)}):
             result=self.publisher.step(lambda:copy.deepcopy(VALID))
         self.assertEqual(result['receipt']['protocolVersion'],'hosted-delivery-api/1')
-        self.assertEqual(result['receipt']['rendererVersion'],'delivery-line-map/2')
+        self.assertEqual(result['receipt']['rendererVersion'],'delivery-line-map/3')
         self.assertEqual(result['receipt']['digest'],hashlib.sha256(hosted.public.encode(VALID)).hexdigest())
         self.assertEqual([call[0] for call in self.observed],['status','session','snapshots'])
         self.assertEqual(hosted.CHILDREN,set())
@@ -412,11 +412,39 @@ class CollectionTests(unittest.TestCase):
         artifact=hosted.collect(self.inputs)
         self.assertNotEqual(missing['sourceFingerprint'],artifact['sourceFingerprint'])
         self.assertEqual(artifact['reviews']['APP-1'],{'unavailable':True})
+        # The files view's reads are part of the cut, as the local page embeds them, and a new read is a new cut.
+        changes={'spec':'delivery-lane-changes/1','at':'2026-11-15T00:00:00Z','base':'b'*40,'lanes':{},'files':[]}
+        (self.state/render.LANE_CHANGES_FILE).write_text(json.dumps(changes))
+        filed=hosted.collect(self.inputs)
+        self.assertEqual(filed['files'],render.read_lane_changes_block(self.state))
+        self.assertEqual(filed['files']['at'],'2026-11-15T00:00:00Z')
+        self.assertNotEqual(artifact['sourceFingerprint'],filed['sourceFingerprint'])
+        (self.state/render.LANE_CHANGES_FILE).write_text(json.dumps({**changes,'at':'2026-11-15T00:01:00Z'}))
+        refiled=hosted.collect(self.inputs)
+        self.assertNotEqual(filed['sourceFingerprint'],refiled['sourceFingerprint'])
+    def test_the_cut_counts_the_integrations_drift_in_the_deliverys_own_repository(self):
+        self.document['meta']['integration']={'base':'integrate/app','target':'main','remote':'origin'};self.write_state()
+        asked=[]
+        def drift(document,repository=None):
+            asked.append(repository);return {'moved':2,'behind':1}
+        with mock.patch.object(hosted.render,'integration_drift',side_effect=drift):
+            value=hosted.collect(self.inputs)
+        self.assertEqual(asked,[self.root])
+        self.assertEqual(value['integration'],{'drift':{'moved':2,'behind':1}})
     def test_changed_cut_symlink_and_different_run_response_are_refused(self):
         original=render.read_needs_block
         def mutate(directory):
             self.document['meta']['headline']='Changed during capture';self.write_state();return original(directory)
         with mock.patch.object(hosted.render,'read_needs_block',side_effect=mutate):
+            with self.assertRaises(hosted.public.SourceChanged):hosted.collect(self.inputs)
+        # A supervisor pass that rewrites the files view's reads during a cut changes the cut too.
+        lane_changes=self.state/render.LANE_CHANGES_FILE
+        lane_changes.write_text(json.dumps({'spec':'delivery-lane-changes/1','at':'2026-11-15T00:00:00Z','lanes':{}}))
+        read_files=render.read_lane_changes_block
+        def rewrite(directory):
+            lane_changes.write_text(json.dumps({'spec':'delivery-lane-changes/1','at':'2026-11-15T00:02:00Z','lanes':{}}))
+            return read_files(directory)
+        with mock.patch.object(hosted.render,'read_lane_changes_block',side_effect=rewrite):
             with self.assertRaises(hosted.public.SourceChanged):hosted.collect(self.inputs)
         (self.state/'plan.json').symlink_to(self.root.parent/'outside')
         with self.assertRaisesRegex(hosted.PublishError,'source_path'):hosted.collect(self.inputs)

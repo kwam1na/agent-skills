@@ -27,6 +27,10 @@ Then apply it from this repository's top level:
 python3 -B <folder>/linear-<version>.zip --root . --product apply --archive <folder>/linear-<version>.zip --metadata <folder>/linear-<version>.release.json --maintenance
 ```
 
+In the same commit, add the release id and its archive's sha256 to `ATTESTED_ARCHIVES` in
+`tests/test_own_deliveries.py`. The standing-binding gate pins the installed generation to that list,
+so an apply without the entry fails every check of the binding on the branch it lands on.
+
 The views and the state tool a delivery runs are the generation's, so a change made
 in `skills/` shows in a delivery here only after this.
 
@@ -377,6 +381,27 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py doc
 ```
 
 Fix the first line that isn't `ok` and run it again, until it exits 0.
+
+Every repository on the machine, this one and Athena alike, shares one machine
+ledger (orchestrate-work's guide, "The machine ledger"). Set the machine's
+capacity once, in slots, with the reason, or reset it to the core count:
+
+```bash
+python3 -B .agent-skills/current/skills/orchestrate-work/scripts/machine.py capacity --slots 8 --why "16 cores, keep half free for the editor and browsers"
+python3 -B .agent-skills/current/skills/orchestrate-work/scripts/machine.py status
+```
+
+A run that needs the machine to itself, such as a timing-sensitive suite, takes
+an exclusive claim. It waits for the machine to empty and nothing else starts
+while it runs:
+
+```bash
+python3 -B .agent-skills/current/skills/orchestrate-work/scripts/machine.py run --exclusive --label "full suite" -- .venv/bin/python scripts/run-tests.py --workers 4 --budget tests/suite-budget.json
+```
+
+The hand-kept suite slot, and waiting on Athena's quiet-machine lease, are
+retired once Athena claims through the same ledger. Until
+then, keep using them beside it.
 
 ## Hosted service verification
 

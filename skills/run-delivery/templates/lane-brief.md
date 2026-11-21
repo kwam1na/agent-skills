@@ -180,6 +180,13 @@ going on.
 Run at most 4 local test workers. Stop only processes you started, by the pid you
 recorded, never by pattern.
 
+The machine's ledger is shared by every repository on this machine. `{{flow}} claim [--slots N] [--label L] -- <argv>`
+is the default way to start a heavy command, such as a hand-off suite or a module or mutation run: it claims slots,
+waits while the machine is full, names the claims ahead of it, and then runs argv under its claim. `check`, `gate`,
+`lead-push` and `lead-suite` claim the same way. `{{machine}} status` shows the machine: its capacity, the running
+claims, the waiters and the live load. `--now --why <reason>` steps off the default and runs at once, and the reason is
+recorded. Which runs to start, and when, is your call.
+
 ## Delivery notes
 
 {{notes}}

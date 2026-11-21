@@ -64,6 +64,27 @@ li.run-finding .run-finding-text { display: inline; }
 li.run-finding .run-fate { white-space: nowrap; }
 .run-followup { margin: 2px 0 0; font-size: 12px; line-height: 1.5; color: var(--faint, #8f979c); overflow-wrap: anywhere; font-weight: 400; }
 .run-followup a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }
+/* A deferral's text is a button that opens its detail, with a quiet chevron in the gutter; beneath it one quiet line says
+   why it waited and how it ended, the fate in ink when it was fixed or closed and in the waiting colour while it waits.
+   Its detail is a two-column list on the card's lift, hidden until opened, so a closed card keeps its resting height. */
+.run-deferral { appearance: none; display: block; width: 100%; margin: 0; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; position: relative; }
+.run-deferral::before { content: "\25B8"; position: absolute; left: -16px; top: 0; width: 12px; font-size: 11px; color: var(--faint, #646c71); }
+.run-deferral[aria-expanded="true"]::before { content: "\25BE"; }
+.run-deferral:focus-visible { outline: 2px solid var(--ink, #141719); outline-offset: 2px; border-radius: 4px; }
+.run-deferral-said { margin: 2px 0 0; font-size: 12px; line-height: 1.5; color: var(--faint, #646c71); font-weight: 400; overflow-wrap: anywhere; }
+.run-deferral-said .run-fate { font: inherit; white-space: normal; font-weight: 550; color: var(--faint, #646c71); }
+.run-deferral-said .run-fate.is-fixed, .run-deferral-said .run-fate.is-closed, .run-deferral-said .run-fate.is-filed { color: var(--ink, #141719); }
+.run-deferral-said .run-fate.is-waiting { color: var(--wait, #946414); }
+.run-deferral-said a, .run-deferral-detail a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }
+.run-deferral-detail { margin: 6px 0 4px; padding: 12px 14px; border-radius: 8px; background: var(--lift, #ffffff); display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 10px 12px; font-size: 12.5px; line-height: 18px; font-weight: 400; color: var(--ink, #141719); }
+.run-deferral-detail[hidden] { display: none; }
+.run-deferral-detail dt { font-size: 12px; font-weight: 500; color: var(--faint, #646c71); }
+.run-deferral-detail dd { margin: 0; overflow-wrap: anywhere; }
+.run-deferral-detail dd.run-quiet { font-size: 12.5px; }
+.run-deferral-history { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.run-deferral-history li { display: flex; gap: 8px; }
+.run-deferral-round { flex: none; min-width: 20px; font: 12px var(--mono, ui-monospace, monospace); color: var(--faint, #646c71); }
+@media (max-width: 520px) { .run-deferral-detail { grid-template-columns: minmax(0, 1fr); gap: 2px; } .run-deferral-detail dd + dt { margin-top: 8px; } }
 .run-commit { font: 12px var(--mono, ui-monospace, monospace); color: inherit; }
 a.run-commit { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }
 .run-settled { margin: 0; padding-top: 12px; border-top: 1px solid var(--hair, #dfe2de); font-size: 13px; color: var(--ink, #141719); }

@@ -1600,8 +1600,8 @@ def integration_drift(document: dict, repository: Path | None = None) -> dict | 
 def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
                   plan: dict | None = None, needs: dict | None = None, story: bool = True,
                   files: dict | None = None, repository: Path | None = None) -> dict:
-    """The shared bounded view data; local HTML and public projection consume the same cut. Without ``story``, the
-    record is not narrated: a cut that publishes no story tells none."""
+    """The shared bounded view data; the local page and the hosted snapshot consume the same cut. Without ``story``,
+    the record is not narrated."""
     reviews = native_review_summaries(document)
     # One review payload budget, in stop order, regardless of its backing store.
     combined = {**{"run:" + key: value for key, value in runs.items()},
@@ -1625,7 +1625,7 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
     reviews = {key: bounded["native:" + key] for key in reviews}
     document = {key: value for key, value in document.items() if key != "reviewEvidence"}
     if story:
-        # The waits go with the story: a cut that publishes no story says nothing the lead wrote about a hold either.
+        # The waits go with the story: a cut without one says nothing the lead wrote about a hold either.
         document = with_waits(with_story(document, plan.get("plan") if isinstance(plan, dict) else None))
     view = {
         "title": config["title"],
@@ -1637,12 +1637,12 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
     data = {"document": document, "runs": runs, "reviews": reviews, "view": view,
             "links": page_links(document, runs, config, reviews), "plan": plan, "needs": needs}
     if files is not None:
-        # Only the local page reads the lanes' branches: a cut made without them publishes none.
+        # The lanes' branches, as the supervisor's pass read them beside the record: a cut made without them has none.
         data["files"] = files
     if story:
-        # What a closed delivery left open goes with the story too: the published cut tells none.
+        # What a closed delivery left open goes with the story too.
         data["leftOpen"] = left_open(document)
-        # How far the target moved goes with the story: it is read from this repository, and the published cut has none.
+        # How far the target moved goes with the story: it is read from the repository the cut is made in.
         drift = integration_drift(document, repository)
         if drift is not None:
             data["integration"] = {"drift": drift}

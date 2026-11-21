@@ -220,6 +220,15 @@
   }
   try { readLinks(JSON.parse(document.getElementById("delivery-links").textContent)); } catch (error) { /* nothing is linked */ }
   function issueHref(id) { return typeof LINKS.issues[id] === "string" ? LINKS.issues[id] : null; }
+  // The key of the follow-up the close-out filed for one of a story's deferred findings, which the record keeps as
+  // "<story>-<finding>" once the tracker names it; null until then.
+  function followUpOf(doc, subject) {
+    return function (finding) {
+      var id = String(subject) + "-" + String(finding);
+      var entry = list(doc && doc.state ? doc.state.followups : null).filter(function (item) { return isObject(item) && item.id === id; })[0];
+      return entry && typeof entry.reference === "string" && entry.reference && entry.reference !== id ? entry.reference : null;
+    };
+  }
   function commitHref(sha) { return typeof LINKS.commits[sha] === "string" ? LINKS.commits[sha] : null; }
   function changeTarget(changeRequest) {
     var target = LINKS.changes[text(changeRequest)];
@@ -2667,7 +2676,7 @@
         var box = el("div", "d-run");
         if (note) { box.appendChild(el("div", "d-run-none", note)); }
         var shown = isObject(finished) ? finished : { observational: true, observationKey: item.subject, open: false, roundDetail: [] };
-        box.appendChild(runSummaryNode(Object.assign({}, shown, { running: inFlight }), { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses, subject: item.subject }));
+        box.appendChild(runSummaryNode(Object.assign({}, shown, { running: inFlight }), { commitHref: commitHref, issueHref: issueHref, followUpOf: followUpOf(doc, item.subject), lenses: VIEW.lenses, subject: item.subject }));
         return box;
       };
       if (inFlight && !native && !events.length) { return underWay(null); }
@@ -2694,7 +2703,7 @@
       if (inFlight) { return underWay(native); }
       var nativeBox = el("div", "d-run");
       if (carried) { nativeBox.appendChild(el("div", "d-run-carried", "Carried by the lead. " + text(carried.note))); }
-      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses, subject: item.subject }));
+      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, issueHref: issueHref, followUpOf: followUpOf(doc, item.subject), lenses: VIEW.lenses, subject: item.subject }));
       return nativeBox;
     }
     if (VIEW.runs !== true) { return null; }

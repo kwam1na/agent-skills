@@ -114,7 +114,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from delivery_state import (  # noqa: E402
     CHANGES_FILE, JOURNAL_FILE, OUTBOX_DIRECTORY, PUBLISHED_FILE, QUEUE_LOCK, RECOVERY_FILE,
     RECOVERY_QUARANTINE, STATE_FILE, STATE_LOCK, StateError,
-    dumps, load_schema, merge_slot_path, show, slot_holder, waited_on, waits,
+    dumps, load_schema, machine_reading, merge_slot_path, show, slot_holder, waited_on, waits,
 )
 import narrator  # noqa: E402
 
@@ -375,7 +375,94 @@ def _status_lines(status: object) -> list[str]:
     return [] if text is None else [_markdown_text(text), ""]
 
 
-def render_markdown(document: dict) -> str:
+def _machine_module():
+    """The machine ledger's module, imported when a view first reads it."""
+    import machine
+    return machine
+
+
+def machine_view() -> dict | None:
+    """The machine ledger as the views show it, read live at render time: capacity, the running claims, the waiters in
+    order and the last five overrides, with the machine's pressure; ``{unavailable}`` when it can't be read; and None,
+    for no section, when no claim is live and the history holds no override."""
+    ledger = _machine_module().Ledger()
+    if not os.path.lexists(ledger.directory):
+        return None
+    reading = ledger.reading()
+    if "unavailable" in reading:
+        return {"unavailable": reading["unavailable"]}
+    if not (reading["running"] or reading["waiting"] or reading["overrides"]):
+        return None
+    probe = ledger.directory if ledger.directory.is_dir() else Path.cwd()
+    return {**reading, "pressure": machine_reading(probe)}
+
+
+def _repository_name(repository: object) -> str:
+    """A claim's repository as a reader knows it: the folder its git directory belongs to."""
+    if not isinstance(repository, str) or not repository:
+        return "no repository"
+    path = PurePosixPath(repository.replace("\\", "/"))
+    return path.parent.name if path.name == ".git" and path.parent.name else path.name
+
+
+def _slots(count: object) -> str:
+    return f"{count} slot" if count == 1 else f"{count} slots"
+
+
+def machine_lines(reading: dict) -> tuple[str, list[str], list[str], list[str]]:
+    """The section's words: its capacity line, then the running claims, the waiters in order and the overrides."""
+    if "unavailable" in reading:
+        return f"The machine ledger is unavailable: {reading['unavailable']}", [], [], []
+    setting = reading.get("capacitySetting")
+    source = f"set {setting.get('setAt')}: {setting.get('why')}" if isinstance(setting, dict) else "unset, the core count"
+    pressure = reading.get("pressure") or {}
+    load = pressure.get("load5")
+    head = (f"Capacity {_slots(reading['capacity'])} ({source}); {reading['used']} in use; "
+            f"load {load if load is not None else 'unknown'} on {pressure.get('cores') or 'unknown'} cores")
+
+    def described(claim: dict) -> str:
+        return (f"{claim.get('label')} · {_repository_name(claim.get('repository'))} · "
+                f"{claim.get('delivery') or 'no delivery'} · {_slots(claim.get('slots'))}")
+
+    running = [f"{described(claim)} · since {claim.get('startedAt')} · expected end "
+               f"{claim.get('expectedEnd') or 'not yet measured'}" for claim in reading["running"]]
+    waiting = [f"{described(claim)} · waiting since {claim.get('enqueuedAt')}" for claim in reading["waiting"]]
+    how = {"now": "admitted now", "admit": "admitted by hand"}
+    overrides = [f"{entry.get('label')} · {how.get(entry.get('admittedBy'), 'admitted')} at {entry.get('at')}: "
+                 f"{entry.get('why')}" for entry in reading["overrides"]]
+    return head, running, waiting, overrides
+
+
+def machine_markdown(reading: dict | None) -> list[str]:
+    """The markdown's Machine section, or nothing for no reading."""
+    if reading is None:
+        return []
+    head, running, waiting, overrides = machine_lines(reading)
+    lines = ["## Machine", "", _markdown_text(head), ""]
+    for title, rows, numbered in (("Running", running, False), ("Waiting", waiting, True), ("Overrides", overrides, False)):
+        if rows:
+            lines += [f"{title}:", ""]
+            # A waiter's place shows as text: the view never opens a Markdown ordered list.
+            lines += [f"- {position}\\. {_markdown_text(row)}" if numbered else f"- {_markdown_text(row)}"
+                      for position, row in enumerate(rows, start=1)]
+            lines.append("")
+    return lines
+
+
+def machine_markup(reading: dict | None) -> str:
+    """The built-in page's Machine section, or nothing for no reading."""
+    if reading is None:
+        return ""
+    head, running, waiting, overrides = machine_lines(reading)
+    parts = [f'<section id="machine">\n<h2>Machine</h2>\n<p>{html.escape(head)}</p>\n']
+    for title, rows, tag in (("Running", running, "ul"), ("Waiting", waiting, "ol"), ("Overrides", overrides, "ul")):
+        if rows:
+            items = "".join(f"<li>{html.escape(row)}</li>\n" for row in rows)
+            parts.append(f"<h3>{title}</h3>\n<{tag}>\n{items}</{tag}>\n")
+    return "".join(parts) + "</section>\n"
+
+
+def render_markdown(document: dict, machine: dict | None = None) -> str:
     document = with_across(with_waits(document))
     waiting, holding = _waits_by(document, "waits"), _waits_by(document, "waitedOn")
     state = document["state"]
@@ -487,6 +574,7 @@ def render_markdown(document: dict) -> str:
     lines += _markdown_section("Leases", rows, "No leases held.")
 
     lines += _markdown_story(document)
+    lines += [""] + machine_markdown(machine) if machine is not None else []
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
@@ -1238,7 +1326,7 @@ _LIVE_ADAPTER = """
 
 
 def render_static_page(document: dict, *, live: bool = False, flags: tuple[str, ...] = (),
-                       banner: str | None = None) -> str:
+                       banner: str | None = None, machine: dict | None = None) -> str:
     """The page. `banner` is the supervisor's banner markup, given only when the view reads a status file."""
     adapter = f"<script>\n{_LIVE_ADAPTER}\n</script>\n" if live else ""
     document = with_across(with_waits(_told(document)))
@@ -1253,7 +1341,7 @@ def render_static_page(document: dict, *, live: bool = False, flags: tuple[str, 
         "</head>\n"
         "<body>\n"
         + "".join(f'<p role="alert"><strong>{html.escape(flag)}</strong></p>\n' for flag in flags)
-        + (banner or "") +
+        + (banner or "") + machine_markup(machine) +
         '<main id="app" data-source="embedded"></main>\n'
         '<p id="live-status" class="status" hidden></p>\n'
         f'<script type="application/json" id="delivery-state">{_page_embed(document)}</script>\n'
@@ -1693,7 +1781,8 @@ def _write_atomically(path: Path, contents: bytes) -> None:
 def _render_builtin(name: str, document: bytes) -> Outcome:
     """Draw a built-in view in this process, held to the same view limit."""
     try:
-        view = BUILTINS[name](json.loads(document.decode("utf-8"))).encode("utf-8")
+        # The Machine section is read live, as each view is drawn.
+        view = BUILTINS[name](json.loads(document.decode("utf-8")), machine=machine_view()).encode("utf-8")
     except Exception as error:  # noqa: BLE001 - a view must never stop the others
         return Outcome(None, b"", b"", False, False, f"the built-in {name} view failed: {error}")
     if len(view) > VIEW_LIMIT_BYTES:
@@ -2203,7 +2292,8 @@ def _live_handler(view: LiveView, accepts: Callable[[str], bool], flags: tuple[s
                     return
                 page = render_static_page(document, live=True, flags=flags,
                                           banner=_banner_markup(view.status_file)
-                                          + peers_markup(view.directory, view.repository)).encode("utf-8")
+                                          + peers_markup(view.directory, view.repository),
+                                          machine=machine_view()).encode("utf-8")
                 self._plain(200, page, "text/html; charset=utf-8")
             elif path == "/document":
                 with view.changed:

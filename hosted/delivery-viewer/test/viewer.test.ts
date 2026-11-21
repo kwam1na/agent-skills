@@ -244,12 +244,12 @@ describe("trusted corpus DOM bridge (behavior only)", () => {
       expect(window.document.querySelector("#app")!.textContent).toContain(
         "Coherent new headline",
       );
-      // The snapshot carries no story, so its chapter says that plainly, never that the story could not be told.
+      // A record with no story reads as it does on the local page.
       expect(window.document.querySelector("#app")!.textContent).toContain(
-        "What happened is not published on the hosted page.",
+        "The story could not be told from this record.",
       );
       expect(window.document.querySelector("#app")!.textContent).not.toContain(
-        "could not be told",
+        "not published",
       );
       // Nor a setbacks ledger or a chapter's setback line: with no story there is no ledger to draw, and no reason leaks.
       expect(
@@ -510,13 +510,14 @@ function auxiliaryProjection(label: string): PublicProjection {
       findings: { P0: 0, P1: 1, P2: 0, P3: 0 },
     },
   });
-  // Every kept review journals its capture after its round, and the capture publishes no facts.
-  body.document.journal.push({
+  // Every kept review journals its capture after its round, with the digest and candidate the page checks it by.
+  (body.document.journal as Record<string, unknown>[]).push({
     id: 3,
     at: "2026-11-15T00:01:30Z",
     kind: "review.recorded",
     lane: "one",
     subject: "APP-2",
+    data: { digest: "d".repeat(64), candidateRef: "b".repeat(40) },
   });
   const round = {
     round: 1,
@@ -603,6 +604,9 @@ function seedDOM(window: JSDOM["window"], body: PublicProjection) {
     view: body.view,
     plan: body.plan,
     needs: body.needs,
+    files: body.files,
+    "left-open": body.leftOpen,
+    integration: body.integration,
   })) {
     if (value === null || value === undefined) continue;
     const block = window.document.createElement("script");
@@ -614,7 +618,7 @@ function seedDOM(window: JSDOM["window"], body: PublicProjection) {
 }
 function testDOM() {
   const dom = new JSDOM(
-    '<!doctype html><body><p id="hosting-status"></p><p id="hosting-times"></p><main id="app"></main><script data-renderer="/assets/renderer.js"></script></body>',
+    '<!doctype html><body><p id="hosting-status" class="hosting-status hosted-announce" role="status" aria-live="polite">Loading hosted progress…</p><main id="app"></main><script data-renderer="/assets/renderer.js"></script></body>',
     {
       url: `https://service.test/d/${publicId}`,
       runScripts: "outside-only",
@@ -633,12 +637,10 @@ function testDOM() {
   Object.defineProperty(dom.window, "crypto", { value: globalThis.crypto });
   return dom;
 }
-describe("what the hosted cut does not publish", () => {
-  const UNPUBLISHED = "Its reason is not published on the hosted page.";
-  const NONE = "No reason recorded.";
-  /** The auxiliary projection with: APP-2 stopped by a journaled stop, APP-3 stopped with no stop journaled, APP-4 in a
-   * check run a decision was recorded during, APP-5 planned with a kept review, a lane blocked on nothing named, and the
-   * main line broken. */
+describe("the hosted page draws what the local page draws", () => {
+  /** The auxiliary projection with: APP-2 stopped by a journaled stop with its facts, APP-3 stopped with no stop
+   * journaled, APP-4 in a check run a decision was recorded during, a lane blocked on nothing named, and the main
+   * line broken. */
   function hostedBody(): PublicProjection {
     const body = auxiliaryProjection("old");
     const state = body.document.state as Record<string, unknown>;
@@ -648,30 +650,23 @@ describe("what the hosted cut does not publish", () => {
       { subject: "APP-3", title: "Never journaled", lane: "one", stage: "stopped", head: "c".repeat(40) },
       { subject: "APP-4", title: "In its checks", lane: "one", stage: "checking", head: "d".repeat(40) },
     );
-    state.planned = [{ subject: "APP-5", title: "Reviewed before hand-off", lane: "one", stage: "review" }];
     state.lanes = [{ id: "two", title: "Lane two", focus: "Waiting", state: "blocked", waitingOn: null, since: "2026-11-15T00:00:00Z" }];
     state.meta = { ...(state.meta as Record<string, unknown>), checking: { now: { subject: "APP-4", title: "In its checks",
       startedAt: "2026-11-15T00:05:00Z", steps: [{ label: "suite", state: "failed" }] }, next: [] } };
-    body.document.journal.push(
-      { id: 4, at: "2026-11-15T00:02:00Z", kind: "check.started", lane: "one", subject: "APP-2" },
-      { id: 5, at: "2026-11-15T00:03:00Z", kind: "candidate.stopped", lane: "one", subject: "APP-2" },
-      { id: 6, at: "2026-11-15T00:04:00Z", kind: "base.broken", lane: null, subject: null },
-      { id: 7, at: "2026-11-15T00:05:00Z", kind: "check.started", lane: "one", subject: "APP-4" },
-      { id: 8, at: "2026-11-15T00:06:00Z", kind: "decision.recorded", lane: null, subject: "APP-4" },
-      { id: 9, at: "2026-11-15T00:07:00Z", kind: "review.round", lane: "one", subject: "APP-5",
-        data: { round: 1, verdicts: { "lens.security": "approve" }, findings: { P0: 0, P1: 0, P2: 0, P3: 0 } } },
-      { id: 10, at: "2026-11-15T00:08:00Z", kind: "review.recorded", lane: "one", subject: "APP-5" },
+    (body.document.journal as Record<string, unknown>[]).push(
+      { id: 4, at: "2026-11-15T00:02:00Z", kind: "check.started", lane: "one", subject: "APP-2", data: { head: "b".repeat(40) } },
+      { id: 5, at: "2026-11-15T00:03:00Z", kind: "candidate.stopped", lane: "one", subject: "APP-2",
+        data: { reason: "The suite failed in tests/test_parser.py at its head." } },
+      { id: 6, at: "2026-11-15T00:04:00Z", kind: "base.broken", lane: null, subject: null, data: { reason: "fullHealth failed" } },
+      { id: 7, at: "2026-11-15T00:05:00Z", kind: "check.started", lane: "one", subject: "APP-4", data: { head: "d".repeat(40) } },
+      { id: 8, at: "2026-11-15T00:06:00Z", kind: "decision.recorded", lane: null, subject: "APP-4",
+        data: { text: "Rerun it under scripts/run-tests.py", why: "The first run timed out." } },
     );
-    type Review = { roundDetail: { raised: Record<string, unknown>[] }[] } & Record<string, unknown>;
-    const reviews = body.reviews as Record<string, Review>;
-    const own = reviews["APP-2"];
-    body.reviews = { ...reviews, "APP-5": { ...structuredClone(own), observationKey: "APP-5",
-      candidateRef: "e".repeat(40), journalId: 10,
-      roundDetail: [{ ...structuredClone(own.roundDetail[0]), candidateRef: "e".repeat(40),
-        raised: [{ ...own.roundDetail[0].raised[0], summary: "planned native finding" }] }] } };
     return body;
   }
-  /** The built page drawn from `body`: as the hosted page, under its store, or as a page with no store. */
+  const fullRecord = () =>
+    structuredClone(cases.find((row) => row.file === "valid-full-record.json")!.body) as PublicProjection;
+  /** The built page drawn from `body`: as the hosted page, under its store, or as the local page, with none. */
   function drawn(body: PublicProjection, hosted: boolean) {
     const built = JSON.parse(
       readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8"),
@@ -684,87 +679,110 @@ describe("what the hosted cut does not publish", () => {
     }
     seedDOM(dom.window, body);
     dom.window.eval(built.renderer);
-    const document = dom.window.document;
-    const why = (title: string) =>
-      Array.from(document.querySelectorAll("li")).find((row) => row.querySelector(".a1")?.textContent === title)
-        ?.querySelector(".a2")?.textContent ?? null;
-    // A story opens from its stop, or, folded out of its row, from its tick on the main line.
-    const open = (subject: string) => {
-      const target = document.querySelector(`.stop-btn[data-subject="${subject}"]`) ??
-        document.querySelector(`.mg-tick[data-subject="${subject}"]`);
-      target!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-      return document.querySelector("#detail")!;
-    };
-    return { dom, document, why, open };
+    return dom;
   }
-  it("says a stop's and a break's reason in the supervisor's published words, and words none from the record", () => {
-    const body = hostedBody();
-    const needs = body.needs as Record<string, unknown>;
-    needs.items = [
-      { holding: false, source: "queue", text: "APP-2 stopped", clears: "a new head", kind: "stopped", who: "lead",
-        subject: "APP-2", said: { headline: "Native evidence stopped in its checks", why: "The suite failed at its head.",
-          clears: "Clears with a new head.", who: "The lead" } },
-      { holding: false, source: "fullHealth", text: "the base is broken", clears: "a repair", kind: "baseBroken",
-        who: "lead", said: { headline: "The base broke at its last full run", why: "fullHealth: test_parser failed.",
-          clears: "Clears when the base is repaired.", who: "The lead" } },
-    ];
+  /** Every chapter's words, less the hero's live line, which says how the page is connected rather than the record. */
+  function chapters(dom: JSDOM) {
+    const app = dom.window.document.querySelector("#app")!.cloneNode(true) as HTMLElement;
+    app.querySelectorAll(".fact.since").forEach((node) => node.remove());
+    return app.textContent!.replace(/\s+/g, " ").trim();
+  }
+  it.each([
+    ["a record with facts, stops, checks and a decision", hostedBody],
+    ["the full record on an integration base", fullRecord],
+  ])("draws every chapter as the local page does: %s", (_name, make) => {
+    const body = make();
     projection(body);
-    const page = drawn(body, true);
-    try {
-      expect(page.why("Native evidence stopped in its checks")).toBe("The suite failed at its head.");
-      expect(page.why("The base broke at its last full run")).toBe("fullHealth: test_parser failed.");
-      for (const title of ["Native evidence stopped", "Never journaled stopped", "Lane two is blocked", "The main line is broken"]) {
-        expect(page.why(title)).toBeNull();
-      }
-      const listed = page.document.querySelector(".needs-you")!.textContent;
-      expect(listed).not.toContain(UNPUBLISHED);
-      expect(listed).not.toContain(NONE);
-      // The plan's base flag still words the break from the record, so the hosted cut still says it is not published.
-      expect(page.why("The base is broken")).toBe(UNPUBLISHED);
-    } finally {
-      page.dom.window.close();
-    }
-  });
-  it("draws no wordless merge-check steps or notes, and shows a kept review, its own or a planned piece's", () => {
-    const body = hostedBody();
-    projection(body);
-    const page = drawn(body, true);
-    try {
-      expect(page.document.querySelector(".ck-note")).toBeNull();
-      const stopped = page.open("APP-2");
-      expect(stopped.querySelector("details.mh")).toBeNull();
-      expect(stopped.textContent).toContain("old native finding");
-      expect(stopped.textContent).not.toContain("Review evidence unavailable or stale");
-      const planned = page.open("APP-5");
-      expect(planned.textContent).toContain("planned native finding");
-      expect(planned.textContent).not.toContain("Review evidence unavailable or stale");
-    } finally {
-      page.dom.window.close();
-    }
-  });
-  it("leaves the page as it is with no hosted store, or with a story on the record", () => {
-    // The same record drawn by the page with no store: the note, the merge check, the review cross-check and the
-    // record's own wording are all the page's as before.
-    const body = hostedBody();
     const local = drawn(body, false);
+    const hosted = drawn(body, true);
     try {
-      expect(local.document.querySelector(".ck-note")).not.toBeNull();
-      expect(local.why("The main line is broken")).toBeNull();
-      expect(local.open("APP-2").querySelector("details.mh")).not.toBeNull();
-      expect(local.open("APP-5").textContent).toContain("Review evidence unavailable or stale");
+      const words = chapters(hosted);
+      expect(words.length).toBeGreaterThan(400);
+      expect(words).toBe(chapters(local));
+      expect(words).not.toMatch(/not published|Local reference omitted/);
     } finally {
-      local.dom.window.close();
+      local.window.close();
+      hosted.window.close();
     }
-    // Under the store, a record that does carry a story is the page's own too.
-    const told = hostedBody();
-    (told.document as Record<string, unknown>).story = { schemaVersion: "story/1", state: "open",
-      digest: { head: "Nothing has landed yet.", line: "" }, chapters: [], beats: [], threads: [], tones: [] };
-    const page = drawn(told, true);
+  });
+  /** The full record with region claims, a files view, a drift and, when `closed`, what it left open. */
+  function blocksRecord(moved: number, paths: string[], closed = false): PublicProjection {
+    const body = fullRecord() as PublicProjection & Record<string, any>;
+    const state = body.document.state as Record<string, any>;
+    state.laneOwnership = { "lane-1": ["src/*", "docs/*"] };
+    state.laneRegions = [{ lane: "lane-1", path: "src/shared.py", baseHead: "a".repeat(40), start: 1, end: 20 }];
+    body.files = { spec: "delivery-lane-changes/1", at: "2026-10-30T07:39:00Z", base: "b".repeat(40),
+      lanes: { "lane-1": { story: "A", branch: "claude/A", head: "c".repeat(40), base: "b".repeat(40),
+        mergeBase: "b".repeat(40), readAt: "2026-10-30T07:39:00Z",
+        files: paths.map((path) => ({ path, holds: "file", changes: [] })) } },
+      files: paths.map((path) => ({ path, lines: 10, lanes: ["lane-1"] })) };
+    body.integration = { drift: { moved, behind: 1 } };
+    if (closed) {
+      const journal = body.document.journal as Record<string, unknown>[];
+      journal.push({ id: journal.length + 100, at: "2026-10-30T08:00:00Z", kind: "delivery.closed", lane: null, subject: null, data: {} });
+      body.leftOpen = { heading: "What it left open", rows: [{ subject: "A", said: { headline: "Work A was left stopped", why: "Its suite never passed." } }] };
+    }
+    projection(body);
+    return body;
+  }
+  it("reads the files view, the drift and what a closed delivery left open from the viewer's seed and its store's pushes", async () => {
+    const assets = JSON.parse(readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8")) as
+      { renderer: string; viewer: string };
+    let served = await revision(1, blocksRecord(3, ["src/one.py"]));
+    const dom = testDOM();
+    Object.assign(dom.window, {
+      fetch: async (url: string) => url.endsWith("/current") ? Response.json(served.meta)
+        : new Response(served.bytes, { headers: { "Content-Type": "application/json" } }),
+    });
+    const words = () => dom.window.document.querySelector("#app")!.textContent!.replace(/\s+/g, " ");
+    const files = () => [...dom.window.document.querySelectorAll("details.files-fold [data-path]")]
+      .map((node) => node.getAttribute("data-path"));
     try {
-      expect(page.why("The main line is broken")).toBeNull();
-      expect(page.open("APP-5").textContent).toContain("Review evidence unavailable or stale");
+      dom.window.eval(assets.viewer);
+      await vi.waitFor(() => expect(Reflect.get(dom.window, "deliveryStateStore")).toBeDefined());
+      const store = Reflect.get(dom.window, "deliveryStateStore") as ReturnType<typeof createViewStore>;
+      dom.window.eval(assets.renderer);
+      // The first draw reads the blocks the viewer seeded, as the local page reads the ones it embeds.
+      await vi.waitFor(() => expect(words()).toContain("main moved 3 commits while this worked"));
+      expect(dom.window.document.querySelector("details.files-fold summary")!.textContent).toBe("Who holds which files");
+      expect(files()).toContain("src/one.py");
+      const local = drawn(served.body, false);
+      try {
+        expect(chapters(dom)).toBe(chapters(local));
+      } finally {
+        local.window.close();
+      }
+      // A pushed projection moves each block, as a rewritten local page does.
+      served = await revision(2, blocksRecord(5, ["src/one.py", "docs/new.md"]));
+      await store.poll();
+      await vi.waitFor(() => expect(words()).toContain("main moved 5 commits while this worked"));
+      expect(files()).toContain("docs/new.md");
+      served = await revision(3, blocksRecord(5, ["src/one.py"], true));
+      await store.poll();
+      await vi.waitFor(() => expect(words()).toContain("Work A was left stopped"));
+      expect(dom.window.document.querySelector(".left-open .ah")!.textContent).toBe("What it left open");
     } finally {
-      page.dom.window.close();
+      dom.window.dispatchEvent(new dom.window.Event("pagehide"));
+      dom.window.close();
+    }
+  });
+  it("draws the integration base, the rejoin bar's four stops, and the story's words", () => {
+    const body = fullRecord();
+    projection(body);
+    const hosted = drawn(body, true);
+    try {
+      const words = chapters(hosted);
+      expect(words).toContain("Rejoin main");
+      // The rejoin is drawn as the line's bar, one segment per step, as the local page draws it; the old
+      // "Before it rejoins" table is gone from both.
+      const steps = [...hosted.window.document.querySelectorAll("#line .mg-step")].map((step) => step.getAttribute("data-step"));
+      expect(steps).toEqual(["merged", "suite", "round", "requested"]);
+      expect(words).not.toContain("Before it rejoins");
+      expect(words).toContain("integrate/app");
+      const story = (body.document as Record<string, unknown>).story as Record<string, unknown>;
+      expect(story).toBeTruthy();
+    } finally {
+      hosted.window.close();
     }
   });
 });
@@ -1130,5 +1148,190 @@ describe("immutable tuple confirmations", () => {
       sourceConfirmedAt: 1000100,
       serverNow: 1000100,
     });
+  });
+});
+
+describe("the hosting status in the hero's live line", () => {
+  type Built = { renderer: string; viewer: string; shell: string };
+  const built = () =>
+    JSON.parse(
+      readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8"),
+    ) as Built;
+  type Served = Awaited<ReturnType<typeof revision>> | Error;
+  /** The viewer and, when `draw`, the renderer on one page, served whatever `served.now` holds at each request. */
+  async function hostedPage(served: { now: Served }, draw = true) {
+    const assets = built();
+    const dom = testDOM();
+    Object.assign(dom.window, {
+      fetch: async (url: string) => {
+        const now = served.now;
+        if (now instanceof Error) throw now;
+        return url.endsWith("/current")
+          ? Response.json(now.meta)
+          : new Response(now.bytes, {
+              headers: { "Content-Type": "application/json" },
+            });
+      },
+    });
+    dom.window.eval(assets.viewer);
+    const document = dom.window.document;
+    // The viewer hands its store to the renderer once it holds data.
+    if (draw)
+      await vi.waitFor(() =>
+        expect(Reflect.get(dom.window, "deliveryStateStore")).toBeDefined(),
+      );
+    const store = Reflect.get(dom.window, "deliveryStateStore") as ReturnType<
+      typeof createViewStore
+    >;
+    if (draw) {
+      dom.window.eval(assets.renderer);
+      await vi.waitFor(() =>
+        expect(document.querySelector(".fact.since[data-hosting]")).not.toBeNull(),
+      );
+    }
+    return { dom, store, document };
+  }
+  const line = (document: Document) =>
+    document.querySelector<HTMLElement>(".fact.since")!;
+  const status = (document: Document) =>
+    document.getElementById("hosting-status")!;
+  function close(dom: JSDOM) {
+    dom.window.dispatchEvent(new dom.window.Event("pagehide"));
+    dom.window.close();
+  }
+  it("draws no strip, and a current publication shows only as the live line, its times on hover or focus", async () => {
+    expect(built().shell).not.toMatch(/hosting-strip|hosting-times|<aside/);
+    const served = { now: (await revision(1, auxiliaryProjection("old"))) as Served };
+    const { dom, document } = await hostedPage(served, false);
+    try {
+      await vi.waitFor(() =>
+        expect(Reflect.get(dom.window, "deliveryStateStore")).toBeDefined(),
+      );
+      const store = Reflect.get(dom.window, "deliveryStateStore") as ReturnType<
+        typeof createViewStore
+      >;
+      // Before the line is drawn the status is said on its own; drawing the line alone, with no status change between
+      // (the store's own tick is a second away), puts it out of sight.
+      expect(status(document).classList.contains("hosted-announce")).toBe(false);
+      dom.window.eval(built().renderer);
+      expect(document.querySelector(".fact.since[data-hosting]")).not.toBeNull();
+      await Promise.resolve();
+      expect(status(document).classList.contains("hosted-announce")).toBe(true);
+      await store.poll();
+      expect(store.status().kind).toBe("current");
+      const fact = line(document);
+      expect(fact.dataset.hosting).toBe("current");
+      expect(fact.querySelector(".hosted-words")).toBeNull();
+      const handle = fact.querySelector<HTMLElement>('[data-tab="hosting"]')!;
+      expect(handle.textContent).toBe("Live");
+      expect(handle.getAttribute("tabindex")).toBe("0");
+      expect(handle.getAttribute("aria-describedby")).toBe("hosting-times");
+      const tip = document.getElementById("hosting-times")!;
+      expect(tip.getAttribute("role")).toBe("tooltip");
+      expect(tip.textContent).toMatch(/^Source confirmed .+ · Published .+ · Revision 1\.1$/);
+      expect(tip.previousElementSibling).toBe(handle);
+      expect(status(document).textContent).toBe("Progress confirmed");
+      expect(status(document).getAttribute("aria-live")).toBe("polite");
+      expect(status(document).classList.contains("hosted-announce")).toBe(true);
+      expect(document.querySelectorAll(".hosting-strip, aside, #hosting-times")).toHaveLength(1);
+    } finally {
+      close(dom);
+    }
+  });
+  it.each([
+    ["stale", "Progress is stale · publisher contact lost"],
+    ["unavailable", "Update unavailable · showing the last saved progress"],
+    ["incompatible", "Incompatible update · showing the last saved progress"],
+  ])("says a %s publication in the live line without interaction, and announces it", async (kind, words) => {
+    const body = auxiliaryProjection("old");
+    const served = { now: (await revision(1, body)) as Served };
+    const { dom, store, document } = await hostedPage(served);
+    try {
+      await store.poll();
+      const handle = line(document).querySelector<HTMLElement>('[data-tab="hosting"]')!;
+      handle.focus();
+      expect(document.activeElement).toBe(handle);
+      if (kind === "stale") served.now = await revision(2, body, 1120000);
+      else if (kind === "unavailable") served.now = Error("offline");
+      else {
+        const next = await revision(2, body);
+        next.meta.rendererVersion = "delivery-line-map/0";
+        served.now = next;
+      }
+      await store.poll();
+      expect(store.status().kind).toBe(kind);
+      const fact = line(document);
+      await vi.waitFor(() => expect(fact.isConnected && fact.dataset.hosting).toBe(kind));
+      const said = fact.querySelector(".hosted-words")!;
+      expect(said.textContent).toBe(words);
+      expect(said.getAttribute("aria-hidden")).toBe("true");
+      expect(status(document).textContent).toBe(words);
+      expect(status(document).dataset.state).toBe(kind);
+      expect(status(document).getAttribute("role")).toBe("status");
+      expect(document.getElementById("hosting-times")!.textContent).toContain(
+        kind === "stale" ? "Revision 1.2" : "Revision 1.1",
+      );
+      // The renderer redraws the line as the connection drops; keyboard focus comes back to its label.
+      expect((document.activeElement as HTMLElement).dataset.tab).toBe("hosting");
+      expect(document.activeElement!.isConnected).toBe(true);
+      // Back to current: the words go, and the line is quiet again.
+      served.now = await revision(3, body);
+      await store.poll();
+      await vi.waitFor(() => expect(line(document).dataset.hosting).toBe("current"));
+      expect(line(document).querySelector(".hosted-words")).toBeNull();
+    } finally {
+      close(dom);
+    }
+  });
+  it("keeps a completed delivery's saved and retained publication quiet in its closed line until its connection fails", async () => {
+    const body = auxiliaryProjection("old");
+    body.document.journal.push({
+      id: body.document.journal.length + 1,
+      at: "2026-11-15T00:01:00Z",
+      kind: "delivery.closed",
+      lane: null,
+      subject: null,
+    });
+    const served = { now: (await revision(1, body, 9999999)) as Served };
+    const { dom, store, document } = await hostedPage(served);
+    try {
+      await store.poll();
+      expect(store.status().kind).toBe("retained");
+      await vi.waitFor(() => expect(line(document).dataset.hosting).toBe("retained"));
+      expect(line(document).classList.contains("closed")).toBe(true);
+      expect(line(document).querySelector(".hosted-words")).toBeNull();
+      expect(document.getElementById("hosting-times")!.textContent).toContain("Revision 1.1");
+      expect(status(document).textContent).toBe("Completed delivery · saved and retained");
+      // A lost connection is said in the line, though the saved delivery stays readable.
+      served.now = Error("offline");
+      await store.poll();
+      expect(store.status().kind).toBe("retained");
+      await vi.waitFor(() =>
+        expect(line(document).querySelector(".hosted-words")?.textContent).toBe(
+          "Saved completed delivery · connection unavailable",
+        ),
+      );
+      expect(status(document).textContent).toBe("Saved completed delivery · connection unavailable");
+    } finally {
+      close(dom);
+    }
+  });
+  it("says the status on its own, in the page's column, only before any live line is drawn", async () => {
+    const served = { now: Error("offline") as Served };
+    const { dom, store, document } = await hostedPage(served, false);
+    try {
+      // While loading, the page's own loading words say it; the region only announces.
+      expect(status(document).textContent).toBe("Loading hosted progress…");
+      expect(status(document).classList.contains("hosted-announce")).toBe(true);
+      expect(store).toBeUndefined();
+      await vi.waitFor(() =>
+        expect(status(document).textContent).toBe("Hosted progress unavailable"),
+      );
+      expect(status(document).dataset.state).toBe("unavailable");
+      expect(status(document).classList.contains("hosted-announce")).toBe(false);
+      expect(document.querySelector(".fact.since")).toBeNull();
+    } finally {
+      close(dom);
+    }
   });
 });

@@ -1,7 +1,7 @@
 ---
 title: "Select checks by what reads a change, not only by what it touches"
 date: 2026-11-08
-last_updated: 2026-11-17
+last_updated: 2026-11-21
 category: best-practices
 module: orchestrate-work
 problem_type: best_practice
@@ -70,6 +70,14 @@ memory.
   checks read. A complete entry that misses a read file carries a check over a
   base change that breaks it, and only the post-merge `fullHealth` run would
   catch it.
+- A reader the binding declares still has to run where the change is made. In V26-3689 a lane
+  changed run-delivery's brief templates, its journal call sites and its skill page, and handed
+  off green on its plan's sensors. The queue's full suite then failed three corpus tests the lane
+  never ran: `tests.test_round_brief_template_corpus` and `tests.test_run_event_emission_corpus`,
+  which the `skills/**/*.md` reader already names, and `tests.test_journal_shape`, which no reader
+  names for the scripts it inventories (`run_delivery.py`, `merge_queue.py`, `delivery_state.py`).
+  Before hand-off, run the readers of every path the story changes, and give a script whose
+  journal writes a test inventories a `readers` entry naming that test.
 
 ## Examples
 

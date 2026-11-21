@@ -1226,13 +1226,20 @@ file, and reads no CI or forge. It returns on the first thing needing the lead:
   lands: it wakes no wait, is never reported quiet, isn't in "Needs you" and doesn't hold the close;
 - machine pressure: five-minute load above `--load-multiple` times the cores
   (2 by default), free disk under `--min-free-bytes` (20 GiB), or swap grown by
-  more than `--swap-growth-bytes` (4 GiB).
+  more than `--swap-growth-bytes` (4 GiB);
+- one of this delivery's own machine claims that has waited longer than `--claim-wait-seconds` (900 by default), once
+  per waiting stretch. A claim is this delivery's when its `delivery` is the record's headline, its tracker parent or
+  its state folder's name, and its repository is this one or none. Another delivery's wait never wakes it, and nothing
+  is admitted for the lead: it decides whether to admit (see [the machine ledger](#the-machine-ledger)).
 
 It exits 0 on a wake, 1 on an error, such as a malformed journal or a missing
 state directory, 2 on a usage error, and exits 3 when `--timeout` passes, 30
 minutes by default. It
-prints what it found: `woke`, `events`, `blockedLanes`, `pressure`, `quietLanes`,
-`machine`, `unavailable`, `through` and `restart`. Without `--after` it starts after the
+prints what it found: `woke` (`event`, `pressure`, `claim` or `expired`), `events`, `blockedLanes`, `pressure`,
+`quietLanes`, `claimWaits`, `machine`, `unavailable`, `through` and `restart`. `machine` holds the pressure counters,
+`cores`, `load5`, `diskFreeBytes` and `swapUsedBytes`, and the ledger as any agent reads it: `capacity`, `used`,
+`running`, `waiting` in order and the last five `overrides`; with a ledger that can't be read, `unavailable` and the
+reason take the ledger's place. `claimWaits` names each long claim wait that woke it. Without `--after` it starts after the
 journal's last entry, so pass it on every restart: `restart` holds the arguments
 for the next wait, so an entry written between two waits is not missed, along with
 this wait's timeout, poll and limits. They also mark a held condition as seen, so
@@ -1256,6 +1263,35 @@ loading the machine before taking more work, and reduces this delivery's own
 load first, such as by capping test workers. It reports what it can't reduce to
 the operator, such as other work or a system service. It stops nothing it didn't
 start without the operator's word.
+
+### The machine ledger
+
+Every repository on a machine shares one machine directory: `$AGENT_SKILLS_MACHINE_DIR` when set, else
+`$XDG_STATE_HOME/agent-skills/machine`, else `~/.local/state/agent-skills/machine`. It holds the claims of the heavy
+runs on the machine, what each run has measured itself to cost, the machine's capacity and a history of waits,
+admissions and overrides. It gives agents three facts, who is using the machine, what a run costs and what the
+machine can bear, and commands to act on them. It prescribes no rule: the agent judges.
+
+```bash
+python3 -B <skill>/scripts/machine.py status [--json]
+python3 -B <skill>/scripts/machine.py run [--kind check|fullHealth|suite|run] [--slots N] [--exclusive] [--label L] [--delivery D] [--story S] [--wait-seconds S] [--now --why W] -- <command>
+python3 -B <skill>/scripts/machine.py admit <claim id> --why W
+python3 -B <skill>/scripts/machine.py capacity (--slots N | --reset) --why W
+```
+
+- **Defaults.** `run` claims its slots and waits while the machine is full, for as long as it takes unless
+  `--wait-seconds` caps it; the waiting command says on stderr what it waits behind. Its slots come from what the
+  same run measured last time when it has, else from `--slots`. Capacity is the core count until someone sets it.
+  The queue claims its turn before the merge slot, so its checks wait their turn on the machine too.
+- **Overrides.** An agent steps off a default with a reason, and the reason is recorded in the history: `--now --why`
+  runs at once whatever the machine holds, `admit --why` admits another agent's waiting claim, and `capacity --why`
+  sets or resets the capacity. Inside a delivery the lead records the call as a `decision.recorded` entry too.
+- **What the lead sees.** Every `wait` carries the ledger in `machine`, and a long wait on one of this delivery's own
+  claims wakes it once. The built-in page and the markdown show a Machine section beside the peers, read live at
+  render time: capacity and pressure, the running claims (label, repository, delivery, slots, since, expected end),
+  the waiters in order and the last five overrides with their reasons. With no live claim and no override in the
+  history the section is left out, and a ledger that can't be read is shown as unavailable. A ledger that can't be
+  used never stops a run: the command says so and runs unclaimed.
 
 ### Leases
 

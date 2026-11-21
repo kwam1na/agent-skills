@@ -565,3 +565,18 @@ Criteria:
 - the scenarios pass;
 - existing render snapshots are unchanged when the machine directory is empty;
 - no fixed rule replaces the agent's judgement.
+
+### V26-3693. Make the hosted page look like the local live view
+
+Lane 3, tier 1, not blocked. Added mid-delivery: The operator added it on 2026-11-20: the hosted page falls back to Georgia and the system sans because its policy and asset build carry none of the local view's fonts.
+It also replaces the hosted page's full-width hosting strip with an unobtrusive indicator in the hero's live line, as the operator asked. Files: `hosted/delivery-viewer/`. The ticket, [V26-3693](https://linear.app/v26-technologies/issue/V26-3693), holds its scope, criteria, scenarios and sensors.
+
+### V26-3692. Publish the local live view's record in full on the hosted page
+
+Lane 3, tier 1, after V26-3693. Added mid-delivery: The operator added it on 2026-11-20 after finding this delivery's own hosted page omits its integrate/shared-machine-capacity base: the hosted snapshot schema drops meta.integration and the integration facts.
+The operator then ruled, the same day, to remove the hosted page's privacy redactions: it shows what the local live view shows, and only credentials and configured secret values are never published. Files: `skills/delivery-views/`, `hosted/delivery-viewer/`, `tests/test_delivery_views_hosted.py`, `tests/test_delivery_views_page.py` and `docs/hosted-deliveries.md`. The ticket, [V26-3692](https://linear.app/v26-technologies/issue/V26-3692), holds its scope, criteria, scenarios and sensors.
+
+### V26-3695. Say why a review finding was deferred, and how it ended, in the round card
+
+Lane 3, tier 2, not blocked. Added mid-delivery: The operator added it on 2026-11-21 after reviewing the deferral-reason mockups (direction B with C's detail): the round card says findings were deferred but not why, nor what became of them.
+Files: `skills/delivery-views/assets/run-summary.js`, `skills/delivery-views/assets/run-summary.css`, `tests/delivery_views_page/` and delivery-views' catalog line. The design is direction "B with C's detail" on the Deferral reasons canvas; the ticket, [V26-3695](https://linear.app/v26-technologies/issue/V26-3695), holds its scope, criteria, scenarios and sensors.
