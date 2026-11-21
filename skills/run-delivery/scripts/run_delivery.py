@@ -1742,6 +1742,7 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
         "metadataSha256": rel["metadataSha256"], "graph": graph_digest(), "bound_text": bound_text, "kind": kind,
         "carry": carry, "resolutions": resolutions, "charter": charter, "later": later, "checkout": str(checkout),
         "context": context, "in_app": in_app_summary(key), "severities": STORY_SEVERITIES, "checks": scoped_checks(span),
+        "result": str(result_path(review_dir(key), round_no, short)),
     }
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
 
@@ -2017,11 +2018,58 @@ def review_prepare(args) -> None:
     else:
         print("Resume the same reviewer for each lens, in parallel, with exactly this message. Only if a reviewer "
               "can't be resumed, start a fresh one with the same prompt and say so in the hand-off.")
-    print("Save each final JSON message, exactly as returned, to its result path. Never write or edit a result.\n")
+    print("Each reviewer writes its final JSON to its result path as its last step. Wait for them in the foreground, "
+          f"inside your turn: {flow_command()} review-wait {key} --round {n} returns once every result is in, and exits "
+          "4 naming the lenses still out when its time runs out, so run it again. A reviewer that returned without "
+          "writing its result: save its final JSON message, exactly as returned, to its result path. Never edit a "
+          "result.\n")
     for lens, path, result in briefs:
-        print(f"- {lens}\n  prompt: Read {path} and follow it exactly. Your final message is only the JSON it asks for.\n"
-              f"  save to: {result}")
-    print(f"\nThen: {flow_command()} review-reduce {key} --round {n}")
+        print(f"- {lens}\n  prompt: Read {path} and follow it exactly. As your last step, write your final JSON to "
+              f"{result}, then reply with only that same JSON.\n"
+              f"  result path: {result}")
+    print(f"\nThen: {flow_command()} review-reduce {key} --round {n}, once {flow_command()} review-wait {key} --round {n} "
+          "returns 0")
+
+
+# review-wait's default deadline, inside a host's ten-minute command limit, and how often it looks.
+REVIEW_WAIT_SECONDS, REVIEW_WAIT_POLL = 540, 5
+
+
+def parsed_json(path: Path) -> bool:
+    """Whether `path` holds JSON that parses: a result still being written, or not written, doesn't."""
+    try:
+        json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def review_wait(args) -> None:
+    """`review-wait <key> --round N [--seconds S]`: wait in the foreground until every lens's result path in the
+    round's meta holds JSON that parses, then exit 0; exit 4 naming the lenses still out once S seconds run out."""
+    c = cfg()
+    key = c.require(args.key)
+    n = args.round
+    folder = review_dir(key)
+    meta = load_json(folder / f"round-{n}.meta.json")
+    if meta is None:
+        raise Stop(f"round {n} isn't prepared: {flow_command()} review-prepare {key} --round {n} prepares it")
+    if args.seconds < 0:
+        raise Stop(f"--seconds is {args.seconds:g}: give zero or more")
+    paths = {lens: result_path(folder, n, c.lenses[lens][0]) for lens in meta["lenses"] if lens in c.lenses}
+    watch = clock()
+    deadline = watch.time() + args.seconds
+    while True:
+        out = [lens for lens, path in paths.items() if not parsed_json(path)]
+        if not out:
+            print(f"{key} round {n}: every lens's result is in. Then: {flow_command()} review-reduce {key} --round {n}")
+            return
+        left = deadline - watch.time()
+        if left <= 0:
+            print(f"{key} round {n}: still out after {args.seconds:g}s: {', '.join(out)}. Wait again: "
+                  f"{flow_command()} review-wait {key} --round {n}")
+            sys.exit(4)
+        watch.sleep(min(watch.poll(REVIEW_WAIT_POLL), left))
 
 
 def flow_command() -> str:
@@ -2645,6 +2693,7 @@ def plan_brief(c, n: int, lens: str, candidate: str, tree: str, checkout: Path, 
         "severities": PLAN_SEVERITIES,
         "checks": ("- scoped sensor commands: none; a plan review runs no checks, since the plan is the whole subject.\n"
                    "- test files in scope for this round: none."),
+        "result": str(result_path(plan_review_dir(c), n, short)),
     }
     template = (TOOL / "templates/round-brief.md").read_text()
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
@@ -15574,6 +15623,11 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=note_gap)
     p = command(sub, "review-reduce"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
     p.set_defaults(fn=review_reduce)
+    p = command(sub, "review-wait", help="wait in the foreground until every lens's result in a round is in")
+    p.add_argument("key"); p.add_argument("--round", type=int, required=True)
+    p.add_argument("--seconds", type=float, default=REVIEW_WAIT_SECONDS,
+                   help=f"how long to wait before exiting 4 with the lenses still out (default {REVIEW_WAIT_SECONDS})")
+    p.set_defaults(fn=review_wait)
     p = command(sub, "plan-review", help="review the plan before it is approved: prepare, reduce or end a round")
     review_commands = p.add_subparsers(dest="action", required=True)
     plan_help = "review this plan in its own store, keyed by its reviewSlug, with no delivery"

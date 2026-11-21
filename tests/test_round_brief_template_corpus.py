@@ -614,6 +614,18 @@ DIVERGENCES = (
         "run-delivery names the ids its reduce carries, so a lens never has to work them out from the entries.",
     ),
     (
+        'Result shape',
+        (),
+        (
+            (
+                'Its one permitted write, when its prompt asks for it, is its final JSON to `<result>` as its last '
+                'step, before it replies with the same JSON: an exception to the read-only rule and to touching no '
+                'checkout but its own.'
+            ),
+        ),
+        "run-delivery's lane waits on its lenses' result files in the foreground, so each lens writes its own.",
+    ),
+    (
         'Observation binding and selected output',
         (
             'Capture actual review, dissent, clarification and available partial-output bytes before cleanup.',
@@ -1071,7 +1083,8 @@ def _render(brief_template: str, no_deferrals: bool = False, prior: list[dict] |
                                  graph_digest=lambda: "<graph>", review_dir=lambda key, root=None: Path(folder),
                                  in_app_summary=lambda key: "<in-app evidence>",
                                  git=lambda *args, **kwargs: "tests/test_example.py",
-                                 plan_review_subject=lambda c: "EX-1.plan"):
+                                 plan_review_subject=lambda c: "EX-1.plan", plan_review_dir=lambda c: Path(folder),
+                                 result_path=lambda folder, n, short: Path("<result>")):
             key, lens, candidate, tree, merge_base, checkout = story
             return [
                 tool.brief(key, 1, lens, candidate, tree, merge_base, checkout, [], None),
