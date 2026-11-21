@@ -4430,6 +4430,8 @@ def lane_start(args) -> None:
     # it is. It comes first, so the stage is moved before the start is recorded.
     if mark_building(c, key, lane):
         did.append(f"{lane} started it: now building")
+    # On every run, so a session that takes the story over is seated as its lane too.
+    record_session(c, "lane", key)
     if not starts:
         # The focus is set only with the start, so running it again never resets what the lane has said since.
         state_tool("focus", "--lane", lane, "--text", f"{key}: started", "--state", "working", "--waiting-on", "")
@@ -7739,6 +7741,7 @@ def lead_init(args) -> None:
             rebuild_plan(c)
     print(f"initialized {c.state} with {len(planned)} planned stories across {len(c.lanes)} lanes"
           + (f"; wrote {c.state / PLAN_FILE}" if (c.state / PLAN_FILE).exists() else ""))
+    record_session(c, "lead")
     for item in planned:
         if (outcome := refine_outcome(c, item["subject"])) is not None:
             print(f"  refine: {outcome}")
@@ -11124,6 +11127,7 @@ def lead_wait(args) -> None:
     c = cfg()
     if not (c.state / "state.json").exists():
         raise Stop(f"no record at {c.state}: lead-init starts it")
+    record_session(c, "lead")
     passed = list(args.wait_args)
     parsed = _validator().wait_arguments(passed)
     after = parsed.after
@@ -11208,13 +11212,16 @@ class Seat:
         self.role, self.configs, self.story = role, configs, story
 
 
-def seat_of(cwd_text: object) -> Seat | None:
-    """The session's seat, from the payload's cwd: a lane when the cwd lies in the checkout of a story of an open
+def seat_of(payload: dict) -> Seat | None:
+    """The session's seat. A `session_id` an open delivery's sessions.json holds seats it by the role recorded there,
+    whatever its cwd: a lane on its story, matched first, else the lead of each delivery that recorded it. Any other
+    session is seated from the payload's cwd: a lane when the cwd lies in the checkout of a story of an open
     delivery, matched first; else the lead of each delivery whose record is open in the cwd's checkout; else none.
     A cwd's checkout is the deepest one holding it, after resolving symlinks, so a lane nested in the lead's
     checkout is a lane, and any other checkout nested there is neither."""
     global OFFLINE
     OFFLINE = True  # a hook reads what this machine has; it never fetches
+    cwd_text, session = payload.get("cwd"), payload.get("session_id")
     if not isinstance(cwd_text, str) or not os.path.isabs(cwd_text) or not os.path.isdir(cwd_text):
         return None
     cwd = real(cwd_text)
@@ -11249,6 +11256,8 @@ def seat_of(cwd_text: object) -> Seat | None:
         return None
     lanes: list[tuple[Path, str, str]] = []
     leads: list[str] = []
+    recorded_lanes: list[tuple[Path, str, str]] = []
+    recorded_leads: list[tuple[Path, str]] = []
     for key, d in here.delivery_files().items():
         lead_root = deepest(real(here.state_of(key, d)), checkouts)
         lead = config_at(lead_root) if lead_root is not None else None
@@ -11257,17 +11266,81 @@ def seat_of(cwd_text: object) -> Seat | None:
         files = lead.delivery_files()
         if key not in files or not lead.open_here(key, files[key]):
             continue
-        for story in files[key].get("stories") or {}:
+        stories = files[key].get("stories") or {}
+        entry = recorded_session(lead.state_of(key, files[key]), session)
+        if entry is not None and entry.get("role") == "lane" and entry.get("story") in stories:
+            recorded_lanes.append((lead_root, key, entry["story"]))
+        elif entry is not None and entry.get("role") == "lead":
+            recorded_leads.append((lead_root, key))
+        for story in stories:
             if real(lead.lane_checkout(story)) == owner:
                 lanes.append((lead_root, key, story))
         if lead_root == owner:
             leads.append(key)
+    for lead_root, key, story in recorded_lanes:
+        c = loaded(lead_root, key)
+        if c is not None:
+            return Seat("lane", [c], story)
+    found = [c for c in (loaded(lead_root, key) for lead_root, key in recorded_leads) if c is not None]
+    if found:
+        return Seat("lead", found)
     for lead_root, key, story in lanes:
         c = loaded(lead_root, key)
         if c is not None:
             return Seat("lane", [c], story)
     found = [c for c in (loaded(owner, key) for key in leads) if c is not None]
     return Seat("lead", found) if found else None
+
+
+# The host sessions a delivery's commands ran in, beside its record: {"sessions": {<session id>: {"role": "lane",
+# "story": <key>} or {"role": "lead"}}}, so a hook seats a session by its id rather than by the folder its last command
+# ran in. A host that exports no session id records none, and its sessions are seated by cwd.
+SESSIONS_FILE = "sessions.json"
+SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
+
+
+def read_sessions(path: Path) -> dict:
+    """sessions.json's `sessions`, or none when it is missing or unreadable."""
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    sessions = doc.get("sessions") if isinstance(doc, dict) else None
+    return sessions if isinstance(sessions, dict) else {}
+
+
+def recorded_session(state: Path, session: object) -> dict | None:
+    """What the record at `state` holds for the host session `session`, or None."""
+    if not isinstance(session, str) or not session:
+        return None
+    entry = read_sessions(state / SESSIONS_FILE).get(session)
+    return entry if isinstance(entry, dict) else None
+
+
+def record_session(c, role: str, story: str | None = None) -> None:
+    """Record the session this command runs in, when the host names it, as `role` (on `story`, for a lane) in the
+    record's sessions.json. It reads, changes and replaces the file under the record's state lock, so two sessions
+    recording at once both keep their entry, and leaves it untouched when it already says so."""
+    session = os.environ.get(SESSION_VARIABLE, "").strip()
+    if not session or not c.state.is_dir():
+        return
+    entry = {"role": role, **({"story": story} if story else {})}
+    path = c.state / SESSIONS_FILE
+    with open(c.state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            sessions = read_sessions(path)
+            if sessions.get(session) == entry:
+                return
+            sessions[session] = entry
+            staging = path.with_name(f".{path.name}.{os.getpid()}")
+            try:
+                staging.write_text(json.dumps({"sessions": sessions}, indent=2) + "\n")
+                os.replace(staging, path)
+            finally:
+                staging.unlink(missing_ok=True)  # gone once replaced; a failed write leaves the file as it was
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def record_of(c) -> dict:
@@ -11294,7 +11367,7 @@ def lead_may_stop(payload: dict) -> dict:
     `block` under enforce with one open delivery in the checkout; `warn` under warn, and whenever two or more open
     deliveries share the checkout, since which one this session leads can't be told. A hold the session hasn't
     already been held for journals one hook.held in each delivery it names."""
-    seat = seat_of(payload.get("cwd"))
+    seat = seat_of(payload)
     if seat is None or seat.role != "lead":
         return {"verdict": "allow"}
     mode = hook_mode(seat.configs[0].flow_raw, "lead.may-stop")
@@ -11403,7 +11476,7 @@ def orientation(seat: Seat) -> str:
 def delivery_orient(payload: dict) -> dict:
     """delivery.orient: tell a starting, resumed, cleared, compacted or forked session its role and next command.
     It only ever allows; under mode off it says nothing."""
-    seat = seat_of(payload.get("cwd"))
+    seat = seat_of(payload)
     if seat is None or hook_mode(seat.configs[0].flow_raw, "delivery.orient") == "off":
         return {"verdict": "allow"}
     return {"verdict": "allow", "context": orientation(seat)}
@@ -13956,6 +14029,7 @@ def lead_run(args) -> None:
     # Before the lock, the orphan sweep or any child: the supervisor's children run the Node first on its PATH.
     require_node(c.release, "lead-run --resume" if args.resume else "lead-run")
     if args.resume:
+        record_session(c, "lead")
         for line in stop_orphans(c):
             print(line)
         start_hosted(c,resume=True)
