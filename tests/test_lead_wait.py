@@ -909,6 +909,63 @@ class ClaimWaitTests(MachineCase):
         self.assertEqual(quiet["claimWaits"], [])
         self.assertIn(f"--seen-claim={own.id}", quiet["restart"])
 
+    def test_a_claim_naming_this_repository_or_another_of_the_deliverys_names_wakes_it(self) -> None:
+        # The merge queue names the repository by its git common directory, as the record's own identity reads it.
+        self.claim(4, "suite", delivery="Another delivery")
+        with mock.patch.object(state_tool._machine_module(), "repository_identity", return_value="/work/app/.git"):
+            own = self.claim(1, "queue turn", delivery="Fixture", repository="/work/app/.git")
+            code, result = self.wait_at(ENQUEUED + 901, claim_wait_seconds=900)
+        self.assertEqual((code, result["woke"]), (0, "claim"))
+        self.assertEqual([said["id"] for said in result["claimWaits"]], [own.id])
+        own.release()
+        # The record's tracker parent and its state folder's name name it too.
+        version = self.record.tool("show")["state"]["version"]
+        self.record.tool("patch", "--writer", "lead", "--version", str(version),
+                         "--patch", json.dumps({"meta": {"trackerParent": "EPIC-1"}}))
+        for name in ("EPIC-1", self.record.directory.name):
+            with self.subTest(name=name):
+                named = self.claim(1, f"named {name}", delivery=name)
+                code, result = self.wait_at(ENQUEUED + 901, claim_wait_seconds=900)
+                self.assertEqual((code, result["woke"]), (0, "claim"))
+                self.assertEqual([said["id"] for said in result["claimWaits"]], [named.id])
+                named.release()
+
+    def test_a_claim_at_exactly_the_limit_stays_quiet_and_a_restart_keeps_its_limit(self) -> None:
+        self.claim(4, "suite", delivery="Another delivery")
+        self.claim(1, "lead-suite", delivery="Fixture")
+        code, result = self.wait_at(ENQUEUED + 900, claim_wait_seconds=900)
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "a claim at exactly the limit woke it")
+        code, short = self.wait_at(ENQUEUED + 61, claim_wait_seconds=60)
+        self.assertEqual(short["woke"], "claim")
+        arguments = short["restart"]
+        self.assertEqual(arguments[arguments.index("--claim-wait-seconds") + 1], "60")
+        self.assertEqual(state_tool.wait_arguments(arguments).claim_wait_seconds, 60.0)
+
+    def test_the_command_reads_its_limit_and_a_restart_carrying_the_token_stays_quiet(self) -> None:
+        # Through the real command: a claim two minutes old passes a 60-second limit and not the default.
+        holder = machine.Ledger(self.machine, clock=lambda: time.time() - 120).request(
+            "run", "suite", label="suite", slots=4, delivery="Another delivery")
+        self.addCleanup(holder.release)
+        own = machine.Ledger(self.machine, clock=lambda: time.time() - 120).request(
+            "run", "lead-suite", label="lead-suite", slots=1, delivery="Fixture")
+        self.addCleanup(own.release)
+        self.assertFalse(own.admitted)
+        code, quiet = self.record.wait()
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "the default limit woke on a two-minute wait")
+        code, result = self.record.wait("--claim-wait-seconds", "60")
+        self.assertEqual((code, result["woke"]), (0, "claim"))
+        self.assertEqual([said["id"] for said in result["claimWaits"]], [own.id])
+        code, again = self.record.wait(*result["restart"])
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "a restart carrying the token woke on the same wait")
+        self.assertEqual(again["claimWaits"], [])
+        for bad in ("-1", "inf", "nan"):
+            with self.subTest(limit=bad):
+                done = subprocess.run([sys.executable, "-B", str(TOOL), "--dir", str(self.record.directory), "wait",
+                                       f"--claim-wait-seconds={bad}", "--timeout", "0"],
+                                      capture_output=True, text=True, check=False)
+                self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+                self.assertEqual(json.loads(done.stdout)["code"], "wait_invalid")
+
     def test_the_default_limit_is_fifteen_minutes(self) -> None:
         self.claim(4, "suite", delivery="Another delivery")
         self.claim(1, "lead-suite", delivery="Fixture")

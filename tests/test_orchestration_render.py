@@ -3003,9 +3003,6 @@ class StoryViewTests(unittest.TestCase):
         self.assertIn("change-1 reached the main line", [beat["words"]["head"] for beat in embedded["story"]["beats"]])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 def _load_machine():
     sys.path.insert(0, str(SCRIPTS))
@@ -3116,3 +3113,62 @@ class MachineSectionTests(unittest.TestCase):
         section = markdown[markdown.index("## Machine"):]
         self.assertIn("The machine ledger is unavailable:", section)
         self.assertIn("The machine ledger is unavailable:", self.machine_markup(page))
+
+    def test_an_unset_capacity_a_hand_admission_and_waiters_in_order(self) -> None:
+        (self.folder / "capacity.json").unlink()
+        cores = os.cpu_count() or 1
+        ticks = [0]
+
+        def clock() -> float:
+            # Each read a moment later, so the waiters enqueue in order.
+            ticks[0] += 1
+            return MACHINE_AT + ticks[0]
+
+        ledger = machine.Ledger(self.folder, clock=clock)
+        holder = ledger.request("run", "suite", label="suite", slots=cores)
+        self.addCleanup(holder.release)
+        waiters = [ledger.request("run", name, label=name, slots=1) for name in ("first", "second", "third")]
+        for waiter in waiters:
+            self.addCleanup(waiter.release)
+        self.assertFalse(any(waiter.admitted for waiter in waiters))
+        ledger.admit(waiters[2].id, "the release can't wait")
+        markdown, page = self.views()
+        section = markdown[markdown.index("## Machine"):]
+        self.assertIn(f"Capacity {cores} slot" + ("" if cores == 1 else "s") + " (unset, the core count)", section)
+        self.assertLess(section.index("- 1\\. first"), section.index("- 2\\. second"))
+        self.assertNotIn("third · ", section[section.index("Waiting:"):section.index("Overrides:")])
+        self.assertIn("- third · admitted by hand at ", section)
+        self.assertIn(": the release can't wait", section)
+        markup = self.machine_markup(page)
+        self.assertLess(markup.index("<li>first"), markup.index("<li>second"))
+
+    def test_an_absent_machine_directory_shows_no_section_and_is_not_created(self) -> None:
+        absent = Path(self.enterContext(tempfile.TemporaryDirectory())) / "never-made"
+        plain = (render_state.render_markdown(json.loads(json.dumps(self.document))),
+                 render_state.render_static_page(json.loads(json.dumps(self.document))))
+        with mock.patch.dict(os.environ, {"AGENT_SKILLS_MACHINE_DIR": str(absent)}):
+            self.assertIsNone(render_state.machine_view())
+            self.assertEqual(self.views(), plain)
+        self.assertFalse(os.path.lexists(absent))
+
+    def test_the_live_page_shows_the_section_beside_the_peers(self) -> None:
+        self.claim(2, "lead-suite", delivery="V26-3689")
+        state_dir = Path(self.enterContext(tempfile.TemporaryDirectory())) / "state"
+        state_tool(state_dir, "init", "--headline", "Live machine")
+        view = render_state.LiveView(state_dir, None)
+        view.refresh()
+        server = render_state._LiveServer(("127.0.0.1", 0), render_state._live_handler(view, lambda header: True))
+        serving = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+        serving.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.addCleanup(view.stop)
+        with urllib.request.urlopen(f"http://127.0.0.1:{server.server_address[1]}/", timeout=10) as answer:
+            page = answer.read().decode("utf-8")
+        markup = self.machine_markup(page)
+        self.assertIsNotNone(markup)
+        self.assertIn("lead-suite", markup)
+
+
+if __name__ == "__main__":
+    unittest.main()
