@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -79,6 +81,16 @@ class ReviewWaitTests(unittest.TestCase):
         code, out = self.wait("--seconds", "0")
         self.assertEqual(code, 0, out)
         self.assertIn(f"FX-2 round 1: every lens's result is in. Then: {FLOW} review-reduce FX-2 --round 1", out)
+
+    def test_results_written_while_it_waits_end_the_wait(self) -> None:
+        writer = threading.Timer(1, write_results, (self.review, 1, "FX-2", self.lenses))
+        self.addCleanup(writer.cancel)
+        started = time.monotonic()
+        writer.start()
+        code, out = self.wait("--seconds", "30")
+        self.assertEqual(code, 0, out)
+        self.assertIn("FX-2 round 1: every lens's result is in.", out)
+        self.assertLess(time.monotonic() - started, 25, "it waited out its deadline instead of seeing the results")
 
     def test_a_result_holding_truncated_json_is_still_out(self) -> None:
         write_results(self.review, 1, "FX-2", self.lenses)
