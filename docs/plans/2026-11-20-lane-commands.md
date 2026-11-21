@@ -71,15 +71,18 @@ Checked against `main` at `9a084797` on 2026-11-20:
    - `merge` moves the lane's branch to the synced head only as its last step before the binding's `ready`,
      `review_gate` and `merge` commands, under `--force-with-lease=refs/heads/<branch>:<handed head>`. The forge
      merges a branch, and a review gate reads the pipeline at the branch's head, so the branch must hold the synced
-     head for those commands. A batch's `land` does the same.
+     head for those commands. A batch's `land` does the same. After the push, the queue re-resolves the candidate
+     through the binding's candidate step until it reports the synced head, within `checkTimeoutSeconds`, before it
+     runs `ready`, so a forge that updates a change request's head late doesn't refuse the merge for a mismatched
+     head. A candidate step that never reports it stops the candidate as `candidate_moved`, and the branch moves back.
    - When `ready`, the review gate or `merge` then fails, the queue moves the branch back to the handed head, under a
      lease on the synced head. Only the queue's own synced commit is dropped. If the lease fails because someone
      pushed since, the queue leaves the branch alone.
    - `candidate.stopped` gains an optional `leftOnBranch`, the commit the queue left on the branch when it couldn't
      move it back. Every other stop leaves the branch at the handed head and omits the field. `journal-kinds.json`
      and its vectors gain the field.
-   - The queue deletes `refs/merge-queue/<key>` on the remote once the story merges, and when a candidate is
-     withdrawn.
+   - The queue deletes `refs/merge-queue/<key>` on the remote once the story merges. A stopped candidate's ref stays
+     until the story's next sync overwrites it under its lease, or the story merges.
    - `lead-authorize-base-merge` and the lane's `base-merge` are unchanged: with the branch at the handed head, the
      lane's authorized merge of it pushes as a fast-forward.
 2. **A stale outside-span detail is pinned** (V26-3649). `tests/test_lane_changes.py` asserts `fields["detail"]` for
@@ -94,8 +97,17 @@ Checked against `main` at `9a084797` on 2026-11-20:
    `first == end` as the span's when no claim of another lane covers the line on the far side of that edge, or that
    side is the file's edge. A hunk that replaces the span's last line with that line plus new lines is then the
    span's. An insertion just past a span whose next line another lane claims is still refused, naming that lane.
-   `check_change` passes the other lanes' claims in, and review preparation, hand-off, acceptance and the queue's
-   `check_regions` all reach it, so all four judge alike.
+   An insertion between two spans of the same lane and story is theirs, and one between two lanes' spans is refused.
+   `check_change` and `change_report` take the other lanes' claims as an optional keyword, so existing positional
+   callers are unchanged. Other lanes' claims are mapped only to judge an insertion at an edge. A foreign claim that
+   can't be mapped to the base counts as covering the far-side line, so that edge insertion is refused, naming that
+   lane. An interior hunk never reads another lane's claim. Review preparation, `claims-check`, `lead-claims`
+   (through `claims_report`), hand-off, acceptance and the queue's `check_regions` all pass the other lanes' claims,
+   so all of them judge alike. The existing pins that refuse every edge insertion move with
+   it, each rewritten as an allow and deny pair at its own entry point, never deleted:
+   `RegionDiffTests.test_insertions_at_edges_and_changes_spanning_claims_are_refused` in `tests/test_merge_queue.py`,
+   `test_an_insertion_at_a_spans_edge_and_a_mode_change_are_outside_it` in `tests/test_lane_changes.py`, and the
+   `claims-check` `--insert` request in `tests/test_region_grants.py`.
 5. **Carrying a stale span** (V26-3640). `lead-own --carry PATH --lane L [--story KEY]` maps each claim of that lane
    (and story) on the path from its own base to the current base head. It writes only when every base hunk since the
    claim's base lies wholly outside the claim's lines. It is refused, writing nothing, naming each hunk that
@@ -110,38 +122,46 @@ Checked against `main` at `9a084797` on 2026-11-20:
    lane a whole-file claim on `PATH` in the record, by `lead-own --grant`'s checks, and journals the reason as the
    lead's decision. Then it accepts as usual. It is refused when another lane holds the path, and when the candidate
    doesn't change it. It is repeatable.
-8. **An element-scoped patch** (V26-3434). `delivery_state.py show --element POINTER` prints the element and its
-   `sha256` over its canonical JSON. `patch --element POINTER --element-digest D --set ...` takes no `--version`. It
-   refuses only when the element's current digest isn't `D`, or a `--set` pointer lies outside the element. The
-   check and the write happen under the record's lock. `journal_patched` takes the same pair. `--version` keeps
-   today's behaviour.
+8. **An element-scoped patch** (V26-3434). `patch` already takes `--element SELECTOR`, such as `lanes[id=lane-2]`,
+   with `--set` pointers relative to the selected element. `show` gains `--element SELECTOR`, printing the element
+   and the `sha256` of its canonical JSON. `patch --element SELECTOR --element-digest D` takes no `--version`, and
+   refuses only when the selected element's current digest isn't `D`. The check and the write happen under the
+   record's lock. `journal_patched` takes the same pair. `--version` keeps today's behaviour, and `--element-digest`
+   without `--element` is a usage error.
 9. **A refused unknown field names the allowed ones** (V26-3434). `patch`'s `patch_invalid` refusal, for an
    `additionalProperties` error, adds the object's allowed fields, sorted, and the closest one when `difflib` finds
    one. So `status` on a lane row says `state`. `_errors` is unchanged, so the registry's own wording and its pins in
    `tests/test_journal_kinds.py` stay as they are.
 10. **A delivery key that is a story's key** (V26-3578). When the delivery file names no `stateDirectory`, the
     binding none, and `DELIVERY_STATE` is unset, `Config.state_of` puts the record of a delivery whose key is one of
-    its stories' keys at `.orchestration/deliveries/<key>/<state directory>`, which git already ignores. Every other
+    its stories' keys at `<work directory>/deliveries/<key>/<state directory>`, beside the lanes folder under the
+    configured work directory, which git ignores. Every other
     delivery keeps today's default. `doctor --delivery` reports this as `warn`, naming the folder and
-    `stateDirectory` to choose another. `lead-init` prints the same line. A record already at the old path is
-    adopted where it is, so a running delivery doesn't lose its record.
+    `stateDirectory` to choose another. `lead-init` prints the same line. Whichever of the two default paths already
+    holds a record is used, so a running delivery doesn't lose its record, and one whose colliding story is later
+    removed keeps the record it has.
 11. **A lane added in one command** (V26-3628). `lead-add-lane --lane L [--grant PATTERN]... [--why T]` does three
     things in one commit in the lead's checkout. It adds `L` to the delivery file's `lanes`, with `owns` set to the
     grants. It adds the lane's row to the plan's `Units and order` table, at the highest tier, with no items. It
-    writes `/laneOwnership/L` and a `lanes[]` row in one state-tool patch. Every grant goes through `lead-own
+    writes `/laneOwnership/L` and a `lanes[]` row in one root state-tool `patch`, through `patch_from`, which pins
+    the version, re-reads and retries when the queue moved it. The record is never written outside the state tool.
+    `L` must be `lane-N`, since the plan's Units table and lane sentences read only numbered lanes: any other name
+    is refused. Every grant goes through `lead-own
     --grant`'s checks: overlap with other lanes' claims, shared outputs and region claims. Any refusal writes
     nothing. It refuses a lane the delivery already holds. `lead-own`, `lead-assign` and `lead-plan change --kind
     added --lane L` accept the lane afterwards. A `--lane` new to the delivery is still refused there, now naming
     `lead-add-lane`.
 12. **A hook seats a session by its id** (V26-3676). `lane-start` records `CLAUDE_CODE_SESSION_ID`, when set, as its
-    story's lane session in the record's `sessions.json` beside the state. `lead-init`, `lead-run --resume` and
+    story's lane session in the record's `sessions.json` beside the state. Every write of the file reads, changes and
+    replaces it atomically under the record's state lock, so lanes starting at once don't lose each other's entry. `lead-init`, `lead-run --resume` and
     `lead-wait` record the lead's. `seat_of` takes the payload. A `session_id` the file holds seats the session by
     the recorded role, whatever its `cwd`. An unknown id, or a payload with none, is seated by `cwd` as today, so
     another host is unchanged. `lead-may-stop` and `delivery-orient` both use it. A lane session is never held and
     never told to start `lead-wait`.
 13. **A lane waits on its lenses in the foreground** (V26-3427).
     - `review-prepare`'s prompts tell each reviewer to write its final JSON to its result path as its last step,
-      then reply with the same JSON.
+      then reply with the same JSON. `templates/round-brief.md` names that write as the lens's one permitted write,
+      an exception to its read-only rule and to touching no checkout but its own.
     - The lane still saves a reviewer's final message to the path when the reviewer returned without writing it.
     - `review-wait <key> --round N [--seconds S]` returns 0 once every lens's result path in `round-N.meta.json`
       holds JSON that parses. It exits 4 with the lenses still out when `S` runs out, default 540, inside a host's
@@ -208,11 +228,17 @@ makes other tests in the same change cheaper. No budget number moves.
 - A candidate stopped after sync, then authorized with `lead-authorize-base-merge`: the lane's merge of the base into
   its handed head pushes as a fast-forward and hands off.
 - A merge whose forge command fails moves the branch back to the handed head, and the stop omits `leftOnBranch`.
+- The same for a `ready` refusal (`test_a_refusing_ready_or_merge_stops`) and for a missing, stale or slow review
+  (`test_a_missing_stale_or_slow_review_stops_and_nothing_merges`): after each stop the branch is at the handed head
+  and `leftOnBranch` is absent.
+- A batch in which one member's merge fails: that member's branch ends at its handed head.
+- A queue ref moved off the synced head stops the check with `candidate_moved`.
+- The sync push to `refs/merge-queue/<key>` is under a lease on that ref.
 - The same with a commit pushed to the branch after the queue moved it: the branch is left alone, and
   `candidate.stopped` names `leftOnBranch`.
 - A batch landing moves each member's branch only at its merge.
 - Every push the queue makes to `refs/heads/` is under a lease, and none targets the base.
-- The queue ref is deleted after the merge and after a withdrawal.
+- The queue ref is deleted after the merge, and a later sync of a stopped candidate overwrites it under its lease.
 
 `tests/test_lane_changes.py` (V26-3649):
 - The whole-file item's `fields.detail` is "It doesn't hold the file.", and the span item's names the line it
@@ -221,51 +247,94 @@ makes other tests in the same change cheaper. No budget number moves.
 `tests/test_region_grants.py` and `tests/test_region_claims.py` (V26-3640):
 - c1: `--anchor`/`--through` resolves to the lines between them and records the base and coordinates. Ambiguous,
   missing and reversed anchors are refused with the matches listed.
+- An anchor pair whose span cuts a Python statement is refused with the existing statement-check wording.
+- `--anchor` with `--start`, and `--anchor` with `--around`, are each refused.
+- Carve's `--give lane-3:anchor=A..through=B` grants the same span `lead-own --region --anchor A --through B` grants.
 - c2: replacing a span's last line with that line plus new lines is accepted.
-- An insertion just before a span's first line, with no other claim on the line above, is accepted.
+- An insertion just before a span's first line, with no other claim on the line above, is accepted, and so is an
+  insertion before line 1 of a span that starts there.
+- An insertion just before a span's first line is refused, naming that lane, when another lane claims the line above.
 - c3: an insertion just past a span is refused when another lane claims the next line, naming that lane.
+- An insertion between two spans of one lane and story is accepted, and between two lanes' spans refused.
+- A lane's change strictly inside its own span is accepted while another lane's claim on the same file is stale.
+- An edge insertion next to another lane's stale claim is refused, naming that lane.
+- `lead-claims` reports an accepted edge insertion as held, not as needing a claim.
+- The edge cases hold at each entry point, each with an allow and a deny row: the queue's `check_regions`
+  (`tests/test_merge_queue.py`), review preparation and `claims-check` (`tests/test_region_grants.py`), the hand-off's
+  `laneOutside` items (`tests/test_lane_changes.py`), and `lead-accept`.
 - `--carry` carries a span whose lines a base edit shifted but didn't touch, journalling `ownership.carried` with
   `by: lead`. It refuses one whose lines the edit touched, naming the hunk, and writes nothing.
+- With two claims on the path, one touched and one not, `--carry` writes neither.
+- `--story KEY` carries only that story's claim.
+- A base hunk ending on the line just before the claim's first line, without touching it, carries.
 
 `tests/test_lead_assign_owns.py` (V26-3432):
 - `lead-assign --own-co-changed` adds the warned file to the lane's `owns` and the record, in one commit, with no
   hand edit.
+- Without the flag, the warning ends by naming `--own-co-changed`.
 - A warned file another lane holds is named with its `--move`, and isn't added.
 - `lead-accept --take PATH --why T` accepts a one-line pin in an unowned file and journals the reason. It is refused
-  when another lane holds the file, and when the candidate doesn't change it.
+  when another lane holds the file, when the path is a shared output, and when the candidate doesn't change it, and
+  each refusal leaves the record and journal unchanged.
+- Two `--take` flags take both files.
 
 `tests/test_orchestration_state.py` (V26-3434):
 - An element-scoped patch to a lane row succeeds after the queue writes another part of the record.
 - The same patch is refused when the row itself changed, and nothing is written.
-- `status` on a lane row is refused, naming `state` among the allowed fields.
+- `--element-digest` without `--element` is a usage error, and the record's bytes and journal are unchanged.
+- The existing selector-form element patches `run_delivery.py` sends still pass.
+- `show --element` prints the sha256 of the element's canonical JSON, compared with one the test computes itself.
+- `journal_patched` with the element and digest behaves the same.
+- `status` on a lane row is refused, naming `state` among the allowed fields, and as the closest match.
 - `--version` patches behave as today.
 
 `tests/test_delivery_key_collision.py` (V26-3578):
 - c1: a delivery whose key is a story's key inits and its story's `lane-start` succeeds, with the record under
-  `.orchestration/deliveries/<key>/`.
+  `<work directory>/deliveries/<key>/`.
 - c2: `doctor --delivery` warns of the collision and names the folder.
-- A delivery file's `stateDirectory` still wins, and a record already at the old path is used where it is.
+- A delivery file's `stateDirectory` still wins, `DELIVERY_STATE` wins over both, and a record already at the old
+  path is used where it is.
+- A delivery whose key is no story's keeps today's default, and `doctor` warns of nothing.
+- After the colliding story is removed with `lead-plan change`, the record at the new path is still found.
+- Under a configured `workDirectory`, the record goes under that folder's `deliveries/`.
+- `lead-init` prints the record's folder for a colliding key.
 
 `tests/test_lead_add_lane.py` (V26-3628):
 - c1: `lead-add-lane` adds the lane to the delivery file, the plan's Units table and the record in one commit and one
   patch, and `lead-own` and `lead-assign` then accept it.
 - c2: a grant overlapping another lane's claim, a shared output or a region claim is refused, and nothing is written
   or committed.
+- A lane the delivery already holds is refused, and the delivery file, the plan, the record and the commit count are
+  unchanged.
+- In a plan with two tiers, the lane's row is added at tier 2.
+- `--lane extra` is refused, naming the `lane-N` form, and nothing is written.
 - c3: `lead-plan change --kind added --lane L` then adds a story on the new lane, and before it the refusal names
   `lead-add-lane`.
-- c4: no step uses the state tool's raw `patch` on `laneOwnership`.
+- c4: the record's journal gains exactly one patch entry for the command, written by the state tool, carrying both
+  `/laneOwnership/L` and the new `lanes[]` row.
 
 `tests/test_run_delivery_hooks.py` (V26-3676):
 - A lane session, recorded at `lane-start`, whose Stop payload's `cwd` is the lead's checkout is allowed and told
   nothing about `lead-wait`.
 - The lead's recorded session in a lane checkout is still held while a lane works.
 - A payload with an unknown or no `session_id` is seated by `cwd`, as today.
+- `delivery-orient` orients a recorded lane session as its lane whatever its `cwd`.
+- `lead-init`, `lead-run --resume` and `lead-wait` each record the lead's session.
+- Two lane-start writes interleaved between read and write both survive.
 
 `tests/test_run_delivery_review_wait.py` (V26-3427):
-- `review-wait` returns 0 once every result path holds JSON, and exits 4 naming the lenses still out when its
-  seconds run out.
+- `review-wait` returns 0 once every result path holds JSON that parses, and exits 4 naming the lenses still out
+  when its seconds run out.
+- With one result path holding truncated JSON, `review-wait --seconds 1` exits 4 and names that lens.
+- With no `--seconds`, it waits 540 seconds.
+- The rendered round brief names the result path as the lens's one permitted write.
 - `review-prepare`'s output names `review-wait`, and its prompts tell the reviewer to write its result.
 - The lane brief's "Your turn" names `review-wait`.
+
+Docs (Decision 14), in each story's own test module:
+- A corpus pin holds each new or changed `SKILL.md` row (`lead-add-lane`, `review-wait`, and the new flags of
+  `lead-own`, `lead-assign` and `lead-accept`), config.md's sentence on how a hook seats a session, and the guide's
+  sentence on where the queue keeps its synced head.
 
 ## Units and order
 
@@ -274,23 +343,24 @@ makes other tests in the same change cheaper. No budget number moves.
 | 1 | 1 | V26-3643 | `skills/orchestrate-work/scripts/merge_queue.py`, `tests/test_merge_queue.py`, `tests/fixtures/journal-kinds/vectors.json`, `tests/test_journal_kinds.py`, `tests/test_journal_shape.py` |
 | 1 | 2 | V26-3649, V26-3640, V26-3432 | `skills/orchestrate-work/scripts/region_ownership.py`, `tests/test_lane_changes.py`, `tests/test_region_grants.py`, `tests/test_region_claims.py`, `tests/test_lead_assign_owns.py` |
 | 1 | 3 | V26-3434, V26-3578, V26-3628 | `skills/orchestrate-work/scripts/delivery_state.py`, `tests/test_orchestration_state.py`, `tests/test_delivery_key_collision.py`, `tests/test_lead_add_lane.py`, `tests/test_lead_plan_changes.py`, `tests/test_lane_rows.py` |
-| 1 | 4 | V26-3676, V26-3427 | `skills/run-delivery/templates/lane-brief.md`, `tests/test_run_delivery_hooks.py`, `tests/test_run_delivery_review_wait.py`, `tests/test_round_brief_template_corpus.py`, `tests/test_waits_review.py` |
+| 1 | 4 | V26-3676, V26-3427 | `skills/run-delivery/templates/lane-brief.md`, `skills/run-delivery/templates/round-brief.md`, `tests/test_run_delivery_hooks.py`, `tests/test_run_delivery_review_wait.py`, `tests/test_round_brief_template_corpus.py`, `tests/test_waits_review.py` |
 
 The four lanes are independent. Within lane 2, V26-3649 goes first because it is the smallest and touches only a
 test. V26-3640 changes `region_ownership.py`, which V26-3432's `--take` grants through. Within lane 3, V26-3434's
-element patch comes first, since V26-3628's one-patch write uses it.
+element patch goes first because it is the smallest. V26-3628 doesn't depend on it.
 
 The lanes share these files. The lead grants each lane disjoint regions in them with `lead-own --region --around`
 against the integration base's head at `lead-init`:
 
 - `skills/run-delivery/scripts/run_delivery.py`
-  - Lane 2: `change_regions` and the region resolution it calls; carve's give parsing; `co_change_warning`;
+  - Lane 2: `change_regions` and the region resolution it calls; `claims_report`; `candidate_ownership`; carve's give parsing; `co_change_warning`;
     `lead_assign`'s warning block; `lead_accept`'s ownership check; the `lead-own`, `lead-assign` and `lead-accept`
     parsers.
   - Lane 3: `Config.state_of`; `setup_problems`; `lead_plan`'s unknown-lane refusal; a new `lead_add_lane` beside
     `change_ownership`; its parser beside `lead-own`'s.
   - Lane 4: `seat_of` through `orientation`; `lane_start`'s start record; `lead_wait`'s lease write; `review_prepare`'s
     printed prompts; a new `review_wait` beside `review_reduce`; its parser beside `review-reduce`'s.
+- `tests/test_merge_queue.py`: lane 2 the `RegionDiffTests` class, for Decision 4's edge pins.
 - `tests/test_run_delivery.py`: none at start. A lane whose change moves an existing assertion asks the lead for a
   region over it and fixes it in the same change. An assertion is never left red or deleted.
 - `skills/orchestrate-work/references/journal-kinds.json`: lane 1 `candidate.stopped`; lane 2 `ownership.carried`.
@@ -329,7 +399,8 @@ Implement Decision 2.
 
 Lane 2, tier 1, after V26-3649. Test-first. Files: `skills/orchestrate-work/scripts/region_ownership.py`,
 `skills/run-delivery/scripts/run_delivery.py`, `skills/orchestrate-work/references/journal-kinds.json`,
-`skills/run-delivery/SKILL.md`, `tests/test_region_grants.py` and `tests/test_region_claims.py`.
+`skills/run-delivery/SKILL.md`, `tests/test_region_grants.py`, `tests/test_region_claims.py`,
+`tests/test_lane_changes.py` and `tests/test_merge_queue.py`.
 
 Implement Decisions 3 to 5.
 
@@ -372,7 +443,8 @@ Implement Decision 12.
 ### V26-3427. Keep lanes waiting on their own lens results inside a turn
 
 Lane 4, tier 1, after V26-3676. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
-`skills/run-delivery/templates/lane-brief.md`, `skills/run-delivery/SKILL.md`,
+`skills/run-delivery/templates/lane-brief.md`, `skills/run-delivery/templates/round-brief.md`,
+`skills/run-delivery/SKILL.md`,
 `tests/test_run_delivery_review_wait.py`, `tests/test_round_brief_template_corpus.py` and `tests/test_waits_review.py`.
 
 Implement Decision 13.
