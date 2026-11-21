@@ -482,7 +482,10 @@ and every lead command repeats it. It keeps the merge queue's `serve` and the li
    `<delivery>.full-health.lock` while it runs, recording its pid, head and start; the pass starts it and passes
    that follow see it running, so the supervisor keeps passing beside it and the run holds the close until it ends.
    A start that finds the lock held runs nothing, a run that outlives its supervisor is adopted by the next one, and
-   `lead-close` or `lead-init --replace` stops it, recording no result. `lead-run --once` waits for the run it
+   `lead-close` or `lead-init --replace` stops it, recording no result. Under the lock, once no result stands at the
+   head, the run claims machine slots (`fullHealth` / `fullHealth`) and records the claim's id in the lock, so a run
+   waiting for the machine is the run the passes see; it waits with no cap while the machine is full, and holds the
+   claim, not the supervisor, so a supervisor restart neither releases it nor blocks on it. `lead-run --once` waits for the run it
    starts;
 4. `finish.met`, once for each finish line whose covered criteria have every covered proof done;
 5. the binding's `state` publishers; then each lane's pushed branch, read into the record's `lane-changes.json`

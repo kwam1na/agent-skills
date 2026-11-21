@@ -63,6 +63,8 @@ RUN_QUIETLY = True
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills/run-delivery"
+sys.path.insert(0, str(ROOT / "skills/orchestrate-work/scripts"))
+import machine  # noqa: E402  (the machine ledger the fixtures' commands claim in, read and held from the case)
 PROFILE = "run-delivery"
 TOOL_RELATIVE = "skills/run-delivery/scripts/run_delivery.py"
 # The stored runtime this profile's product is rebound from.
@@ -195,6 +197,61 @@ def call(tool: Path, fn: str, *args, cwd: Path, env: dict[str, str] | None = Non
     if "stop" in answer:
         raise Stopped(answer["stop"], answer["elapsed"])
     return answer["value"]
+
+
+# -- the machine ledger ---------------------------------------------------------------------------
+
+def case_machine(fx: "Fixture", slots: int) -> "machine.Ledger":
+    """The case's own machine directory, with its capacity set to `slots`, which every command the fixture runs from
+    now on claims in; and the ledger over it, for the case to hold claims in and read."""
+    directory = fx.tmp / "machine"
+    directory.mkdir(exist_ok=True)
+    set_capacity(directory, slots)
+    fx.env["AGENT_SKILLS_MACHINE_DIR"] = str(directory)
+    return machine.Ledger(directory)
+
+
+def set_capacity(directory: Path, slots: int) -> None:
+    (directory / "capacity.json").write_text(json.dumps(
+        {"schemaVersion": "machine-capacity/1", "slots": slots, "setAt": "2026-01-01T00:00:00.000000Z",
+         "why": "the case's"}, indent=2) + "\n")
+
+
+class Watched:
+    """A command the case started, whose stdout and stderr are read apart as they arrive."""
+
+    def __init__(self, case: unittest.TestCase, argv: list, *, cwd: Path, env: dict[str, str]) -> None:
+        self.process = subprocess.Popen([str(a) for a in argv], cwd=cwd, env=env, text=True, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, start_new_session=True)
+        case.addCleanup(lambda: (self.process.stdout.close(), self.process.stderr.close()))
+        case.addCleanup(stop_and_reap, self.process)
+        self.err: list[str] = []
+        self.out: list[str] = []
+        for stream, kept in ((self.process.stderr, self.err), (self.process.stdout, self.out)):
+            threading.Thread(target=lambda stream=stream, kept=kept: kept.extend(iter(stream.readline, "")),
+                             daemon=True).start()
+
+    def said(self, text: str, seconds: float = 120) -> str:
+        """The first stderr line holding `text`, once it has arrived."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            found = next((line for line in list(self.err) if text in line), None)
+            if found is not None:
+                return found
+            if self.process.poll() is not None and not any(text in line for line in self.err):
+                time.sleep(0.2)
+                found = next((line for line in list(self.err) if text in line), None)
+                if found is None:
+                    raise AssertionError(f"exited {self.process.returncode} without saying {text!r}: "
+                                         f"{''.join(self.err)[-1500:]}{''.join(self.out)[-1500:]}")
+                return found
+            time.sleep(0.05)
+        raise AssertionError(f"{text!r} wasn't said within {seconds}s: {''.join(self.err)[-1500:]}")
+
+    def finish(self, seconds: float = 300) -> int:
+        code = self.process.wait(timeout=seconds)
+        time.sleep(0.1)
+        return code
 
 
 # -- the fixture ----------------------------------------------------------------------------------
@@ -7286,7 +7343,8 @@ class LiveLeadChangesTests(unittest.TestCase):
             self.assertEqual(fx.call("guard_lines", "FX-3", wt, later, cwd=wt, delivery="FX-1"),
                              [f"guards: no gate run at {later[:10]}"])
         with self.subTest("--skip-guards without --why, or --why alone, is a usage error"):
-            for argv, said in ((["--skip-guards"], "--skip-guards needs --why"), (["--why", "x"], "--why goes with")):
+            for argv, said in ((["--skip-guards"], "--skip-guards needs --why"),
+                               (["--why", "x"], "--why goes with --skip-guards or --now")):
                 code, out = fx.flow("gate", "FX-3", *argv, cwd=wt)
                 self.assertEqual(code, 2, out)
                 self.assertIn(said, out)
@@ -7404,6 +7462,211 @@ class LiveLeadChangesTests(unittest.TestCase):
             said = fx.call("reuse_lines", {"head": head, "evidence": [bare]}, ["unit"], cwd=m, delivery="FX-1")[0]
             self.assertTrue(said.startswith("check unit: runs: the record is missing its where, environment, host facts"),
                             said)
+        self.machine_claims(fx, wt)
+
+    def machine_claims(self, fx: Fixture, wt: Path) -> None:
+        """The same fixture's commands claim machine slots: `check`, `gate` and `lead-push` through run-checks, and
+        `claim` around any command, each waiting while the machine is full unless `--now --why` steps off."""
+        from tests.test_run_delivery_supervisor import kinds
+
+        m = fx.main
+        ledger = case_machine(fx, 1)
+        repository = machine.repository_identity(m)
+        # A queue turn from another delivery, with a measured cost, so its claim carries an expected end: it takes four
+        # slots, clamped to the capacity.
+        ledger.record_cost(repository, "check", "turn", machine.Measured(0, 600.0, 2400.0, "passed"))
+        held: list = []
+
+        def free() -> None:
+            """Release every turn claim still held, so a subtest that failed holding one leaves the next a free machine."""
+            while held:
+                held.pop().release()
+
+        def turn(slots: int):
+            free()
+            claim = ledger.acquire("check", "turn", label="queue turn: FX-9", repository=repository, delivery="FX-9")
+            self.assertEqual(claim.record["slots"], slots)
+            held.append(claim)
+            return claim
+        self.addCleanup(free)
+        history = lambda: ledger.read_history()
+        flow = [sys.executable, "-B", fx.tool]
+        with self.subTest("check waits while the machine is full, saying so on its stderr before the check starts"):
+            holder = turn(1)
+            kept = wt / ".orchestration/review/FX-3/checks.jsonl"
+            before = kept.read_text().count("\n") if kept.exists() else 0
+            checking = Watched(self, [*flow, "check", "FX-3", "unit"], cwd=wt, env=fx.env)
+            line = checking.said("waits for")
+            self.assertIn("queue turn: FX-9 (delivery FX-9, 1 slot, expected end ", line)
+            self.assertNotIn("expected end unknown", line)
+            self.assertEqual([(c["kind"], c["subject"], c["state"]) for c in ledger.reading()["waiting"]],
+                             [("check", "unit", "waiting")])
+            self.assertIsNone(checking.process.poll())
+            self.assertEqual(kept.read_text().count("\n") if kept.exists() else 0, before, "the check ran while waiting")
+            holder.release()
+            self.assertEqual(checking.finish(), 0, "".join(checking.err))
+            # Stdout is the command's own, read from run-checks' one JSON document.
+            self.assertRegex("".join(checking.out), r"check unit passed in [\d.]+s at \w+ \(runner\)")
+            self.assertEqual(kept.read_text().count("\n"), before + 1)
+            self.assertEqual(ledger.reading()["running"], [])
+        with self.subTest("gate --now --why runs the guards at once; --now needs --why, and --why needs either"):
+            for argv, said in ((["--now"], "--now needs --why"),
+                               (["--why", "x"], "--why goes with --skip-guards or --now")):
+                code, out = fx.flow("gate", "FX-3", *argv, cwd=wt)
+                self.assertEqual(code, 2, out)
+                self.assertIn(said, out)
+            (wt / "src/three.txt").write_text("three\n")
+            commit(wt, "FX-3: three, for a guard run at a new tree")
+            holder = turn(1)
+            try:
+                code, out = fx.flow("gate", "FX-3", "--now", "--why", "r", cwd=wt)
+            finally:
+                holder.release()
+            self.assertEqual(code, 0, out)
+            self.assertRegex(out, r"guard guard: guard passed in [\d.]+s")
+            overrides = [(e["subject"], e["admittedBy"], e["why"]) for e in history() if e["event"] == "override"]
+            self.assertIn(("guard", "now", "r"), overrides)
+        with self.subTest("lead-push claims nothing itself: its guard claims in run-checks, within capacity"):
+            estimate = ledger.estimate(repository, "check", "guard")
+            self.assertEqual(estimate["from"], "measured", estimate)
+            set_capacity(ledger.directory, estimate["slots"])
+            (m / "docs/b.txt").unlink()
+            commit(m, "lead: drop b, so the guard passes")
+            published, seen = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip(), len(history())
+            code, out = fx.flow("lead-push", cwd=m)
+            self.assertEqual(code, 0, out)
+            self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=m).stdout.split()[0],
+                             published)
+            claimed = [(e["kind"], e["subject"], e["slots"]) for e in history()[seen:] if e["event"] in ("admitted",
+                                                                                                         "override")]
+            self.assertEqual(claimed, [("check", "guard", estimate["slots"])])
+            self.assertEqual((ledger.reading()["running"], ledger.reading()["waiting"]), ([], []))
+        set_capacity(ledger.directory, 1)
+        with self.subTest("claim --now --why runs at once while the machine is full, journaled as the decision"):
+            holder = turn(1)
+            try:
+                code, out = fx.flow("claim", "--now", "--why", "z", "--label", "probe", "--", sys.executable, "-c",
+                                    "open('now-marker', 'w').close()", cwd=wt)
+            finally:
+                holder.release()
+            self.assertEqual(code, 0, out)
+            self.assertTrue((wt / "now-marker").exists())
+            (wt / "now-marker").unlink()
+            entry = [e for e in history() if e["event"] == "override"][-1]
+            self.assertEqual((entry["kind"], entry["label"], entry["why"], entry["delivery"], entry["story"]),
+                             ("run", "probe", "z", "FX-1", "FX-3"))
+            decision = kinds(fx, "decision.recorded")[-1]
+            self.assertEqual((decision.get("subject"), decision["data"]),
+                             ("FX-3", {"text": "ran probe at once, stepping off the machine's wait", "why": "z"}))
+            code, out = fx.flow("claim", "--now", "--", "true", cwd=wt)
+            self.assertEqual(code, 2, out)
+            self.assertIn("--now needs --why", out)
+        with self.subTest("claim without --now waits behind a turn's claim, naming it, and runs once it is released"):
+            set_capacity(ledger.directory, 4)
+            holder = turn(4)
+            marker = wt / "claim-marker"
+            waiting = Watched(self, [*flow, "claim", "--slots", "4", "--label", "suite", "--", sys.executable, "-c",
+                                     f"open({str(marker)!r}, 'w').close()"], cwd=wt, env=fx.env)
+            line = waiting.said("waits for")
+            self.assertIn("suite waits for 4 slots; 4 of 4 in use", line)
+            self.assertIn("queue turn: FX-9 (delivery FX-9, 4 slots, expected end ", line)
+            self.assertNotIn("expected end unknown", line)
+            self.assertEqual([(c["kind"], c["label"], c["state"], c["delivery"], c["story"])
+                              for c in ledger.reading()["waiting"]], [("run", "suite", "waiting", "FX-1", "FX-3")])
+            self.assertFalse(marker.exists())
+            holder.release()
+            self.assertEqual(waiting.finish(), 0, "".join(waiting.err))
+            self.assertTrue(marker.exists())
+            marker.unlink()
+        with self.subTest("a claimed check runs under the outer claim, with no wait"):
+            free()
+            set_capacity(ledger.directory, 1)
+            code, out = fx.flow("claim", "--label", "outer", "--", *flow, "check", "FX-3", "unit", cwd=wt)
+            self.assertEqual(code, 0, out)
+            self.assertRegex(out, r"running under claim [0-9a-f]{32} \(outer\)")
+            self.assertRegex(out, r"check unit passed in [\d.]+s")
+            self.assertEqual(sorted(os.listdir(ledger.directory / "claims")), [])
+            outer = [e for e in history() if e.get("label") == "outer"]
+            self.assertEqual([e["event"] for e in outer], ["admitted"], "the check claimed beside its outer claim")
+        with self.subTest("claim exits as its command does, and a failed run's cost is kept apart"):
+            code, out = fx.flow("claim", "--label", "failing", "--", sys.executable, "-c", "raise SystemExit(3)", cwd=wt)
+            self.assertEqual(code, 3, out)
+            [cost] = [e for e in ledger.costs()["entries"] if (e["kind"], e["subject"]) == ("run", "failing")]
+            self.assertEqual(([r["result"] for r in cost["passed"]], [r["result"] for r in cost["failed"]]),
+                             ([], ["failed"]))
+            self.assertEqual(sorted(os.listdir(ledger.directory / "claims")), [])
+        with self.subTest("an unlabelled claim is measured by a digest, and no argument reaches the machine's files"):
+            seen = len(history())
+            code, out = fx.flow("claim", "--", sys.executable, "-c", "pass", "SENTINEL-a1b2c3", cwd=wt)
+            self.assertEqual(code, 0, out)
+            [entry] = [e for e in history()[seen:] if e["event"] == "admitted"]
+            self.assertRegex(entry["subject"], rf"^{re.escape(Path(sys.executable).name)} [0-9a-f]{{16}}$")
+            self.assertEqual(entry["label"], Path(sys.executable).name)
+            for path in ledger.directory.rglob("*"):
+                if path.is_file():
+                    self.assertNotIn("SENTINEL-a1b2c3", path.read_text(encoding="utf-8", errors="replace"), path)
+        with self.subTest("claim --exclusive claims alone; --wait-seconds gives up, runs nothing and says so"):
+            seen_exclusive = fx.tmp / "exclusive-seen"
+            code, out = fx.flow("claim", "--exclusive", "--label", "quiet", "--", sys.executable, "-c",
+                                "import json, os, pathlib\n"
+                                "claim = pathlib.Path(os.environ['AGENT_SKILLS_MACHINE_DIR'], 'claims', "
+                                "os.environ['AGENT_SKILLS_MACHINE_CLAIM'] + '.json')\n"
+                                f"pathlib.Path({str(seen_exclusive)!r}).write_text("
+                                "json.dumps(json.loads(claim.read_text())['exclusive']))", cwd=wt)
+            self.assertEqual(code, 0, out)
+            self.assertEqual(seen_exclusive.read_text(), "true")
+            holder = turn(1)
+            marker = fx.tmp / "gave-up-marker"
+            started = time.monotonic()
+            code, out = fx.flow("claim", "--wait-seconds", "1", "--label", "capped", "--", sys.executable, "-c",
+                                f"open({str(marker)!r}, 'w').close()", cwd=wt)
+            self.assertEqual(code, 75, out)
+            self.assertLess(time.monotonic() - started, 60)
+            self.assertFalse(marker.exists())
+            self.assertIn("gave up after", out)
+            self.assertIn("queue turn: FX-9", out)
+            self.assertEqual([e["label"] for e in history() if e["event"] == "gave-up"][-1:], ["capped"])
+            for argv, said in ((["--slots", "0"], "--slots must be at least 1"),
+                               (["--why", "w"], "--why goes with --now")):
+                code, out = fx.flow("claim", *argv, "--", "true", cwd=wt)
+                self.assertEqual(code, 2, out)
+                self.assertIn(said, out)
+        with self.subTest("check --now --why and lead-push --now --why run at once while the machine is full"):
+            holder = turn(1)
+            code, out = fx.flow("check", "FX-3", "unit", "--now", "--why", "c", cwd=wt)
+            self.assertEqual(code, 0, out)
+            self.assertIn(("unit", "now", "c"), [(e["subject"], e["admittedBy"], e.get("why")) for e in history()
+                                                 if e["event"] == "override"])
+            (m / "docs/c.txt").write_text("c\n")
+            commit(m, "lead: c")
+            code, out = fx.flow("lead-push", "--now", "--why", "p", cwd=m)
+            self.assertEqual(code, 0, out)
+            self.assertIn(("guard", "now", "p"), [(e["subject"], e["admittedBy"], e.get("why")) for e in history()
+                                                  if e["event"] == "override"])
+            free()
+        with self.subTest("with a machine directory that can't be used, claim says so and runs its command unclaimed"):
+            unusable = fx.tmp / "not-a-directory"
+            unusable.write_text("a file where the machine directory would be\n")
+            marker = fx.tmp / "unclaimed-marker"
+            code, out = fx.flow("claim", "--label", "unclaimed", "--", sys.executable, "-c",
+                                f"open({str(marker)!r}, 'w').close(); raise SystemExit(4)", cwd=wt,
+                                env={**fx.env, "AGENT_SKILLS_MACHINE_DIR": str(unusable)})
+            self.assertEqual(code, 4, out)
+            self.assertTrue(marker.exists())
+            self.assertRegex(out, r"machine ledger unavailable: .*; running unclaimed")
+        with self.subTest("a lens brief names the delivery in its claim, which runs from a detached checkout"):
+            brief = next((wt / ".orchestration/review/FX-3").glob("brief-r1-*.md")).read_text()
+            command = re.search(r"`(python3 -B \S+run_delivery\.py --delivery FX-1) claim \[--slots N\]", brief)
+            self.assertIsNotNone(command, brief)
+            self.assertIn("`python3 -B .agent-skills/current/skills/orchestrate-work/scripts/machine.py status`", brief)
+            detached = fx.tmp / "detached"
+            sh("git", "worktree", "add", "-q", "--detach", detached, "HEAD", cwd=wt)
+            self.addCleanup(sh, "git", "worktree", "remove", "--force", detached, cwd=wt, check=False)
+            # The brief's own command, as a lens runs it in its detached checkout: --delivery names the delivery its
+            # branch can't, so no pick among the repository's deliveries is needed.
+            code, out = fx.flow("--delivery", "FX-1", "claim", "--label", "lens", "--", "true", cwd=detached)
+            self.assertEqual(code, 0, out)
+            self.assertEqual([e["delivery"] for e in history() if e.get("label") == "lens"], ["FX-1"])
 
     def held_check(self, failures: list[str]):
         from tests.test_run_delivery_supervisor import hand_off, record, supervised
@@ -12548,6 +12811,82 @@ class BaseMergeRoundWordingTests(unittest.TestCase):
         guide = " ".join((ROOT / "skills/orchestrate-work/references/orchestration-guide.md").read_text().split())
         self.assertIn("A round forced by a base merge counts against that bound: a merge forces one only when the "
                       "story's own change reads differently after it, so that round is about the story.", guide)
+
+
+class MachineBriefWordingTests(unittest.TestCase):
+    """The lane brief and the lens round brief name the machine's primitives, claim, status and --now --why, and set
+    no rule about when to run what: which runs to start, and when, stays the reader's call."""
+
+    SENTENCES = (
+        "The machine's ledger is shared by every repository on this machine.",
+        "claim [--slots N] [--label L] -- <argv>`",
+        "is the default way to start a heavy command, such as",
+        "it claims slots, waits while the machine is full, names the claims ahead of it, and then runs argv under its claim.",
+        "`{{machine}} status` shows the machine",
+        "`--now --why <reason>` steps off the default and runs at once, and the reason is recorded.",
+        "Which runs to start, and when, is your call.",
+    )
+    # A rule about when to run what, by meaning: the plan's phrases and their synonyms.
+    SCHEDULING = re.compile(
+        r"\b(only one|one\b.{0,20}\bat a time|at most one|a single .{0,20}at once|never overlap|not overlap|don'?t overlap|"
+        r"no overlap|overlapp?ing|must wait|should wait|need(s)? to wait|have to wait|wait for|wait until|waiting for|"
+        r"do not run|don'?t run|never run|not run .{0,30}while|avoid running|avoid starting|refrain|hold off|"
+        r"before running|before starting|after .{0,30}finish(es)?|until .{0,30}(finish|end|done)s?|serial(ize|ly)|"
+        r"in turn|take turns|queue (up )?behind|run (it )?alone)\b", re.IGNORECASE)
+
+    # What each whole brief rightly says that the search finds, by the words that follow it: waits for the lead, a
+    # reviewer or a command's result, and a lens's evidence named one path at a time. None of it is about the machine.
+    ALLOWED = {
+        "lane-brief.md": ["wait for the lead to record", "wait for a reviewer, the gates", "wait for them, resume your reviewers",
+                          "wait for their results, and use", "wait for the lead to run"],
+        "round-brief.md": ["one path at a time, with"],
+    }
+
+    @staticmethod
+    def normal(name: str) -> str:
+        return " ".join((SKILL / "templates" / name).read_text(encoding="utf-8").split())
+
+    def found(self, text: str) -> list[str]:
+        """Each match, with the words that follow it, enough to tell one allowed sentence from another."""
+        return [" ".join(text[match.start():].split()[:6]).rstrip(",.") for match in self.SCHEDULING.finditer(text)]
+
+    def machine_text(self, name: str) -> str:
+        """The brief's words about the machine: from the ledger's sentence to the reader's call. The rest of each brief
+        rightly says to wait for the lead or a reviewer, which is no rule about the machine."""
+        text = self.normal(name)
+        start, end = text.index(self.SENTENCES[0]), text.index(self.SENTENCES[-1]) + len(self.SENTENCES[-1])
+        return text[start:end]
+
+    def test_each_brief_names_claim_status_and_now_why(self) -> None:
+        for name in ("lane-brief.md", "round-brief.md"):
+            for sentence in self.SENTENCES:
+                with self.subTest(brief=name, sentence=sentence[:40]):
+                    self.assertIn(sentence, self.normal(name))
+        # The lane brief's paragraph sits in Local load, beside the worker limit; the lens brief's among its checks.
+        lane = self.normal("lane-brief.md")
+        self.assertIn(self.machine_text("lane-brief.md"), lane[lane.index("## Local load"):lane.index("## Delivery notes")])
+        lens = self.normal("round-brief.md")
+        self.assertIn(self.machine_text("round-brief.md"),
+                      lens[lens.index("## Checks this lens runs"):lens.index("## In-app evidence so far")])
+        self.assertIn("`check`, `gate`, `lead-push` and `lead-suite` claim the same way.", lane)
+
+    def test_no_brief_sets_a_rule_about_when_to_run_what(self) -> None:
+        for name in ("lane-brief.md", "round-brief.md"):
+            with self.subTest(brief=name, part="the machine's words"):
+                self.assertIsNone(self.SCHEDULING.search(self.machine_text(name)), self.machine_text(name))
+            with self.subTest(brief=name, part="the whole brief"):
+                self.assertEqual(self.found(self.normal(name)), self.ALLOWED[name])
+        # The round brief names the delivery a lens's detached checkout can't tell from its branch.
+        self.assertIn("`{{flow}}{{delivery_option}} claim [--slots N] [--label L] -- <argv>`, run in your checkout,",
+                      self.normal("round-brief.md"))
+
+    def test_the_scheduling_search_is_not_vacuous(self) -> None:
+        for rule in ("Only one suite runs at once.", "Run them one at a time.", "Run one suite at a time.", "Never overlap a review with a suite.",
+                     "A lane must wait for the queue.", "Wait for the turn to end.", "Do not run two suites.",
+                     "Avoid running a suite during a round.", "Claim before running a suite.",
+                     "Hold off until the queue finishes.", "Run the suites serially."):
+            with self.subTest(rule=rule):
+                self.assertIsNotNone(self.SCHEDULING.search(rule))
 
 
 class FinishLineWordingTests(unittest.TestCase):

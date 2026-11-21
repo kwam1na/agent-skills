@@ -63,6 +63,7 @@ import signal
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import traceback
 import warnings
@@ -1742,6 +1743,7 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
         "metadataSha256": rel["metadataSha256"], "graph": graph_digest(), "bound_text": bound_text, "kind": kind,
         "carry": carry, "resolutions": resolutions, "charter": charter, "later": later, "checkout": str(checkout),
         "context": context, "in_app": in_app_summary(key), "severities": STORY_SEVERITIES, "checks": scoped_checks(span),
+        "flow": flow_command(), "machine": machine_command(), "delivery_option": delivery_option(c),
     }
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
 
@@ -2031,6 +2033,17 @@ def flow_command() -> str:
     if c is not None and c.release_override:
         return f"python3 -B {Path(c.release_override) / 'skills/run-delivery/scripts/run_delivery.py'}"
     return f"python3 -B {TOOL_PATH}"
+
+
+def delivery_option(c) -> str:
+    """` --delivery KEY` for a command a lens runs in its checkout, which is detached, so its branch names no delivery;
+    nothing for a plan review with no delivery."""
+    return f" --delivery {c.delivery}" if getattr(c, "delivery", None) else ""
+
+
+def machine_command() -> str:
+    """The machine ledger's command, as briefs name it: beside the run-delivery command `flow_command` names."""
+    return flow_command().replace("skills/run-delivery/scripts/run_delivery.py", "skills/orchestrate-work/scripts/machine.py")
 
 
 def _merge_queue():
@@ -2642,7 +2655,8 @@ def plan_brief(c, n: int, lens: str, candidate: str, tree: str, checkout: Path, 
         "bound_text": f"`unbounded`: unbounded round {n}, with no bound supplied or invented.", "kind": kind,
         "carry": carry, "resolutions": resolutions, "charter": Path(charter_file).read_text().strip(), "later": later,
         "checkout": str(checkout), "context": context, "in_app": "None: a plan review has no in-app evidence.",
-        "severities": PLAN_SEVERITIES,
+        "severities": PLAN_SEVERITIES, "flow": flow_command(), "machine": machine_command(),
+        "delivery_option": delivery_option(c),
         "checks": ("- scoped sensor commands: none; a plan review runs no checks, since the plan is the whole subject.\n"
                    "- test files in scope for this round: none."),
     }
@@ -3071,19 +3085,37 @@ def named_gate(name: str, binding: dict | None) -> dict:
             "timeoutSeconds": check.get("timeoutSeconds", (binding or {}).get("checkTimeoutSeconds", 1800))}
 
 
-def check_runs(c, head: str, ids: list[str]) -> tuple[list[dict], float]:
+def check_runs(c, head: str, ids: list[str], now_why: str | None = None) -> tuple[list[dict], float]:
     """Run checks at `head` through the release's `merge_queue.py run-checks`, the way the queue runs them, and return
-    the records it prints with the run's whole time. Its refusal stops here with its own reason."""
+    the records it prints with the run's whole time. Its refusal stops here with its own reason. Each check claims
+    machine slots there and waits while the machine is full, unless `now_why` steps off that default: what run-checks
+    says on stderr, its waiting lines among it, reaches this command's stderr as it arrives, while its stdout is read
+    as one JSON document. It inherits this process's environment, so a claim this command runs under is its too."""
     argv = [sys.executable, "-B", str(c.release / "skills/orchestrate-work/scripts/merge_queue.py"), "--repo", str(repo()),
-            "--remote", c.remote, "--base", c.base_branch, "run-checks", "--head", head, "--checks", ",".join(ids)]
+            "--remote", c.remote, "--base", c.base_branch, "run-checks", "--head", head, "--checks", ",".join(ids),
+            *(["--now", "--why", now_why] if now_why is not None else [])]
     started = time.time()
     proc = subprocess.Popen(argv, cwd=repo(), text=True, start_new_session=True, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
+    said_on_stderr: list[str] = []
+
+    def copy_stderr() -> None:
+        for line in proc.stderr:
+            said_on_stderr.append(line)
+            sys.stderr.write(line)
+            sys.stderr.flush()
+    copier = threading.Thread(target=copy_stderr, daemon=True)
+    copier.start()
     try:
-        out, err = proc.communicate()  # each check and prepare step is bounded by the queue's own timeouts
+        out = proc.stdout.read()  # each check and prepare step is bounded by the queue's own timeouts
+        proc.wait()
+        copier.join()
     finally:
         stop_group(proc)
+    err = "".join(said_on_stderr)
     seconds = time.time() - started
+    if proc.returncode == MACHINE_GAVE_UP:
+        raise Stop(f"run-checks gave up waiting for the machine: {err.strip()[-800:]}")
     try:
         said = json.loads(out)
     except json.JSONDecodeError:
@@ -3091,6 +3123,167 @@ def check_runs(c, head: str, ids: list[str]) -> tuple[list[dict], float]:
     if isinstance(said, dict):
         raise Stop(f"run-checks refused: {said.get('reason')}: {said.get('detail')}")
     return said, seconds
+
+
+# -- the machine: claims for heavy runs ------------------------------------------------------
+
+# The exit of a capped wait for the machine that ended unadmitted (EX_TEMPFAIL), as machine.py says it.
+MACHINE_GAVE_UP = 75
+
+
+def machine_module():
+    """The installed release's machine ledger module, beside its merge queue."""
+    _validator()  # puts the release's orchestration scripts on the path
+    import machine  # noqa: E402
+    return machine
+
+
+def machine_ledger():
+    """This machine's ledger, which every repository on it shares."""
+    return machine_module().Ledger()
+
+
+def heavy_claim(kind: str, subject: str, *, label: str, slots: int = 1, exclusive: bool = False,
+                now_why: str | None = None, wait_seconds: float | None = None, repository: str | None = None,
+                delivery: str | None = None, story: str | None = None,
+                enqueued: Callable[[object], None] | None = None):
+    """Claim machine slots for a heavy run and wait, uncapped unless `wait_seconds` caps it, until admitted. `enqueued`
+    is told the claim once it is in the ledger, before any wait. A capped wait that ends unadmitted raises the
+    module's GaveUp; a ledger that can't be used gives an unclaimed stand-in, and the run goes on."""
+    machine = machine_module()
+    ledger = machine_ledger()
+    claim = ledger.request(kind, subject, label=label, slots=slots, exclusive=exclusive, repository=repository,
+                           delivery=delivery, story=story, now_why=now_why)
+    try:
+        if enqueued is not None:
+            enqueued(claim)
+        claim.wait(wait_seconds)
+    except machine.LedgerUnavailable as error:
+        claim.release()
+        return ledger._unclaimed(error)
+    except BaseException:
+        claim.release()
+        raise
+    return claim
+
+
+def stepped_off(claim) -> bool:
+    """Whether a claim was admitted by its own --now: one run under an ancestor's claim, or unclaimed, stepped off
+    nothing."""
+    return claim.record is not None and claim.record.get("admittedBy") == "now"
+
+
+@contextlib.contextmanager
+def claimed_environment(claim):
+    """This process's environment names `claim` while the run it is for goes on, so every process the run starts runs
+    under it and never waits behind it."""
+    names = claim.child_environment()
+    before = {name: os.environ.get(name) for name in names}
+    os.environ.update(names)
+    try:
+        yield
+    finally:
+        for name, value in before.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def children_cpu_seconds() -> float:
+    """The CPU time of every child this process has waited for, and of their waited-for descendants."""
+    import resource
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return usage.ru_utime + usage.ru_stime
+
+
+def measured_since(machine, code: int, began: float, cpu_before: float | None, passed: bool):
+    """A finished run's cost, for the machine's cost record: its wall seconds, and the CPU its waited-for children
+    took, which is None where the platform can't say."""
+    cpu = None
+    if cpu_before is not None:
+        with contextlib.suppress(ImportError, OSError, ValueError):
+            cpu = round(children_cpu_seconds() - cpu_before, 3)
+    return machine.Measured(code, round(time.monotonic() - began, 3), cpu, "passed" if passed else "failed")
+
+
+def cpu_mark() -> float | None:
+    try:
+        return children_cpu_seconds()
+    except (ImportError, OSError, ValueError):
+        return None
+
+
+def machine_repository() -> str | None:
+    with contextlib.suppress(Stop, OSError):
+        return machine_module().repository_identity(repo())
+    return None
+
+
+def now_and_why(args, skip: bool = False) -> str | None:
+    """The reason --now steps off the machine's wait with, or None without --now. --now needs --why; --why goes with
+    --now, or with --skip-guards for a command that takes it, and one --why gives the reason for both."""
+    why = (getattr(args, "why", None) or "").strip()
+    if args.now and not why:
+        raise Stop("--now needs --why, the reason the run steps off waiting for the machine, which is recorded")
+    if getattr(args, "why", None) and not args.now and not skip:
+        raise Stop("--why goes with --skip-guards or --now" if hasattr(args, "skip_guards") else "--why goes with --now")
+    return why if args.now else None
+
+
+def journal_override(c, subject: str | None, text: str, why: str) -> None:
+    """Journal a run that stepped off the machine's wait as decision.recorded, inside a delivery with a record. One
+    attempt: a refusal is said, and the run goes on."""
+    if not (c.state / "state.json").is_file():
+        return
+    done = state_tool("journal", "--kind", "decision.recorded", *(["--subject", subject] if subject else []),
+                      "--text", text, "--why", why, check=False)
+    if done.returncode != 0:
+        print(f"the override wasn't journaled: {(done.stderr or done.stdout).strip()[-300:]}", file=sys.stderr)
+
+
+def claim_story(c) -> str | None:
+    """The story a claim from this checkout is for: the story whose branch it is on, or None (the lead's checkout, a
+    lens checkout, or any other)."""
+    with contextlib.suppress(Stop, OSError):
+        branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=c.root, check=False)
+        return next((key for key in c.stories if c.branch(key) == branch), None)
+    return None
+
+
+def claim(args) -> None:
+    """Claim machine slots for argv, waiting while the machine is full unless --now steps off with --why, then run it
+    under the claim, measure it into the machine's cost record and release the claim, whatever happens to the run.
+    The claim names this delivery and the story whose checkout it runs in."""
+    c = cfg()
+    argv = args.argv[1:] if args.argv[:1] == ["--"] else list(args.argv)
+    if not argv:
+        raise Stop("give the command to run after --")
+    if args.slots < 1:
+        raise Stop("--slots must be at least 1")
+    if args.wait_seconds is not None and args.wait_seconds < 0:
+        raise Stop("--wait-seconds must be zero or greater")
+    why = now_and_why(args)
+    machine = machine_module()
+    label = args.label or Path(argv[0]).name
+    # An unlabelled run is measured by a digest of its whole command line, as machine.py measures one, so no argument,
+    # a secret included, reaches the shared ledger.
+    subject = args.label or f"{Path(argv[0]).name} {hashlib.sha256(shlex.join(argv).encode('utf-8')).hexdigest()[:16]}"
+    story = claim_story(c)
+    try:
+        held = heavy_claim("run", subject, label=label, slots=args.slots, exclusive=args.exclusive, now_why=why,
+                           wait_seconds=args.wait_seconds, repository=machine_repository(), delivery=c.delivery,
+                           story=story)
+    except machine.GaveUp as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(MACHINE_GAVE_UP) from None
+    with held:
+        if why is not None and stepped_off(held):
+            journal_override(c, story or c.delivery, f"ran {label} at once, stepping off the machine's wait", why)
+        measured = machine.measured_run(argv, env={**os.environ, **held.child_environment()})
+        held.record_cost(measured)
+    code = measured.returncode
+    raise SystemExit(128 - code if code < 0 else code)
 
 
 def check_median(c, name: str) -> str:
@@ -3119,8 +3312,9 @@ def check(args) -> None:
     ids = [name.strip() for text in args.ids for name in text.split(",") if name.strip()]
     if not ids:
         raise Stop("name the checks to run, by id")
+    why = now_and_why(args)
     head = clean_head()
-    records, seconds = check_runs(c, head, ids)
+    records, seconds = check_runs(c, head, ids, now_why=why)
     with (review_dir(key) / CHECK_RECORDS).open("a", encoding="utf-8") as kept:
         for record in records:
             kept.write(json.dumps(record, sort_keys=True) + "\n")
@@ -3228,7 +3422,7 @@ def record_reasons(runner, record: dict, name: str, tree: str, binding: dict, ow
     return runner.applies(record, check, tree, binding, None, own=own)
 
 
-def gate_guards(c, key: str, head: str, tree: str) -> tuple[dict, bool]:
+def gate_guards(c, key: str, head: str, tree: str, now_why: str | None = None) -> tuple[dict, bool]:
     """Run the binding's guards at HEAD through run-checks, before the repository's gates, reusing a guard's latest
     record at this tree when it applies. Prints each guard's result and median, and the prepare time."""
     ids = guard_ids(c.binding)
@@ -3243,7 +3437,7 @@ def gate_guards(c, key: str, head: str, tree: str) -> tuple[dict, bool]:
                 reused[name] = latest
             else:
                 run_ids.append(name)
-    records, seconds = check_runs(c, head, run_ids) if run_ids else ([], 0.0)
+    records, seconds = check_runs(c, head, run_ids, now_why=now_why) if run_ids else ([], 0.0)
     ran = {record["check"]: record for record in records}
     for name in ids:
         record = reused.get(name) or ran[name]
@@ -3280,8 +3474,7 @@ def gate(args) -> None:
     key = c.require(args.key)
     if args.skip_guards and not (args.why or "").strip():
         raise Stop("--skip-guards needs --why, the reason the guards don't run, which the hand-off shows")
-    if args.why and not args.skip_guards:
-        raise Stop("--why goes with --skip-guards")
+    now_why = now_and_why(args, skip=args.skip_guards)
     if not c.gates:
         raise Stop(f"{c.path} declares no gates")
     unknown = [g["id"] for g in c.gates if g.get("unknown")]
@@ -3297,7 +3490,7 @@ def gate(args) -> None:
         guards = {"ids": guard_ids(c.binding), "skipped": True, "why": args.why.strip()}
         print(f"guards skipped: {guards['why']}")
     elif guard_ids(c.binding):
-        guards, passed = gate_guards(c, key, head, tree)
+        guards, passed = gate_guards(c, key, head, tree, now_why)
         if not passed:
             failed = [r["check"] for r in guards["records"] if r["check"] in guards["ids"] and r["result"] != "passed"]
             print(f"the guard(s) {', '.join(failed)} didn't pass: the repository's gates don't run")
@@ -3309,7 +3502,7 @@ def gate(args) -> None:
             while gates and gates[0].get("check"):
                 group.append(gates.pop(0))
             print(f"gate {', '.join(g['id'] for g in group)}: run-checks at {head[:10]}", flush=True)
-            records, _ = check_runs(c, head, [g["check"] for g in group])
+            records, _ = check_runs(c, head, [g["check"] for g in group], now_why=now_why)
             by_id = {record["check"]: record for record in records}
             for g in group:
                 record = by_id[g["check"]]
@@ -7997,7 +8190,7 @@ def lead_brief(args) -> None:
         for k, s in c.stories.items())
     values = {
         "delivery": c.delivery, "headline": c.raw.get("headline", c.delivery), "plan": str(c.plan),
-        "flow": flow_command(), "config": c.config_named, "base_branch": c.base_branch, "base_ref": c.base_ref, "remote": c.remote,
+        "flow": flow_command(), "machine": machine_command(), "config": c.config_named, "base_branch": c.base_branch, "base_ref": c.base_ref, "remote": c.remote,
         "branch": c.branch_pattern.replace("{key}", "<key>"),
         "lane_checkout": c.lane_pattern.replace("{key}", "<key>"),
         "state": str(c.state.resolve()), "lead_checkout": str(c.root.resolve()), "bound": str(c.bound), "work": c.work,
@@ -8536,8 +8729,7 @@ def lead_push(args) -> None:
         raise Stop("--wait-seconds must be zero or greater")
     if args.skip_guards and not (args.why or "").strip():
         raise Stop("--skip-guards needs --why, the reason the guards don't run, which is journaled")
-    if args.why and not args.skip_guards:
-        raise Stop("--why goes with --skip-guards")
+    now_and_why(args, skip=args.skip_guards)
     head = clean_head()
     before = remote_head(c.base_branch)
     if not before:
@@ -8599,7 +8791,8 @@ def push_guards(c, head: str, args) -> list[str] | None:
         print(f"guards skipped: {', '.join(ids)}: {args.why.strip()}")
         return ids
     print(f"Running the guards {', '.join(ids)} at {head[:12]} before publishing.", flush=True)
-    records, _ = check_runs(c, head, ids)
+    # The guards claim their own slots in run-checks, before the merge slot is taken: lead-push claims none itself.
+    records, _ = check_runs(c, head, ids, now_why=now_and_why(args, skip=args.skip_guards))
     for record in records:
         print(f"  guard {record_line(record)}; {check_median(c, record['check'])}")
     failed = [record for record in records if record["check"] in ids and record["result"] != "passed"]
@@ -12481,8 +12674,20 @@ def full_health_running(c) -> dict | None:
 
 
 def running_words(run: dict) -> str:
+    waiting = " (waiting for the machine)" if claim_waiting(run.get("claim")) else ""
     return (f"fullHealth running at {str(run.get('head', ''))[:10]} since {run.get('startedAt', 'its start')} "
-            f"(pid {run.get('pid')})")
+            f"(pid {run.get('pid')}){waiting}")
+
+
+def claim_waiting(claim_id: object) -> bool:
+    """Whether the machine's ledger holds this claim, waiting to be admitted. A ledger that can't be read says no."""
+    if not isinstance(claim_id, str) or not claim_id:
+        return False
+    try:
+        reading = machine_ledger().reading()
+    except Exception:  # noqa: BLE001  (what the run's words add, never what stops them)
+        return False
+    return any(claim.get("id") == claim_id for claim in reading.get("waiting") or [])
 
 
 def process_started(pid: int) -> str | None:
@@ -12675,18 +12880,39 @@ def full_health_run(args) -> None:
         if last and not rerun:
             print(f"fullHealth {last['result']} at {args.head[:10]} already; this start runs nothing")
             return
-        checkout = Path(tempfile.mkdtemp(prefix="run-delivery-full-health-")) / "base"
-        record({"checkout": str(checkout)})
-        try:
-            print(run_full_health(c, binding, args.head, posture, declared_words(posture),
-                                  started=lambda pid: record({"command": pid, "commandStarted": process_started(pid)}),
-                                  checkout=checkout)[1])
-        finally:
-            # Stopped with its run, by run_group, and its checkout removed by run_full_health.
-            record({"command": None, "commandStarted": None, "checkout": None})
+        # Its claim comes only now, under the run's lock and with no result standing, and its id goes in the lock, so
+        # the waiting run is what full_health_running reports and a second start runs nothing. Its wait has no cap.
+        held = claim_full_health(c, args.head, record)
+        with held, claimed_environment(held):
+            checkout = Path(tempfile.mkdtemp(prefix="run-delivery-full-health-")) / "base"
+            record({"checkout": str(checkout)})
+            began, cpu = time.monotonic(), cpu_mark()
+            passed = False
+            try:
+                passed, line = run_full_health(c, binding, args.head, posture, declared_words(posture),
+                                               started=lambda pid: record({"command": pid,
+                                                                           "commandStarted": process_started(pid)}),
+                                               checkout=checkout)
+                print(line)
+            finally:
+                # Stopped with its run, by run_group, and its checkout removed by run_full_health.
+                record({"command": None, "commandStarted": None, "checkout": None})
+            held.record_cost(measured_since(machine_module(), 0 if passed else 1, began, cpu, passed))
     finally:
         fcntl.flock(handle, fcntl.LOCK_UN)
         handle.close()
+
+
+def claim_full_health(c, head: str, record: Callable[[dict], None]):
+    """fullHealth's machine claim, held by its full-health-run process: in the ledger before any wait, its id recorded
+    in the run's lock as it enters, and waited for with no cap, however long the machine stays full. A supervisor
+    restart neither releases it nor blocks on it."""
+    def enqueued(claim) -> None:
+        record({"claim": claim.id})
+        if not claim.admitted:
+            print(f"fullHealth at {head[:10]} waits for the machine (claim {claim.id})")
+    return heavy_claim("fullHealth", "fullHealth", label=f"fullHealth {c.delivery}", repository=machine_repository(),
+                       delivery=c.delivery, enqueued=enqueued)
 
 
 def forget_checkout(c, checkout: Path) -> None:
@@ -13994,6 +14220,28 @@ def lead_suite(args) -> None:
     else:
         commit = base_head(c)
     argv = [*binding["fullHealth"], *(args.extra[1:] if args.extra[:1] == ["--"] else args.extra)]
+    why = now_and_why(args)
+    machine = machine_module()
+    # The run's claim comes before its checkout is made and prepared, and is held until both are gone.
+    held = heavy_claim("suite", "lead-suite", label=f"lead-suite {c.delivery}", now_why=why,
+                       repository=machine_repository(), delivery=c.delivery)
+    with held, claimed_environment(held):
+        if why is not None and stepped_off(held):
+            journal_override(c, c.delivery, f"ran lead-suite at {commit[:10]} at once, stepping off the machine's wait",
+                             why)
+        began, cpu = time.monotonic(), cpu_mark()
+        code = 1
+        try:
+            code = suite_run(c, binding, commit, argv)
+        finally:
+            held.record_cost(measured_since(machine, code, began, cpu, code == 0))
+    if code:
+        raise SystemExit(code if 0 < code < 256 else 1)
+
+
+def suite_run(c, binding: dict, commit: str, argv: list[str]) -> int:
+    """lead-suite's run of argv at commit, in a detached checkout of its own, recorded in the flow log and, on a
+    record with an integration step, the journal. Returns its exit."""
     folder = c.root / (binding.get("workRoot") or f"{c.work}/work") / "suite"
     folder.mkdir(parents=True, exist_ok=True)
     checkout = Path(tempfile.mkdtemp(prefix=f"{commit[:12]}-", dir=folder)) / "checkout"
@@ -14033,8 +14281,7 @@ def lead_suite(args) -> None:
     print(out[-2000:].rstrip())
     print(f"lead-suite: {result} at {commit[:10]} (exit {code}, {seconds}s); "
           f"recorded in {flow_log('suite', c.delivery)}" + ("" if not integration else " and the journal"))
-    if code:
-        raise SystemExit(code if 0 < code < 256 else 1)
+    return code
 # The run's budget: the file a --budget argument names, read in the run's own checkout at the head it ran, as its
 # wall seconds when it reads as suite-budget/1, and None otherwise.
 def suite_budget(argv: list[str], checkout: Path) -> float | None:
@@ -15591,11 +15838,28 @@ def main(argv: list[str] | None = None) -> None:
     q.add_argument("records", nargs="+", metavar="RECORD"); q.set_defaults(fn=plan_review_check)
     p = command(sub, "gate"); p.add_argument("key")
     p.add_argument("--skip-guards", action="store_true", help="don't run the binding's guards first; needs --why")
-    p.add_argument("--why", help="with --skip-guards: why, which gates.json keeps and the hand-off shows")
+    p.add_argument("--now", action="store_true", help="run the guards and named gates at once, whatever the machine "
+                   "holds; needs --why, which the machine's history records")
+    p.add_argument("--why", help="with --skip-guards: why, which gates.json keeps and the hand-off shows; with --now: "
+                   "why the run steps off waiting for the machine")
     p.set_defaults(fn=gate)
     p = command(sub, "check", help="run checks by id at HEAD the way the merge queue does, and keep each run's record")
     p.add_argument("key"); p.add_argument("ids", nargs="+", help="the check ids, comma-separated or one an argument")
+    p.add_argument("--now", action="store_true", help="run at once, whatever the machine holds; needs --why")
+    p.add_argument("--why", help="with --now: why the run steps off waiting for the machine, which is recorded")
     p.set_defaults(fn=check)
+    p = command(sub, "claim", help="claim machine slots, waiting while the machine is full, then run the command "
+                "after -- under the claim")
+    p.add_argument("--slots", type=int, default=1, help="the slots to claim before a measured run says (default 1)")
+    p.add_argument("--label", help="what the run is, as the machine shows it and measures it (default: the command)")
+    p.add_argument("--exclusive", action="store_true", help="run with nothing else admitted beside it")
+    p.add_argument("--now", action="store_true", help="run at once, whatever the machine holds; needs --why")
+    p.add_argument("--why", help="with --now: why the run steps off waiting for the machine, recorded in the machine's "
+                   "history and journaled as decision.recorded")
+    p.add_argument("--wait-seconds", type=float, help="the most to wait for the machine; a wait that ends unadmitted "
+                   "exits 75 and runs nothing")
+    p.add_argument("argv", nargs=argparse.REMAINDER, help="after --: the command to run")
+    p.set_defaults(fn=claim)
     p = command(sub, "claims-check", help="what your committed change still needs claimed, with the lead's request for each")
     p.add_argument("key"); p.set_defaults(fn=claims_check)
     p = command(sub, "build"); p.add_argument("key", nargs="?"); p.set_defaults(fn=build)
@@ -15698,7 +15962,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--wait-seconds", type=int, default=3600, metavar="SECONDS")
     p.add_argument("--skip-guards", action="store_true", help="publish without running the binding's guards at the "
                    "commit; needs --why, journaled as decision.recorded")
-    p.add_argument("--why", help="with --skip-guards: why the guards don't run")
+    p.add_argument("--now", action="store_true", help="run the guards at once, whatever the machine holds; needs --why")
+    p.add_argument("--why", help="with --skip-guards: why the guards don't run; with --now: why they step off waiting "
+                   "for the machine")
     p.set_defaults(fn=lead_push)
     p = command(sub, "lead-flake", help="declare a temporary flake for a check at the current remote base")
     p.add_argument("--check", required=True)
@@ -15766,6 +16032,8 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=lead_carry_review)
     p = command(sub, "lead-suite", help="run the binding's fullHealth at a commit, in a detached checkout of its own")
     p.add_argument("--at", help="the commit to run at; the base head on the remote when absent")
+    p.add_argument("--now", action="store_true", help="run at once, whatever the machine holds; needs --why")
+    p.add_argument("--why", help="with --now: why the run steps off waiting for the machine, which is recorded")
     q = command(sub, "lead-integrate", help="journal a fact of the integration step under the delivery's own key")
     facts = q.add_subparsers(dest="fact", required=True)
     one = facts.add_parser("merged", help="the target merged into the integration candidate at --head")
