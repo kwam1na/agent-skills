@@ -499,10 +499,19 @@ class ContinuousIntegrationTests(unittest.TestCase):
     def test_ci_runs_only_cut_release_and_no_tests(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertEqual(re.findall(r"(?m)^  ([a-z-]+):$", workflow.split("\njobs:\n", 1)[1]), ["cut-release"])
-        for withdrawn in ("run-tests.py", "macos", "full-matrix", "matrix", "unittest"):
+        for withdrawn in ("run-tests.py", "macos", "full-matrix", "unittest"):
             with self.subTest(withdrawn=withdrawn):
                 self.assertNotIn(withdrawn, workflow)
         self.assertNotRegex(workflow, r"(?i)gates? (publishing|a release|releases)")
+
+    def test_ci_qualifies_the_development_version_and_bundled_runtime_minimum(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        minimum = json.loads((ROOT / "product-runtime/runtime.json").read_text())["nodeMinimum"]
+        self.assertEqual((ROOT / ".nvmrc").read_text(), "24\n")
+        self.assertIn("- runtime: development\n            node-file: .nvmrc", workflow)
+        self.assertIn(f'- runtime: minimum\n            node: "{minimum}"', workflow)
+        self.assertIn("node-version-file: ${{ matrix.node-file }}", workflow)
+        self.assertIn("node-version: ${{ matrix.node }}", workflow)
 
     def test_ci_proves_the_release_path_with_nothing_above_read_permission(self) -> None:
         ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
