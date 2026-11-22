@@ -2248,6 +2248,7 @@
           "skills/delivery-views/scripts/render.py",
           "skills/delivery-views/references/hosted-snapshot.schema.json",
           "tests/fixtures/delivery-views/hosted/**",
+          ".nvmrc",
           ".github/workflows/hosted-delivery-viewer.yml"
         ],
         "checks": [

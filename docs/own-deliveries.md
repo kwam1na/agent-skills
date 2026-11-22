@@ -282,7 +282,7 @@ source = json.loads(subprocess.check_output(["git", "show", "origin/integrate/<n
 assert json.loads(binding.read_text()) == target, "restore the target binding first"
 service = ["hosted.install", "hosted.typecheck", "hosted.build", "hosted.test", "hosted.browser-install", "hosted.browser"]
 allowed = ["tests.test_delivery_views_hosted", "tests.test_delivery_views_hosted_projection", "tests.test_run_delivery_hosted", *service]
-reader = {"paths": ["hosted/delivery-viewer/**", "skills/delivery-views/assets/**", "skills/delivery-views/scripts/render.py", "skills/delivery-views/references/hosted-snapshot.schema.json", "tests/fixtures/delivery-views/hosted/**", ".github/workflows/hosted-delivery-viewer.yml"], "checks": service}
+reader = {"paths": ["hosted/delivery-viewer/**", "skills/delivery-views/assets/**", "skills/delivery-views/scripts/render.py", "skills/delivery-views/references/hosted-snapshot.schema.json", "tests/fixtures/delivery-views/hosted/**", ".nvmrc", ".github/workflows/hosted-delivery-viewer.yml"], "checks": service}
 assert reader in source["selection"]["readers"], "reviewed service reader differs"
 merged = copy.deepcopy(target)
 rows = merged["selection"]["catalogue"]

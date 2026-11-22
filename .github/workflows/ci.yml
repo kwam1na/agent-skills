@@ -22,10 +22,23 @@ env:
 jobs:
   # Every change proves the release path, the way a version tag's publish job runs it.
   cut-release:
+    name: cut-release (${{ matrix.runtime }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: development
+            node-file: .nvmrc
+          - runtime: minimum
+            node: "22.6.0"
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ${{ matrix.node-file }}
+          node-version: ${{ matrix.node }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"

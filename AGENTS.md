@@ -193,7 +193,9 @@ extra, that guard reports one installation failure before importing the suite.
 
 The page-behaviour lane runs the delivery views' page scripts under Node's
 built-in test runner with `jsdom`, through `tests/test_delivery_views_page.py`.
-It is development-only: bootstrap needs Node.js 20 or newer with npm and runs
+Use Node 24 via the root `.nvmrc` for development. CI qualifies the release on that version
+and on the bundled runtime minimum of Node 22.6.0. The page lane is
+development-only: bootstrap needs Node.js 20 or newer with npm and runs
 `npm ci --ignore-scripts` against the committed `package-lock.json`, installing
 into the checkout's own `node_modules/`. No release archive carries the lane's
 package files.

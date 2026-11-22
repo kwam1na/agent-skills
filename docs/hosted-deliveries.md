@@ -71,7 +71,7 @@ not to the record, so the hosted page has none.
 
 ## Service checks
 
-Use supported Node 22.22.2+ or 24.15+; CI pins 22.23.5. Run the service's own
+Use Node 24 via the repository’s `.nvmrc` for development and CI. The service supports Node 22.22.2+ on the 22 line and Node 24.15 or newer. Run the service's own
 locked install, typecheck, build, Worker/DOM and Chromium tests from its directory.
 The build is dry-run only. Root page-test manifests stay independent. Dedicated
 CI triggers for service files, trusted corpus assets/theme source, shared schema

@@ -771,7 +771,7 @@ class HostedServiceBoundaryTests(unittest.TestCase):
         required=['hosted/delivery-viewer/**','skills/delivery-views/assets/**',
                   'skills/delivery-views/scripts/render.py',
                   'skills/delivery-views/references/hosted-snapshot.schema.json',
-                  'tests/fixtures/delivery-views/hosted/**','.github/workflows/hosted-delivery-viewer.yml']
+                  'tests/fixtures/delivery-views/hosted/**','.nvmrc','.github/workflows/hosted-delivery-viewer.yml']
         for event in ('push','pull_request'):
             self.assertEqual(workflow['on'][event]['paths'],required)
         job=workflow['jobs']['service']
@@ -782,7 +782,7 @@ class HostedServiceBoundaryTests(unittest.TestCase):
                 self.assertEqual(step.get('if'),'always()')
             else:self.assertNotIn('if',step)
         self.assertEqual(job['defaults']['run']['working-directory'],'hosted/delivery-viewer')
-        self.assertEqual([step['with']['node-version'] for step in job['steps'] if step.get('uses','').startswith('actions/setup-node@')],['22.23.5'])
+        self.assertEqual([step['with']['node-version-file'] for step in job['steps'] if step.get('uses','').startswith('actions/setup-node@')],['.nvmrc'])
         commands=[step['run'] for step in job['steps'] if 'run' in step]
         self.assertEqual(commands,['npm ci --ignore-scripts --no-audit --no-fund --engine-strict',
                                    'npm run typecheck','npm run build','npm test',
