@@ -29,13 +29,17 @@ encoded paths and alternate methods are refused. Authenticated endpoints require
 `Authorization: Bearer <repository-publishing-token>` before DO lookup or body
 parsing. No redirects are returned. Use HTTPS with an explicit service origin.
 
-The `PUBLISHERS` Worker secret is a JSON object mapping repository IDs to SHA-256
-lowercase hex digests of independent, high-entropy bearer publishing tokens.
-Provision tokens with at least 256 random bits, encoded base64url without padding
-(43–128 characters accepted). Digests are compared with Node's constant-time
-primitive in Workers. The Worker has no Cloudflare management credential. Neither
-source configuration nor storage contains the original token. Provisioning and
-deployment are separate operator work; no resources have been deployed here.
+The receiver looks up the repository's publishing digest in the private R2
+bucket under `_publishers/v1/<repositoryId>`. Each check reads current storage.
+A stored SHA-256 digest activates that repository, and a stored `revoked` marker
+disables it. An absent object uses the original `PUBLISHERS` Worker secret,
+a JSON map of repository IDs to digests. Corrupt records and failed reads deny
+access. The read routes serve acknowledged delivery digests only.
+
+Provision tokens with at least 256 random bits encoded as unpadded base64url
+(43–128 characters). Digests are compared in constant time. See the
+[operator procedure](../../docs/hosted-deliveries.md#manage-a-publisher)
+to add, rotate or revoke one publisher.
 
 `POST /api/v1/repos/{repo}/deliveries/{id}/session`
 
@@ -62,20 +66,22 @@ epoch has sequence 0; publish a new sequence in the current epoch to confirm it.
 
 `POST /api/v1/repos/{repo}/deliveries/{id}/snapshots`
 
-The entire body is the raw UTF-8 `hosted-delivery-snapshot/3` snapshot, at most
-16 MiB. It is not wrapped in another JSON object. Required headers:
+The body is a raw UTF-8 snapshot of at most 16 MiB. Pair
+`hosted-delivery-snapshot/2` with `delivery-line-map/2`, or
+`hosted-delivery-snapshot/3` with `delivery-line-map/3`. The first accepted
+snapshot fixes the renderer for that delivery link. It is not wrapped in another JSON object. Required headers:
 
 - `Content-Type: application/json` (no encoding)
 - `X-Writer-Epoch: <positive safe integer>`
 - `X-Snapshot-Sequence: <positive safe integer>`
 - `X-Snapshot-Digest: <lowercase SHA-256 of the exact body bytes>`
-- `X-Renderer-Version: delivery-line-map/3`
+- `X-Renderer-Version` naming the matching renderer
 
 The receiver counts streamed bytes even without an honest Content-Length,
 rejects nesting deeper than 64, malformed UTF-8/JSON, unknown top-level fields,
 other versions, unsupported renderers, over-long texts, lists and objects, a
 credential-named field at any depth, unsafe links and numbers beyond JavaScript
-safe precision. The body is the local live view's own cut, so it accepts the
+safe precision. The v2 validator retains the deployed v2 privacy rules. The v3 body is the local live view's own cut, so it accepts the
 record's prose as written, paths and commands included, and public markup as
 data. Publishers still scan every projected string for their configured secret
 values before transport; no service scanner claims to recognize arbitrary prose
@@ -92,7 +98,7 @@ public. Unreferenced immutable objects may remain; no bucket lifecycle deletion
 is configured. Committed completed snapshots must be retained.
 
 A receipt contains `protocolVersion: hosted-delivery-api/1`,
-`rendererVersion: delivery-line-map/3`, `epoch`, `sequence`, `digest`,
+the accepted `rendererVersion`, `epoch`, `sequence`, `digest`,
 `sourceFingerprint`, `publishedAt`, `sourceConfirmedAt`. Both times are server
 Unix milliseconds of original acceptance. Sequence is strictly increasing within
 an epoch; compare epoch first. Do not replace current state with an old retry's

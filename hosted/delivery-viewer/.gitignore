@@ -1,7 +1,7 @@
 node_modules/
 .wrangler/
 dist/
-src/generated-validator.js
+src/generated-validator*.js
 worker-configuration.d.ts
 .dev.vars*
 .env*

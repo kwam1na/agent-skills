@@ -35,9 +35,8 @@ describe("trusted hosted shell boundary", () => {
 
 describe("fixed content-addressed asset routes", () => {
   it("serves only trusted exact build paths with MIME, privacy and immutable cache headers", async () => {
-    // The renderer, the viewer and the stylesheet; Newsreader's four files and Geist's and Geist Mono's two each; and
-    // the three families' licences.
-    expect(Object.keys(assets)).toHaveLength(3 + 8 + 3);
+    // Both versions retain their renderer, viewer and stylesheet. They share eight fonts and three licences.
+    expect(Object.keys(assets)).toHaveLength(2 * 3 + 8 + 3);
     const fonts = Object.values(assets).filter((asset) => asset.type === "font/woff2");
     expect(fonts).toHaveLength(8);
     expect(fonts.every((asset) => asset.encoding === "base64")).toBe(true);

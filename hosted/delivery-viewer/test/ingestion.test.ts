@@ -1,8 +1,9 @@
 import { SELF } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
+import legacyFixture from './fixtures/snapshot-v2.json';
 import { cases } from './fixtures.generated';
 import { id, session, request, route, sql, upload, current, OTHER_TOKEN, TOKEN, fixture } from './helpers';
-import { MAX_BYTES, RENDERER, digest, parse } from '../src/protocol';
+import { MAX_BYTES, RENDERER, LEGACY_RENDERER, digest, parse } from '../src/protocol';
 
 describe('ingestion boundary', () => {
   it('authenticates scope before any durable metadata and keeps public unknown reads empty', async () => {
@@ -94,17 +95,58 @@ describe('ingestion boundary', () => {
     const valid = JSON.stringify(fixture());
     const exact = { ...headers, 'X-Snapshot-Digest': await digest(new TextEncoder().encode(valid)) };
     expect(RENDERER).toBe('delivery-line-map/3');
-    for (const older of ['delivery-line-map/1', 'delivery-line-map/2']) {
-      const previous = await request(route(publicId, 'snapshots'), { method: 'POST', headers: {...exact, 'X-Renderer-Version': older}, body: valid });
-      expect(previous.status).toBe(422);
-      expect(JSON.stringify(await previous.json())).toContain('unsupported_renderer');
-    }
+    const unknown = await request(route(publicId, 'snapshots'), { method: 'POST', headers: {...exact, 'X-Renderer-Version': 'delivery-line-map/1'}, body: valid });
+    expect(unknown.status).toBe(422);
+    expect(await unknown.json()).toEqual({ error: 'unsupported_renderer' });
+    const mismatched = await request(route(publicId, 'snapshots'), { method: 'POST', headers: {...exact, 'X-Renderer-Version': LEGACY_RENDERER}, body: valid });
+    expect(mismatched.status).toBe(400);
     // An older body is refused too, under the current renderer.
     const olderBody = JSON.stringify({ ...fixture(), schemaVersion: 'hosted-delivery-snapshot/2' });
     expect((await upload(publicId, 1, olderBody)).status).toBe(400);
     expect((await current(publicId)).status).toBe(404);
     expect((await upload(publicId, 1, '[['.repeat(65))).status).toBe(400);
     expect((await upload(publicId, 1, '{"bad":')).status).toBe(400);
+    expect((await current(publicId)).status).toBe(404);
+  });
+  it('continues a v2 delivery across retries and confirmations while other deliveries can use v3', async () => {
+    const publicId = id();
+    await session(publicId);
+    const body = JSON.stringify(legacyFixture);
+    const headers = {
+      'X-Renderer-Version': LEGACY_RENDERER, 'X-Writer-Epoch': '1', 'X-Snapshot-Sequence': '1',
+      'X-Snapshot-Digest': await digest(new TextEncoder().encode(body)),
+    };
+    const snapshot = () => request(route(publicId, 'snapshots'), {method: 'POST', headers, body});
+    const confirm = (version: string) => request(route(publicId, 'confirm'), {method: 'POST',
+      headers: {...headers, 'X-Renderer-Version': version}, body: JSON.stringify({sourceFingerprint: legacyFixture.sourceFingerprint})});
+    const first = await snapshot();
+    expect(first.status).toBe(200);
+    const receipt = await first.json();
+    expect(receipt).toMatchObject({rendererVersion: LEGACY_RENDERER, sequence: 1});
+    expect(await (await snapshot()).json()).toEqual(receipt);
+    expect((await confirm(RENDERER)).status).toBe(409);
+    expect((await confirm(LEGACY_RENDERER)).status).toBe(200);
+    const resumed = await session(publicId, {mode: 'resume', epoch: 1});
+    expect(await resumed.json()).toMatchObject({receipt});
+    headers['X-Snapshot-Sequence'] = '2';
+    expect(await (await snapshot()).json()).toMatchObject({rendererVersion: LEGACY_RENDERER, sequence: 2});
+    expect((await upload(publicId, 3)).status).toBe(422);
+    expect(await (await current(publicId)).json()).toMatchObject({rendererVersion: LEGACY_RENDERER, sequence: 2});
+    const newer = id();
+    await session(newer);
+    expect(await (await upload(newer)).json()).toMatchObject({rendererVersion: RENDERER, sequence: 1});
+  });
+  it('retains the v2 local-reference privacy rule', async () => {
+    const publicId = id();
+    await session(publicId);
+    const body = JSON.stringify(legacyFixture).replace(legacyFixture.document.state.meta.headline, 'Notes under docs/private');
+    expect(body).toContain('docs/private');
+    const response = await request(route(publicId, 'snapshots'), {method: 'POST', body, headers: {
+      'X-Renderer-Version': LEGACY_RENDERER, 'X-Writer-Epoch': '1', 'X-Snapshot-Sequence': '1',
+      'X-Snapshot-Digest': await digest(new TextEncoder().encode(body)),
+    }});
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({error: 'invalid_projection'});
     expect((await current(publicId)).status).toBe(404);
   });
   it('counts streamed bytes despite absent or dishonest content length and cancels oversized input', async () => {
