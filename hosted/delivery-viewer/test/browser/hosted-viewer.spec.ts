@@ -471,14 +471,16 @@ test("retains readable progress on pointer loss, incompatibility and publisher d
   await page.goto(`${origin}/d/${id}`);
   await expect(page.locator("#app")).toContainText("Saved progress");
   body.document.state.meta.headline = "Recovered progress";
-  const next = await publish(id, body, 2);
-  await page.route(`**/d/${id}/snapshots/${next.digest}`, (route) =>
+  // Install the missing-snapshot response before publishing makes its digest visible to the polling browser.
+  const snapshotRoute = `**/d/${id}/snapshots/${hash(JSON.stringify(body))}`;
+  await page.route(snapshotRoute, (route) =>
     route.fulfill({
       status: 404,
       contentType: "application/json",
       body: '{"error":"not_found"}',
     }),
   );
+  await publish(id, body, 2);
   await expect(page.locator("#hosting-status")).toContainText(
     "Update unavailable",
   );
@@ -488,7 +490,7 @@ test("retains readable progress on pointer loss, incompatibility and publisher d
     "Update unavailable · showing the last saved progress",
   );
   await expect(page.locator("#app")).toContainText("Saved progress");
-  await page.unroute(`**/d/${id}/snapshots/${next.digest}`);
+  await page.unroute(snapshotRoute);
   await expect(page.locator("#app")).toContainText("Recovered progress");
   await expect(page.locator(".fact.since .hosted-words")).toHaveCount(0);
   await page.route(`**/d/${id}/current`, async (route) => {
