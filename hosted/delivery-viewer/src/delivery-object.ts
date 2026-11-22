@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { ApiError, LEASE_MS, STALE_MS, RENDERER, fail, type Receipt, type Commit, result } from './protocol';
+import { ApiError, LEASE_MS, STALE_MS, fail, type Receipt, type Commit, result } from './protocol';
 
 type Row = { repo: string; deliveryKey: string; ownerId: string; epoch: number; leaseUntil: number; sequence: number; pointer: string | null; receipt: string | null; confirmedAt: number | null };
 export type Session = { mode: 'acquire' | 'resume' | 'takeover'; deliveryKey: string; ownerId: string; epoch?: number };
@@ -76,6 +76,9 @@ export class DeliveryObject extends DurableObject<Env> {
   }
   private admissible(repo: string, commit: Commit): Receipt | undefined {
     const row = this.bound(repo);
+    if (row.receipt && (JSON.parse(row.receipt) as Receipt).rendererVersion !== commit.rendererVersion) {
+      fail('unsupported_renderer', 422);
+    }
     const accepted = this.accepted(commit.epoch, commit.sequence, commit.digest);
     if (accepted) return accepted;
     this.writer(row, commit.epoch);
@@ -92,7 +95,7 @@ export class DeliveryObject extends DurableObject<Env> {
       const accepted = this.admissible(repo, commit);
       if (accepted) return accepted;
       const now = Date.now();
-      const receipt: Receipt = { protocolVersion: 'hosted-delivery-api/1', rendererVersion: RENDERER,
+      const receipt: Receipt = { protocolVersion: 'hosted-delivery-api/1', rendererVersion: commit.rendererVersion,
         epoch: commit.epoch, sequence: commit.sequence, digest: commit.digest, sourceFingerprint: fingerprint,
         publishedAt: now, sourceConfirmedAt: now };
       const encoded = JSON.stringify(receipt);
@@ -106,7 +109,7 @@ export class DeliveryObject extends DurableObject<Env> {
       const row = this.bound(repo);
       this.writer(row, commit.epoch);
       const receipt = row.receipt ? JSON.parse(row.receipt) as Receipt : null;
-      if (!receipt || receipt.epoch !== commit.epoch || receipt.sequence !== commit.sequence || receipt.digest !== commit.digest || receipt.sourceFingerprint !== fingerprint) fail('confirmation_conflict', 409);
+      if (!receipt || receipt.rendererVersion !== commit.rendererVersion || receipt.epoch !== commit.epoch || receipt.sequence !== commit.sequence || receipt.digest !== commit.digest || receipt.sourceFingerprint !== fingerprint) fail('confirmation_conflict', 409);
       const now = Date.now();
       this.ctx.storage.sql.exec('UPDATE delivery SET confirmedAt=?, leaseUntil=? WHERE singleton=1', now, now + LEASE_MS);
       return { protocolVersion: 'hosted-delivery-api/1', sourceConfirmedAt: now, leaseUntil: now + LEASE_MS, receipt };

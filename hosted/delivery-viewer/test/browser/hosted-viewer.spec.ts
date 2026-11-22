@@ -69,7 +69,7 @@ test.afterAll(async () => {
 });
 const route = (id: string, action: string) =>
   `${origin}/api/v1/repos/browser-repo/deliveries/${id}/${action}`;
-async function publish(id: string, value: unknown, sequence = 1) {
+async function publish(id: string, value: unknown, sequence = 1, renderer = "delivery-line-map/3") {
   const body = JSON.stringify(value);
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -94,13 +94,36 @@ async function publish(id: string, value: unknown, sequence = 1) {
       "X-Writer-Epoch": "1",
       "X-Snapshot-Sequence": String(sequence),
       "X-Snapshot-Digest": hash(body),
-      "X-Renderer-Version": "delivery-line-map/3",
+      "X-Renderer-Version": renderer,
     },
     body,
   });
   expect(result.status).toBe(200);
   return result.json() as Promise<{ digest: string }>;
 }
+
+test("a v2 delivery keeps its signed-out page and deployed immutable assets", async ({ page }) => {
+  const id = randomBytes(32).toString("hex");
+  const snapshot = JSON.parse(readFileSync(new URL("../fixtures/snapshot-v2.json", import.meta.url), "utf8"));
+  await publish(id, snapshot, 1, "delivery-line-map/2");
+  const url = `${origin}/d/${id}`;
+  const response = await page.goto(url);
+  expect(response?.status()).toBe(200);
+  // These exact asset URLs shipped on the original shared viewer.
+  const deployed = [
+    "/assets/0d13161f7ed59712f7a2245e4c95137bb05b21f26ec26c4dd016bc28e6b97787.js",
+    "/assets/a3c505f2486b866ea70133ed39be10024ecd5084b33d88a08688f0c63cb15d80.js",
+    "/assets/7475283f0ae841b7b61199da5c6d932ccac83818356d22f33bce51d758f2cc7d.css",
+  ];
+  const html = await response!.text();
+  for (const path of deployed) expect(html).toContain(path);
+  await expect(page.locator("#app")).toContainText("</script><b>Work</b>");
+  await expect(page.locator("#hosting-status")).toContainText("Progress confirmed");
+  snapshot.document.state.queue[0].title = "Second v2 publication";
+  await publish(id, snapshot, 2, "delivery-line-map/2");
+  await expect(page.locator("#app")).toContainText("Second v2 publication", { timeout: 25_000 });
+  expect(page.url()).toBe(url);
+});
 
 test("signed-out data-only view enforces CSP, headers, no-referrer and no opener", async ({
   page,

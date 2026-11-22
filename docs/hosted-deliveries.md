@@ -83,18 +83,11 @@ installs the service package. The lead verifies this separate service job at the
 exact main-push commit before release/deploy; the publish command reads no CI
 result, and the local suite before a tag does not attest service CI.
 
-## Versions move together
+## Snapshot compatibility
 
-The service and the publishing generation move together. The snapshot body is
-`hosted-delivery-snapshot/3`, sent as renderer `delivery-line-map/3`: a service that
-reads another version refuses the body as an unsupported renderer, and a publisher
-refuses a receipt naming another. Deploy the service and apply the generation in
-one step. A delivery hosted as `/2` or earlier stays at its last acknowledged cut and its page
-then reads as requiring a compatible snapshot, since nothing republishes a finished
-delivery. One still open under the older generation closes there first, as its
-journal must: the newer publisher reads that delivery's identity, pending body or
-terminal body as corrupt (`identity_corrupt`, `terminal_corrupt`) rather than
-half-reading it.
+The shared viewer accepts `delivery-line-map/2` and `delivery-line-map/3` publishers. Each upload declares its renderer and must pass that version’s snapshot validation. The receipt records the accepted renderer. Opening a delivery link selects the page and its immutable assets from the stored receipt, so a finished v2 delivery remains readable at its original URL when another repository starts publishing v3.
+
+Keep an active delivery on the publisher generation that created its local identity and terminal records. Start new deliveries with the new generation. When adding a renderer, retain the existing reader, validation rules and assets, and verify a link created before deployment alongside a new delivery link.
 
 ## Reviewed production procedure
 
@@ -123,19 +116,41 @@ npx wrangler r2 bucket info hosted-delivery-snapshots
 ```
 
 If absent, create that private bucket with `npx wrangler r2 bucket create
-hosted-delivery-snapshots`. Provision independent random publishing tokens with at
-least 256 bits per repository. Populate the `PUBLISHERS` secret with a JSON object
-mapping each repository ID to the SHA-256 lowercase hex digest of its token, not
-the token. Use an interactive secret prompt or a protected file outside the
-checkout; never put values in command arguments or shell history. Publish that
-secret with `npx wrangler secret put PUBLISHERS`, then `npx wrangler deploy` from
-the reviewed checkout. On a first deployment, secret provisioning may create the
-Worker before code deployment; verify the selected Worker/account before each
-command. The deployment applies the declared DO migration and attaches the custom
+hosted-delivery-snapshots`. Retain the current `PUBLISHERS` secret when upgrading.
+For a new Worker, initialize this legacy fallback with the empty JSON object
+`{}` through `npx wrangler secret put PUBLISHERS`. Run `npx wrangler deploy`
+from the reviewed checkout. On a first deployment, initializing the secret may
+create the Worker. Verify the selected Worker and account before each command.
+The deployment applies the declared DO migration and attaches the custom
 domain. Wait for certificate readiness and verify actual HTTPS; DNS creation alone
 is not success. Runtime rollbacks use a verified prior Worker version, preserve
 DO/R2 data and account for migration compatibility; never delete retained storage
 to undo a code deployment. Keep the previous configuration/version ID for rollback.
+
+### Manage a publisher
+
+From the viewer package, verify the Wrangler account and the bucket bound as
+`SNAPSHOTS`. Give each repository a random ID and a distinct token generated from
+at least 32 random bytes, encoded as unpadded base64url. Export the token from
+the operator's credential store. Only the variable name appears in the command.
+
+```sh
+node scripts/publisher.mjs set hosted-delivery-snapshots REPOSITORY_ID DELIVERY_PUBLISH_TOKEN
+node scripts/publisher.mjs revoke hosted-delivery-snapshots REPOSITORY_ID
+```
+
+Use `set` for both initial provisioning and rotation. It writes the token’s
+SHA-256 digest to one private object and verifies the result by reading it back.
+The receiver checks this object on each write request. Coordinate changes to
+the same repository ID because the latest write wins. Other repository IDs
+can be managed independently. A token change takes effect for the next request,
+so restart active publishers with the new environment after rotation.
+
+Revocation stores a permanent marker. Keep the marker and all publisher
+records outside bucket expiration rules. Deleting a record restores the
+legacy fallback for that repository. Before rolling the Worker back to code
+that only reads `PUBLISHERS`, reconcile legacy credentials with current
+revocations and rotations.
 
 ## Acceptance evidence
 

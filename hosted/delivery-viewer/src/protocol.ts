@@ -4,6 +4,12 @@ export const MAX_BYTES = 16 * 1024 * 1024;
 export const LEASE_MS = 180_000;
 export const STALE_MS = 120_000;
 export const RENDERER = 'delivery-line-map/3';
+export const LEGACY_RENDERER = 'delivery-line-map/2';
+export type RendererVersion = typeof RENDERER | typeof LEGACY_RENDERER;
+export function supportedRenderer(value: string | null): RendererVersion {
+  if (value === RENDERER || value === LEGACY_RENDERER) return value;
+  return fail('unsupported_renderer', 422);
+}
 export const ID = /^[a-f0-9]{64}$/;
 export const REPOSITORY = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 export const KEY = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
@@ -78,7 +84,7 @@ function scan(value: unknown): void {
     }
   }
 }
-function safeUrl(value: unknown): boolean {
+export function safeUrl(value: unknown): boolean {
   if (typeof value !== 'string' || /[\x00-\x20\x7f\\]/.test(value)) return false;
   try {
     const url = new URL(value);
@@ -110,7 +116,7 @@ export function errorResponse(error: unknown): Response {
 }
 export interface Receipt {
   protocolVersion: 'hosted-delivery-api/1';
-  rendererVersion: typeof RENDERER;
+  rendererVersion: RendererVersion;
   epoch: number;
   sequence: number;
   digest: string;
@@ -122,7 +128,7 @@ export interface Commit {
   epoch: number;
   sequence: number;
   digest: string;
-  rendererVersion: string;
+  rendererVersion: RendererVersion;
 }
 
 // RPC does not preserve custom Error properties. Return safe tagged failures,

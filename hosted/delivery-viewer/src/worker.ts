@@ -1,6 +1,8 @@
-import {assets,shell} from './generated-assets';
+import {assets,shell,retainedShells} from './generated-assets';
+import { publisherKey, REVOKED } from './publisher-record.mjs';
 import { timingSafeEqual } from 'node:crypto';
-import { unwrap, digest, identifier, integer, object, exact, parse, projection, readBytes, MAX_BYTES, KEY, REPOSITORY, RENDERER, fail, json, errorResponse, headers, type Commit } from './protocol';
+import { unwrap, digest, identifier, integer, object, exact, parse, projection, readBytes, MAX_BYTES, KEY, REPOSITORY, LEGACY_RENDERER, supportedRenderer, fail, json, errorResponse, headers, type Commit } from './protocol';
+import { projectionV2 } from './projection-v2';
 import { DeliveryObject, type Session } from './delivery-object';
 export { DeliveryObject };
 // Binary assets (the fonts) are generated as base64; each is decoded once, when the worker starts.
@@ -12,22 +14,30 @@ async function authenticate(request: Request, env: Env, repo: string) {
   const header = request.headers.get('Authorization');
   if (!header || !/^Bearer [A-Za-z0-9_-]{43,128}$/.test(header)) fail('unauthorized', 401);
   const computed = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(header.slice(7)));
-  let publishers: Record<string, unknown>;
-  try { publishers = object(JSON.parse(env.PUBLISHERS)); } catch { fail('temporarily_unavailable', 503); }
-  const expected = publishers[repo];
-  const valid = typeof expected === 'string' && /^[a-f0-9]{64}$/.test(expected);
-  const bytes = Uint8Array.from((valid ? expected : '0'.repeat(64)).match(/../g)!, hex => parseInt(hex, 16));
-  if (!timingSafeEqual(new Uint8Array(computed), bytes) || !valid) fail('unauthorized', 401);
+  const record = await env.SNAPSHOTS.get(publisherKey(repo));
+  let expected: unknown;
+  if (record === null) {
+    let legacy: Record<string, unknown>;
+    try { legacy = object(JSON.parse(env.PUBLISHERS)); } catch { fail('temporarily_unavailable', 503); }
+    expected = Object.hasOwn(legacy, repo) ? legacy[repo] : undefined;
+  } else {
+    if (record.size !== 64 && record.size !== REVOKED.length) fail('temporarily_unavailable', 503);
+    expected = await record.text();
+    if (expected !== REVOKED && !/^[a-f0-9]{64}$/.test(String(expected))) fail('temporarily_unavailable', 503);
+  }
+  const expectedDigest = typeof expected === 'string' && /^[a-f0-9]{64}$/.test(expected) ? expected : null;
+  const bytes = Uint8Array.from((expectedDigest ?? '0'.repeat(64)).match(/../g)!, hex => parseInt(hex, 16));
+  if (!timingSafeEqual(new Uint8Array(computed), bytes) || expectedDigest === null) fail('unauthorized', 401);
 }
 function envelope(request: Request): Commit {
-  if (request.headers.get('X-Renderer-Version') !== RENDERER) fail('unsupported_renderer', 422);
+  const rendererVersion = supportedRenderer(request.headers.get('X-Renderer-Version'));
   const numberHeader = (name: string) => {
     const value = request.headers.get(name);
     if (!value || !/^[1-9][0-9]{0,15}$/.test(value)) fail('invalid_sequence');
     return integer(Number(value));
   };
   return { epoch: numberHeader('X-Writer-Epoch'), sequence: numberHeader('X-Snapshot-Sequence'),
-    digest: identifier(request.headers.get('X-Snapshot-Digest')), rendererVersion: RENDERER };
+    digest: identifier(request.headers.get('X-Snapshot-Digest')), rendererVersion };
 }
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -58,7 +68,8 @@ export default {
         }
         const bytes = await readBytes(request, MAX_BYTES);
         if (await digest(bytes) !== commit.digest) fail('digest_mismatch', 422);
-        const { sourceFingerprint } = projection(parse(bytes));
+        const validate = commit.rendererVersion === LEGACY_RENDERER ? projectionV2 : projection;
+        const { sourceFingerprint } = validate(parse(bytes));
         return json(unwrap(await env.DELIVERIES.getByName(publicId).commit(repo, publicId, commit, sourceFingerprint, bytes)));
       }
       if (request.method === 'GET' && Object.hasOwn(assets,url.pathname)) {
@@ -67,8 +78,9 @@ export default {
       }
       const page=/^\/d\/([a-f0-9]{64})$/.exec(url.pathname);
       if(page&&request.method==='GET'){
-        unwrap(await env.DELIVERIES.getByName(page[1]).current());
-        return new Response(shell,{headers:{...headers,'Content-Type':'text/html; charset=utf-8',
+        const pointer = unwrap(await env.DELIVERIES.getByName(page[1]).current());
+        const selected = Object.hasOwn(retainedShells, pointer.rendererVersion) ? retainedShells[pointer.rendererVersion] : shell;
+        return new Response(selected,{headers:{...headers,'Content-Type':'text/html; charset=utf-8',
           'Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'none'; connect-src 'self'; img-src 'none'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"}});
       }
       const read = /^\/d\/([a-f0-9]{64})\/(current|snapshots\/([a-f0-9]{64}))$/.exec(url.pathname);

@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { build } from "esbuild";
+import { gunzipSync } from "node:zlib";
 import { buildFonts } from "./fonts.mjs";
 const root = new URL("../../../", import.meta.url);
 const corpus = (name) =>
@@ -124,9 +125,26 @@ const theme = JSON.parse(
 );
 if (typeof theme !== "string") throw Error("hosted.theme_hook_drift");
 const shell = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="referrer" content="no-referrer"><meta name="robots" content="noindex,nofollow,noarchive"><title>Hosted delivery</title><link rel="stylesheet" href="${cssPath}"><script defer src="${viewerPath}" data-renderer="${rendererPath}"></script></head><body><a href="#app" class="hosted-skip">Skip to delivery</a>${theme}<p id="hosting-status" class="hosting-status hosted-announce" role="status" aria-live="polite">Loading hosted progress…</p><main id="app" tabindex="-1" aria-busy="true"><p class="hosted-loading">Loading hosted progress…</p></main><noscript>This read-only delivery view requires JavaScript.</noscript></body></html>`;
+// Preserve assets referenced by old HTML or in-flight requests during a deployment.
+const retained = JSON.parse(await readFile(new URL("../renderers/index.json", import.meta.url), "utf8"));
+const shells = {};
+for (const [version, { archive, sha256 }] of Object.entries(retained)) {
+  const bytes = await readFile(new URL(`../renderers/${archive}`, import.meta.url));
+  if (createHash("sha256").update(bytes).digest("hex") !== sha256) {
+    throw Error(`Retained renderer archive failed its digest check: ${version}`);
+  }
+  const bundle = JSON.parse(gunzipSync(bytes).toString("utf8"));
+  for (const [path, asset] of Object.entries(bundle.assets)) {
+    if (Object.hasOwn(assets, path) && JSON.stringify(assets[path]) !== JSON.stringify(asset)) {
+      throw Error(`Conflicting immutable asset in ${version}: ${path}`);
+    }
+    assets[path] = asset;
+  }
+  shells[version] = bundle.shell;
+}
 await writeFile(
   new URL("../src/generated-assets.ts", import.meta.url),
-  `// Generated from trusted corpus assets; do not edit.\nexport const assets: Record<string,{body:string;type:string;encoding?:"base64"}> = ${JSON.stringify(assets)};\nexport const shell = ${JSON.stringify(shell)};\n`,
+  `// Generated from trusted corpus assets; do not edit.\nexport const assets: Record<string,{body:string;type:string;encoding?:"base64"}> = ${JSON.stringify(assets)};\nexport const shell = ${JSON.stringify(shell)};\nexport const retainedShells: Record<string,string> = ${JSON.stringify(shells)};\n`,
 );
 await writeFile(
   new URL("../test/assets.generated.json", import.meta.url),
