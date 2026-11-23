@@ -11,7 +11,11 @@ verifies and every record passes. The command owns the output directory: it
 removes every release file there, of any version, and refuses a directory that
 holds anything else.
 
-Exit codes: 0 when the set is published; 1 when a build, verification or
+`--service-bundle` builds only the service bundle and its `.sha256`, from the checkout at `--root` (this
+one by default) into the `--out` directory, and cuts no release: a service check uses it to build from the
+same bytes a release carries. It refuses an output inside that checkout or one already holding either file.
+
+Exit codes: 0 when the set (or the bundle) is published; 1 when a build, verification or
 qualifier fails; 2 for a refused version or output directory. Success prints
 nothing, so a closed stdout cannot turn a published set into a failure.
 """
@@ -56,6 +60,7 @@ SERVICE_ROOTS = (
     "skills/delivery-views/scripts/render.py",
     "skills/delivery-views/references/hosted-snapshot.schema.json",
     "tests/fixtures/delivery-views/hosted/",
+    ".nvmrc",
 )
 SERVICE_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 SERVICE_EXTERNAL_ATTR = 0o100644 << 16
@@ -309,12 +314,52 @@ def _clear_earlier_set(out: Path) -> None:
     out.rmdir()
 
 
+def _service_bundle_only(version: str, root: Path, out: Path) -> int:
+    """Write the bundle and its `.sha256` into ``out``, both or neither, and cut no release."""
+    names = (f"{SERVICE_BUNDLE}-{version}.zip", f"{SERVICE_BUNDLE}-{version}.zip.sha256")
+    try:
+        if not valid_version(version):
+            raise Refusal("the version must be vMAJOR.MINOR.PATCH, optionally -rc.N, with no leading zeros")
+        if not root.is_dir():
+            raise Refusal("the checkout to bundle is not a directory")
+        if out.is_relative_to(root):
+            raise Refusal("the output directory must be outside the checkout it bundles")
+        if out.exists() and not out.is_dir():
+            raise Refusal("the output path is not a directory")
+        if any((out / name).exists() for name in names):
+            raise Refusal("the output directory already holds this version's bundle")
+    except Refusal as error:
+        print(f"cut-release refused: {error}", file=sys.stderr)
+        return 2
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=out, prefix=".service-bundle.") as temporary:
+            staged = Path(temporary)
+            write_service_bundle(root, version, staged)
+            check_service_bundle(version, staged)
+            for name in names:
+                os.rename(staged / name, out / name)
+            check_service_bundle(version, out)
+    except Exception as error:
+        for name in names:
+            (out / name).unlink(missing_ok=True)
+        print(f"cut-release failed: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(arguments: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--service-bundle", action="store_true", help="build only the service bundle and its .sha256")
+    parser.add_argument("--root", type=Path, help="with --service-bundle: the checkout to bundle (default: this one)")
     args = parser.parse_args(arguments)
     out = args.out.resolve()
+    if args.root is not None and not args.service_bundle:
+        parser.error("--root needs --service-bundle")
+    if args.service_bundle:
+        return _service_bundle_only(args.version, (args.root or ROOT).resolve(), out)
     try:
         _refuse_a_tracked_output(out)
         _clear_earlier_set(out)

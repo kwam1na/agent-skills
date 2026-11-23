@@ -464,6 +464,87 @@ class SetTests(unittest.TestCase):
                 self.assertEqual(out.exists(), before)
 
 
+class ServiceBundleCommandTests(unittest.TestCase):
+    """`--service-bundle` builds only the bundle from a checkout, as a service check calls it; no release is cut."""
+
+    def setUp(self) -> None:
+        self.command = _load_command()
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.out = Path(temporary.name) / "bundle"
+        self.names = {BUNDLE, f"{BUNDLE}.sha256"}
+
+    def _bundle(self, *extra: str) -> tuple[int, str]:
+        stderr = io.StringIO()
+        with mock.patch.object(self.command, "build_set") as build, contextlib.redirect_stderr(stderr):
+            code = self.command.main(["--version", VERSION, "--out", str(self.out), "--service-bundle", *extra])
+        build.assert_not_called()
+        return code, stderr.getvalue()
+
+    def test_the_command_writes_only_the_checked_bundle_of_the_named_checkout(self) -> None:
+        done = subprocess.run([sys.executable, "-B", str(SCRIPT), "--service-bundle", "--root", str(ROOT), "--version", VERSION,
+                               "--out", str(self.out)], capture_output=True, text=True, check=False)
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""))
+        self.assertEqual({path.name for path in self.out.iterdir()}, self.names)
+        self.assertEqual(self.command.check_service_bundle(VERSION, self.out), _sha256(self.out / BUNDLE))
+        with zipfile.ZipFile(self.out / BUNDLE) as bundle:
+            self.assertEqual(bundle.namelist(), _service_files(ROOT, self.command.SERVICE_ROOTS))
+
+    def test_refusals_write_nothing_and_keep_what_was_there(self) -> None:
+        for case in ("inside the checkout", "already there", "bad version", "root without the flag", "root not a folder"):
+            with self.subTest(case=case):
+                if self.out.exists():
+                    shutil.rmtree(self.out)
+                if case == "inside the checkout":
+                    inside = ROOT / "hosted" / "delivery-viewer" / "node_modules" / ".service-bundle-refused"
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr):
+                        code = self.command.main(["--version", VERSION, "--out", str(inside), "--service-bundle"])
+                    self.assertEqual(code, 2)
+                    self.assertIn("outside the checkout", stderr.getvalue())
+                    self.assertFalse(inside.exists())
+                    continue
+                if case == "already there":
+                    self.out.mkdir()
+                    (self.out / BUNDLE).write_bytes(b"earlier")
+                    self.assertEqual(self._bundle()[0], 2)
+                    self.assertEqual({path.name for path in self.out.iterdir()}, {BUNDLE})
+                    self.assertEqual((self.out / BUNDLE).read_bytes(), b"earlier")
+                elif case == "bad version":
+                    with mock.patch("sys.stderr"):
+                        self.assertEqual(self.command.main(["--version", "1.2.3", "--out", str(self.out), "--service-bundle"]), 2)
+                    self.assertFalse(self.out.exists())
+                elif case == "root without the flag":
+                    with mock.patch("sys.stderr"), self.assertRaises(SystemExit) as caught:
+                        self.command.main(["--version", VERSION, "--out", str(self.out), "--root", str(ROOT)])
+                    self.assertEqual(caught.exception.code, 2)
+                    self.assertFalse(self.out.exists())
+                else:
+                    self.assertEqual(self._bundle("--root", str(self.out.parent / "no-such-checkout"))[0], 2)
+                    self.assertFalse(self.out.exists())
+
+    def test_a_failed_build_or_recheck_leaves_neither_file(self) -> None:
+        write = self.command.write_service_bundle
+
+        def corrupt(root: Path, version: str, directory: Path) -> str:
+            digest = write(root, version, directory)
+            with (directory / f"hosted-delivery-service-{version}.zip").open("ab") as bundle:
+                bundle.write(b"\0")
+            return digest
+
+        for case, patcher, phrase in (
+            ("missing root", mock.patch.object(self.command, "SERVICE_ROOTS", (*self.command.SERVICE_ROOTS, "hosted/no-such-root/")),
+             "cut_release.service_root_missing: hosted/no-such-root/"),
+            ("corrupted", mock.patch.object(self.command, "write_service_bundle", corrupt), "cut_release.service_bundle_digest"),
+        ):
+            with self.subTest(case=case):
+                with patcher:
+                    code, stderr = self._bundle()
+                self.assertEqual(code, 1)
+                self.assertIn(phrase, stderr)
+                self.assertEqual(list(self.out.iterdir()), [])
+
+
 class RealRunTests(unittest.TestCase):
     """One real run: the five products and every real qualifier, as the publish command calls it."""
 
