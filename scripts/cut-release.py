@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Build, verify and qualify a full release set from the tree.
 
-The output directory ends up holding exactly five archives, five release files
-and four records, or none of them. An earlier set in that directory is removed
+The output directory ends up holding exactly five archives, five release files,
+four records and the hosted delivery service bundle with its `.sha256`, or none
+of them. The bundle holds the tracked files under SERVICE_ROOTS, at their
+repository-relative paths, with fixed timestamps and modes, and its digest is
+checked against the written bytes before the set is renamed into place. An earlier set in that directory is removed
 before anything else happens, and a new set appears only once every product
 verifies and every record passes. The command owns the output directory: it
 removes every release file there, of any version, and refuses a directory that
@@ -20,12 +23,14 @@ import sys
 sys.dont_write_bytecode = True
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 
 
@@ -40,9 +45,24 @@ PRODUCTS = ("core", "linear", "bootstrap", "run-delivery", "jira")
 RECORDS = ("core", "provider", "bootstrap", "linear")
 VERSION_PATTERN = r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-rc\.(?:0|[1-9][0-9]*))?"
 VERSION = re.compile(VERSION_PATTERN)
+SERVICE_BUNDLE = "hosted-delivery-service"
+# The service bundle's roots, an explicit list rather than one derived from the service workflow's trigger paths.
+# A root ending in "/" is a folder and holds every tracked file under it; any other root is one tracked file.
+SERVICE_ROOTS = (
+    "hosted/delivery-viewer/",
+    "hosted/protocol/",
+    "hosted/conformance/",
+    "skills/delivery-views/assets/",
+    "skills/delivery-views/scripts/render.py",
+    "skills/delivery-views/references/hosted-snapshot.schema.json",
+    "tests/fixtures/delivery-views/hosted/",
+)
+SERVICE_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+SERVICE_EXTERNAL_ATTR = 0o100644 << 16
 EARLIER_OUTPUT = re.compile(
     rf"(?:(?:{'|'.join(PRODUCTS)})-{VERSION_PATTERN}\.(?:zip|release\.json)"
-    rf"|(?:{'|'.join(RECORDS)})-{VERSION_PATTERN}\.json)"
+    rf"|(?:{'|'.join(RECORDS)})-{VERSION_PATTERN}\.json"
+    rf"|{SERVICE_BUNDLE}-{VERSION_PATTERN}\.zip(?:\.sha256)?)"
 )
 
 
@@ -59,6 +79,8 @@ def named_outputs(version: str) -> set[str]:
         *(f"{profile}-{version}.zip" for profile in PRODUCTS),
         *(f"{profile}-{version}.release.json" for profile in PRODUCTS),
         *(f"{record}-{version}.json" for record in RECORDS),
+        f"{SERVICE_BUNDLE}-{version}.zip",
+        f"{SERVICE_BUNDLE}-{version}.zip.sha256",
     }
 
 
@@ -91,6 +113,85 @@ def build_products(version: str, directory: Path) -> None:
                 profile_id=profile,
                 runtime_directory=rebound_runtime(profile, Path(temporary) / profile),
             )
+
+
+def _git_paths(root: Path, *arguments: str) -> list[str]:
+    done = subprocess.run(
+        ["git", "ls-files", "-z", *arguments, "--", *SERVICE_ROOTS],
+        cwd=root,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        check=False,
+    )
+    if done.returncode != 0:
+        reason = done.stderr.decode("utf-8", "replace").strip()[-800:]
+        raise ValueError(f"cut_release.service_bundle_source: git cannot list the service files: {reason}")
+    return [entry.decode("utf-8") for entry in done.stdout.split(b"\0") if entry]
+
+
+def service_files(root: Path) -> list[str]:
+    """The tracked files under SERVICE_ROOTS in the checkout at ``root``, less any its .gitignore files ignore, sorted.
+
+    Every root must hold a tracked file, and every file must be a regular file in git's index, so a
+    link or a submodule refuses rather than enters the bundle.
+    """
+    staged = {}
+    for line in _git_paths(root, "--cached", "--stage"):
+        details, path = line.split("\t", 1)
+        staged[path] = details.split(" ", 1)[0]
+    # Only the tree's own .gitignore files decide what is ignored: this machine's exclude files would make
+    # the bundle depend on who cut it.
+    ignored = set(_git_paths(root, "--cached", "--ignored", "--exclude-per-directory=.gitignore"))
+    paths = sorted(path for path in staged if path not in ignored)
+    for service_root in SERVICE_ROOTS:
+        if not any(path == service_root or (service_root.endswith("/") and path.startswith(service_root)) for path in paths):
+            raise ValueError(f"cut_release.service_root_missing: {service_root} holds no tracked file")
+    for path in paths:
+        if staged[path] not in ("100644", "100755"):
+            raise ValueError(f"cut_release.service_bundle_source: {path} is not a regular file in git's index")
+    return paths
+
+
+def build_service_bundle(root: Path, archive: Path) -> str:
+    """Write the service bundle for the checkout at ``root`` to ``archive`` and return its sha256.
+
+    The bytes depend only on the listed files' paths and contents: entries are sorted, and every entry
+    carries SERVICE_TIMESTAMP and SERVICE_EXTERNAL_ATTR whatever the files' mtimes and modes.
+    """
+    root = root.resolve()
+    paths = service_files(root)
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
+        for path in paths:
+            source = root / path
+            if source.is_symlink() or not source.is_file():
+                raise ValueError(f"cut_release.service_bundle_source: {path} is not a regular file in the tree")
+            info = zipfile.ZipInfo(path, SERVICE_TIMESTAMP)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 3
+            info.external_attr = SERVICE_EXTERNAL_ATTR
+            bundle.writestr(info, source.read_bytes(), compresslevel=9)
+    return hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+def write_service_bundle(root: Path, version: str, directory: Path) -> str:
+    """Write ``hosted-delivery-service-<version>.zip`` and its ``.sha256`` into ``directory``; return the digest."""
+    name = f"{SERVICE_BUNDLE}-{version}.zip"
+    digest = build_service_bundle(root, directory / name)
+    (directory / f"{name}.sha256").write_text(f"{digest}  {name}\n", encoding="utf-8")
+    return digest
+
+
+def check_service_bundle(version: str, directory: Path) -> str:
+    """Recheck the bundle's written bytes against its `.sha256`, and return the digest."""
+    name = f"{SERVICE_BUNDLE}-{version}.zip"
+    recorded = re.fullmatch(rf"([0-9a-f]{{64}})  {re.escape(name)}\n",
+                            (directory / f"{name}.sha256").read_text(encoding="utf-8"))
+    if recorded is None:
+        raise ValueError(f"cut_release.service_bundle_digest: {name}.sha256 does not name {name} with one sha256")
+    if hashlib.sha256((directory / name).read_bytes()).hexdigest() != recorded.group(1):
+        raise ValueError(f"cut_release.service_bundle_digest: {name} changed after its digest was written")
+    return recorded.group(1)
 
 
 def _run_qualifier(name: str, arguments: list[str], record: Path, work: Path) -> None:
@@ -157,10 +258,12 @@ def _check_set(version: str, directory: Path) -> None:
         verify_release(directory / f"{profile}-{version}.zip", directory / f"{profile}-{version}.release.json")
     for record in RECORDS:
         _require_passed(directory / f"{record}-{version}.json")
+    check_service_bundle(version, directory)
 
 
 def build_set(version: str, directory: Path, work: Path) -> None:
     build_products(version, directory)
+    write_service_bundle(ROOT, version, directory)
     _qualify(version, directory, work)
     _check_set(version, directory)
 
