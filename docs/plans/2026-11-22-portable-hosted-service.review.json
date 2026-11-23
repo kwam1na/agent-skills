@@ -1,0 +1,125 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-22-portable-hosted-service.md",
+  "planSha256": "bae4559a72578cefffaf39ca10b33ddda613069073a514448ea46b58b03640c5",
+  "planCommit": "adce26bdd9676068bc621e8864cc8433d2c7208b",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "987a333c8b7cf71cf3857456ab9c2e8340b0e8df",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-23T00:29:50.218504Z",
+      "finishedAt": "2026-11-23T00:34:08.859839Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "1e2464ecc1aab38146eea89dfe0bee6ad230ec05",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-23T00:35:48.055988Z",
+      "finishedAt": "2026-11-23T00:38:30.115104Z",
+      "open": [
+        "outcome-correctness-r2-1",
+        "outcome-correctness-r2-2",
+        "outcome-correctness-r2-3"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "adce26bdd9676068bc621e8864cc8433d2c7208b",
+      "outcome": "aligned",
+      "startedAt": "2026-11-23T00:39:13.775035Z",
+      "finishedAt": "2026-11-23T00:40:20.675020Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "portable-hosted-service.plan",
+        "candidateRef": "adce26bdd9676068bc621e8864cc8433d2c7208b",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "outcome-correctness-r2-1",
+            "state": "fixed",
+            "resolution": "The decision now builds the planted-failure servers in PHS-1 as copies of today's Worker source, each with exactly one rule removed, at test time under hosted/delivery-viewer/test/. PHS-2 re-derives them onto the core in the change that extracts it, and each must still fail the suite. PHS-1's done line and PHS-2's steps say the same, and a planted server that fails to start counts as a failed proof. This was adopted as written."
+          },
+          {
+            "id": "outcome-correctness-r2-2",
+            "state": "fixed",
+            "resolution": "PHS-5 is now lane 2, tier 2, after PHS-1. Its Ordering bullet says it starts after PHS-1 merges and validates on a base containing PHS-1. Shared resources lists PHS-5 waiting on PHS-1, and the fresh base check targets a base containing PHS-1. The fixture stand-in for the roots-equal-triggers row is removed. This is stricter than the approval condition, which allowed building in parallel, and it resolves the finding."
+          },
+          {
+            "id": "outcome-correctness-r2-3",
+            "state": "fixed",
+            "resolution": "docs/own-deliveries.md is now in PHS-1's Files and Owns. PHS-1 and PHS-4 each update the integration recipe to the new SERVICE_IDS and reader paths and keep test_integration_recipe_carries_only_named_checks_and_refuses_collisions green. PHS-4 also re-derives the single-service-job workflow pin. This was adopted as written."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA 4e8dc4bd435e2c8ec4352ce464b68d5f18043583 in the private checkout at adce26bdd9676068bc621e8864cc8433d2c7208b. Start checks passed: git rev-parse HEAD^{tree} matched and git status --porcelain was empty. End checks passed with the same result. No probes or mutants were made.",
+          "Delta derived with git diff 1e2464ecc1aab38146eea89dfe0bee6ad230ec05..adce26bdd9676068bc621e8864cc8433d2c7208b. It changes only docs/plans/2026-11-22-portable-hosted-service.md: the planted-server construction, PHS-5 tier and ordering, docs/own-deliveries.md ownership and recipe steps, and the PHS-4 workflow-pin re-derivation.",
+          "Carried-finding re-check: outcome-correctness-r2-1, r2-2 and r2-3 are each fixed; see resolvedFindings.",
+          "Delta review: no new finding. PHS-4 adds checks reading the existing trigger paths and does not change the workflow's paths, so PHS-5's roots-equal-triggers row still holds after PHS-4. docs/own-deliveries.md is not a provenance-listed output (no entry in provenance.lock.json). tests/test_declared_mechanics_corpus.py reads it only for absence pins on withdrawn release-gate claims, which a recipe update does not touch. With PHS-5 at tier 2 lane 2 and PHS-2 at tier 2 lane 1, the two share no files, and PHS-6 still waits on PHS-4 and PHS-5.",
+          "Model class: Opus 5.5 (claude-opus-5-5), running as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals to this lens.",
+          "Checks: none run. The brief scopes a plan review to no sensor commands and no test files. Evidence comes from reading the plan delta against the repository at the candidate.",
+          "Approval conditions: none; this round raises no finding."
+        ]
+      },
+      "resultSha256": "4d1e3c63ae8849a68676d7a7d10b19c71fdb4ffb0efb95f824a4ac6b8a420608"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "portable-hosted-service.plan",
+        "candidateRef": "adce26bdd9676068bc621e8864cc8433d2c7208b",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree SHA 4e8dc4bd435e2c8ec4352ce464b68d5f18043583. Start identity check: git rev-parse HEAD^{tree} == 4e8dc4bd435e2c8ec4352ce464b68d5f18043583 and git status --porcelain empty, in /Users/kwamina/agent-skills/.orchestration/plan-review/portable-hosted-service/checkouts/lens.adversarial-testing. End identity check: same tree SHA, porcelain empty.",
+          "Delta derived with git diff 1e2464ecc1aab38146eea89dfe0bee6ad230ec05..adce26bdd9676068bc621e8864cc8433d2c7208b. It changes only docs/plans/2026-11-22-portable-hosted-service.md.",
+          "Carried findings: none open. adversarial-testing-r1-1 to r1-6 were closed as fixed in round 2. A re-check against this revision finds each fix intact. The planted-failure servers, the storage contract suite for both stores, the explicit bundle roots with contents and extraction under TMPDIR, the responses Node writes itself, the allow-side rows for both credentials and provisioned tokens, and the reproducibility row with altered mtimes and modes are all unchanged or strengthened.",
+          "Round-2 P3 notes taken up in this delta. Planted-failure proofs now require the failure to name the scenario that server is expected to trip, and a planted server that fails to start counts as a failed proof, which closes the vacuous all-red case. In PHS-1 the planted servers are copies of today's Worker with one rule removed, and PHS-2 re-derives them onto the core, where each must still fail. This removes the inconsistency between 'core' and 'before any refactor'.",
+          "Delta reviewed for new findings: none at P0 or P1. PHS-5 moves to tier 2, after PHS-1, so its roots exist and the 'roots equal trigger paths minus itself' row compares against PHS-1's updated workflow rather than a fixture stand-in. That makes the pin observe the real surface. Fresh base checks cover later changes to the workflow paths. The docs/own-deliveries.md recipe updates keep test_integration_recipe_carries_only_named_checks_and_refuses_collisions green, and PHS-4 re-derives the workflow pin for the split jobs. Both are re-derivations of existing pins, not deletions or weakenings.",
+          "Mutation reasoning on the delta: if a PHS-1 planted server's one-rule removal silently fails to apply, the server is unmodified and passes the suite, so the planted-failure row goes red rather than green. If it fails to build or start, it is now explicitly a failed proof. No surviving mutation found.",
+          "Checks: none run. The brief names no scoped sensor commands or test files for a plan review. No mutants were planted and no files changed. Reasoning stays within the plan's changed lines.",
+          "Model class: Claude Opus 5.5 (claude-opus-5-5). Realization basis: host-convention. Host: a native subagent, which exposes no progress or permission signals to the lens; recorded as a limitation. No run ID (the repository declares no run-event command). activityId review-portable-hosted-service.plan, attemptId 1, roundId portable-hosted-service.plan-r3.",
+          "Approval conditions: no findings are raised this round, so none apply."
+        ]
+      },
+      "resultSha256": "cbf4c1837d288629c4e52f4e21812446bb9af947017277cc0e85180caa98ceca"
+    }
+  ],
+  "residualRisks": [
+    "3 review rounds; findings open after each round: 9, 3, 0."
+  ]
+}
