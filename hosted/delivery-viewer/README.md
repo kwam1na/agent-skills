@@ -1,12 +1,38 @@
 # Hosted delivery ingestion
 
-Private Worker + SQLite Durable Object + private R2 snapshot storage. This package
-implements ingestion, committed read APIs and the trusted read-only browser viewer.
-Local runtime tests are not production or installed-adopter evidence.
+A neutral service core with a Cloudflare adapter: private Worker + SQLite Durable
+Object + private R2 snapshot storage. This package implements ingestion, committed
+read APIs and the trusted read-only browser viewer. Local runtime tests are not
+production or installed-adopter evidence.
+
+## Layout
+
+- `src/core/` is the service on Web-standard `Request`, `Response`,
+  `crypto.subtle`, `TextEncoder` and streams, plus `node:crypto`
+  `timingSafeEqual`, which both runtimes provide. `service.ts` routes,
+  authenticates, validates and serves the viewer's asset table; `deliveries.ts` is
+  the delivery state machine; `ports.ts` states the `MetadataStore` and write-once
+  `BlobStore` contracts it is written against; `publishers.ts` reads a
+  `PUBLISHERS` map. With `src/protocol.ts`, `src/projection-v2.ts` and the
+  generated validators and assets, it typechecks under `tsconfig.core.json`, which
+  loads neither Workers nor Node types.
+- `src/cloudflare/` is the Cloudflare adapter: `worker.ts`, the Worker entry and
+  its R2 publisher records, and `delivery-object.ts`, the Durable Object
+  `MetadataStore` and the R2 `BlobStore`. It typechecks under `tsconfig.json`
+  with the Workers types.
+- `src/node/` is the portable server: the core over one SQLite database and
+  write-once filesystem blobs in a data directory, behind `node:http`, with no
+  runtime dependencies. `npm run build:node` bundles it to
+  `build/node/server.mjs`; it typechecks under `tsconfig.node.json`, and
+  `Dockerfile` builds its container image. See [Portable server](#portable-server).
+- `src/viewer.ts`, `src/view-store.ts` and `src/viewer.css` are the browser viewer
+  the build bundles into the asset table.
 
 Use Node 22.22.2+ or 24.15+ (an even, supported Node release), then `npm ci`.
 Run `npm test`, `npm run typecheck`, and `npm run build`. The build is a Wrangler
-dry run and deploys nothing. `generate` compiles the corpus's fixed JSON Schema
+dry run and deploys nothing. `generate:core` compiles the validators and builds
+the asset table, with no Wrangler; `generate` adds `wrangler types` for the
+Cloudflare target. `generate` compiles the corpus's fixed JSON Schema
 2020-12 with Ajv standalone at build time and generates bindings from
 `wrangler.jsonc`; the Worker never compiles schemas or uses eval/new Function.
 The package consumes the shared fixture manifest directly at generation time.
@@ -16,138 +42,105 @@ Cloudflare runtime references: [SQLite transactions](https://developers.cloudfla
 [Workers testing](https://developers.cloudflare.com/workers/testing/vitest-integration/write-your-first-test/),
 and [generated types](https://developers.cloudflare.com/workers/languages/typescript/#generate-types).
 
-## Transport contract: hosted-delivery-api/1
+## Protocol: hosted-delivery-api/1
 
-All IDs in URLs are literal, unencoded ASCII. Public IDs and owner IDs are
-64 lowercase hexadecimal characters, generated from 32 cryptographically random
-bytes by the publisher under its identity lock. Repository IDs match
-`[A-Za-z0-9][A-Za-z0-9_-]{0,63}`; provision a random ID per repository. Delivery
-keys match `[A-Za-z0-9][A-Za-z0-9._-]{0,127}` and are the canonical local delivery
-identity. Creation permanently binds repository, delivery key and public ID.
-No route lists deliveries, repositories, objects or history. Query strings,
-encoded paths and alternate methods are refused. Authenticated endpoints require
-`Authorization: Bearer <repository-publishing-token>` before DO lookup or body
-parsing. No redirects are returned. Use HTTPS with an explicit service origin.
+The protocol is specified in
+[`hosted/protocol/hosted-delivery-api-1.md`](../protocol/hosted-delivery-api-1.md):
+the transport contract, the anonymous viewer API, the response headers and the
+error table. This Worker is one implementation of it, and
+[`hosted/conformance/`](../conformance/) checks a running origin against it.
 
-The receiver looks up the repository's publishing digest in the private R2
-bucket under `_publishers/v1/<repositoryId>`. Each check reads current storage.
-A stored SHA-256 digest activates that repository, and a stored `revoked` marker
-disables it. An absent object uses the original `PUBLISHERS` Worker secret,
-a JSON map of repository IDs to digests. Corrupt records and failed reads deny
-access. The read routes serve acknowledged delivery digests only.
+What is particular to this Worker:
 
-Provision tokens with at least 256 random bits encoded as unpadded base64url
-(43–128 characters). Digests are compared in constant time. See the
-[operator procedure](../../docs/hosted-deliveries.md#manage-a-publisher)
-to add, rotate or revoke one publisher.
+- Each delivery's metadata is one SQLite Durable Object, named by its public ID.
+  Snapshot bytes go to the private R2 bucket under write-once puts. Only a
+  successful immutable R2 write followed by a synchronous metadata transaction
+  advances the pointer, and the transaction rechecks persisted epoch, lease and
+  sequence after the R2 await. No bucket lifecycle deletion is configured.
+- The receiver looks up the repository's publishing digest in the private R2
+  bucket under `_publishers/v1/<repositoryId>`, falling back to the
+  `PUBLISHERS` Worker secret, as the spec's authentication section says.
+- Worker observability is disabled so request paths are not collected by
+  default.
 
-`POST /api/v1/repos/{repo}/deliveries/{id}/session`
+## Portable server
 
-Body: `{"mode":"acquire","deliveryKey":"APP-1","ownerId":"<64hex>"}`.
-All control bodies require exact `Content-Type: application/json`, no content
-encoding, and no extra keys. Session bodies are limited to 2048 bytes.
-`acquire` binds a new delivery at epoch 1, sequence 0, lease expiry now + 180s.
-An exact initial acquisition retry returns that session without extending it.
-Another owner cannot acquire an existing identity. `resume` requires `epoch`
-and matching `ownerId`/`deliveryKey`. While active it only returns the session;
-after expiry it explicitly advances the matching epoch and resets sequence to 0.
-`takeover` requires the current `epoch`, a new owner ID and an expired lease.
-Neither operation can silently displace an active writer or accept an old epoch.
-A fenced owner must stop ordinary retries. An operator may explicitly resume or
-take over an expired session after inspecting status.
+One process, one data directory, single writer. Configure it with:
 
-Response: `protocolVersion`, `deliveryKey`, `ownerId`, `epoch`, `sequence`,
-`leaseUntil` (Unix milliseconds), `receipt` (last committed receipt or null).
-`GET /api/v1/repos/{repo}/deliveries/{id}/status` returns that same authenticated
-shape. Inspect it after a lost session response; match persisted owner/delivery
-identity before adopting its epoch. Public metadata never exposes those private
-identity fields. A current receipt may belong to the previous epoch while a new
-epoch has sequence 0; publish a new sequence in the current epoch to confirm it.
+- `HOST` (default `127.0.0.1`; the image sets `0.0.0.0`) and `PORT` (default `8080`);
+- `DATA_DIR`, an absolute path on a local block volume (the image uses `/data`);
+- exactly one of `PUBLISHERS`, the JSON map of repository IDs to token digests,
+  or `PUBLISHERS_FILE`, a file holding it. The file is read on every check, so a
+  rotation takes effect without a restart, and a file that cannot be read denies
+  access.
 
-`POST /api/v1/repos/{repo}/deliveries/{id}/snapshots`
+`node build/node/server.mjs provision-token <repositoryId>` prints a new token
+once, 256 random bits as unpadded base64url, and the `PUBLISHERS` entry that
+accepts it. Nothing is stored. Add the entry to the map and hand the token to the
+publisher.
 
-The body is a raw UTF-8 snapshot of at most 16 MiB. Pair
-`hosted-delivery-snapshot/2` with `delivery-line-map/2`, or
-`hosted-delivery-snapshot/3` with `delivery-line-map/3`. The first accepted
-snapshot fixes the renderer for that delivery link. It is not wrapped in another JSON object. Required headers:
+The server answers on one line, `hosted delivery service listening on <origin>`,
+and logs nothing per request. A missing, ambiguous or malformed configuration
+stops it at startup with a named error (`hosted.config_invalid`,
+`hosted.publishers_invalid`). SIGTERM or SIGINT stops it gracefully: it accepts
+nothing new, lets requests in flight finish for up to ten seconds, and exits 0.
 
-- `Content-Type: application/json` (no encoding)
-- `X-Writer-Epoch: <positive safe integer>`
-- `X-Snapshot-Sequence: <positive safe integer>`
-- `X-Snapshot-Digest: <lowercase SHA-256 of the exact body bytes>`
-- `X-Renderer-Version` naming the matching renderer
+Storage, per the plan's decisions:
 
-The receiver counts streamed bytes even without an honest Content-Length,
-rejects nesting deeper than 64, malformed UTF-8/JSON, unknown top-level fields,
-other versions, unsupported renderers, over-long texts, lists and objects, a
-credential-named field at any depth, unsafe links and numbers beyond JavaScript
-safe precision. The v2 validator retains the deployed v2 privacy rules. The v3 body is the local live view's own cut, so it accepts the
-record's prose as written, paths and commands included, and public markup as
-data. Publishers still scan every projected string for their configured secret
-values before transport; no service scanner claims to recognize arbitrary prose
-secrets.
+- `DATA_DIR/metadata.sqlite` holds every delivery, keyed by public ID, opened
+  with `locking_mode=EXCLUSIVE` and `synchronous=FULL`, with each operation in a
+  `BEGIN IMMEDIATE` transaction. Startup takes the lock with `BEGIN EXCLUSIVE`, so
+  a second instance on the same data directory fails at startup with
+  `hosted.data_dir_in_use`, even against an idle first one. The OS releases the
+  lock with a crashed process, so no lock file is left behind.
+- A snapshot is written to `DATA_DIR/staging/`, fsynced, `link()`ed to its
+  content-addressed name in `DATA_DIR/blobs/` (an existing name with identical
+  bytes counts as success), and the directory is fsynced before the metadata
+  transaction. Startup clears what a crash left in `staging/`.
+- SQLite and `link()` need local block-device semantics. Network filesystems are
+  unsupported: AWS EFS, Azure Files, Cloud Run volume mounts, GCS FUSE and NFS.
+  Nothing detects them.
 
-Only a successful immutable R2 write followed by a synchronous metadata transaction
-advances the pointer. The transaction rechecks persisted epoch, lease and sequence
-after R2 awaits. Each accepted sequence has one durable receipt; a retry with the
-same epoch, sequence and digest returns its original receipt without refreshing
-freshness, even after a later commit or expired/displaced writer. Reusing a
-sequence with different bytes conflicts. A superseded, never-accepted sequence
-conflicts. Failed commits leave the prior pointer intact; staged objects are not
-public. Unreferenced immutable objects may remain; no bucket lifecycle deletion
-is configured. Committed completed snapshots must be retained.
+The server speaks HTTP; TLS terminates in a reverse proxy or load balancer in
+front of it, whose access logging must be off or path-free, because capability
+links sit in URL paths. It never reads `Host` or `X-Forwarded-*`. It bounds every
+request with header, request and keep-alive timeouts, a header size limit and a
+connection cap, and streams bodies with the core's byte counting. A request that
+fails before it reaches the core (headers or body too slow, a header block over
+the limit, a malformed request line, a connection over the cap) is closed with
+no bytes written; Node's own 400, 408 and 431 responses are never sent.
+Health checks read the fixed `{"error":"not_found"}` 404 that `GET /` answers.
 
-A receipt contains `protocolVersion: hosted-delivery-api/1`,
-the accepted `rendererVersion`, `epoch`, `sequence`, `digest`,
-`sourceFingerprint`, `publishedAt`, `sourceConfirmedAt`. Both times are server
-Unix milliseconds of original acceptance. Sequence is strictly increasing within
-an epoch; compare epoch first. Do not replace current state with an old retry's
-receipt. Authenticated status reconciles the current session and pointer.
+The image is a two-stage build on one base pinned by digest. The build stage runs
+`npm ci --ignore-scripts` and `npm run build:node`; the runtime stage holds only
+Node and `server.mjs`, runs as the non-root `node` user, and works on a read-only
+root filesystem with its volume at `/data`. Build it from the root of an
+extracted service bundle or a checkout:
+`docker build -f hosted/delivery-viewer/Dockerfile .`.
 
-`POST /api/v1/repos/{repo}/deliveries/{id}/confirm`
+Its checks: `npm run test:node` runs the core storage contract against SQLite and
+the filesystem, the durability settings and write order, a fault between the blob
+and the transaction, the startup lock, a crash restart, the pre-core HTTP
+failures and provisioned tokens. `node test/conformance/check-node.mjs [--slow]`
+runs the conformance suite against the built server, and
+`npm run test:browser:node` runs the Chromium suite against it, with
+`test/browser/portable-publisher.spec.ts`: the corpus publisher's own
+`Transport`, through its loopback test seam, acquires, commits twice, confirms,
+reads status, retries exactly and survives a server restart, and the page
+renders the last committed cut. That is source and fixture proof; an installed
+adopter publishing over HTTPS stays with live acceptance.
 
-Same four X-* headers as snapshot commit; body is only
-`{"sourceFingerprint":"<64hex>"}`, at most 1024 bytes. A successful fresh source
-check may confirm the exact current epoch/sequence/digest/fingerprint, extending
-its lease by 180s and updating source confirmation. A transport heartbeat, status,
-active resume, receipt retry or failed source collection never refreshes it.
-Response: `protocolVersion`, `sourceConfirmedAt`, `leaseUntil`, original `receipt`.
-
-## Anonymous viewer API
-
-`GET /d/{id}/current` returns the committed receipt fields, current
-`sourceConfirmedAt`, `serverNow`, `staleAfterMs: 120000`, and `stale` computed by the server.
-Poll every 5s. Keep the existing readable view on failures. Metadata has no-store.
-The UI may exempt an acknowledged terminal cut from stale presentation by reading
-its delivery outcome; server freshness never changes the recorded outcome.
-
-`GET /d/{id}/snapshots/{digest}` reads only the currently committed pointer and
-returns its exact JSON bytes. A pointer change between metadata and data can
-produce 404; poll metadata again and retain the previously rendered view. Old
-committed or staged object paths are not routable. This version uses no-store for
-snapshot responses as well, keeping capability content out of shared caches.
-All routes (including errors) set no-referrer, noindex/nofollow/noarchive,
-nosniff, restrictive CSP and no-store. The trusted HTML shell uses its
-own narrow asset CSP. No CORS/write/viewer controls are offered.
-
-## Errors and retry advice
-
-Errors are only `{"error":"<fixed_code>"}`; no raw exception, URL, bearer,
-capability, header or payload is logged. Worker observability is disabled so
-request paths are not collected by default. Do not enable request logging that
-records capability URLs. Applications must not log fetch URLs on this service.
-
-| HTTP | Codes | Publisher action |
-| --- | --- | --- |
-| 400 | invalid_identifier, invalid_sequence, invalid_envelope, invalid_json, invalid_projection | Fix input; keep prior remote copy. |
-| 401 | unauthorized | Correct repository-scoped credentials. |
-| 404 | not_found | Generic unknown/binding mismatch; inspect local identity; never replace it automatically. |
-| 405 | method_not_allowed | Fix client method. |
-| 409 | lease_held, resume_required, writer_fenced, lease_expired, sequence_conflict, sequence_superseded, confirmation_conflict | Reconcile status; stop fenced retries; use explicit permitted resume only. |
-| 413 | body_too_large | Reduce projection; keep prior copy. |
-| 415 | unsupported_content_type, unsupported_encoding | Fix headers; JSON data only. |
-| 422 | unsupported_renderer, digest_mismatch | Fix version/digest, hash exact bytes. |
-| 503 | temporarily_unavailable | Retry with bounded jitter/backoff; inspect receipt after ambiguous acceptance. |
+`npm run test:browser` runs the Chromium suite against both servers.
+`node test/conformance/bundle.mjs` is `hosted.conformance-node`: it builds the
+release's service bundle with `scripts/cut-release.py --service-bundle`, checks
+its `.sha256`, extracts it under `TMPDIR` outside any git worktree, and from that
+extraction alone installs, builds the server and runs the fast tier against it.
+`node test/conformance/container.mjs` builds the image from the same extraction's
+Dockerfile, checks that it runs as `node`, provisions two tokens with it, runs it
+read-only with its volume at `/data`, and runs the fast tier against it. It removes
+the image, container and volume it named. Where Docker is missing it exits 3 and
+says the check is unavailable, never that it passed. The service CI runs it as its
+own job, beside the fast checks and the two slow tiers.
 
 ## Local development and proof boundary
 
@@ -162,12 +155,32 @@ tokens and capability paths.
 
 The test suite uses current Cloudflare Vitest integration and actual local
 Worker/SQLite DO/private R2 bindings. It pauses the real R2 await, lets competing
-commits run, and injects R2 failure. A SQLite abort trigger tests rollback after the
-receipt insert and before pointer update. Eviction tests use the runtime's actual
+commits run, and injects R2 failure. The core storage contract,
+`test/contract/storage.ts`, holds a store's first blob write until a takeover, a
+lease expiry on an injected clock, a competing commit or an exact retry has run,
+and faults the commit transaction after its receipt insert. It expects
+`writer_fenced`, `lease_expired` or `sequence_superseded`, one immutable receipt,
+and no receipt row for a rolled-back commit. `test/storage-contract.test.ts` runs it
+against the Durable Object store and R2. `test/versions.test.ts` holds the
+conformance suite's versions and bounds equal to the core's and the spec's.
+Eviction tests use the runtime's actual
 eviction helper and retain session/receipt/binding state. Shared schema and
 boundary fixtures run through HTTP handling. These checks prove local runtime
 behavior only. No hosted CI, deployment, DNS, live browser or installed-archive
 qualification is claimed by this package.
+
+`node test/conformance/check.mjs`, after `npm run build`, is the
+`hosted.conformance` check. It starts the built Worker through
+`test/launcher.mjs`, the same launcher and synthetic credentials the browser
+run uses, and runs the conformance suite's fast tier against it; `--slow` adds
+the slow tier, which waits out a lease and staleness in real time. It then
+builds a copy of `src/` unchanged, which must pass, and one planted-failure copy
+per rule in `test/conformance/planted.mjs`, each the core under the Cloudflare
+adapter with exactly one rule removed,
+which must start and fail exactly the scenarios it names. The Worker's run must
+cover exactly the scenario names the check lists, and `hosted/conformance/cli.mjs`
+must exit 0 against the Worker and 1 against a planted copy. A planted copy that
+does not start, or whose patch text has drifted, fails the check.
 
 
 ## Trusted browser viewer
@@ -229,7 +242,8 @@ Run `PLAYWRIGHT_SKIP_BROWSER_GC=1 npx playwright install chromium` to install th
 locked browser without removing other shared browser versions. Then run
 `npm run test:browser` under the supported Node version. This dry-run builds the
 actual Worker and starts a local Miniflare5 Worker/SQLite DO/R2 runtime on a free
-loopback port with synthetic repository credentials. The harness disables request
+loopback port with synthetic repository credentials, through the shared
+`test/launcher.mjs`. The harness disables request
 logging and telemetry and disposes only its own runtime. Desktop and mobile
 Chromium tests assert signed-out access, hostile text remaining text, browser
 CSP/MIME rejection, the local view's fonts loaded from this origin with no

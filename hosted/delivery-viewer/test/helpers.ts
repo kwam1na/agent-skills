@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import { vi } from 'vitest';
-import worker from '../src/worker';
+import worker from '../src/cloudflare/worker';
 import { digest, RENDERER } from '../src/protocol';
 import { cases } from './fixtures.generated';
 export const TOKEN = 'publisher-test-token-'.padEnd(64, 'x');

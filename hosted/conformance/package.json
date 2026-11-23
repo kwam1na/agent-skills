@@ -1,0 +1,17 @@
+{
+  "name": "@agent-skills/hosted-delivery-conformance",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A black-box conformance suite for any origin serving hosted-delivery-api/1.",
+  "type": "module",
+  "engines": {
+    "node": "^22.22.2 || >=24.15.0"
+  },
+  "bin": {
+    "hosted-delivery-conformance": "./cli.mjs"
+  },
+  "exports": {
+    ".": "./suite.mjs",
+    "./versions": "./versions.mjs"
+  }
+}

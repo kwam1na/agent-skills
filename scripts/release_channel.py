@@ -22,6 +22,7 @@ import sys
 sys.dont_write_bytecode = True
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -37,6 +38,7 @@ SIGNATURE = re.compile(r"(?m)^-----BEGIN (?:PGP SIGNATURE|SSH SIGNATURE|SIGNED M
 
 
 NEVER_PUBLISHED = "; a version tag that never published may be deleted to clear this"
+SERVICE_DIGEST = re.compile(r"([0-9a-f]{64})  (hosted-delivery-service-v[0-9A-Za-z.-]+\.zip)\n")
 
 
 class ChannelError(Exception):
@@ -112,18 +114,39 @@ def annotation(tag: str, root: Path) -> str:
     return (shown.stdout[:signature.start()] if signature else shown.stdout).strip()
 
 
+def service_bundle(output: Path) -> tuple[str, str]:
+    """The service bundle's name and the digest its `.sha256` records, refused unless that is the bundle's sha256."""
+    recorded = sorted(output.glob("hosted-delivery-service-*.zip.sha256"))
+    if len(recorded) != 1:
+        raise ChannelError(f"no single service bundle digest in {output}")
+    match = SERVICE_DIGEST.fullmatch(recorded[0].read_text(encoding="utf-8"))
+    if match is None or f"{match.group(2)}.sha256" != recorded[0].name:
+        raise ChannelError(f"{recorded[0].name} does not name its bundle with one sha256")
+    digest, name = match.groups()
+    bundle = output / name
+    if not bundle.is_file() or hashlib.sha256(bundle.read_bytes()).hexdigest() != digest:
+        raise ChannelError(f"{name} does not match the digest {recorded[0].name} records")
+    return name, digest
+
+
 def render_notes(message: str, output: Path, generated: str) -> str:
-    """The annotation, when there is one, then the digest table, then GitHub's generated list."""
+    """The annotation, when there is one, then the archive and service bundle digests, then GitHub's generated list."""
     metadata = sorted(output.glob("*.release.json"))
     if not metadata:
         raise ChannelError(f"no release files in {output}")
+    bundle, bundle_digest = service_bundle(output)
     table = "## Archives\n\n| Profile | Release id | Archive sha256 |\n| --- | --- | --- |\n"
     for path in metadata:
         release = json.loads(path.read_text(encoding="utf-8"))
         table += f"| {release['profile']} | `{release['releaseId']}` | `{release['archiveSha256']}` |\n"
     table += ("\nEach archive's `.release.json` records the same sha256. Check the downloaded zip against it"
               " (`shasum -a 256`) before installing, then install it as the README at this tag describes.\n")
-    parts = [message.strip(), table.strip(), generated.strip()]
+    service = ("## Service bundle\n\n| Bundle | sha256 |\n| --- | --- |\n"
+               f"| `{bundle}` | `{bundle_digest}` |\n\n"
+               f"The hosted delivery service's source, spec and conformance suite. `{bundle}.sha256` records the same"
+               f" sha256: check the downloaded zip against it (`shasum -a 256 -c {bundle}.sha256`) before building from"
+               " it, and use the bundle from the same release as the generation you applied.\n")
+    parts = [message.strip(), table.strip(), service.strip(), generated.strip()]
     return "\n\n".join(part for part in parts if part) + "\n"
 
 

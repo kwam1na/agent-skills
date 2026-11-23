@@ -809,6 +809,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_lead_add_lane",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_lead_add_lane.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_lead_add_lane.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_lead_assign_owns",
         "argv": [
           ".venv/bin/python",
@@ -840,24 +858,6 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_lead_plan_changes.py."
-        ],
-        "prerequisites": [],
-        "timeoutSeconds": 3600
-      },
-      {
-        "id": "tests.test_lead_add_lane",
-        "argv": [
-          ".venv/bin/python",
-          "-B",
-          "scripts/run-tests.py",
-          "--workers",
-          "4",
-          "-p",
-          "test_lead_add_lane.py"
-        ],
-        "cwd": ".",
-        "reasons": [
-          "The tests in tests/test_lead_add_lane.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600
@@ -1597,6 +1597,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_run_delivery_gaps",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_gaps.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_gaps.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_run_delivery_hooks",
         "argv": [
           ".venv/bin/python",
@@ -1633,6 +1651,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_run_delivery_lens_request",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_lens_request.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_lens_request.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_run_delivery_peers",
         "argv": [
           ".venv/bin/python",
@@ -1664,42 +1700,6 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_run_delivery_plan_review.py."
-        ],
-        "prerequisites": [],
-        "timeoutSeconds": 3600
-      },
-      {
-        "id": "tests.test_run_delivery_gaps",
-        "argv": [
-          ".venv/bin/python",
-          "-B",
-          "scripts/run-tests.py",
-          "--workers",
-          "4",
-          "-p",
-          "test_run_delivery_gaps.py"
-        ],
-        "cwd": ".",
-        "reasons": [
-          "The tests in tests/test_run_delivery_gaps.py."
-        ],
-        "prerequisites": [],
-        "timeoutSeconds": 3600
-      },
-      {
-        "id": "tests.test_run_delivery_lens_request",
-        "argv": [
-          ".venv/bin/python",
-          "-B",
-          "scripts/run-tests.py",
-          "--workers",
-          "4",
-          "-p",
-          "test_run_delivery_lens_request.py"
-        ],
-        "cwd": ".",
-        "reasons": [
-          "The tests in tests/test_run_delivery_lens_request.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600
@@ -1777,24 +1777,6 @@
         "timeoutSeconds": 3600
       },
       {
-        "id": "tests.test_run_delivery_tracker",
-        "argv": [
-          ".venv/bin/python",
-          "-B",
-          "scripts/run-tests.py",
-          "--workers",
-          "4",
-          "-p",
-          "test_run_delivery_tracker.py"
-        ],
-        "cwd": ".",
-        "reasons": [
-          "The tests in tests/test_run_delivery_tracker.py."
-        ],
-        "prerequisites": [],
-        "timeoutSeconds": 3600
-      },
-      {
         "id": "tests.test_run_delivery_tool_commits",
         "argv": [
           ".venv/bin/python",
@@ -1808,6 +1790,24 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_run_delivery_tool_commits.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_run_delivery_tracker",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_tracker.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_tracker.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600
@@ -1880,6 +1880,24 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_runless_reviews.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_siblings",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_siblings.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_siblings.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600
@@ -1988,24 +2006,6 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_validate.py."
-        ],
-        "prerequisites": [],
-        "timeoutSeconds": 3600
-      },
-      {
-        "id": "tests.test_siblings",
-        "argv": [
-          ".venv/bin/python",
-          "-B",
-          "scripts/run-tests.py",
-          "--workers",
-          "4",
-          "-p",
-          "test_siblings.py"
-        ],
-        "cwd": ".",
-        "reasons": [
-          "The tests in tests/test_siblings.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600
@@ -2167,6 +2167,8 @@
       {
         "id": "hosted.browser-install",
         "argv": [
+          "env",
+          "PLAYWRIGHT_SKIP_BROWSER_GC=1",
           "npx",
           "playwright",
           "install",
@@ -2196,6 +2198,50 @@
           "hosted.build",
           "hosted.browser-install"
         ],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.conformance",
+        "argv": [
+          "node",
+          "test/conformance/check.mjs"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [
+          "hosted.build"
+        ],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.node-test",
+        "argv": [
+          "npm",
+          "run",
+          "test:node"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [
+          "hosted.install"
+        ],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.conformance-node",
+        "argv": [
+          "node",
+          "test/conformance/bundle.mjs"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [],
         "timeoutSeconds": 1200
       }
     ],
@@ -2244,8 +2290,12 @@
       {
         "paths": [
           "hosted/delivery-viewer/**",
+          "hosted/protocol/**",
+          "hosted/conformance/**",
           "skills/delivery-views/assets/**",
           "skills/delivery-views/scripts/render.py",
+          "skills/delivery-views/scripts/hosted.py",
+          "skills/delivery-views/scripts/views_common.py",
           "skills/delivery-views/references/hosted-snapshot.schema.json",
           "tests/fixtures/delivery-views/hosted/**",
           ".nvmrc",
@@ -2257,7 +2307,10 @@
           "hosted.build",
           "hosted.test",
           "hosted.browser-install",
-          "hosted.browser"
+          "hosted.browser",
+          "hosted.conformance",
+          "hosted.node-test",
+          "hosted.conformance-node"
         ]
       }
     ]

@@ -38,13 +38,14 @@ CATALOGUE_MODULES = (
     "run_tests", "runless_reviews", "suite_budget", "test_dependency_guard", "test_environment", "tracker_contract", "update_provenance",
     "validate", "siblings", "waits", "waits_review", "workflow_graph_contract", "workflow_observation", "workflows",
 )
-CATALOGUE_IDS = tuple("tests.test_" + name for name in CATALOGUE_MODULES)
+# The binding lists them in canonical order, which the integration recipe relies on to insert a check.
+CATALOGUE_IDS = tuple(sorted("tests.test_" + name for name in CATALOGUE_MODULES))
 # Test modules left out of the catalogue on purpose, each as (module name, why): none today.
 UNCATALOGUED_MODULES: tuple[tuple[str, str], ...] = ()
 # A change to any test module brings the guard below, so a module added without its entry fails in the queue.
 TEST_MODULE_READER = {"paths": ["tests/test_*.py"], "checks": ["tests.test_own_deliveries"]}
 SERVICE_IDS = ('hosted.install', 'hosted.typecheck', 'hosted.build', 'hosted.test',
-               'hosted.browser-install', 'hosted.browser')
+               'hosted.browser-install', 'hosted.browser', 'hosted.conformance', 'hosted.node-test', 'hosted.conformance-node')
 GUARDS = ["tests.test_linear_qualification", "tests.test_registry"]
 SKILL_PROSE_READERS = ["tests.test_declared_mechanics_corpus", "tests.test_lane_ruling_corpus",
                        "tests.test_review_bound_corpus", "tests.test_round_brief_template_corpus",
@@ -767,58 +768,112 @@ class HostedServiceBoundaryTests(unittest.TestCase):
     def test_service_ci_and_catalogue_keep_dependencies_in_the_service(self):
         workflow=json.loads((ROOT/'.github/workflows/hosted-delivery-viewer.yml').read_text())
         self.assertEqual(workflow['permissions'],{'contents':'read'})
-        self.assertEqual(workflow['on']['push']['branches'],['main','integrate/hosted-deliveries'])
-        required=['hosted/delivery-viewer/**','skills/delivery-views/assets/**',
+        self.assertEqual(workflow['on']['push']['branches'],['main','integrate/**'])
+        required=['hosted/delivery-viewer/**','hosted/protocol/**','hosted/conformance/**','skills/delivery-views/assets/**',
                   'skills/delivery-views/scripts/render.py',
                   'skills/delivery-views/references/hosted-snapshot.schema.json',
                   'tests/fixtures/delivery-views/hosted/**','.nvmrc','.github/workflows/hosted-delivery-viewer.yml']
         for event in ('push','pull_request'):
             self.assertEqual(workflow['on'][event]['paths'],required)
-        job=workflow['jobs']['service']
-        for field in ('if','continue-on-error'):self.assertNotIn(field,job)
-        for step in job['steps']:
-            self.assertNotIn('continue-on-error',step)
-            if step.get('uses','').startswith('actions/upload-artifact@'):
-                self.assertEqual(step.get('if'),'always()')
-            else:self.assertNotIn('if',step)
-        self.assertEqual(job['defaults']['run']['working-directory'],'hosted/delivery-viewer')
-        self.assertEqual([step['with']['node-version-file'] for step in job['steps'] if step.get('uses','').startswith('actions/setup-node@')],['.nvmrc'])
-        commands=[step['run'] for step in job['steps'] if 'run' in step]
-        self.assertEqual(commands,['npm ci --ignore-scripts --no-audit --no-fund --engine-strict',
-                                   'npm run typecheck','npm run build','npm test',
-                                   'npx playwright install --with-deps chromium','npm run test:browser'])
-        self.assertNotIn('deploy', ' '.join(commands))
+        # Four parallel jobs, each inside the 30-minute job timeout: the fast checks, the Worker's slow tier, the
+        # portable server's slow tier, and the container built from an extracted bundle.
+        jobs=workflow['jobs']
+        self.assertEqual(list(jobs),['fast','worker-slow','node-slow','container'])
+        install='npm ci --ignore-scripts --no-audit --no-fund --engine-strict'
+        expected_commands={
+            'fast':[install,'npm run typecheck','npm run build','npm test','npm run test:node',
+                    'npx playwright install --with-deps chromium','npm run test:browser',
+                    'node test/conformance/check.mjs','node test/conformance/bundle.mjs'],
+            'worker-slow':[install,'npm run build','node test/conformance/check.mjs --slow'],
+            'node-slow':[install,'npm run build:node','node test/conformance/check-node.mjs --slow'],
+            'container':['node test/conformance/container.mjs'],
+        }
+        for name,job in jobs.items():
+            with self.subTest(job=name):
+                self.assertEqual(job['timeout-minutes'],30)
+                self.assertEqual(job['runs-on'],'ubuntu-latest')
+                for field in ('if','continue-on-error','needs'):self.assertNotIn(field,job)
+                for step in job['steps']:
+                    self.assertNotIn('continue-on-error',step)
+                    if step.get('uses','').startswith('actions/upload-artifact@'):
+                        self.assertEqual(step.get('if'),'always()')
+                    else:self.assertNotIn('if',step)
+                self.assertEqual(job['defaults']['run']['working-directory'],'hosted/delivery-viewer')
+                self.assertEqual(job['env'],{'WRANGLER_SEND_METRICS':'false','CI':'true'})
+                self.assertEqual([step['with']['node-version-file'] for step in job['steps'] if step.get('uses','').startswith('actions/setup-node@')],['.nvmrc'])
+                self.assertEqual([step['run'] for step in job['steps'] if 'run' in step],expected_commands[name])
+        commands=expected_commands['fast']
+        self.assertNotIn('deploy',' '.join(sum(expected_commands.values(),[])))
         binding=json.loads((ROOT/'.agents/orchestration.json').read_text())
         rows={entry['id']:entry for entry in binding['selection']['catalogue']}
         for key in SERVICE_IDS:self.assertEqual(rows[key]['cwd'],'hosted/delivery-viewer')
-        expected=[commands[0].split(),['npm','run','typecheck'],['npm','run','build'],
-                  ['npm','test'],['npx','playwright','install','chromium'],['npm','run','test:browser']]
-        for key,argv in zip(SERVICE_IDS,expected):self.assertEqual(rows[key]['argv'],argv,key)
+        # The browser install keeps the machine's other Playwright browsers: a shared machine runs more than one.
+        expected=[install.split(),['npm','run','typecheck'],['npm','run','build'],
+                  ['npm','test'],['env','PLAYWRIGHT_SKIP_BROWSER_GC=1','npx','playwright','install','chromium'],['npm','run','test:browser'],
+                  ['node','test/conformance/check.mjs'],['npm','run','test:node'],['node','test/conformance/bundle.mjs']]
+        for key,argv in zip(SERVICE_IDS,expected,strict=True):self.assertEqual(rows[key]['argv'],argv,key)
+        # Every field of a hosted row is pinned, so a hand-built restore can't change a timeout or add a field unnoticed.
+        for key in SERVICE_IDS:
+            self.assertEqual(sorted(rows[key]),['argv','cwd','id','prerequisites','reasons','timeoutSeconds'],key)
+            self.assertEqual(rows[key]['timeoutSeconds'],1200,key)
+            self.assertTrue(rows[key]['reasons'] and all(isinstance(reason,str) and reason for reason in rows[key]['reasons']),key)
+        # The integration recipe inserts by canonical order, so the binding's own Python checks stay sorted.
+        python_ids=[entry['id'] for entry in binding['selection']['catalogue'] if entry['id'].startswith('tests.')]
+        self.assertEqual(python_ids,sorted(python_ids))
         self.assertEqual(rows['hosted.typecheck']['prerequisites'],['hosted.install'])
         self.assertEqual(rows['hosted.build']['prerequisites'],['hosted.install'])
         self.assertEqual(rows['hosted.test']['prerequisites'],['hosted.install'])
         self.assertEqual(rows['hosted.install']['prerequisites'],[])
         self.assertEqual(rows['hosted.browser-install']['prerequisites'],['hosted.install'])
         self.assertEqual(rows['hosted.browser']['prerequisites'],['hosted.build','hosted.browser-install'])
-        for path in required:
+        # The conformance check runs the built Worker and builds its planted-failure copies from the generated sources.
+        self.assertEqual(rows['hosted.conformance']['prerequisites'],['hosted.build'])
+        self.assertEqual(rows['hosted.node-test']['prerequisites'],['hosted.install'])
+        # The bundle check installs and builds inside its own extraction, so it needs nothing from this checkout's.
+        self.assertEqual(rows['hosted.conformance-node']['prerequisites'],[])
+        # The real-publisher test imports the corpus publisher, so its transport and origin rules bring the service checks.
+        for path in (*required,'skills/delivery-views/scripts/hosted.py','skills/delivery-views/scripts/views_common.py'):
             matched=[entry for entry in binding['selection']['readers'] if path in entry['paths']]
             self.assertTrue(any(entry['checks']==list(SERVICE_IDS) for entry in matched),path)
         root=json.loads((ROOT/'package.json').read_text())
         self.assertNotIn('wrangler',root.get('devDependencies',{}))
         self.assertNotIn('playwright',root.get('devDependencies',{}))
 
+    def test_browser_check_runs_chromium_against_both_servers(self):
+        # hosted.browser and the fast job run `npm run test:browser`: it must reach the portable server and the
+        # real-publisher spec, which skips itself against the Worker.
+        scripts=json.loads((ROOT/'hosted/delivery-viewer/package.json').read_text())['scripts']
+        self.assertEqual(scripts['test:browser'],
+                         'npm run build && npm run build:node && playwright test && playwright test -c playwright.node.config.ts')
+
+    @unittest.skipUnless(shutil.which('node'),'needs Node')
+    def test_container_check_without_docker_is_unavailable_not_passed(self):
+        with tempfile.TemporaryDirectory() as empty:
+            done=subprocess.run([shutil.which('node'),'test/conformance/container.mjs'],cwd=ROOT/'hosted/delivery-viewer',
+                                env={'PATH':empty,'HOME':empty},capture_output=True,text=True,timeout=60)
+        self.assertEqual(done.returncode,3,done.stderr)
+        self.assertIn('the container check is unavailable',done.stderr)
+        self.assertIn('(not passed)',done.stderr)
+        self.assertEqual(done.stdout,'')
+
     def test_service_readers_resolve_dependencies_without_loading_service_for_other_changes(self):
         tool=_generation_module('hosted_selection',STATE_TOOL)
         binding=json.loads((ROOT/'.agents/orchestration.json').read_text())
         for changed in ('hosted/delivery-viewer/src/worker.ts','skills/delivery-views/assets/line-map.js',
+                        'hosted/protocol/hosted-delivery-api-1.md','hosted/conformance/suite.mjs',
+                        'skills/delivery-views/scripts/hosted.py','skills/delivery-views/scripts/views_common.py',
                         'skills/delivery-views/scripts/render.py',
                         'skills/delivery-views/references/hosted-snapshot.schema.json',
                         'tests/fixtures/delivery-views/hosted/valid-plan-review.json',
-                        '.github/workflows/hosted-delivery-viewer.yml','docs/own-deliveries.md'):
+                        '.github/workflows/hosted-delivery-viewer.yml','docs/own-deliveries.md',
+                        # The service bundle's builder is covered by tests.test_cut_release; by the delivery's decision it
+                        # brings no hosted check.
+                        'scripts/cut-release.py'):
             with self.subTest(changed=changed):
                 checks,_=tool.resolve_selection([],binding,lambda:[changed])
                 ids={row['id'] for row in checks}
-                self.assertEqual(set(SERVICE_IDS).issubset(ids),changed!='docs/own-deliveries.md')
+                self.assertEqual(set(SERVICE_IDS).issubset(ids),changed not in ('docs/own-deliveries.md','scripts/cut-release.py'))
+                if changed=='scripts/cut-release.py':self.assertFalse(set(SERVICE_IDS)&ids)
                 for row in checks:self.assertLessEqual(set(row['prerequisites']),ids)
 
     def test_integration_recipe_carries_only_named_checks_and_refuses_collisions(self):

@@ -7,14 +7,18 @@
     "node": "^22.22.2 || >=24.15.0"
   },
   "scripts": {
-    "generate": "node scripts/generate-validator.mjs && node scripts/build-assets.mjs && wrangler types",
-    "typecheck": "npm run generate && tsc --noEmit",
+    "generate:core": "node scripts/generate-validator.mjs && node scripts/build-assets.mjs",
+    "generate": "npm run generate:core && wrangler types",
+    "typecheck": "npm run generate && tsc --noEmit && tsc --noEmit -p tsconfig.core.json && tsc --noEmit -p tsconfig.node.json",
     "build": "npm run generate && wrangler deploy --dry-run --outdir dist",
-    "test": "node scripts/generate-validator.mjs && node scripts/build-assets.mjs && vitest run && vitest run -c vitest.ui.config.ts",
+    "build:node": "npm run generate:core && node scripts/build-node.mjs",
+    "test": "npm run generate:core && vitest run && vitest run -c vitest.ui.config.ts",
+    "test:node": "npm run build:node && vitest run -c vitest.node.config.ts",
     "dev": "npm run generate && wrangler dev --ip 127.0.0.1",
-    "test:browser": "npm run build && playwright test",
-    "test:worker": "node scripts/generate-validator.mjs && node scripts/build-assets.mjs && vitest run",
-    "test:viewer": "node scripts/generate-validator.mjs && node scripts/build-assets.mjs && vitest run -c vitest.ui.config.ts"
+    "test:browser": "npm run build && npm run build:node && playwright test && playwright test -c playwright.node.config.ts",
+    "test:worker": "npm run generate:core && vitest run",
+    "test:viewer": "npm run generate:core && vitest run -c vitest.ui.config.ts",
+    "test:browser:node": "npm run build:node && playwright test -c playwright.node.config.ts"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.8.2",

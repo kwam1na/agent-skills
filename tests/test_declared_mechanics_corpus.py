@@ -69,6 +69,26 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
     "docs/hosted-deliveries.md": (
         "the publish command reads no CI result, and the local suite before a tag does not attest service CI",
+        # Choose a host: the three paths, the bundle an adopter checks and the rules a portable host keeps.
+        "Any service that conforms to it is a valid origin, whoever runs it and wherever.",
+        "whatever terminates TLS in front of the service must have its access logging off or path-free",
+        "shasum -a 256 -c hosted-delivery-service-<version>.zip.sha256",
+        "docker build -f hosted/delivery-viewer/Dockerfile -t hosted-delivery-service:<version> .",
+        "Use the bundle from the same release as the generation you applied",
+        "docker run --rm --read-only hosted-delivery-service:<version> provision-token REPOSITORY_ID",
+        "Network filesystems are unsupported: AWS EFS, Azure Files, Cloud Run volume mounts, GCS FUSE and NFS.",
+        "Like Node's own HTTP server, it closes a half-closed connection whose response is still pending. A client"
+        " must read its reply before it sends FIN.",
+        "No local build of the image is recorded: the image is first built and run in the service CI's container job.",
+        "An origin that passes both tiers is a valid origin.",
+        "SQLite's exclusive lock and the blob store's `link()` need local block-device semantics. Give the service a"
+        " disk that one machine mounts:",
+        "AWS: an EBS volume attached to the EC2 instance; - GCP: a Persistent Disk or Hyperdisk attached to the Compute"
+        " Engine VM; - Azure: a managed disk attached to the VM;",
+        "edit `publishers.json` in place, or run `docker compose restart deliveries` after replacing it",
+        "node hosted/conformance/cli.mjs --origin https://deliveries.example.com --credentials credentials.json"
+        " node hosted/conformance/cli.mjs --origin https://deliveries.example.com --credentials credentials.json --slow",
+        "`hosted.browser`, `hosted.conformance`, `hosted.node-test` and `hosted.conformance-node` for those readers",
     ),
     "docs/product-generation.md": (
         "Tag a commit merged to `main`; a merge commit is the usual one",
@@ -113,6 +133,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Nothing here reads a `.env`, this repository's or another's.",
     ),
     "AGENTS.md": (
+        "carrying its verified product archives, release files and records, and the hosted delivery service bundle"
+        " with its `.sha256`",
         "`docs/solutions/` holds what past deliveries learned, one note per learning at"
         " `docs/solutions/<category>/<slug>-<YYYY-MM-DD>.md`",
         "On Windows, which is not validated (see above), use `.venv\\Scripts\\python.exe`",
@@ -418,6 +440,14 @@ class DeclaredMechanicsCorpusTests(unittest.TestCase):
                     release_id="invalid-source-v1",
                     profile_id="core",
                 )
+
+    def test_the_hosting_guide_names_exactly_the_bindings_hosted_checks(self) -> None:
+        import json
+
+        catalogue = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))["selection"]["catalogue"]
+        bound = {row["id"] for row in catalogue if row["id"].startswith("hosted.")}
+        named = set(re.findall(r"`(hosted\.[a-z-]+)`", (ROOT / "docs/hosted-deliveries.md").read_text(encoding="utf-8")))
+        self.assertEqual(named, bound)
 
     def test_each_declaration_is_red_for_exactly_itself(self) -> None:
         texts = corpus_texts(ROOT)

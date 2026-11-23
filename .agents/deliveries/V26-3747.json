@@ -1,0 +1,242 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3747",
+  "headline": "V26-3747: host the delivery viewer anywhere, not only on Cloudflare",
+  "baseBranch": "integrate/portable-hosted-service",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-22-portable-hosted-service.md",
+  "laneBrief": "docs/plans/2026-11-22-portable-hosted-service.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-22-portable-hosted-service.lane-notes.md"
+  },
+  "context": {
+    "sections": []
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "hosted/protocol/*",
+        "hosted/conformance/*",
+        "hosted/delivery-viewer/README.md",
+        "hosted/delivery-viewer/test/*",
+        ".github/workflows/hosted-delivery-viewer.yml",
+        ".agents/orchestration.json",
+        "tests/test_own_deliveries.py",
+        "docs/own-deliveries.md"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "scripts/cut-release.py",
+        "scripts/release_channel.py",
+        "tests/test_cut_release.py",
+        "tests/test_release_channel.py"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3748": {
+      "title": "Write the protocol spec and a black-box conformance suite",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3748-1",
+          "text": "Before any refactor, the suite's fast and slow tiers pass against today's Worker."
+        },
+        {
+          "id": "v26-3748-2",
+          "text": "Every planted-failure server fails the suite, naming the scenario that server is expected to trip. A planted server that fails to start is a failed proof."
+        },
+        {
+          "id": "v26-3748-3",
+          "text": "A change that touches only the spec or the suite triggers the hosted workflow and selects the hosted checks."
+        },
+        {
+          "id": "v26-3748-4",
+          "text": "tests.test_own_deliveries, including test_integration_recipe_carries_only_named_checks_and_refuses_collisions, stays green."
+        }
+      ]
+    },
+    "V26-3749": {
+      "title": "Split the service into a neutral core and a Cloudflare adapter",
+      "lane": "lane-1",
+      "after": [
+        "V26-3748"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3749-1",
+          "text": "Every existing service test passes, and both conformance tiers pass against the Worker."
+        },
+        {
+          "id": "v26-3749-2",
+          "text": "The storage contract suite passes against the Durable Object store."
+        },
+        {
+          "id": "v26-3749-3",
+          "text": "Each planted-failure server, now the core with one rule removed, still fails the suite, naming its expected scenario."
+        }
+      ]
+    },
+    "V26-3750": {
+      "title": "Ship a portable Node server and container",
+      "lane": "lane-1",
+      "after": [
+        "V26-3749"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3750-1",
+          "text": "The storage contract suite, both conformance tiers and the Chromium suite pass against the portable server."
+        },
+        {
+          "id": "v26-3750-2",
+          "text": "The real publisher works against it. The corpus publisher's Transport, through its existing loopback seam, does acquire, two commits, confirm, status, an exact retry and a server restart. The page then renders the last committed cut in Chromium."
+        },
+        {
+          "id": "v26-3750-3",
+          "text": "Crash recovery: after a crash or an injected fault between the blob write and the transaction, the last committed view and pointer survive, and a retry commits."
+        },
+        {
+          "id": "v26-3750-4",
+          "text": "Gate: first confirm that node:sqlite needs no flag on ^22.22.2 || >=24.15.0. If it does, stop and return the decision to the operator."
+        }
+      ]
+    },
+    "V26-3751": {
+      "title": "Run conformance for both adapters as checks",
+      "lane": "lane-1",
+      "after": [
+        "V26-3750",
+        "V26-3752"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3751-1",
+          "text": "Both new checks pass locally, and each is selected by changes to the hosted trigger paths."
+        },
+        {
+          "id": "v26-3751-2",
+          "text": "CI records the slow tier for both servers and the container run."
+        },
+        {
+          "id": "v26-3751-3",
+          "text": "Locally, Docker is an optional sensor, reported as unavailable where it is missing."
+        },
+        {
+          "id": "v26-3751-4",
+          "text": "tests.test_own_deliveries is green."
+        }
+      ]
+    },
+    "V26-3752": {
+      "title": "Carry a verified service bundle in each release",
+      "lane": "lane-2",
+      "after": [
+        "V26-3748"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3752-1",
+          "text": "Two cuts give identical bytes, one of them on a copy of the tree with every mtime and one mode bit changed."
+        },
+        {
+          "id": "v26-3752-2",
+          "text": "The bundle contains hosted/protocol/hosted-delivery-api-1.md and the conformance entry point, and its roots equal the hosted workflow's trigger paths minus the workflow file."
+        },
+        {
+          "id": "v26-3752-3",
+          "text": "Refusals, each with a named code:"
+        },
+        {
+          "id": "v26-3752-4",
+          "text": "a missing root;"
+        },
+        {
+          "id": "v26-3752-5",
+          "text": "a bundle corrupted between write and recheck."
+        },
+        {
+          "id": "v26-3752-6",
+          "text": "The dry-run publish lists both files, and the notes list the digest."
+        }
+      ]
+    },
+    "V26-3753": {
+      "title": "Document hosting anywhere",
+      "lane": "lane-2",
+      "after": [
+        "V26-3751",
+        "V26-3752"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3753-1",
+          "text": "Each phrase that tests pin in these files and that moves is re-derived in the same change."
+        },
+        {
+          "id": "v26-3753-2",
+          "text": "scripts/update-provenance.py --check and scripts/validate-registry.py pass."
+        },
+        {
+          "id": "v26-3753-3",
+          "text": "The full local suite passes on macOS with Python 3.11, inside its budget."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "V26-3748, V26-3749, V26-3750, V26-3751, V26-3752 and V26-3753 land on integrate/portable-hosted-service through its merge queue",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "service-ci",
+      "label": "Service CI",
+      "text": "A service CI run at the final integration commit records the conformance slow tier for both servers and the container run, dispatched with workflow_dispatch when the push did not run it",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration head, with --workers 4 --budget tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide's integration review says, and merged into main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-22"
+  },
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}
