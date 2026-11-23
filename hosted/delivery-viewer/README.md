@@ -64,7 +64,9 @@ run uses, and runs the conformance suite's fast tier against it; `--slow` adds
 the slow tier, which waits out a lease and staleness in real time. It then
 builds a copy of `src/` unchanged, which must pass, and one planted-failure copy
 per rule in `test/conformance/planted.mjs`, each with exactly one rule removed,
-which must start and fail exactly the scenarios it names. A planted copy that
+which must start and fail exactly the scenarios it names. The Worker's run must
+cover exactly the scenario names the check lists, and `hosted/conformance/cli.mjs`
+must exit 0 against the Worker and 1 against a planted copy. A planted copy that
 does not start, or whose patch text has drifted, fails the check.
 
 

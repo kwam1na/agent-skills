@@ -324,6 +324,10 @@ async function errors400(h) {
   refused(await sessionBody({ mode: "acquire", deliveryKey: "APP-1", ownerId: owner, epoch: 1 }), 400, "invalid_envelope",
     "an acquisition carrying an epoch");
   refused(await sessionBody([]), 400, "invalid_envelope", "a session body that is an array");
+  refused(await sessionBody({ mode: "acquire", deliveryKey: "-APP", ownerId: owner, epoch: 1 }), 400, "invalid_identifier",
+    "a malformed delivery key reported before an acquisition's epoch");
+  refused(await sessionBody({ mode: "acquire", deliveryKey: "-APP", ownerId: owner, extra: 1 }), 400, "invalid_envelope",
+    "an extra key reported before a malformed delivery key");
   refused(await h.client.send({ method: "POST", path: h.api(h.first, id, "confirm"),
     headers: h.envelope(h.first, { sequence: 1, digest: cut.digest }),
     body: Buffer.from(JSON.stringify({ sourceFingerprint: cut.fingerprint, sequence: 1 })) }), 400, "invalid_envelope",
@@ -431,6 +435,11 @@ async function errors422(h) {
   for (const renderer of ["delivery-line-map/4", "delivery-line-map/1", "", "Delivery-Line-Map/3"])
     refused(await h.commit(h.first, id, cut, { sequence: 1, renderer }), 422, "unsupported_renderer", `renderer ${show(renderer)}`);
   refused(await h.commit(h.first, id, { ...cut, digest: hex() }, { sequence: 1 }), 422, "digest_mismatch", "another body's digest");
+  // Several faults at once: the first in the spec's order of checks is the one reported.
+  refused(await h.commit(h.first, id, cut, { sequence: 1, renderer: "delivery-line-map/9", headers: { "X-Snapshot-Sequence": "01" } }),
+    422, "unsupported_renderer", "an unsupported renderer reported before a malformed sequence");
+  refused(await h.commit(h.first, id, { bytes: Buffer.from([0xc3, 0x28]), digest: hex() }, { sequence: 1 }), 422, "digest_mismatch",
+    "a wrong digest reported before malformed JSON");
   // The first accepted snapshot fixes the renderer for the delivery.
   const legacy = h.snapshot(h.fixtures.legacy);
   const legacyReceipt = isReceipt(ok(await h.commit(h.first, id, legacy, { sequence: 1, renderer: LEGACY_RENDERER_VERSION }),

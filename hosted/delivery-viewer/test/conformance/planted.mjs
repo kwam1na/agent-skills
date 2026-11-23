@@ -71,6 +71,18 @@ export const PLANTED = Object.freeze([
     fails: ["errors.413", "streamed-body-limit"],
   },
   {
+    name: "streamed-bytes-uncounted",
+    rule: "streamed bytes are counted against the limit, whatever Content-Length says",
+    patches: [{ file: "protocol.ts", find: "      if (size > limit) { await reader.cancel(); fail('body_too_large', 413); }\n", replace: "" }],
+    fails: ["streamed-body-limit"],
+  },
+  {
+    name: "wrong-error-status",
+    rule: "each fixed error code is sent with its own HTTP status",
+    patches: [{ file: "worker.ts", find: "fail('method_not_allowed', 405)", replace: "fail('method_not_allowed', 400)" }],
+    fails: ["errors.405"],
+  },
+  {
     name: "routes-by-host",
     rule: "routing and identity never read Host",
     patches: [{ file: "worker.ts", find: "env.DELIVERIES.getByName(", replace: "env.DELIVERIES.getByName(url.host + '/' + ", count: 6 }],

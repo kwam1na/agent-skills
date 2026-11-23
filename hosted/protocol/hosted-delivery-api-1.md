@@ -65,10 +65,12 @@ Nothing else is routed:
 
 - No route lists deliveries, repositories, objects or history. Every other path
   answers 404 `not_found`. That includes `/`, which is what a health check reads.
-- A request with a query string, or a path containing `%`, answers 404
-  `not_found`, even on an otherwise valid route. Encoded paths are never decoded
-  into a route. A path is read as a URL path, so dot segments are resolved and
-  `\` is read as `/` before routing.
+- A request with a non-empty query string, or a path containing `%`, answers
+  404 `not_found`, even on an otherwise valid route. A bare trailing `?` with
+  nothing after it is read as no query, as the Worker reads it. Encoded paths
+  are never decoded into a route. A server MAY read the path as a URL path,
+  resolving dot segments and reading `\` as `/` before routing, as the Worker
+  does; the suite asserts neither way.
 - An authenticated route answers 405 `method_not_allowed` to any other method,
   `OPTIONS` and `HEAD` included, once the request has authenticated. An
   anonymous route answers 404 `not_found` to any method but `GET`.
@@ -130,9 +132,13 @@ reported:
 6. the body: content type and encoding (415), size (413);
 7. for a commit, the digest of the received bytes (422 `digest_mismatch`), then
    JSON (400 `invalid_json`), then the snapshot rules (400 `invalid_projection`);
-   for a control body, JSON (400 `invalid_json`), its shape (400
-   `invalid_envelope`), its identifiers (400 `invalid_identifier`) and epoch
-   (400 `invalid_sequence`);
+   for a session body, JSON (400 `invalid_json`), then its shape: an object
+   with no extra keys and a known mode (400 `invalid_envelope`), then
+   `deliveryKey` and `ownerId` (400 `invalid_identifier`), then the epoch: an
+   acquisition carrying one is 400 `invalid_envelope`, and a resume's or
+   takeover's that is not a positive safe integer is 400 `invalid_sequence`;
+   for a confirmation body, JSON, its shape, then `sourceFingerprint` (400
+   `invalid_identifier`);
 8. the delivery: its binding (404), then the rules of the operation (409, or
    422 `unsupported_renderer` when a commit names another renderer than the
    delivery's first accepted snapshot).

@@ -3,13 +3,23 @@
 // The built Worker must pass every scenario (with --slow, the slow tier too). A copy built from the unchanged source
 // must pass the fast tier, so the builder alone breaks nothing. Each planted server must start and fail the fast tier in
 // exactly the scenarios it names. Run `npm run build` first: this reads dist/worker.js and the generated sources.
-import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runSuite } from "../../../conformance/suite.mjs";
 import { builtWorker, credentials, startWorker } from "../launcher.mjs";
 import { PLANTED, buildWorker } from "./planted.mjs";
 
 const slow = process.argv.includes("--slow");
+// Kept here rather than read from the suite, so a scenario dropped from it, or a slow tier that never ran, is red.
+const FAST = ["round-trip.first-repository", "round-trip.second-repository", "host-headers-ignored", "exact-retry",
+  "sequence-rules", "writer-fencing", "repository-scope", "errors.400", "errors.401", "errors.404", "errors.405", "errors.409",
+  "errors.413", "errors.415", "errors.422", "projection-fixtures", "streamed-body-limit", "refused-requests",
+  "no-redirect-listing-or-history", "anonymous-read", "security-headers"];
+const SLOW = ["slow.lease-expiry", "slow.resume", "slow.takeover", "slow.staleness"];
+const CLI = fileURLToPath(new URL("../../../conformance/cli.mjs", import.meta.url));
 const unknown = process.argv.slice(2).filter((arg) => arg !== "--slow");
 if (unknown.length) {
   console.error(`usage: check.mjs [--slow]; unknown: ${unknown.join(" ")}`);
@@ -42,7 +52,36 @@ if (!worker.started) problems.push(worker.error);
 else {
   for (const row of worker.results) console.log(row.ok ? `ok ${row.name}` : `not ok ${row.name}: ${row.message}`);
   if (worker.failed.length) problems.push(`the built Worker failed ${worker.failed.map((row) => row.name).join(", ")}`);
+  const ran = worker.results.map((row) => row.name);
+  const expected = slow ? [...FAST, ...SLOW] : FAST;
+  if (JSON.stringify(ran) !== JSON.stringify(expected))
+    problems.push(`the built Worker ran ${ran.join(", ")}; the check expects exactly ${expected.join(", ")}`);
 }
+
+/** The adopter's entry point: cli.mjs must exit 0 against the Worker and 1 against a planted server. */
+async function cliExit(label, script) {
+  const folder = mkdtempSync(join(tmpdir(), "hosted-conformance-cli-"));
+  let server;
+  try {
+    const file = join(folder, "credentials.json");
+    writeFileSync(file, JSON.stringify(credentials), { mode: 0o600 });
+    server = await startWorker({ script });
+    const run = spawnSync(process.execPath, [CLI, "--origin", server.origin, "--credentials", file],
+      { encoding: "utf8", timeout: 300_000 });
+    return run.status;
+  } catch (error) {
+    problems.push(`the CLI run against ${label} did not start: ${error.message}`);
+    return null;
+  } finally {
+    await server?.dispose();
+    rmSync(folder, { recursive: true, force: true });
+  }
+}
+const cliWorker = await cliExit("the built Worker");
+if (cliWorker !== 0) problems.push(`cli.mjs exited ${cliWorker} against the built Worker, not 0`);
+const cliPlanted = await cliExit("a planted server", await buildWorker(PLANTED[0].patches));
+if (cliPlanted !== 1) problems.push(`cli.mjs exited ${cliPlanted} against planted ${PLANTED[0].name}, not 1`);
+if (cliWorker === 0 && cliPlanted === 1) console.log(`ok cli: exits 0 against the Worker and 1 against planted ${PLANTED[0].name}`);
 
 let control;
 try {
