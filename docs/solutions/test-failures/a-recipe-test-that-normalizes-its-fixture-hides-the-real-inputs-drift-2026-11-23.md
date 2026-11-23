@@ -8,7 +8,7 @@ severity: medium
 tags: [integration, binding, recipe, fixtures, own-deliveries]
 symptoms: "The integration restore recipe in docs/own-deliveries.md failed with 'target Python checks are not in canonical order' on main's real binding, while the test that runs the recipe passed"
 root_cause: "The test sorted the binding's catalogue before building its fixtures, so it never ran the recipe on the binding as main held it, whose Python checks had drifted out of order"
-resolution_type: code_fix
+resolution_type: config_change
 ---
 
 # A recipe test that normalizes its fixture hides the real input's drift
@@ -19,7 +19,7 @@ resolution_type: code_fix
 only the delivery's reviewed hosted checks. The script inserts checks by canonical order, and it refuses a target
 binding whose Python checks are out of order. `tests/test_own_deliveries.py` runs the script from the doc, but it
 built its fixture from a sorted copy of the real binding. Earlier deliveries had added catalogue rows out of order,
-so main's real binding had four Python checks out of order. The script refused it, and the test kept passing.
+so main's real binding had its Python checks out of canonical order in four places. The script refused it, and the test kept passing.
 
 ## Symptoms
 
