@@ -102,6 +102,15 @@ the generation. That generation is what this repository delivers with, not its
 source: an edit goes in `skills/`, never under `.agent-skills/`, and reaches a
 delivery only once a release holding it is applied.
 
+The run-event command is `python3 -B .agent-skills/current --root . harness emit`,
+run from the repository root. A delivery workflow reports its run through it, as
+`$compound-delivery-kernel` says, into the run store `harness runs list --json`
+names. The live view command is `python3 -B
+.agent-skills/current/skills/orchestrate-work/scripts/render_state.py live --dir
+.orchestration/state --binding .agents/orchestration.json --if-absent`: it prints
+the address of this repository's standing live server, or starts one, whose front
+page lists every run while no delivery record exists.
+
 Keep JSON serialized as two-space-indented UTF-8 with a final newline. Bootstrap
 the worktree-private test environment before running the sensors; a shared
 editable install stores one checkout path in site-packages, so concurrent
