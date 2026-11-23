@@ -1,6 +1,7 @@
 // The core-level storage contract: the ordering guarantees the core needs of any MetadataStore and BlobStore, run
 // through the core's own Deliveries with deterministic interleaving and an injected clock. Each store runs it:
-// test/storage-contract.test.ts against the Durable Object store and R2.
+// test/storage-contract.test.ts against the Durable Object store and R2, test/node/storage-contract.test.ts against
+// SQLite and the filesystem. `manyDeliveriesContract` adds the rows only a store holding many deliveries can answer.
 import { describe, expect, it } from 'vitest';
 import { Deliveries, endpoint, type Session } from '../../src/core/deliveries';
 import { createService } from '../../src/core/service';
@@ -17,7 +18,7 @@ export interface Stores {
 /** Runs one scenario with stores for the delivery `publicId`, inside whatever context the stores need. */
 export type Harness = (publicId: string, scenario: (stores: Stores) => Promise<void>) => Promise<void>;
 
-const REPO = 'repo-contract';
+const REPO = 'repo-contract', OTHER_REPO = 'repo-contract-other';
 const hex = (seed: number) => seed.toString(16).padStart(64, '0');
 let next = 1;
 const publicId = () => crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '');
@@ -221,14 +222,14 @@ export function storageContract(name: string, harness: Harness) {
     it('serves the protocol through the core service over an in-process endpoint', async () => {
       const id = publicId();
       await harness(id, async ({ metadata, blobs }) => {
-        const token = 'contract-token-'.padEnd(43, 'x');
-        const expected = await digest(new TextEncoder().encode(token));
+        const token = 'contract-token-'.padEnd(43, 'x'), otherToken = 'contract-other-'.padEnd(43, 'y');
+        const expected = await digest(new TextEncoder().encode(token)), otherExpected = await digest(new TextEncoder().encode(otherToken));
         const deliveries = new Deliveries(metadata, blobs, { now: () => 8_000_000 });
         const service = createService({ deliveries: publicId => endpoint(deliveries, publicId),
-          publishers: { expected: async repository => repository === REPO ? expected : null } });
-        const send = (path: string, init: RequestInit = {}, headers: Record<string, string> = {}) =>
+          publishers: { expected: async repository => repository === REPO ? expected : repository === OTHER_REPO ? otherExpected : null } });
+        const send = (path: string, init: RequestInit = {}, headers: Record<string, string> = {}, as = token) =>
           service.fetch(new Request(`https://service.test${path}`, { ...init,
-            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...headers } }));
+            headers: { Authorization: `Bearer ${as}`, 'Content-Type': 'application/json', ...headers } }));
         const api = (action: string) => `/api/v1/repos/${REPO}/deliveries/${id}/${action}`;
         expect((await send(api('session'), { method: 'POST', body: JSON.stringify(acquire) })).status).toBe(200);
         const body = JSON.stringify(cases.find(row => row.valid)!.body);
@@ -244,6 +245,58 @@ export function storageContract(name: string, harness: Harness) {
         expect(await (await send(`/d/${id}/current`)).json()).toMatchObject({ digest: hash, stale: false });
         expect(await (await send(`/d/${id}/snapshots/${hash}`)).text()).toBe(body);
         expect((await send(`/api/v1/repos/other-repo/deliveries/${id}/status`)).status).toBe(401);
+        // Another authenticated repository reaches the binding check, which refuses it: the endpoint passes the
+        // caller's repository through rather than the bound one.
+        const asOther = (action: string) => `/api/v1/repos/${OTHER_REPO}/deliveries/${id}/${action}`;
+        for (const [action, init, headers] of [['status', {}, {}], ['snapshots', { method: 'POST', body }, { ...envelope, 'X-Snapshot-Sequence': '2' }],
+          ['confirm', { method: 'POST', body: JSON.stringify({ sourceFingerprint: receipt.sourceFingerprint }) }, envelope]] as const) {
+          const refused = await send(asOther(action), init, headers, otherToken);
+          expect([action, refused.status, await refused.json()]).toEqual([action, 404, { error: 'not_found' }]);
+        }
+        expect(await (await send(api('status'))).json()).toMatchObject({ sequence: 1, receipt });
+      });
+    });
+  });
+}
+
+/** Rows for a store that holds many deliveries, as the portable SQLite store does and a Durable Object does not. */
+export function manyDeliveriesContract(name: string, harness: Harness) {
+  describe(`storage contract, many deliveries: ${name}`, () => {
+    const acquire: Session = { mode: 'acquire', deliveryKey: 'APP-1', ownerId: hex(0xc3) };
+
+    it('keeps each public id to its own delivery through the in-process endpoint', async () => {
+      const id = publicId(), other = publicId();
+      await harness(id, async ({ metadata, blobs }) => {
+        const deliveries = new Deliveries(metadata, blobs, { now: () => 9_000_000 });
+        deliveries.session(id, REPO, acquire);
+        const first = cut(1, 1);
+        const receipt = await deliveries.commit(id, REPO, first.commit, first.fingerprint, first.bytes);
+        const at = (publicId: string) => endpoint(deliveries, publicId);
+        expect(await at(id).current()).toMatchObject({ ok: true, value: { digest: receipt.digest } });
+        expect(await at(other).current()).toEqual({ ok: false, error: 'not_found', status: 404 });
+        expect(await at(other).status(REPO)).toEqual({ ok: false, error: 'not_found', status: 404 });
+        expect(await at(other).snapshot(receipt.digest)).toEqual({ ok: false, error: 'not_found', status: 404 });
+        expect(await at(other).session(REPO, { ...acquire, mode: 'resume', epoch: 1 })).toEqual({ ok: false, error: 'not_found', status: 404 });
+        expect(await at(other).confirm(REPO, first.commit, first.fingerprint)).toEqual({ ok: false, error: 'not_found', status: 404 });
+      });
+    });
+
+    it('commits to one delivery while another delivery\'s blob write is held', async () => {
+      const id = publicId(), other = publicId();
+      await harness(id, async ({ metadata, blobs }) => {
+        const held = holding(blobs);
+        const deliveries = new Deliveries(metadata, held.store, { now: () => 9_500_000 });
+        deliveries.session(id, REPO, acquire);
+        deliveries.session(other, REPO, acquire);
+        const slow = cut(1, 1), quick = cut(1, 1);
+        const pending = deliveries.commit(id, REPO, slow.commit, slow.fingerprint, slow.bytes);
+        await held.started;
+        const accepted = await deliveries.commit(other, REPO, quick.commit, quick.fingerprint, quick.bytes);
+        expect(deliveries.current(other).digest).toBe(accepted.digest);
+        expect(await code(() => deliveries.current(id))).toBe('not_found');
+        held.release();
+        expect((await pending).digest).toBe(slow.commit.digest);
+        expect(deliveries.current(id).digest).toBe(slow.commit.digest);
       });
     });
   });
