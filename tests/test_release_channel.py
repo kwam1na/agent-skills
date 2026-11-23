@@ -33,6 +33,15 @@ def load_channel():
 channel = load_channel()
 
 
+def write_bundle(output: Path, version: str, contents: bytes = b"bundle") -> str:
+    """A service bundle and its `.sha256`, as cut-release writes them; returns the digest."""
+    name = f"hosted-delivery-service-{version}.zip"
+    (output / name).write_bytes(contents)
+    digest = hashlib.sha256(contents).hexdigest()
+    (output / f"{name}.sha256").write_text(f"{digest}  {name}\n", encoding="utf-8")
+    return digest
+
+
 def git(root: Path, *arguments: str) -> str:
     done = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "tag.gpgSign=false", "-c", "commit.gpgSign=false",
                            *arguments], cwd=root, capture_output=True, text=True, check=True)
@@ -157,6 +166,7 @@ class NotesTests(unittest.TestCase):
         for profile, digest in (("core", "a" * 64), ("linear", "b" * 64)):
             (self.output / f"{profile}-v1.2.3.release.json").write_text(
                 json.dumps({"profile": profile, "releaseId": f"{profile}-v1.2.3", "archiveSha256": digest}), encoding="utf-8")
+        self.bundle_digest = write_bundle(self.output, "v1.2.3")
 
     def test_a_signed_annotation_loses_its_signature_and_keeps_the_rest(self) -> None:
         for patch, (begin, end) in enumerate((("-----BEGIN PGP SIGNATURE-----", "-----END PGP SIGNATURE-----"),
@@ -190,11 +200,45 @@ class NotesTests(unittest.TestCase):
 
     def test_the_notes_are_annotation_then_every_digest_then_the_generated_list(self) -> None:
         notes = channel.render_notes("The annotation.", self.output, "## What's Changed\n* one\n")
-        positions = [notes.index(text) for text in ("The annotation.", "a" * 64, "b" * 64, "## What's Changed")]
+        positions = [notes.index(text) for text in ("The annotation.", "a" * 64, "b" * 64, "## Service bundle",
+                                                    self.bundle_digest, "## What's Changed")]
         self.assertEqual(positions, sorted(positions))
         self.assertIn("`core-v1.2.3`", notes)
         self.assertIn("`linear-v1.2.3`", notes)
+        self.assertIn(f"| `hosted-delivery-service-v1.2.3.zip` | `{self.bundle_digest}` |", notes)
+        self.assertIn("shasum -a 256 -c hosted-delivery-service-v1.2.3.zip.sha256", notes)
         self.assertTrue(notes.endswith("\n"))
+
+    def test_notes_without_a_bundle_digest_that_matches_its_bundle_are_refused(self) -> None:
+        name = "hosted-delivery-service-v1.2.3.zip"
+        recorded = self.output / f"{name}.sha256"
+        for change, phrase in (
+            ("no digest", "no single service bundle digest"),
+            ("two digests", "no single service bundle digest"),
+            ("no bundle", "does not match"),
+            ("changed bundle", "does not match"),
+            ("another name", "does not name its bundle"),
+            ("malformed", "does not name its bundle"),
+        ):
+            with self.subTest(change=change):
+                write_bundle(self.output, "v1.2.3")
+                for stray in self.output.glob("hosted-delivery-service-v9*"):
+                    stray.unlink()
+                if change == "no digest":
+                    recorded.unlink()
+                elif change == "two digests":
+                    write_bundle(self.output, "v9.9.9")
+                elif change == "no bundle":
+                    (self.output / name).unlink()
+                elif change == "changed bundle":
+                    (self.output / name).write_bytes(b"bundle, changed")
+                elif change == "another name":
+                    recorded.write_text(f"{self.bundle_digest}  hosted-delivery-service-v9.9.9.zip\n", encoding="utf-8")
+                else:
+                    recorded.write_text(self.bundle_digest + "\n", encoding="utf-8")
+                with self.assertRaises(channel.ChannelError) as caught:
+                    channel.render_notes("", self.output, "generated")
+                self.assertIn(phrase, str(caught.exception))
 
     def test_notes_with_no_release_file_are_refused_rather_than_published_without_digests(self) -> None:
         for path in self.output.iterdir():
@@ -293,13 +337,17 @@ class CommandLineTests(unittest.TestCase):
         output.mkdir()
         (output / "core-v1.2.3.release.json").write_text(
             json.dumps({"profile": "core", "releaseId": "core-v1.2.3", "archiveSha256": "a" * 64}), encoding="utf-8")
+        bundle_digest = write_bundle(output, "v1.2.3")
         generated = self.root / "generated.md"
         generated.write_text("## What's Changed\n", encoding="utf-8")
         arguments = ("notes", "--tag", "v1.2.3", "--out", str(output), "--generated", str(generated))
         done = self.run_command(*arguments)
         self.assertEqual(done.returncode, 0, done.stderr)
-        positions = [done.stdout.index(text) for text in ("The annotation.", "a" * 64, "## What's Changed")]
+        positions = [done.stdout.index(text) for text in ("The annotation.", "a" * 64, bundle_digest, "## What's Changed")]
         self.assertEqual(positions, sorted(positions))
+        (output / "hosted-delivery-service-v1.2.3.zip").write_bytes(b"changed")
+        self.assertEqual(self.run_command(*arguments).returncode, 1)
+        write_bundle(output, "v1.2.3")
         (output / "core-v1.2.3.release.json").unlink()
         self.assertEqual(self.run_command(*arguments).returncode, 1)
 
@@ -358,7 +406,14 @@ with open(archive, "wb") as stream:
 digest = hashlib.sha256(b"archive").hexdigest()
 with open(os.path.join(out, f"core-{version}.release.json"), "w", encoding="utf-8") as stream:
     json.dump({"profile": "core", "releaseId": f"core-{version}", "archiveSha256": digest}, stream)
+bundle = f"hosted-delivery-service-{version}.zip"
+with open(os.path.join(out, bundle), "wb") as stream:
+    stream.write(b"bundle")
+with open(os.path.join(out, f"{bundle}.sha256"), "w", encoding="utf-8") as stream:
+    stream.write(f"{hashlib.sha256(b'bundle').hexdigest()}  {bundle}\\n")
 """
+BUILT = ["core-v1.0.0.release.json", "core-v1.0.0.zip", "hosted-delivery-service-v1.0.0.zip",
+         "hosted-delivery-service-v1.0.0.zip.sha256"]
 
 
 @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and releases are published from macOS")
@@ -414,9 +469,9 @@ class PublishTests(unittest.TestCase):
         argv = create["argv"]
         self.assertEqual(argv[:6], ["release", "create", "v1.0.0", "--verify-tag", "--title", "v1.0.0"])
         self.assertIn("--latest", argv)
-        self.assertEqual(sorted(Path(arg).name for arg in argv if arg.startswith(str(Path(tempfile.gettempdir()).resolve())) or "core-" in arg),
-                         ["core-v1.0.0.release.json", "core-v1.0.0.zip"])
-        positions = [create["notes"].index(text) for text in ("The annotation.", hashlib.sha256(b"archive").hexdigest(), "## What's Changed")]
+        self.assertEqual(sorted(Path(arg).name for arg in argv if Path(arg).parent.name == "release"), BUILT)
+        positions = [create["notes"].index(text) for text in ("The annotation.", hashlib.sha256(b"archive").hexdigest(),
+                                                              hashlib.sha256(b"bundle").hexdigest(), "## What's Changed")]
         self.assertEqual(positions, sorted(positions))
         self.assertEqual(self.worktrees(), 1)
 
@@ -433,7 +488,9 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         folder = Path(done.stdout.strip())
         self.addCleanup(shutil.rmtree, folder.parent, True)
-        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["core-v1.0.0.release.json", "core-v1.0.0.zip"])
+        self.assertEqual(sorted(path.name for path in folder.iterdir()), BUILT)
+        notes = (folder.parent / "notes.md").read_text(encoding="utf-8")
+        self.assertIn(f"| `hosted-delivery-service-v1.0.0.zip` | `{hashlib.sha256(b'bundle').hexdigest()}` |", notes)
         self.assertEqual(self.created(), [])
 
     def test_a_lightweight_tag_is_refused_before_anything_is_built(self) -> None:

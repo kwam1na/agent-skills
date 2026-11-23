@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_skills.release import RUNTIME_FILES, _path_digest, _release_view, verify_release
+from tests.quiet_git import quieten
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +25,10 @@ RUNTIME = ROOT / "product-runtime"
 VERSION = "v1.2.3-rc.1"
 PRODUCTS = ("core", "linear", "bootstrap", "run-delivery", "jira")
 RECORDS = ("core", "provider", "bootstrap", "linear")
+BUNDLE = f"hosted-delivery-service-{VERSION}.zip"
+BUNDLE_DATE_TIME = (1980, 1, 1, 0, 0, 0)
+BUNDLE_EXTERNAL_ATTR = 0o100644 << 16
+WORKFLOW = ".github/workflows/hosted-delivery-viewer.yml"
 # The seed's digests, frozen until a reviewed change replaces the seed.
 FROZEN_SEED_SHA256 = {
     "LICENSE": "02ed546806a3298b12c633742eb2fd354821d5dc9a5ee4384d4ae8196737a83f",
@@ -60,14 +65,29 @@ def _named_outputs(version: str) -> set[str]:
         *(f"{profile}-{version}.zip" for profile in PRODUCTS),
         *(f"{profile}-{version}.release.json" for profile in PRODUCTS),
         *(f"{record}-{version}.json" for record in RECORDS),
+        f"hosted-delivery-service-{version}.zip",
+        f"hosted-delivery-service-{version}.zip.sha256",
     }
+
+
+def _service_files(root: Path, roots: tuple[str, ...]) -> list[str]:
+    """What the bundle should hold, worked out apart from the command: tracked, less what the tree's .gitignore ignores."""
+    def listed(*options: str) -> list[str]:
+        done = subprocess.run(["git", "ls-files", "-z", *options, "--", *roots], cwd=root, capture_output=True, check=True)
+        return [name.decode("utf-8") for name in done.stdout.split(b"\0") if name]
+
+    ignored = set(listed("--cached", "--ignored", "--exclude-per-directory=.gitignore"))
+    return sorted(name for name in listed("--cached") if name not in ignored)
 
 
 def _qualifier_double(fail: str | None = None, how: str = "exit"):
     """Stands in for the qualifier subprocesses, which the real run below exercises."""
     calls = []
+    real_run = subprocess.run
 
-    def run(command, **_kwargs):
+    def run(command, **kwargs):
+        if command[0] == "git":
+            return real_run(command, **kwargs)
         script = Path(command[1]).name
         calls.append(command)
         record = Path(command[command.index("--record") + 1])
@@ -255,7 +275,16 @@ class SetTests(unittest.TestCase):
             shutil.copyfile(stored / archive.name, archive)
             shutil.copyfile(stored / metadata.name, metadata)
 
-        for name, stand_in in (("rebound_runtime", runtime), ("build_release", build)):
+        self.real_bundle = self.command.build_service_bundle
+
+        def bundle(root: Path, archive: Path) -> str:
+            stored = self.built / "bundle.zip"
+            if not stored.exists():
+                self.real_bundle(root, stored)
+            shutil.copyfile(stored, archive)
+            return hashlib.sha256(archive.read_bytes()).hexdigest()
+
+        for name, stand_in in (("rebound_runtime", runtime), ("build_release", build), ("build_service_bundle", bundle)):
             patcher = mock.patch.object(self.command, name, stand_in)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -341,6 +370,55 @@ class SetTests(unittest.TestCase):
         self.assertEqual(self._cut(version="v1.0.0")[0], 0)
         self.assertEqual(self._cut(version="v1.0.1")[0], 0)
         self.assertEqual({path.name for path in self.out.iterdir()}, _named_outputs("v1.0.1"))
+        # Both bundle files are the later run's: the earlier pair is gone, and the digest names the later name.
+        self.assertEqual(
+            (self.out / "hosted-delivery-service-v1.0.1.zip.sha256").read_text(encoding="utf-8"),
+            f"{_sha256(self.out / 'hosted-delivery-service-v1.0.1.zip')}  hosted-delivery-service-v1.0.1.zip\n",
+        )
+
+    def test_a_missing_service_root_refuses_the_cut_by_name(self) -> None:
+        self.assertEqual(self._cut()[0], 0)
+        for missing in ("hosted/no-such-root/", "hosted/protocol/no-such-file.md"):
+            with self.subTest(missing=missing):
+                stderr = io.StringIO()
+                run, _ = _qualifier_double()
+                with mock.patch.object(self.command, "build_service_bundle", self.real_bundle), \
+                        mock.patch.object(self.command, "SERVICE_ROOTS", (*self.command.SERVICE_ROOTS, missing)), \
+                        mock.patch.object(self.command.subprocess, "run", run), contextlib.redirect_stderr(stderr):
+                    self.assertEqual(self.command.main(["--version", VERSION, "--out", str(self.out)]), 1)
+                self.assertIn(f"cut_release.service_root_missing: {missing} holds no tracked file", stderr.getvalue())
+                self.assertEqual(list(self.directory.iterdir()), [])
+
+    def test_a_bundle_changed_after_its_digest_was_written_refuses_the_cut_by_name(self) -> None:
+        write = self.command.write_service_bundle
+        copy = shutil.copyfile
+
+        def corrupt_after_writing(root: Path, version: str, directory: Path) -> str:
+            digest = write(root, version, directory)
+            with (directory / f"hosted-delivery-service-{version}.zip").open("ab") as bundle:
+                bundle.write(b"\0")
+            return digest
+
+        def corrupt_the_staged_copy(source, target, **options):
+            copied = copy(source, target, **options)
+            if Path(target).parent.name.startswith(".out.") and Path(target).name.endswith(".zip") \
+                    and Path(target).name.startswith("hosted-delivery-service-"):
+                Path(target).write_bytes(Path(target).read_bytes()[:-1] + b"\1")
+            return copied
+
+        for where, patcher in (
+            ("after the write", mock.patch.object(self.command, "write_service_bundle", corrupt_after_writing)),
+            ("in the staged set", mock.patch.object(self.command.shutil, "copyfile", corrupt_the_staged_copy)),
+        ):
+            with self.subTest(where=where):
+                self.assertEqual(self._cut(version="v1.0.0")[0], 0)
+                stderr = io.StringIO()
+                run, _ = _qualifier_double()
+                with patcher, mock.patch.object(self.command.subprocess, "run", run), contextlib.redirect_stderr(stderr):
+                    self.assertEqual(self.command.main(["--version", VERSION, "--out", str(self.out)]), 1)
+                self.assertIn(f"cut_release.service_bundle_digest: {BUNDLE} changed after its digest was written",
+                              stderr.getvalue())
+                self.assertEqual(list(self.directory.iterdir()), [])
 
     def test_a_failed_check_of_the_staged_set_leaves_no_set(self) -> None:
         self.assertEqual(self._cut()[0], 0)
@@ -386,6 +464,135 @@ class SetTests(unittest.TestCase):
                 self.assertEqual(out.exists(), before)
 
 
+class ServiceBundleCommandTests(unittest.TestCase):
+    """`--service-bundle` builds only the bundle from a checkout, as a service check calls it; no release is cut."""
+
+    def setUp(self) -> None:
+        self.command = _load_command()
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.out = Path(temporary.name) / "bundle"
+        self.names = {BUNDLE, f"{BUNDLE}.sha256"}
+
+    def _bundle(self, *extra: str) -> tuple[int, str]:
+        stderr = io.StringIO()
+        with mock.patch.object(self.command, "build_set") as build, contextlib.redirect_stderr(stderr):
+            code = self.command.main(["--version", VERSION, "--out", str(self.out), "--service-bundle", *extra])
+        build.assert_not_called()
+        return code, stderr.getvalue()
+
+    def test_the_command_writes_only_the_checked_bundle_of_the_named_checkout(self) -> None:
+        done = subprocess.run([sys.executable, "-B", str(SCRIPT), "--service-bundle", "--root", str(ROOT), "--version", VERSION,
+                               "--out", str(self.out)], capture_output=True, text=True, check=False)
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""))
+        self.assertEqual({path.name for path in self.out.iterdir()}, self.names)
+        self.assertEqual(self.command.check_service_bundle(VERSION, self.out), _sha256(self.out / BUNDLE))
+        with zipfile.ZipFile(self.out / BUNDLE) as bundle:
+            self.assertEqual(bundle.namelist(), _service_files(ROOT, self.command.SERVICE_ROOTS))
+
+    def test_refusals_write_nothing_and_keep_what_was_there(self) -> None:
+        for case in ("inside the checkout", "already there", "bad version", "root without the flag", "root not a folder"):
+            with self.subTest(case=case):
+                if self.out.exists():
+                    shutil.rmtree(self.out)
+                if case == "inside the checkout":
+                    inside = ROOT / "hosted" / "delivery-viewer" / "node_modules" / ".service-bundle-refused"
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr):
+                        code = self.command.main(["--version", VERSION, "--out", str(inside), "--service-bundle"])
+                    self.assertEqual(code, 2)
+                    self.assertIn("outside the checkout", stderr.getvalue())
+                    self.assertFalse(inside.exists())
+                    continue
+                if case == "already there":
+                    for earlier in (BUNDLE, f"{BUNDLE}.sha256"):
+                        if self.out.exists():
+                            shutil.rmtree(self.out)
+                        self.out.mkdir()
+                        (self.out / earlier).write_bytes(b"earlier")
+                        self.assertEqual(self._bundle()[0], 2, earlier)
+                        self.assertEqual({path.name for path in self.out.iterdir()}, {earlier})
+                        self.assertEqual((self.out / earlier).read_bytes(), b"earlier")
+                elif case == "bad version":
+                    with mock.patch("sys.stderr"):
+                        self.assertEqual(self.command.main(["--version", "1.2.3", "--out", str(self.out), "--service-bundle"]), 2)
+                    self.assertFalse(self.out.exists())
+                elif case == "root without the flag":
+                    with mock.patch("sys.stderr"), self.assertRaises(SystemExit) as caught:
+                        self.command.main(["--version", VERSION, "--out", str(self.out), "--root", str(ROOT)])
+                    self.assertEqual(caught.exception.code, 2)
+                    self.assertFalse(self.out.exists())
+                else:
+                    self.assertEqual(self._bundle("--root", str(self.out.parent / "no-such-checkout"))[0], 2)
+                    self.assertFalse(self.out.exists())
+
+    def test_a_failed_build_or_recheck_leaves_neither_file(self) -> None:
+        write = self.command.write_service_bundle
+
+        def corrupt(root: Path, version: str, directory: Path) -> str:
+            digest = write(root, version, directory)
+            with (directory / f"hosted-delivery-service-{version}.zip").open("ab") as bundle:
+                bundle.write(b"\0")
+            return digest
+
+        check = self.command.check_service_bundle
+        checks = []
+
+        def refuse_after_the_rename(version: str, directory: Path) -> str:
+            checks.append(directory)
+            if len(checks) == 2:
+                raise ValueError("cut_release.service_bundle_digest: refused after the rename")
+            return check(version, directory)
+
+        not_a_checkout = Path(self.out.parent) / "not-a-checkout"
+        not_a_checkout.mkdir()
+        for case, patcher, phrase, extra in (
+            ("missing root", mock.patch.object(self.command, "SERVICE_ROOTS", (*self.command.SERVICE_ROOTS, "hosted/no-such-root/")),
+             "cut_release.service_root_missing: hosted/no-such-root/", ()),
+            ("corrupted", mock.patch.object(self.command, "write_service_bundle", corrupt), "cut_release.service_bundle_digest", ()),
+            ("after the rename", mock.patch.object(self.command, "check_service_bundle", refuse_after_the_rename),
+             "refused after the rename", ()),
+            ("not a checkout", contextlib.nullcontext(), "cut_release.service_bundle_source: git cannot list",
+             ("--root", str(not_a_checkout))),
+        ):
+            with self.subTest(case=case):
+                with patcher:
+                    code, stderr = self._bundle(*extra)
+                self.assertEqual(code, 1)
+                self.assertIn(phrase, stderr)
+                self.assertEqual(list(self.out.iterdir()), [])
+        self.assertEqual(len(checks), 2, "the output was never checked after the rename")
+
+    def test_a_link_or_submodule_under_a_root_refuses_by_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            tree = Path(temporary) / "tree"
+            (tree / "a").mkdir(parents=True)
+            (tree / "a" / "file").write_text("file\n", encoding="utf-8")
+            subprocess.run(["git", "init", "-q", str(tree)], check=True, capture_output=True)
+            quieten(tree)
+            subprocess.run(["git", "add", "a/file"], cwd=tree, check=True, capture_output=True)
+            commit = "0" * 39 + "1"
+            for case, path, where in (("a tracked link", "a/link", "in git's index"), ("a submodule", "a/sub", "in git's index"),
+                                      ("a link in the tree", "a/file", "in the tree")):
+                with self.subTest(case=case):
+                    if case == "a tracked link":
+                        os.symlink("file", tree / "a" / "link")
+                        subprocess.run(["git", "add", "a/link"], cwd=tree, check=True, capture_output=True)
+                    elif case == "a submodule":
+                        subprocess.run(["git", "rm", "-q", "--cached", "a/link"], cwd=tree, check=True, capture_output=True)
+                        (tree / "a" / "link").unlink()
+                        subprocess.run(["git", "update-index", "--add", "--cacheinfo", f"160000,{commit},a/sub"], cwd=tree,
+                                       check=True, capture_output=True)
+                    else:
+                        subprocess.run(["git", "rm", "-q", "--cached", "a/sub"], cwd=tree, check=True, capture_output=True)
+                        (tree / "a" / "file").unlink()
+                        os.symlink("/etc/hosts", tree / "a" / "file")
+                    archive = Path(temporary) / f"{path.replace('/', '-')}.zip"
+                    with mock.patch.object(self.command, "SERVICE_ROOTS", ("a/",)), self.assertRaises(ValueError) as caught:
+                        self.command.build_service_bundle(tree, archive)
+                    self.assertIn(f"cut_release.service_bundle_source: {path} is not a regular file {where}", str(caught.exception))
+
+
 class RealRunTests(unittest.TestCase):
     """One real run: the five products and every real qualifier, as the publish command calls it."""
 
@@ -423,6 +630,75 @@ class RealRunTests(unittest.TestCase):
         self.assertEqual(_git_status(), self.status_before)
         self.assertEqual(_runtime_digests(), self.runtime_before)
         self.assertEqual(list((ROOT / "skills").rglob("__pycache__")), [])
+
+    def test_the_bundle_digest_is_its_written_bytes(self) -> None:
+        self.assertEqual(self.result.returncode, 0, self.result.stdout + self.result.stderr)
+        self.assertEqual((self.out / f"{BUNDLE}.sha256").read_text(encoding="utf-8"), f"{_sha256(self.out / BUNDLE)}  {BUNDLE}\n")
+
+    def test_the_bundle_holds_the_tracked_service_files_with_fixed_entries(self) -> None:
+        self.assertEqual(self.result.returncode, 0, self.result.stdout + self.result.stderr)
+        roots = _load_command().SERVICE_ROOTS
+        with zipfile.ZipFile(self.out / BUNDLE) as bundle:
+            entries = bundle.infolist()
+            names = [entry.filename for entry in entries]
+            self.assertEqual(names, sorted(names))
+            self.assertEqual(names, _service_files(ROOT, roots))
+            for entry in entries:
+                with self.subTest(entry=entry.filename):
+                    self.assertEqual(entry.date_time, BUNDLE_DATE_TIME)
+                    self.assertEqual(entry.external_attr, BUNDLE_EXTERNAL_ATTR)
+                    self.assertEqual(bundle.read(entry), (ROOT / entry.filename).read_bytes())
+        # The spec, and the conformance package's entry points, which its package.json names.
+        package = json.loads((ROOT / "hosted/conformance/package.json").read_text(encoding="utf-8"))
+        for required in ("hosted/protocol/hosted-delivery-api-1.md",
+                         *(f"hosted/conformance/{Path(entry).name}" for entry in (*package["bin"].values(), package["exports"]["."]))):
+            self.assertIn(required, names)
+        for root in roots:
+            self.assertTrue(any(name == root or (root.endswith("/") and name.startswith(root)) for name in names), root)
+
+    def test_the_bundle_roots_are_the_service_workflow_triggers_less_the_workflow(self) -> None:
+        workflow = json.loads((ROOT / WORKFLOW).read_text(encoding="utf-8"))
+        roots = list(_load_command().SERVICE_ROOTS)
+        for event in ("pull_request", "push"):
+            with self.subTest(event=event):
+                triggers = [path.removesuffix("**") for path in workflow["on"][event]["paths"] if path != WORKFLOW]
+                self.assertEqual(triggers, roots)
+
+    def test_a_copy_with_other_mtimes_a_mode_bit_and_stray_files_gives_identical_bundle_bytes(self) -> None:
+        self.assertEqual(self.result.returncode, 0, self.result.stdout + self.result.stderr)
+        command = _load_command()
+        with tempfile.TemporaryDirectory() as temporary:
+            copy = Path(temporary) / "tree"
+            for name in (".gitignore", *_service_files(ROOT, command.SERVICE_ROOTS)):
+                (copy / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / name, copy / name)
+            subprocess.run(["git", "init", "-q", str(copy)], check=True, capture_output=True)
+            quieten(copy)
+            subprocess.run(["git", "add", "-A"], cwd=copy, check=True, capture_output=True)
+            # What a checkout picks up that the bundle must not: an untracked file, bytecode, and a file the
+            # tree's .gitignore ignores even though someone forced it into the index.
+            strays = {
+                "hosted/protocol/untracked.md": b"untracked\n",
+                "skills/delivery-views/scripts/__pycache__/render.cpython-311.pyc": b"bytecode",
+                "hosted/delivery-viewer/node_modules/forced.js": b"ignored\n",
+            }
+            for name, contents in strays.items():
+                (copy / name).parent.mkdir(parents=True, exist_ok=True)
+                (copy / name).write_bytes(contents)
+            subprocess.run(["git", "add", "-f", "hosted/delivery-viewer/node_modules/forced.js"], cwd=copy, check=True,
+                           capture_output=True)
+            changed = 1_000_000_000
+            for path in copy.rglob("*"):
+                if ".git" not in path.relative_to(copy).parts:
+                    os.utime(path, (changed, changed))
+            spec = copy / "hosted/protocol/hosted-delivery-api-1.md"
+            spec.chmod(spec.stat().st_mode ^ 0o100)
+            again = Path(temporary) / BUNDLE
+            digest = command.build_service_bundle(copy, again)
+            with zipfile.ZipFile(again) as bundle:
+                self.assertEqual(set(bundle.namelist()) & set(strays), set())
+            self.assertEqual(again.read_bytes(), (self.out / BUNDLE).read_bytes())
+            self.assertEqual(digest, _sha256(self.out / BUNDLE))
 
 
 def _git_status() -> str:
