@@ -830,6 +830,23 @@ class HostedServiceBoundaryTests(unittest.TestCase):
         self.assertNotIn('wrangler',root.get('devDependencies',{}))
         self.assertNotIn('playwright',root.get('devDependencies',{}))
 
+    def test_browser_check_runs_chromium_against_both_servers(self):
+        # hosted.browser and the fast job run `npm run test:browser`: it must reach the portable server and the
+        # real-publisher spec, which skips itself against the Worker.
+        scripts=json.loads((ROOT/'hosted/delivery-viewer/package.json').read_text())['scripts']
+        self.assertEqual(scripts['test:browser'],
+                         'npm run build && npm run build:node && playwright test && playwright test -c playwright.node.config.ts')
+
+    @unittest.skipUnless(shutil.which('node'),'needs Node')
+    def test_container_check_without_docker_is_unavailable_not_passed(self):
+        with tempfile.TemporaryDirectory() as empty:
+            done=subprocess.run([shutil.which('node'),'test/conformance/container.mjs'],cwd=ROOT/'hosted/delivery-viewer',
+                                env={'PATH':empty,'HOME':empty},capture_output=True,text=True,timeout=60)
+        self.assertEqual(done.returncode,3,done.stderr)
+        self.assertIn('the container check is unavailable',done.stderr)
+        self.assertIn('(not passed)',done.stderr)
+        self.assertEqual(done.stdout,'')
+
     def test_service_readers_resolve_dependencies_without_loading_service_for_other_changes(self):
         tool=_generation_module('hosted_selection',STATE_TOOL)
         binding=json.loads((ROOT/'.agents/orchestration.json').read_text())
