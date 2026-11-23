@@ -81,6 +81,14 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " must read its reply before it sends FIN.",
         "No local build of the image is recorded: the image is first built and run in the service CI's container job.",
         "An origin that passes both tiers is a valid origin.",
+        "SQLite's exclusive lock and the blob store's `link()` need local block-device semantics. Give the service a"
+        " disk that one machine mounts:",
+        "AWS: an EBS volume attached to the EC2 instance; - GCP: a Persistent Disk or Hyperdisk attached to the Compute"
+        " Engine VM; - Azure: a managed disk attached to the VM;",
+        "edit `publishers.json` in place, or run `docker compose restart deliveries` after replacing it",
+        "node hosted/conformance/cli.mjs --origin https://deliveries.example.com --credentials credentials.json"
+        " node hosted/conformance/cli.mjs --origin https://deliveries.example.com --credentials credentials.json --slow",
+        "`hosted.browser`, `hosted.conformance`, `hosted.node-test` and `hosted.conformance-node` for those readers",
     ),
     "docs/product-generation.md": (
         "Tag a commit merged to `main`; a merge commit is the usual one",
@@ -432,6 +440,14 @@ class DeclaredMechanicsCorpusTests(unittest.TestCase):
                     release_id="invalid-source-v1",
                     profile_id="core",
                 )
+
+    def test_the_hosting_guide_names_exactly_the_bindings_hosted_checks(self) -> None:
+        import json
+
+        catalogue = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))["selection"]["catalogue"]
+        bound = {row["id"] for row in catalogue if row["id"].startswith("hosted.")}
+        named = set(re.findall(r"`(hosted\.[a-z-]+)`", (ROOT / "docs/hosted-deliveries.md").read_text(encoding="utf-8")))
+        self.assertEqual(named, bound)
 
     def test_each_declaration_is_red_for_exactly_itself(self) -> None:
         texts = corpus_texts(ROOT)

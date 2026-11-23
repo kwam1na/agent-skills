@@ -150,7 +150,11 @@ volumes:
 ```
 
 Only the proxy publishes ports, and the service is reached only through it.
-`publishers.json` must be readable by uid 1000. Run exactly one `deliveries`
+`publishers.json` must be readable by uid 1000. The secret is a bind mount of
+that one file, so a replacement written by rename, as many editors and `mv`
+save, is never seen by the running container: edit `publishers.json` in place,
+or run `docker compose restart deliveries` after replacing it, before a rotation
+or revocation takes effect. Run exactly one `deliveries`
 container. A second one on the same volume stops at startup with
 `hosted.data_dir_in_use`, and nothing supports more than one instance. The server
 prints one line when it listens and logs nothing per request. For a health check,
