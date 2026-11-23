@@ -1,8 +1,10 @@
 # Hosted deliveries
 
 A repository may publish its delivery to a signed-out capability link, where it
-reads as the local live view does. Local delivery state remains authoritative. The Worker package in
-`hosted/delivery-viewer/` is deployed separately from portable workflow archives.
+reads as the local live view does. Local delivery state remains authoritative. The service in
+`hosted/delivery-viewer/` runs as a Cloudflare Worker or as a portable container, and any service that
+conforms to `hosted-delivery-api/1` is a valid origin (see [Choose a host](#choose-a-host)). It is
+deployed separately from portable workflow archives.
 No live proof is claimed by packaging, source tests, local receivers or service CI.
 
 ## Install and configure
@@ -50,6 +52,163 @@ identity/receipt sidecars with their record for same-link recovery; keep them ou
 of release archives and public exports. Never copy one repository's sidecars to
 another. Consult the installed skill for `retry`, terminal deadline and recovery.
 
+## Choose a host
+
+A publisher needs only an origin that speaks `hosted-delivery-api/1`, specified
+in `hosted/protocol/hosted-delivery-api-1.md`. Any service that conforms to it is
+a valid origin, whoever runs it and wherever. The publisher's rules for the origin
+stay the same everywhere: an explicit HTTPS DNS origin on port 443 with no path.
+There are three ways to provide one:
+
+- **Cloudflare.** The Worker in `hosted/delivery-viewer/`, deployed as the
+  [reviewed production procedure](#reviewed-production-procedure) describes, with
+  publishers managed as in [Manage a publisher](#manage-a-publisher).
+- **The portable container.** The same service core over SQLite and a local
+  filesystem, one process on one volume, built from the release's service bundle.
+- **Your own implementation.** Any server that passes the conformance suite in
+  `hosted/conformance/`.
+
+Each path keeps capability links out of logs. A delivery link's capability sits
+in its URL path, so whatever terminates TLS in front of the service must have its
+access logging off or path-free.
+
+### The portable container
+
+Each release carries `hosted-delivery-service-<version>.zip` and
+`hosted-delivery-service-<version>.zip.sha256`: the service's source, lockfile and
+Dockerfile, the protocol spec and the conformance suite, with every file at its
+repository path. Use the bundle from the same release as the generation you
+applied, because the publisher, the snapshot schema and the service move
+together. Nothing is pushed to a container registry: build the image yourself
+from bytes you have checked.
+
+```sh
+gh release download <version> --repo kwam1na/agent-skills --pattern 'hosted-delivery-service-*'
+shasum -a 256 -c hosted-delivery-service-<version>.zip.sha256
+mkdir hosted-delivery-service && unzip -q hosted-delivery-service-<version>.zip -d hosted-delivery-service
+cd hosted-delivery-service
+docker build -f hosted/delivery-viewer/Dockerfile -t hosted-delivery-service:<version> .
+```
+
+The digest must also equal the one the release notes list under "Service
+bundle". Stop if either check fails. The build runs from the root of the
+extracted bundle. Its two stages share one Node base pinned by digest. The
+runtime image holds only Node and the built server, runs as the non-root `node`
+user (uid 1000) on a read-only root filesystem, and keeps its data under `/data`.
+
+**Publishers.** Give each repository its own ID and token.
+`provision-token` prints a new token once, 256 random bits as unpadded
+base64url, and the `PUBLISHERS` entry that accepts it, the token's SHA-256
+digest. Nothing is stored.
+
+```sh
+docker run --rm --read-only hosted-delivery-service:<version> provision-token REPOSITORY_ID
+```
+
+Put the token in the adopter's secret store under its `tokenEnv` name, and keep
+it out of shell history and logs. Add the entry to `publishers.json`, one JSON
+object mapping every repository ID to its digest. Point `PUBLISHERS_FILE` at that
+file. The server reads the file on every check, so a new entry, a rotation (run
+`provision-token` again and replace the entry) or a revocation (remove the entry)
+takes effect at the next request with no restart. A file that cannot be read
+denies every write. `PUBLISHERS`, the same map inline, is the alternative.
+Exactly one of the two is set.
+
+**A VPS recipe.** One host with Docker Compose, the service on a local volume,
+and Caddy terminating TLS. Caddy writes no access log unless a `log` directive
+asks for one, so this Caddyfile has none:
+
+```text
+deliveries.example.com {
+	reverse_proxy deliveries:8080
+}
+```
+
+```yaml
+services:
+  deliveries:
+    image: hosted-delivery-service:<version>
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      PUBLISHERS_FILE: /run/secrets/publishers
+    secrets: [publishers]
+    volumes: ["deliveries:/data"]
+    restart: unless-stopped
+  proxy:
+    image: caddy:2 # pin the image by digest
+    ports: ["80:80", "443:443"]
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy-data:/data"]
+    restart: unless-stopped
+secrets:
+  publishers:
+    file: ./publishers.json
+volumes:
+  deliveries: {}
+  caddy-data: {}
+```
+
+Only the proxy publishes ports, and the service is reached only through it.
+`publishers.json` must be readable by uid 1000. Run exactly one `deliveries`
+container. A second one on the same volume stops at startup with
+`hosted.data_dir_in_use`, and nothing supports more than one instance. The server
+prints one line when it listens and logs nothing per request. For a health check,
+read the fixed `{"error":"not_found"}` 404 that `GET /` answers; there is no
+health route. SIGTERM stops it gracefully. Back up the volume while the service
+is stopped.
+
+**Volumes.** SQLite's exclusive lock and the blob store's `link()` need local
+block-device semantics. Give the service a disk that one machine mounts:
+
+- AWS: an EBS volume attached to the EC2 instance;
+- GCP: a Persistent Disk or Hyperdisk attached to the Compute Engine VM;
+- Azure: a managed disk attached to the VM;
+- your own hardware: a local disk or SSD;
+- Kubernetes: one replica on a ReadWriteOnce volume backed by one of those disks,
+  replaced rather than rolled, so two pods never share it.
+
+**Unsupported filesystems.** Network filesystems are unsupported: AWS EFS, Azure
+Files, Cloud Run volume mounts, GCS FUSE and NFS. Nothing detects them, so the
+choice of disk is yours to get right.
+
+**Connections.** The server speaks plain HTTP behind the proxy and never reads
+`Host` or `X-Forwarded-*`. It bounds headers, requests, keep-alive and the number
+of connections. A request that fails before it reaches the service closes the
+socket with no bytes written. Like Node's own HTTP server, it closes a half-closed
+connection whose response is still pending. A client must read its reply before
+it sends FIN.
+
+**What is proven.** `hosted.node-test` and `hosted.browser` run the portable
+server built from source. `hosted.conformance-node` builds it from an extracted
+service bundle and runs the conformance suite's fast tier against it. That is
+source and fixture proof. The container check,
+`node test/conformance/container.mjs`, needs Docker, and it reports itself
+unavailable where Docker is missing. No local build of the image is recorded: the
+image is first built and run in the service CI's container job. A deployment on a
+real host, with an installed adopter publishing to it over HTTPS, is live
+acceptance.
+
+### Your own implementation
+
+Implement `hosted-delivery-api/1` as the spec states it, the failures it names
+before a request reaches the service included, and prove it with the conformance
+suite. The suite is a Node package with no dependencies, and it ships in the
+service bundle. Point it at an origin whose deliveries are disposable, with two
+repository credentials the origin accepts:
+
+```sh
+node hosted/conformance/cli.mjs --origin https://deliveries.example.com --credentials credentials.json
+node hosted/conformance/cli.mjs --origin https://deliveries.example.com --credentials credentials.json --slow
+```
+
+The fast tier covers every route, error code, header rule, size bound,
+idempotency rule, fencing rule and the anonymous read surface in seconds. `--slow`
+adds lease expiry, resume, takeover and staleness, in real time. An origin that
+passes both tiers is a valid origin. The suite pins the API, snapshot and renderer
+versions, so run the suite from the same release as the generation your
+publishers apply.
+
 ## What a hosted link shows
 
 A hosted link shows what the local live view shows, from the same record: every
@@ -76,8 +235,14 @@ locked install, typecheck, build, Worker/DOM and Chromium tests from its directo
 The build is dry-run only. Root page-test manifests stay independent. Dedicated
 CI triggers for service files, trusted corpus assets/theme source, shared schema
 and shared fixtures. The binding selects `hosted.install`, `hosted.typecheck`,
-`hosted.build`, `hosted.test`, `hosted.browser-install` and `hosted.browser` for
-those readers. A local merge runner needs supported Node on PATH and Chromium's
+`hosted.build`, `hosted.test`, `hosted.browser-install`, `hosted.browser`,
+`hosted.conformance`, `hosted.node-test` and `hosted.conformance-node` for those
+readers, the protocol spec and the conformance suite among them.
+`hosted.conformance` runs the fast tier against the Worker, and its planted-failure
+copies must each fail it. `hosted.conformance-node` builds the portable server
+from an extracted service bundle and runs the fast tier against it. The service
+CI adds the slow tier for both servers and the container check, each in its own
+job. A local merge runner needs supported Node on PATH and Chromium's
 OS prerequisites; CI installs those with Playwright. No Python suite implicitly
 installs the service package. The lead verifies this separate service job at the
 exact main-push commit before release/deploy; the publish command reads no CI
@@ -165,6 +330,8 @@ Record separate identities and results, without secret values:
   pass at it and service CI, annotated candidate tag, archive and metadata digests, applied active receipt.
 - Exact deployed bytes: reviewed source SHA, Wrangler version, dry-run Worker and
   asset digests, actual Worker version/deployment ID, domain and storage bindings.
+  For the portable container: the service bundle's sha256, the built image's
+  digest, the host and its block volume, and the proxy's logging setting.
 - Live acceptance: two repositories with matching delivery names, an unrelated
   signed-out device, healthy update cadence, disconnect and retained stale view,
   reconnect/catch-up at the same URL, interrupted upload/restart without regression,

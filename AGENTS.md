@@ -29,7 +29,7 @@ may be deleted to clear that guard, which is neither. After pushing the tag, pub
 from your machine with `python3 scripts/release_channel.py publish --tag <tag>` at the repository root. It
 builds the tagged tree with `cut-release` in a fresh Python 3.11 environment and publishes
 a GitHub release of the same name, carrying its verified product archives, release files
-and records; that release is the channel adopters download from. A release edits no file in the repository and
+and records, and the hosted delivery service bundle with its `.sha256`; that release is the channel adopters download from. A release edits no file in the repository and
 needs no live tracker run. Older set-named tags remain, frozen in place with their
 checked-in bytes, and are not version tags, so the publish command refuses them.
 

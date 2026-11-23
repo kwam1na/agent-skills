@@ -997,7 +997,10 @@ in the named environment variable:
 ```
 
 The origin takes no credentials, query, fragment, non-default port or path other
-than `/`. Publishing is disabled without this member. Do not use a Cloudflare
+than `/`. Publishing is disabled without this member. Any service that conforms
+to `hosted-delivery-api/1` is a valid origin: the Cloudflare Worker, the portable
+container built from the release's service bundle, or your own implementation
+that passes the conformance suite. Do not use a Cloudflare
 account-management credential. The transport follows no redirects and ignores
 proxy environment configuration. HTTP is available only through an injected
 loopback fixture transport, never production configuration or CLI.
