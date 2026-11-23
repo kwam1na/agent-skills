@@ -2,11 +2,18 @@
 // through the core's own Deliveries with deterministic interleaving and an injected clock. Each store runs it:
 // test/storage-contract.test.ts against the Durable Object store and R2.
 import { describe, expect, it } from 'vitest';
-import { Deliveries, type Session } from '../../src/core/deliveries';
+import { Deliveries, endpoint, type Session } from '../../src/core/deliveries';
+import { createService } from '../../src/core/service';
 import type { BlobStore, MetadataStore, MetadataTransaction } from '../../src/core/ports';
-import { ApiError, LEASE_MS, RENDERER, STALE_MS, type Commit } from '../../src/protocol';
+import { ApiError, LEASE_MS, RENDERER, STALE_MS, digest, type Commit } from '../../src/protocol';
+import { cases } from '../fixtures.generated';
 
-export interface Stores { metadata: MetadataStore; blobs: BlobStore }
+export interface Stores {
+  metadata: MetadataStore;
+  blobs: BlobStore;
+  /** The store's raw persisted metadata (its tables, rows or files), read past the MetadataStore interface. */
+  persisted(): unknown[];
+}
 /** Runs one scenario with stores for the delivery `publicId`, inside whatever context the stores need. */
 export type Harness = (publicId: string, scenario: (stores: Stores) => Promise<void>) => Promise<void>;
 
@@ -65,10 +72,13 @@ export function storageContract(name: string, harness: Harness) {
       const id = publicId();
       await harness(id, async ({ metadata, blobs }) => {
         const clock = { time: 1_000_000, now() { return this.time; } };
+        const plain = new Deliveries(metadata, blobs, clock);
+        plain.session(id, REPO, acquire);
+        const acknowledged = cut(1, 1);
+        const original = await plain.commit(id, REPO, acknowledged.commit, acknowledged.fingerprint, acknowledged.bytes);
         const held = holding(blobs);
         const deliveries = new Deliveries(metadata, held.store, clock);
-        deliveries.session(id, REPO, acquire);
-        const stale = cut(1, 1);
+        const stale = cut(1, 2);
         const pending = code(() => deliveries.commit(id, REPO, stale.commit, stale.fingerprint, stale.bytes));
         await held.started;
         clock.time += LEASE_MS;
@@ -78,8 +88,11 @@ export function storageContract(name: string, harness: Harness) {
         held.release();
         expect(await pending).toBe('writer_fenced');
         expect(deliveries.current(id).digest).toBe(accepted.digest);
-        expect(metadata.transact(id, tx => tx.accepted(1, 1))).toBeUndefined();
+        expect(metadata.transact(id, tx => tx.accepted(1, 2))).toBeUndefined();
         expect(await code(() => deliveries.snapshot(id, stale.commit.digest))).toBe('not_found');
+        // The displaced writer's exact retry of an acknowledged commit still answers its original receipt.
+        expect(await deliveries.commit(id, REPO, acknowledged.commit, acknowledged.fingerprint, acknowledged.bytes)).toEqual(original);
+        expect(deliveries.current(id).digest).toBe(accepted.digest);
       });
     });
 
@@ -164,13 +177,14 @@ export function storageContract(name: string, harness: Harness) {
 
     it('creates no state for reads of an unknown public id', async () => {
       const id = publicId();
-      await harness(id, async ({ metadata, blobs }) => {
+      await harness(id, async ({ metadata, blobs, persisted }) => {
         const deliveries = new Deliveries(metadata, blobs, { now: () => 6_000_000 });
         expect(await code(() => deliveries.current(id))).toBe('not_found');
         expect(await code(() => deliveries.snapshot(id, hex(1)))).toBe('not_found');
         expect(await code(() => deliveries.status(id, REPO))).toBe('not_found');
         expect(await code(() => deliveries.session(id, REPO, { ...acquire, mode: 'resume', epoch: 1 }))).toBe('not_found');
         expect(metadata.transact(id, tx => tx.row())).toBeUndefined();
+        expect(persisted()).toEqual([]);
       });
     });
 
@@ -187,6 +201,8 @@ export function storageContract(name: string, harness: Harness) {
         clock.time += 1;
         expect(deliveries.current(id).stale).toBe(true);
         expect(deliveries.confirm(id, REPO, first.commit, first.fingerprint).leaseUntil).toBe(clock.time + LEASE_MS);
+        // The renewal is stored, not only answered.
+        expect(deliveries.status(id, REPO).leaseUntil).toBe(clock.time + LEASE_MS);
         expect(deliveries.current(id).stale).toBe(false);
         clock.time += LEASE_MS;
         const later = cut(1, 2);
@@ -197,6 +213,37 @@ export function storageContract(name: string, harness: Harness) {
         clock.time += LEASE_MS;
         expect(deliveries.session(id, REPO, { mode: 'takeover', deliveryKey: 'APP-1', ownerId: other, epoch: 2 })).toMatchObject({ epoch: 3, ownerId: other });
         expect(await code(() => deliveries.session(id, REPO, { mode: 'resume', deliveryKey: 'APP-1', ownerId: owner, epoch: 2 }))).toBe('writer_fenced');
+        // Displaced twice, the first writer's exact retry still answers its original receipt.
+        expect(await deliveries.commit(id, REPO, first.commit, first.fingerprint, first.bytes)).toEqual(receipt);
+      });
+    });
+
+    it('serves the protocol through the core service over an in-process endpoint', async () => {
+      const id = publicId();
+      await harness(id, async ({ metadata, blobs }) => {
+        const token = 'contract-token-'.padEnd(43, 'x');
+        const expected = await digest(new TextEncoder().encode(token));
+        const deliveries = new Deliveries(metadata, blobs, { now: () => 8_000_000 });
+        const service = createService({ deliveries: publicId => endpoint(deliveries, publicId),
+          publishers: { expected: async repository => repository === REPO ? expected : null } });
+        const send = (path: string, init: RequestInit = {}, headers: Record<string, string> = {}) =>
+          service.fetch(new Request(`https://service.test${path}`, { ...init,
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...headers } }));
+        const api = (action: string) => `/api/v1/repos/${REPO}/deliveries/${id}/${action}`;
+        expect((await send(api('session'), { method: 'POST', body: JSON.stringify(acquire) })).status).toBe(200);
+        const body = JSON.stringify(cases.find(row => row.valid)!.body);
+        const hash = await digest(new TextEncoder().encode(body));
+        const envelope = { 'X-Writer-Epoch': '1', 'X-Snapshot-Sequence': '1', 'X-Snapshot-Digest': hash, 'X-Renderer-Version': RENDERER };
+        const committed = await send(api('snapshots'), { method: 'POST', body }, envelope);
+        expect(committed.status).toBe(200);
+        const receipt = await committed.json() as { digest: string; sourceFingerprint: string };
+        expect(receipt.digest).toBe(hash);
+        expect(await (await send(api('status'))).json()).toMatchObject({ epoch: 1, sequence: 1, receipt });
+        const confirmed = await send(api('confirm'), { method: 'POST', body: JSON.stringify({ sourceFingerprint: receipt.sourceFingerprint }) }, envelope);
+        expect(await confirmed.json()).toMatchObject({ sourceConfirmedAt: 8_000_000, leaseUntil: 8_000_000 + LEASE_MS, receipt });
+        expect(await (await send(`/d/${id}/current`)).json()).toMatchObject({ digest: hash, stale: false });
+        expect(await (await send(`/d/${id}/snapshots/${hash}`)).text()).toBe(body);
+        expect((await send(`/api/v1/repos/other-repo/deliveries/${id}/status`)).status).toBe(401);
       });
     });
   });
