@@ -17,7 +17,7 @@
     "push": {
       "branches": [
         "main",
-        "integrate/hosted-deliveries"
+        "integrate/**"
       ],
       "paths": [
         "hosted/delivery-viewer/**",

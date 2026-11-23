@@ -38,7 +38,8 @@ CATALOGUE_MODULES = (
     "run_tests", "runless_reviews", "suite_budget", "test_dependency_guard", "test_environment", "tracker_contract", "update_provenance",
     "validate", "siblings", "waits", "waits_review", "workflow_graph_contract", "workflow_observation", "workflows",
 )
-CATALOGUE_IDS = tuple("tests.test_" + name for name in CATALOGUE_MODULES)
+# The binding lists them in canonical order, which the integration recipe relies on to insert a check.
+CATALOGUE_IDS = tuple(sorted("tests.test_" + name for name in CATALOGUE_MODULES))
 # Test modules left out of the catalogue on purpose, each as (module name, why): none today.
 UNCATALOGUED_MODULES: tuple[tuple[str, str], ...] = ()
 # A change to any test module brings the guard below, so a module added without its entry fails in the queue.
@@ -767,7 +768,7 @@ class HostedServiceBoundaryTests(unittest.TestCase):
     def test_service_ci_and_catalogue_keep_dependencies_in_the_service(self):
         workflow=json.loads((ROOT/'.github/workflows/hosted-delivery-viewer.yml').read_text())
         self.assertEqual(workflow['permissions'],{'contents':'read'})
-        self.assertEqual(workflow['on']['push']['branches'],['main','integrate/hosted-deliveries'])
+        self.assertEqual(workflow['on']['push']['branches'],['main','integrate/**'])
         required=['hosted/delivery-viewer/**','hosted/protocol/**','hosted/conformance/**','skills/delivery-views/assets/**',
                   'skills/delivery-views/scripts/render.py',
                   'skills/delivery-views/references/hosted-snapshot.schema.json',
@@ -811,6 +812,14 @@ class HostedServiceBoundaryTests(unittest.TestCase):
                   ['npm','test'],['env','PLAYWRIGHT_SKIP_BROWSER_GC=1','npx','playwright','install','chromium'],['npm','run','test:browser'],
                   ['node','test/conformance/check.mjs'],['npm','run','test:node'],['node','test/conformance/bundle.mjs']]
         for key,argv in zip(SERVICE_IDS,expected,strict=True):self.assertEqual(rows[key]['argv'],argv,key)
+        # Every field of a hosted row is pinned, so a hand-built restore can't change a timeout or add a field unnoticed.
+        for key in SERVICE_IDS:
+            self.assertEqual(sorted(rows[key]),['argv','cwd','id','prerequisites','reasons','timeoutSeconds'],key)
+            self.assertEqual(rows[key]['timeoutSeconds'],1200,key)
+            self.assertTrue(rows[key]['reasons'] and all(isinstance(reason,str) and reason for reason in rows[key]['reasons']),key)
+        # The integration recipe inserts by canonical order, so the binding's own Python checks stay sorted.
+        python_ids=[entry['id'] for entry in binding['selection']['catalogue'] if entry['id'].startswith('tests.')]
+        self.assertEqual(python_ids,sorted(python_ids))
         self.assertEqual(rows['hosted.typecheck']['prerequisites'],['hosted.install'])
         self.assertEqual(rows['hosted.build']['prerequisites'],['hosted.install'])
         self.assertEqual(rows['hosted.test']['prerequisites'],['hosted.install'])
@@ -856,11 +865,15 @@ class HostedServiceBoundaryTests(unittest.TestCase):
                         'skills/delivery-views/scripts/render.py',
                         'skills/delivery-views/references/hosted-snapshot.schema.json',
                         'tests/fixtures/delivery-views/hosted/valid-plan-review.json',
-                        '.github/workflows/hosted-delivery-viewer.yml','docs/own-deliveries.md'):
+                        '.github/workflows/hosted-delivery-viewer.yml','docs/own-deliveries.md',
+                        # The service bundle's builder is covered by tests.test_cut_release; by the delivery's decision it
+                        # brings no hosted check.
+                        'scripts/cut-release.py'):
             with self.subTest(changed=changed):
                 checks,_=tool.resolve_selection([],binding,lambda:[changed])
                 ids={row['id'] for row in checks}
-                self.assertEqual(set(SERVICE_IDS).issubset(ids),changed!='docs/own-deliveries.md')
+                self.assertEqual(set(SERVICE_IDS).issubset(ids),changed not in ('docs/own-deliveries.md','scripts/cut-release.py'))
+                if changed=='scripts/cut-release.py':self.assertFalse(set(SERVICE_IDS)&ids)
                 for row in checks:self.assertLessEqual(set(row['prerequisites']),ids)
 
     def test_integration_recipe_carries_only_named_checks_and_refuses_collisions(self):
