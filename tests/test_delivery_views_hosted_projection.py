@@ -408,3 +408,18 @@ class WithdrawnRuleTests(unittest.TestCase):
             with self.subTest(file=name):
                 self.assertRegex(flat, r'what the local live view shows')
                 self.assertRegex(flat, r'(configured secret|credential)')
+
+    def test_any_conforming_service_is_said_to_be_a_valid_origin(self):
+        page = ' '.join((ROOT / 'skills/delivery-views/SKILL.md').read_text(encoding='utf-8').split())
+        self.assertIn('Publishing is disabled without this member. Any service that conforms to `hosted-delivery-api/1`'
+                      ' is a valid origin: the Cloudflare Worker, the portable container built from the release\'s'
+                      ' service bundle, or your own implementation that passes the conformance suite.', page)
+        sentence = ('Any service that conforms to hosted-delivery-api/1 is a valid hosted origin: the Cloudflare Worker,'
+                    ' the portable container built from the release\'s verified service bundle, or one\'s own'
+                    ' implementation that passes the conformance suite.')
+        texts = {name: text for name, text in hosted_sections().items()
+                 if name == 'catalog degradedBehavior' or name.startswith('profiles/')}
+        self.assertEqual(len(texts), 5)
+        for name, text in texts.items():
+            with self.subTest(file=name):
+                self.assertIn(sentence, text)

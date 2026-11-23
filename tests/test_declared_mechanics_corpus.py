@@ -69,6 +69,18 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
     "docs/hosted-deliveries.md": (
         "the publish command reads no CI result, and the local suite before a tag does not attest service CI",
+        # Choose a host: the three paths, the bundle an adopter checks and the rules a portable host keeps.
+        "Any service that conforms to it is a valid origin, whoever runs it and wherever.",
+        "whatever terminates TLS in front of the service must have its access logging off or path-free",
+        "shasum -a 256 -c hosted-delivery-service-<version>.zip.sha256",
+        "docker build -f hosted/delivery-viewer/Dockerfile -t hosted-delivery-service:<version> .",
+        "Use the bundle from the same release as the generation you applied",
+        "docker run --rm --read-only hosted-delivery-service:<version> provision-token REPOSITORY_ID",
+        "Network filesystems are unsupported: AWS EFS, Azure Files, Cloud Run volume mounts, GCS FUSE and NFS.",
+        "Like Node's own HTTP server, it closes a half-closed connection whose response is still pending. A client"
+        " must read its reply before it sends FIN.",
+        "No local build of the image is recorded: the image is first built and run in the service CI's container job.",
+        "An origin that passes both tiers is a valid origin.",
     ),
     "docs/product-generation.md": (
         "Tag a commit merged to `main`; a merge commit is the usual one",
@@ -113,6 +125,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Nothing here reads a `.env`, this repository's or another's.",
     ),
     "AGENTS.md": (
+        "carrying its verified product archives, release files and records, and the hosted delivery service bundle"
+        " with its `.sha256`",
         "`docs/solutions/` holds what past deliveries learned, one note per learning at"
         " `docs/solutions/<category>/<slug>-<YYYY-MM-DD>.md`",
         "On Windows, which is not validated (see above), use `.venv\\Scripts\\python.exe`",
