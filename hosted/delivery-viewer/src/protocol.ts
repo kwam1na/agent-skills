@@ -1,6 +1,10 @@
 import validateSchema from './generated-validator.js';
 
+export const API_VERSION = 'hosted-delivery-api/1';
 export const MAX_BYTES = 16 * 1024 * 1024;
+export const MAX_SESSION_BYTES = 2048;
+export const MAX_CONFIRM_BYTES = 1024;
+export const MAX_NESTING = 64;
 export const LEASE_MS = 180_000;
 export const STALE_MS = 120_000;
 export const RENDERER = 'delivery-line-map/3';
@@ -67,7 +71,7 @@ export function parse(bytes: Uint8Array): unknown {
       else if (c === 92) escape = true;
       else if (c === 34) quoted = false;
     } else if (c === 34) quoted = true;
-    else if (c === 123 || c === 91) { if (++depth > 64) fail('invalid_json'); }
+    else if (c === 123 || c === 91) { if (++depth > MAX_NESTING) fail('invalid_json'); }
     else if (c === 125 || c === 93) depth--;
   }
   try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }

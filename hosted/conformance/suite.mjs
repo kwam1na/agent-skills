@@ -519,6 +519,10 @@ async function refusedRequests(h) {
         "Access-Control-Request-Method": "POST" }, body: Buffer.from("{}") });
       refused(response, 404, "not_found", `${method} ${path}`);
     }
+  // A bare trailing "?" carries no query: it reads as the same route without it.
+  const strip = (value) => ({ ...value, serverNow: 0, stale: false });
+  same(strip(ok(await h.read(`/d/${id}/current?`), "current with a bare trailing ?")), strip(ok(await h.read(`/d/${id}/current`), "current")),
+    "a bare trailing ? reads as no query");
   const head = await h.read(`/d/${id}/current`, { method: "HEAD" });
   check(!head.closed && head.status === 404, `HEAD on a read route is refused, got ${described(head)}`);
   same(ok(await h.status(h.first, id), "status").receipt, one.receipt, "no refused request changed the delivery");

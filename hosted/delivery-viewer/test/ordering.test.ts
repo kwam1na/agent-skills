@@ -1,39 +1,16 @@
-import { env } from 'cloudflare:workers';
 import { evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { describe, it, expect, vi } from 'vitest';
 import { id, session, upload, current, sql, expire, fixture, pauseR2, stub, request, route, owner } from './helpers';
-import { RENDERER, digest, type Receipt } from '../src/protocol';
+import { RENDERER, type Receipt } from '../src/protocol';
 
 async function receipt(response: Response): Promise<Receipt> { expect(response.status).toBe(200); return response.json() as Promise<Receipt>; }
 async function confirm(publicId: string, value: Receipt, fingerprint = value.sourceFingerprint, extra: Record<string,unknown> = {}) {
   return request(route(publicId, 'confirm'), {method:'POST', headers: {'X-Renderer-Version':RENDERER, 'X-Writer-Epoch':String(value.epoch), 'X-Snapshot-Sequence':String(value.sequence), 'X-Snapshot-Digest':value.digest}, body:JSON.stringify({sourceFingerprint:fingerprint,...extra}) });
 }
 
+// Fencing after the blob write, lease expiry during it, rollback at the commit boundary and one receipt for exact
+// retries are the core storage contract's rows: test/contract/storage.ts, run in test/storage-contract.test.ts.
 describe('persistent commit ordering', () => {
-  it('fences an old epoch after its R2 await without publishing staged bytes', async () => {
-    const publicId = id(); await session(publicId);
-    const original = await receipt(await upload(publicId));
-    const oldBody = fixture(); oldBody.sourceFingerprint = '2'.repeat(64);
-    const pause = await pauseR2(publicId);
-    const delayed = upload(publicId, 2, oldBody);
-    try {
-      await pause.entered;
-      expect((await current(publicId)).status).toBe(200);
-      await expire(publicId);
-      expect((await session(publicId, {mode:'takeover',epoch:1,ownerId:'d'.repeat(64)})).status).toBe(200);
-      const newerBody = fixture(); newerBody.sourceFingerprint = '3'.repeat(64);
-      const newer = await receipt(await upload(publicId, 1, newerBody, 2));
-      pause.release();
-      expect((await delayed).status).toBe(409);
-      const currentReceipt = await (await current(publicId)).json() as Receipt;
-      expect(currentReceipt.digest).toBe(newer.digest);
-      expect(currentReceipt.epoch).toBe(2);
-      // An exact acknowledged retry stays a receipt, not a new source confirmation.
-      expect(await receipt(await upload(publicId))).toEqual(original);
-      expect((await session(publicId, {mode:'resume',epoch:1})).status).toBe(409);
-      expect((await session(publicId)).status).toBe(409);
-    } finally { pause.release(); await delayed; pause.restore(); }
-  });
   it('commits N+1 before N, persists lost receipts and rejects same-sequence different bytes', async () => {
     const publicId=id(); await session(publicId);
     const pause = await pauseR2(publicId);
@@ -55,18 +32,6 @@ describe('persistent commit ordering', () => {
       expect(status).toMatchObject({epoch:1,sequence:2,receipt:next});
     } finally { pause.release(); await delayed; pause.restore(); }
   });
-  it('rejects lease expiry during an R2 await even without another owner', async () => {
-    const publicId=id(); await session(publicId);
-    const initial=await receipt(await upload(publicId));
-    const pause=await pauseR2(publicId);
-    const pending=upload(publicId,2);
-    try {
-      await pause.entered; await expire(publicId); pause.release();
-      expect((await pending).status).toBe(409);
-      expect((await (await current(publicId)).json() as Receipt).digest).toBe(initial.digest);
-      expect((await sql<{n:number}>(publicId,'SELECT count(*) AS n FROM receipts'))[0].n).toBe(1);
-    } finally {pause.release();await pending;pause.restore();}
-  });
   it('persists session, binding and lost acknowledgements through actual eviction', async () => {
     const publicId=id(); await session(publicId);
     const accepted=await receipt(await upload(publicId));
@@ -75,30 +40,6 @@ describe('persistent commit ordering', () => {
     expect((await session(publicId,{mode:'resume',epoch:1})).status).toBe(200);
     expect((await session(publicId,{deliveryKey:'DIFFERENT'})).status).toBe(404);
     expect((await (await current(publicId)).json() as Receipt).digest).toBe(accepted.digest);
-  });
-  it('returns one immutable receipt for simultaneous exact retries', async () => {
-    const publicId=id(); await session(publicId);
-    const receipts = await Promise.all([upload(publicId),upload(publicId)].map(async r=>receipt(await r)));
-    expect(receipts[0]).toEqual(receipts[1]);
-    expect((await sql<{n:number}>(publicId,'SELECT count(*) AS n FROM receipts'))[0].n).toBe(1);
-  });
-  it('rolls back pointer and receipt on a real SQLite commit-boundary failure', async () => {
-    const publicId=id(); await session(publicId);
-    const initial=await receipt(await upload(publicId));
-    await sql(publicId, "CREATE TRIGGER fail_pointer BEFORE UPDATE OF pointer ON delivery BEGIN SELECT RAISE(ABORT,'sensitive-internal-detail'); END");
-    const next=fixture();next.sourceFingerprint='5'.repeat(64);
-    const failed=await upload(publicId,2,next);
-    expect(failed.status).toBe(503);
-    expect(await failed.json()).toEqual({error:'temporarily_unavailable'});
-    expect((await (await current(publicId)).json() as Receipt).digest).toBe(initial.digest);
-    expect((await sql<{n:number}>(publicId,'SELECT count(*) AS n FROM receipts'))[0].n).toBe(1);
-    const stagedDigest=await digest(new TextEncoder().encode(JSON.stringify(next)));
-    expect(await env.SNAPSHOTS.head(`${publicId}/1/2/${stagedDigest}`)).not.toBeNull();
-    expect((await request(`/d/${publicId}/snapshots/${stagedDigest}`,{},null)).status).toBe(404);
-    await sql(publicId,'DROP TRIGGER fail_pointer');
-    await evictDurableObject(stub(publicId));
-    expect((await (await current(publicId)).json() as Receipt).digest).toBe(initial.digest);
-    expect((await upload(publicId,2,next)).status).toBe(200);
   });
   it('retains the prior snapshot on R2 failure and never makes a staged digest public', async () => {
     const publicId=id(); await session(publicId);
