@@ -2,7 +2,7 @@
   "schemaVersion": "orchestration-binding/1",
   "base": {
     "remote": "origin",
-    "ref": "integrate/portable-hosted-service"
+    "ref": "main"
   },
   "bases": [
     "main",
