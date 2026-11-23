@@ -2197,6 +2197,21 @@
           "hosted.browser-install"
         ],
         "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.conformance",
+        "argv": [
+          "node",
+          "test/conformance/check.mjs"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [
+          "hosted.build"
+        ],
+        "timeoutSeconds": 1200
       }
     ],
     "guards": [
@@ -2244,8 +2259,12 @@
       {
         "paths": [
           "hosted/delivery-viewer/**",
+          "hosted/protocol/**",
+          "hosted/conformance/**",
           "skills/delivery-views/assets/**",
           "skills/delivery-views/scripts/render.py",
+          "skills/delivery-views/scripts/hosted.py",
+          "skills/delivery-views/scripts/views_common.py",
           "skills/delivery-views/references/hosted-snapshot.schema.json",
           "tests/fixtures/delivery-views/hosted/**",
           ".nvmrc",
@@ -2257,7 +2276,8 @@
           "hosted.build",
           "hosted.test",
           "hosted.browser-install",
-          "hosted.browser"
+          "hosted.browser",
+          "hosted.conformance"
         ]
       }
     ]

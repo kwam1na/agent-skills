@@ -4,6 +4,8 @@
     "pull_request": {
       "paths": [
         "hosted/delivery-viewer/**",
+        "hosted/protocol/**",
+        "hosted/conformance/**",
         "skills/delivery-views/assets/**",
         "skills/delivery-views/scripts/render.py",
         "skills/delivery-views/references/hosted-snapshot.schema.json",
@@ -19,6 +21,8 @@
       ],
       "paths": [
         "hosted/delivery-viewer/**",
+        "hosted/protocol/**",
+        "hosted/conformance/**",
         "skills/delivery-views/assets/**",
         "skills/delivery-views/scripts/render.py",
         "skills/delivery-views/references/hosted-snapshot.schema.json",
@@ -78,6 +82,9 @@
         },
         {
           "run": "npm run test:browser"
+        },
+        {
+          "run": "node test/conformance/check.mjs --slow"
         },
         {
           "uses": "actions/upload-artifact@v4",

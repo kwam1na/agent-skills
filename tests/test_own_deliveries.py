@@ -44,7 +44,7 @@ UNCATALOGUED_MODULES: tuple[tuple[str, str], ...] = ()
 # A change to any test module brings the guard below, so a module added without its entry fails in the queue.
 TEST_MODULE_READER = {"paths": ["tests/test_*.py"], "checks": ["tests.test_own_deliveries"]}
 SERVICE_IDS = ('hosted.install', 'hosted.typecheck', 'hosted.build', 'hosted.test',
-               'hosted.browser-install', 'hosted.browser')
+               'hosted.browser-install', 'hosted.browser', 'hosted.conformance')
 GUARDS = ["tests.test_linear_qualification", "tests.test_registry"]
 SKILL_PROSE_READERS = ["tests.test_declared_mechanics_corpus", "tests.test_lane_ruling_corpus",
                        "tests.test_review_bound_corpus", "tests.test_round_brief_template_corpus",
@@ -768,7 +768,7 @@ class HostedServiceBoundaryTests(unittest.TestCase):
         workflow=json.loads((ROOT/'.github/workflows/hosted-delivery-viewer.yml').read_text())
         self.assertEqual(workflow['permissions'],{'contents':'read'})
         self.assertEqual(workflow['on']['push']['branches'],['main','integrate/hosted-deliveries'])
-        required=['hosted/delivery-viewer/**','skills/delivery-views/assets/**',
+        required=['hosted/delivery-viewer/**','hosted/protocol/**','hosted/conformance/**','skills/delivery-views/assets/**',
                   'skills/delivery-views/scripts/render.py',
                   'skills/delivery-views/references/hosted-snapshot.schema.json',
                   'tests/fixtures/delivery-views/hosted/**','.nvmrc','.github/workflows/hosted-delivery-viewer.yml']
@@ -786,13 +786,15 @@ class HostedServiceBoundaryTests(unittest.TestCase):
         commands=[step['run'] for step in job['steps'] if 'run' in step]
         self.assertEqual(commands,['npm ci --ignore-scripts --no-audit --no-fund --engine-strict',
                                    'npm run typecheck','npm run build','npm test',
-                                   'npx playwright install --with-deps chromium','npm run test:browser'])
+                                   'npx playwright install --with-deps chromium','npm run test:browser',
+                                   'node test/conformance/check.mjs --slow'])
         self.assertNotIn('deploy', ' '.join(commands))
         binding=json.loads((ROOT/'.agents/orchestration.json').read_text())
         rows={entry['id']:entry for entry in binding['selection']['catalogue']}
         for key in SERVICE_IDS:self.assertEqual(rows[key]['cwd'],'hosted/delivery-viewer')
         expected=[commands[0].split(),['npm','run','typecheck'],['npm','run','build'],
-                  ['npm','test'],['npx','playwright','install','chromium'],['npm','run','test:browser']]
+                  ['npm','test'],['npx','playwright','install','chromium'],['npm','run','test:browser'],
+                  ['node','test/conformance/check.mjs']]
         for key,argv in zip(SERVICE_IDS,expected):self.assertEqual(rows[key]['argv'],argv,key)
         self.assertEqual(rows['hosted.typecheck']['prerequisites'],['hosted.install'])
         self.assertEqual(rows['hosted.build']['prerequisites'],['hosted.install'])
@@ -800,7 +802,10 @@ class HostedServiceBoundaryTests(unittest.TestCase):
         self.assertEqual(rows['hosted.install']['prerequisites'],[])
         self.assertEqual(rows['hosted.browser-install']['prerequisites'],['hosted.install'])
         self.assertEqual(rows['hosted.browser']['prerequisites'],['hosted.build','hosted.browser-install'])
-        for path in required:
+        # The conformance check runs the built Worker and builds its planted-failure copies from the generated sources.
+        self.assertEqual(rows['hosted.conformance']['prerequisites'],['hosted.build'])
+        # The real-publisher test imports the corpus publisher, so its transport and origin rules bring the service checks.
+        for path in (*required,'skills/delivery-views/scripts/hosted.py','skills/delivery-views/scripts/views_common.py'):
             matched=[entry for entry in binding['selection']['readers'] if path in entry['paths']]
             self.assertTrue(any(entry['checks']==list(SERVICE_IDS) for entry in matched),path)
         root=json.loads((ROOT/'package.json').read_text())
@@ -811,6 +816,8 @@ class HostedServiceBoundaryTests(unittest.TestCase):
         tool=_generation_module('hosted_selection',STATE_TOOL)
         binding=json.loads((ROOT/'.agents/orchestration.json').read_text())
         for changed in ('hosted/delivery-viewer/src/worker.ts','skills/delivery-views/assets/line-map.js',
+                        'hosted/protocol/hosted-delivery-api-1.md','hosted/conformance/suite.mjs',
+                        'skills/delivery-views/scripts/hosted.py','skills/delivery-views/scripts/views_common.py',
                         'skills/delivery-views/scripts/render.py',
                         'skills/delivery-views/references/hosted-snapshot.schema.json',
                         'tests/fixtures/delivery-views/hosted/valid-plan-review.json',
