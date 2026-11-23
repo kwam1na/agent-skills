@@ -547,7 +547,8 @@ stops. Each pass writes what it did to the flow log's `<delivery>.supervisor.jso
 
 The lead's commands keep working while it is down, and the supervisor skips what is already done when it comes
 back. `lead-run --resume` stops what an earlier supervisor left running and starts it again; `lead-run --once` runs one
-pass in the foreground. `lead-close` asks a running supervisor to stop after its pass, and refuses while the lead's
+pass in the foreground. A release applied to `.agent-skills/current` while it runs is found at its next pass: it stops
+and starts again on that generation by itself. On macOS it holds `caffeinate -i -w <its pid>` while it runs. `lead-close` asks a running supervisor to stop after its pass, and refuses while the lead's
 settings have uncommitted changes. `lead-init --no-supervisor`, or `RUN_DELIVERY_SUPERVISOR=off`, starts none.
 
 ### The live view's address

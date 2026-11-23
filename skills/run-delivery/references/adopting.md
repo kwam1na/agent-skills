@@ -58,10 +58,13 @@ state tool and merge queue, the `obtain-review` round brief and the lens charter
 - A POSIX host (Linux or macOS). The tool doesn't run on Windows.
 - git 2.31 or newer, Python 3.11 or newer, `ps` and `lsof`.
 - ffmpeg and ffprobe, only for stories that need before/after video evidence.
-- Node at the installed runtime's `nodeMinimum` (22.6 or newer), first on `PATH`: a process and every child it
-  starts runs the first `node` on its `PATH`, so an nvm Node further down doesn't count. `doctor` checks it;
-  `lead-init`, `lead-run` (`--resume` included) and `lane-start` refuse without it, before they write, stop or start
-  anything. A generation without a runtime asks for no Node.
+- Node at the installed runtime's `nodeMinimum` (22.6 or newer), first on `PATH` or installed through nvm. A process
+  and every child it starts runs the first `node` on its `PATH`, so when that one is below the minimum, or there is
+  none, the tool puts the newest nvm Node that meets it first on its own `PATH` as it starts, for itself and every
+  process it starts (the supervisor, its queue and their checks, the gates), and says so once. `doctor` checks it,
+  naming a Node it adopts; `lead-init`, `lead-run` (`--resume` included) and `lane-start` refuse only when no Node on
+  `PATH` or in nvm meets it, before they write, stop or start anything. A generation without a runtime asks for no
+  Node.
 - Python 3.11 or newer, both the interpreter running the tool and the first `python3` on `PATH`; `lane-start` refuses
   without them.
 - `gh`, signed in, only for the GitHub forge adapter.
@@ -517,8 +520,8 @@ chapter flags every change without one. An edit made to the criteria or `covers`
 
 The lane begins its story with `lane-start` from the lead checkout named in the brief. It makes the story's own
 checkout from the base, runs the prepare step, sets the lane's focus, and records the story's start, which the tracker's start move waits for.
-First it checks the lane's Node and Python, and refuses, before it makes or records anything, when the first `node` on
-`PATH` is below the runtime's `nodeMinimum`, or Python is below 3.11:
+First it checks the lane's Node and Python, and refuses, before it makes or records anything, when neither the first
+`node` on `PATH` nor an nvm Node meets the runtime's `nodeMinimum`, or Python is below 3.11:
 
 ```sh example repo
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lane-start <story-key> --base main
@@ -830,11 +833,17 @@ refused, naming Bitbucket as the forge that has them.
 - **An install update goes in its own pull request.** Update the release in a pull request of its own, merged before
   any delivery uses it. Parallel deliveries each carry their own tooling update this way: none rides in a story's
   branch, and none waits for another delivery's.
-- **After an install update or a token change, `lead-run --resume`.** The supervisor runs the code and the environment
-  it started with. Stop it by the pid every lead command shows (`kill <pid>`), then `lead-run --resume` stops what it
-  left running and starts it on the new release, or with the new token exported. Nothing it did is done twice. The
-  live view outlives the stop: the resumed supervisor replaces a view of the old release on the same port, and keeps
-  one of the same release, so the address the operator has open stays the same.
+- **An install update restarts the supervisor by itself.** At each pass, and while it waits between passes, the
+  supervisor compares the generation it runs with the one `.agent-skills/current` resolves to. Once a newly applied
+  release is there, it stops its children and starts again on it: through `lead-upgrade-writer`, which moves the
+  record's writer pin to the applied archive, when the record pins one, else through `lead-run --resume`. It stops what
+  it left running, and nothing it did is done twice. The live view keeps its address: the new supervisor starts one of
+  the new release on the same port. Its log says it found the new generation and what it ran.
+- **After a token change, `lead-run --resume`.** A running process can't see a newly exported variable. Stop the
+  supervisor by the pid every lead command shows (`kill <pid>`), then `lead-run --resume` with the new token exported.
+- **The machine stays awake while the supervisor runs.** On macOS, `lead-run` holds `caffeinate -i -w <its pid>`,
+  which keeps the machine from idle sleep until the supervisor exits. Elsewhere, or with no `caffeinate` on `PATH`, it
+  keeps nothing awake, and `doctor`'s keep awake line says so.
 - **Merge strategy.** Merge with merge commits. After each merge, the queue checks that the base holds the checked
   head's tree on top of the base it checked against, and a squash passes that too. A squashed story's branch never
   reaches the base, so cleanup asks the forge instead: it removes a squash-merged story's checkout, and deletes its local
@@ -913,9 +922,10 @@ Where a host offers less otherwise, the workflow takes the path on the right:
   gates and any required in-app and PR checks at the merged head.
 - **Review evidence is captured at hand-off.** `handoff` captures each round's review evidence; without it the line map
   shows no rounds for the story.
-- **Restart long-running commands after an update.** The supervisor, `lead-run`, and the merge queue's `serve` and the
-  live view it keeps, run the code they started with. After an update, stop the supervisor by its pid, then
-  `lead-run --resume`, which also replaces the old release's live view on its port.
+- **Long-running commands restart after an update.** The supervisor, `lead-run`, and the merge queue's `serve` and the
+  live view it keeps, run the code they started with. The supervisor finds a newly applied release at its next pass and
+  starts again on it, its `serve` and its live view with it, on the same port. A `serve` started by hand is restarted
+  by hand.
 - **Start the merge queue with default signals.** The supervisor starts `serve` with SIGINT, SIGHUP and SIGQUIT at
   their defaults, whatever its own parent ignored. A `serve` started by hand needs the same: in its own terminal or
   under a process manager, never with `nohup` or a background `&`, whose ignored signals its checks inherit, so
@@ -940,6 +950,10 @@ its installed command with the previous archive digest and a reason.
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py --delivery KEY \
   lead-upgrade-writer --expected PREVIOUS_ARCHIVE_SHA256 --reason "Lead applied the verified release"
 ```
+
+A running supervisor runs this transition itself: once `.agent-skills/current` resolves to a newly applied generation,
+it stops after its pass and runs that generation's `lead-upgrade-writer` with the digest the record pins, so the
+command above is needed only while no supervisor runs.
 
 The command parks the supervisor after its pass, keeps another supervisor from starting, takes the queue lock,
 and loads both record and journal with the new reader before changing the writer pin under the state lock.
@@ -1080,16 +1094,22 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
   and the same publisher. Or set `tracker.updates` to `"manual"` in `.agents/run-delivery.json` to post them by
   hand.
 - **`and the runtime needs Node`** or **`is below the runtime's nodeMinimum`**: the first `node` on `PATH` is missing
-  or older than the runtime's minimum. Put the `bin` folder the line names first on `PATH` (an nvm Node that meets the
-  minimum), or install Node at the version the line names or newer and put its `bin` folder first. `doctor`,
-  `lead-init`, `lead-run` and `lane-start` all say this the same way.
+  or older than the runtime's minimum, and no nvm Node meets it either. Install Node at the version the line names or
+  newer, through nvm, which the tool then finds and puts first on its own `PATH`, or with its `bin` folder first on
+  `PATH`. `doctor`, `lead-init`, `lead-run` and `lane-start` all say this the same way.
+- **`using nvm's Node`**: not a problem. The first `node` on `PATH` was below the runtime's minimum, or missing, so
+  the tool put the nvm Node it names first on its own `PATH`, for itself and every process it starts. To stop seeing
+  it, put a Node that meets the minimum first on `PATH`, for example with `nvm use`.
+- **`no caffeinate on PATH`**, on the keep awake line: on macOS, `lead-run` keeps the machine awake with
+  `/usr/bin/caffeinate`, which the `PATH` it runs with doesn't reach. Put `/usr/bin` back on `PATH`, or keep the
+  machine awake another way while a delivery runs.
 - **`below 3.11`** from `lane-start`: the Python running the tool, or the first `python3` on `PATH`, is older than
   3.11. Run the tool with Python 3.11 or newer, and put its `bin` folder first on `PATH`.
 - **`it runs Node`**, **`it runs with no node on its PATH`** or **`it recorded no Node`**, on the delivery supervisor's
   line: the running supervisor recorded the Node first on its `PATH` as it started, which its queue's checks run unless
   their profile puts another first. Below the runtime's minimum, or none, it is `wrong`; an older generation's
   supervisor records none, which is `warn`. Stop it by its pid (`kill <pid>`), then
-  `lead-run --resume` with the right Node first on `PATH`.
+  `lead-run --resume` with a Node that meets the minimum first on `PATH` or installed through nvm.
 - **`stories with no plan section`**: each story needs a plan heading that names its key; its lane's review context is
   that section. Add the heading, or correct the story's key. `lead-assign` refuses the story until then.
 - **`context.sections the plan lacks`**: add the heading to the plan, or remove it from `context.sections`.
