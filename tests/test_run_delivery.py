@@ -794,7 +794,8 @@ def path_without(folder: Path, *names: str) -> str:
 def node_environment(fx: "Fixture", base: dict[str, str], node: str | None, python3: str | None = None,
                      nvm: str | None = "22.6.0") -> dict[str, str]:
     """`base` with the Node first on PATH printing `node`'s version, or no node on PATH at all; `python3` stubbed first
-    when given; and HOME holding an nvm Node of version `nvm` that meets the minimum, which the checks must ignore."""
+    when given; and HOME holding an nvm Node of version `nvm`, which the tool adopts, first on its own PATH, when the
+    first node on PATH is missing or below the minimum. With `nvm` None, HOME is a folder of its own holding no nvm."""
     folder = fx.tmp / "stubs" / f"node-{node}-python-{python3}"
     if node:
         stub_program(folder, "node", f"v{node}")
@@ -802,7 +803,7 @@ def node_environment(fx: "Fixture", base: dict[str, str], node: str | None, pyth
         stub_program(folder, "python3", f"Python {python3}")
     folder.mkdir(parents=True, exist_ok=True)
     rest = base.get("PATH", os.environ.get("PATH", "")) if node else path_without(fx.tmp / "stubs/without-node", "node")
-    home = fx.tmp / "home"
+    home = fx.tmp / ("home" if nvm else "home-without-nvm")
     if nvm:
         stub_program(home / f".nvm/versions/node/v{nvm}/bin", "node", f"v{nvm}")
     home.mkdir(parents=True, exist_ok=True)
@@ -6784,7 +6785,7 @@ DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candida
                  "host hooks", "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot scope", "tracker snapshot token",
                  "snapshots and publishers", "hosted delivery", "in-app adapters", "in-app adapter contract", "video evidence tools",
-                 "Node", "harness configuration", "knowledge library properties", "delivery file", "delivery record folder", "plan chapter", "added stories' reasons",
+                 "Node", "keep awake", "harness configuration", "knowledge library properties", "delivery file", "delivery record folder", "plan chapter", "added stories' reasons",
                  "plan sections", "story files", "story readiness", "story summaries", "context sections", "finish lines",
                  "configuration on the remote base", "pull requests marked ready", "delivery supervisor", "deliveries on this base", "merge slot",
                  "gates on the base"]
@@ -9590,6 +9591,7 @@ class RunDeliveryDoctorTests(unittest.TestCase):
                           "story summaries", "pull requests marked ready", "delivery supervisor", "hosted delivery"}
         expected_skips |= set() if self.ffmpeg else {"video evidence tools"}
         expected_skips |= set() if self.node22 else {"harness configuration"}
+        expected_skips |= set() if sys.platform == "darwin" else {"keep awake"}
         self.assertEqual({label for label, (status, _) in lines.items() if status == "skipped"}, expected_skips, out)
         self.assertEqual(failing(out), {}, out)
         self.assertEqual(lines["hosted delivery"], ("skipped", "(hosted publishing is disabled)"), out)
@@ -10549,7 +10551,7 @@ FIXTURE_KEYS = {"<delivery-key>": "FX-1", "<story-key>": "FX-2"}
 # Section 8 of the guide: the operating rules, by their opening words.
 OPERATING_RULES = [
     "Lanes are sessions of their own.", "The merge queue normally syncs the base into the lane branch.", "Review evidence is captured at hand-off.",
-    "Restart long-running commands after an update.", "Start the merge queue with default signals.",
+    "Long-running commands restart after an update.", "Start the merge queue with default signals.",
     "The evidence page follows each marked story's merge.", "Sign-in values stay out of commands.",
 ]
 GUIDE_SECTIONS = ["1. What the workflow does", "2. Prerequisites", "3. Install a release", "4. Configure the repository",
@@ -12583,9 +12585,10 @@ flow.main(sys.argv[3:])
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class NodeAndPythonMinimumTests(unittest.TestCase):
-    """The Node a process uses is the first `node` on its PATH: lead-init and lane-start refuse one below the runtime's
-    nodeMinimum, or none, even with an nvm Node that meets it, before they write anything; lane-start refuses a Python
-    below 3.11 too; doctor's Node row judges the same Node, and names the nvm Node's folder to put first."""
+    """The Node a process uses is the first `node` on its PATH. When that one is below the runtime's nodeMinimum, or
+    there is none, and an nvm Node meets it, the tool puts that Node first on its own PATH, for itself and every process
+    it starts, and says so once; with no such Node, lead-init and lane-start refuse before they write anything.
+    lane-start refuses a Python below 3.11 too; doctor's Node row judges the same Node, naming one it adopted."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -12626,12 +12629,11 @@ class NodeAndPythonMinimumTests(unittest.TestCase):
 
     def test_lane_start_refuses_a_node_or_python_below_the_minimum_before_it_makes_or_records_anything(self) -> None:
         fx = self.delivery()
-        nvm_bin = fx.tmp / "home/.nvm/versions/node/v22.6.0/bin"
-        old = node_environment(fx, fx.env, "20.0.0")
+        old = node_environment(fx, fx.env, "20.0.0", nvm=None)
         cases = [
-            ("a Node below the minimum first on PATH", old, None,
+            ("a Node below the minimum first on PATH, and none in nvm", old, None,
              ["Node 20.0.0 is below the runtime's nodeMinimum 22.6.0", f"from the PATH entry {fx.tmp / 'stubs'}",
-              f"fix: put {nvm_bin} first on PATH"]),
+              "and no nvm Node meets it; fix: install Node 22.6.0 or newer, through nvm"]),
             ("python3 below 3.11 first on PATH", node_environment(fx, fx.env, "22.6.0", python3="3.10.12"), None,
              ["is Python 3.10.12, below 3.11", "fix: put Python 3.11 or newer's bin folder first on PATH"]),
             ("the interpreter running the tool below 3.11", node_environment(fx, fx.env, "22.6.0"), "3.10.4",
@@ -12654,26 +12656,33 @@ class NodeAndPythonMinimumTests(unittest.TestCase):
         self.assertNotIn("refuses", out)
         self.assertTrue((fx.main / "lanes/FX-3").is_dir(), out)
 
-    def test_lead_init_refuses_a_node_below_the_minimum_first_on_path_before_it_writes_the_record(self) -> None:
+    def test_lead_init_refuses_a_node_below_the_minimum_with_none_in_nvm_and_adopts_an_nvm_node_that_meets_it(self) -> None:
         fx = self.delivery(init=False)
-        nvm_bin = fx.tmp / "home/.nvm/versions/node/v22.6.0/bin"
+        nvm_node = fx.tmp / "home/.nvm/versions/node/v22.6.0/bin/node"
         for node, said in (("20.0.0", "Node 20.0.0 is below the runtime's nodeMinimum 22.6.0"),
-                           (None, "no node on PATH, and the runtime needs Node 22.6.0")):
+                           (None, "no node on PATH or in nvm, and the runtime needs Node 22.6.0")):
             with self.subTest(node=node):
-                code, out = fx.flow("lead-init", cwd=fx.main, env=node_environment(fx, fx.env, node))
+                code, out = fx.flow("lead-init", cwd=fx.main, env=node_environment(fx, fx.env, node, nvm=None))
                 self.assertEqual(code, 2, out)
                 self.assertIn(f"lead-init refuses: {said}", out)
-                self.assertIn(f"fix: put {nvm_bin} first on PATH", out)
+                self.assertIn("fix: install Node 22.6.0 or newer, through nvm", out)
                 self.assertFalse((fx.tmp / "record").exists(), out)
                 self.assertFalse((fx.tmp / "flow-log").exists() and any((fx.tmp / "flow-log").iterdir()), out)
-        code, out = fx.flow("lead-init", cwd=fx.main, env=node_environment(fx, fx.env, "22.6.0"))
+        # With nvm's 22.6.0, the Node 20 first on PATH is put behind it: lead-init says so once, and runs.
+        code, out = fx.flow("lead-init", cwd=fx.main, env=node_environment(fx, fx.env, "20.0.0"))
         self.assertEqual(code, 0, out)
+        self.assertEqual(out.count("using nvm's Node"), 1, out)
+        self.assertIn(f"run-delivery: using nvm's Node 22.6.0 at {nvm_node}, put first on PATH for this command and "
+                      f"every process it starts: the first node on PATH, "
+                      f"{fx.tmp / 'stubs/node-20.0.0-python-None/node'}, is Node 20.0.0, below nodeMinimum 22.6.0", out)
+        self.assertNotIn("refuses", out)
 
     def test_a_node_first_on_path_that_prints_no_version_is_refused(self) -> None:
         fx = self.delivery(init=False)
         silent = fx.tmp / "stubs/silent"
         stub_program(silent, "node", "")
-        env = {**node_environment(fx, fx.env, "22.6.0"), "PATH": f"{silent}{os.pathsep}{os.environ.get('PATH', '')}"}
+        env = {**node_environment(fx, fx.env, "22.6.0", nvm=None),
+               "PATH": f"{silent}{os.pathsep}{os.environ.get('PATH', '')}"}
         said = f"{silent / 'node'}, the first node on PATH, from the PATH entry {silent}, prints no version"
         code, out = fx.flow("doctor", "--offline", cwd=fx.main, env=env)
         self.assertEqual(doctor_lines(out)["Node"][0], "wrong", out)
@@ -12697,23 +12706,41 @@ class NodeAndPythonMinimumTests(unittest.TestCase):
         wanted = json.loads((self.generation / "runtime/runtime.json").read_text())["nodeMinimum"]
         self.assertEqual(minimum, [int(n) for n in wanted.split(".")])
 
-    def test_doctor_judges_the_node_first_on_path_and_names_the_nvm_folder_to_put_first(self) -> None:
+    def test_doctor_judges_the_node_first_on_path_naming_an_nvm_node_it_adopts(self) -> None:
         fx = self.delivery(init=False)
-        nvm_bin = fx.tmp / "home/.nvm/versions/node/v22.6.0/bin"
-        for node, status, said in (("20.0.0", "wrong", "Node 20.0.0 is below the runtime's nodeMinimum 22.6.0"),
-                                   (None, "missing", "no node on PATH, and the runtime needs Node 22.6.0"),
-                                   ("22.6.0", "ok", "meets the runtime's nodeMinimum 22.6.0")):
-            with self.subTest(node=node):
-                code, out = fx.flow("doctor", "--offline", cwd=fx.main, env=node_environment(fx, fx.env, node))
+        nvm_node = fx.tmp / "home/.nvm/versions/node/v22.6.0/bin/node"
+        adopted = (f"{nvm_node}, nvm's Node 22.6.0, meets the runtime's nodeMinimum 22.6.0; the tool puts it first on "
+                   f"PATH for itself and every process it starts, since ")
+        cases = (("20.0.0", "22.6.0", "ok", adopted + f"the first node on PATH, "
+                  f"{fx.tmp / 'stubs/node-20.0.0-python-None/node'}, is Node 20.0.0, below nodeMinimum 22.6.0"),
+                 (None, "22.6.0", "ok", adopted + "there was no node on PATH, and the runtime needs Node 22.6.0"),
+                 ("20.0.0", None, "wrong", "Node 20.0.0 is below the runtime's nodeMinimum 22.6.0"),
+                 (None, None, "missing", "no node on PATH or in nvm, and the runtime needs Node 22.6.0"),
+                 ("22.6.0", "22.6.0", "ok",
+                  f"{fx.tmp / 'stubs/node-22.6.0-python-None/node'} meets the runtime's nodeMinimum 22.6.0"))
+        for node, nvm, status, said in cases:
+            with self.subTest(node=node, nvm=nvm):
+                code, out = fx.flow("doctor", "--offline", cwd=fx.main, env=node_environment(fx, fx.env, node, nvm=nvm))
                 row = doctor_lines(out)["Node"]
                 self.assertEqual(row[0], status, out)
-                self.assertIn(said, row[1])
                 if status == "ok":
-                    self.assertEqual(row[1], f"{fx.tmp / 'stubs/node-22.6.0-python-None/node'} meets the runtime's "
-                                             "nodeMinimum 22.6.0")
+                    self.assertEqual(row[1], said, out)
                 else:
-                    self.assertIn(f"nvm's {nvm_bin / 'node'} meets it", row[1])
-                    self.assertTrue(row[1].endswith(f"fix: put {nvm_bin} first on PATH, the nvm Node that meets it"), row)
+                    self.assertIn(said, row[1])
+                    self.assertTrue(row[1].endswith("fix: install Node 22.6.0 or newer, through nvm (the tool finds "
+                                                    "nvm's Nodes and puts one that meets it first on PATH itself) or "
+                                                    "with its bin folder first on PATH"), row)
+        # Keeping the machine awake: lead-run holds caffeinate on macOS; with none on PATH, doctor says it can't.
+        without = {**node_environment(fx, fx.env, "22.6.0"), "PATH": os.pathsep.join(
+            [str(fx.tmp / "stubs/node-22.6.0-python-None"), path_without(fx.tmp / "stubs/without-caffeinate", "caffeinate")])}
+        code, out = fx.flow("doctor", "--offline", cwd=fx.main, env=without)
+        row = doctor_lines(out)["keep awake"]
+        if sys.platform == "darwin":
+            self.assertEqual(row, ("warn", "no caffeinate on PATH, so lead-run can't keep the machine awake while it "
+                                           "runs; fix: put /usr/bin back on PATH"), out)
+        else:
+            self.assertEqual(row[0], "skipped", out)
+            self.assertIn("not macOS: lead-run keeps nothing awake here", row[1])
 
     def test_versions_compare_number_by_number(self) -> None:
         tool = lambda *args, **kw: call(self.tool, *args, cwd=Path(tempfile.gettempdir()), **kw)

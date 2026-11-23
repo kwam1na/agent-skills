@@ -1281,9 +1281,10 @@ class SupervisorProcessTests(unittest.TestCase):
 
 
 class SupervisorNodeTests(unittest.TestCase):
-    """lead-run, --resume included, refuses a Node below the runtime's nodeMinimum first on its PATH, or none, before it
-    takes the lock, stops anything or starts a child; a supervisor records its Node in its lock, and doctor --delivery
-    judges it."""
+    """lead-run, --resume included, refuses a Node below the runtime's nodeMinimum first on its PATH, or none, with no
+    nvm Node that meets it, before it takes the lock, stops anything or starts a child; a supervisor records its Node in
+    its lock, and doctor --delivery judges it. A running supervisor keeps the machine awake, and starts again on a
+    generation applied while it runs."""
 
     run_quietly = True
 
@@ -1311,17 +1312,17 @@ class SupervisorNodeTests(unittest.TestCase):
     def test_lead_run_refuses_a_node_below_the_minimum_or_none_before_the_lock_or_a_child(self) -> None:
         fx = self.fixture()
         lock = fx.tmp / "flow-log/FX-1.supervisor.lock"
-        nvm_bin = fx.tmp / "home/.nvm/versions/node/v22.6.0/bin"
         for node, said in (("20.0.0", "Node 20.0.0 is below the runtime's nodeMinimum 22.6.0: it is "
                                       f"{fx.tmp / 'stubs/node-20.0.0-python-None/node'}, the first node on PATH, from "
-                                      f"the PATH entry {fx.tmp / 'stubs/node-20.0.0-python-None'}"),
-                           (None, "no node on PATH, and the runtime needs Node 22.6.0")):
+                                      f"the PATH entry {fx.tmp / 'stubs/node-20.0.0-python-None'}, and no nvm Node "
+                                      "meets it"),
+                           (None, "no node on PATH or in nvm, and the runtime needs Node 22.6.0")):
             for argv in (["lead-run"], ["lead-run", "--resume"]):
                 with self.subTest(node=node, argv=argv):
-                    code, out = fx.flow(*argv, cwd=fx.main, env=node_environment(fx, running(fx), node))
+                    code, out = fx.flow(*argv, cwd=fx.main, env=node_environment(fx, running(fx), node, nvm=None))
                     self.assertEqual(code, 2, out)
                     self.assertIn(f"{' '.join(argv)} refuses: {said}", out)
-                    self.assertIn(f"fix: put {nvm_bin} first on PATH", out)
+                    self.assertIn("fix: install Node 22.6.0 or newer, through nvm", out)
                     self.assertFalse(lock.exists(), f"the lock was taken: {out}")
                     self.assertEqual(sorted(p.name for p in (fx.tmp / "flow-log").glob("FX-1.supervisor*")), [], out)
 
@@ -1340,7 +1341,8 @@ class SupervisorNodeTests(unittest.TestCase):
         os.kill(first["pid"], signal.SIGKILL)
         wait_for(lambda: not alive(first["pid"]), "the supervisor to die")
         children = {child["name"]: child["pid"] for child in first["children"]}
-        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=node_environment(fx, running(fx), "20.0.0"))
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main,
+                            env=node_environment(fx, running(fx), "20.0.0", nvm=None))
         self.assertEqual(code, 2, out)
         self.assertIn("lead-run --resume refuses: Node 20.0.0 is below the runtime's nodeMinimum 22.6.0", out)
         self.assertNotIn("stopped", out)
@@ -1356,6 +1358,66 @@ class SupervisorNodeTests(unittest.TestCase):
             wait_for(lambda: not alive(pid), f"orphan {pid} to stop", 30)
         self.assertEqual(live_of(fx)["pid"], view)
         self.assertEqual(lock_of(fx)["address"], first["address"])
+
+    def test_it_keeps_the_machine_awake_and_starts_again_on_a_generation_applied_while_it_runs(self) -> None:
+        fx = self.fixture()
+        # A caffeinate that notes how it was asked, then waits on the pid it was given, as the real one does.
+        awake = fx.tmp / "caffeinate.log"
+        stubs = fx.tmp / "stubs/caffeinate"
+        stubs.mkdir(parents=True)
+        (stubs / "caffeinate").write_text(f'#!/bin/sh\necho "$*" >> {shlex.quote(str(awake))}\n'
+                                          'while kill -0 "$3" 2>/dev/null; do sleep 0.2; done\n')
+        (stubs / "caffeinate").chmod(0o755)
+        env = node_environment(fx, running(fx), "22.6.0")
+        env["PATH"] = f"{stubs}{os.pathsep}{env['PATH']}"
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=env)
+        self.assertEqual(code, 0, out)
+        first = settled_lock(fx)
+        held = lambda pid: awake.exists() and f"-i -w {pid}" in awake.read_text().splitlines()
+        if sys.platform == "darwin":
+            wait_for(lambda: held(first["pid"]), "the supervisor to hold caffeinate", 30)
+        pinned = record(fx)["state"]["meta"].get("writerGeneration")
+        # A release applied while it runs: another generation, with its receipt naming the running one as previous,
+        # and `.agent-skills/current` moved to it in one step, as the lifecycle does.
+        applied = fx.tmp / "applied/.agent-skills"
+        receipt = json.loads((fx.main / ".agent-skills/active.json").read_text())
+        name = "f" * 64
+        shutil.copytree(self.generation, applied / "generations" / name, symlinks=True)
+        moved = {**receipt, "generation": name, "previous": {key: receipt[key] for key in ("files", "generation",
+                                                                                          "release")}}
+        for path in (applied / "active.json", fx.main / ".agent-skills/active.json"):
+            path.write_text(json.dumps(moved, indent=2) + "\n")
+        swap = fx.main / ".agent-skills/current.next"
+        swap.symlink_to(applied / "generations" / name)
+        os.replace(swap, fx.main / ".agent-skills/current")
+        # It stops, its children with it, and the new generation's supervisor takes the lock and the view's address.
+        log = fx.tmp / "flow-log/FX-1.supervisor.log"
+        try:
+            second = wait_for(lambda: (lambda lock: lock if lock.get("pid") not in (None, first["pid"])
+                                       and lock.get("address") else None)(lock_of(fx)),
+                              "a supervisor on the applied generation", 120)
+        except AssertionError as error:
+            raise AssertionError(f"{error}; its log ends: {log.read_text()[-3000:]}") from None
+        wait_for(lambda: not alive(first["pid"]), "the first supervisor to exit", 60)
+        for child in first["children"]:
+            if child["name"] != "live":
+                wait_for(lambda: not alive(child["pid"]), f"the first supervisor's {child['name']} to stop", 30)
+        self.assertEqual(second["address"], first["address"])
+        command = subprocess.run(["ps", "-o", "command=", "-p", str(second["pid"])], capture_output=True, text=True)
+        target = (applied / "generations" / name).resolve()
+        self.assertIn(f" {target / 'skills/run-delivery/scripts/run_delivery.py'} ", command.stdout)
+        wait_for(lambda: live_of(fx).get("renderState") == str(target / "skills/orchestrate-work/scripts/render_state.py"),
+                 "the live view to serve from the applied generation", 60)
+        log = log.read_text()
+        self.assertIn(f"now resolves to {name}, not {self.generation.name}: stopping to start again on it", log)
+        self.assertIn("lead-upgrade-writer --expected", log)
+        # The pin already named the applied archive, which the copy shares: the transition left it, and the record,
+        # as they were, and the new supervisor writes the record as the old one did.
+        self.assertEqual(record(fx)["state"]["meta"].get("writerGeneration"), pinned)
+        count = len(passes(fx))
+        wait_for(lambda: len(passes(fx)) > count, "a pass on the applied generation", 60)
+        if sys.platform == "darwin":
+            wait_for(lambda: held(second["pid"]), "the new supervisor to hold caffeinate", 30)
 
     def test_doctor_marks_a_recorded_node_below_the_minimum_wrong_and_none_recorded_warn(self) -> None:
         fx = self.fixture()

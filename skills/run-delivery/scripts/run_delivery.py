@@ -82,6 +82,8 @@ GENERATION = Path(__file__).resolve().parents[3]
 RECEIPT = ".agent-skills/active.json"
 # How briefs and printed commands name this tool: a stable path every checkout of the delivery base resolves.
 TOOL_PATH = ".agent-skills/current/skills/run-delivery/scripts/run_delivery.py"
+# Where this tool sits inside a generation.
+GENERATION_TOOL = "skills/run-delivery/scripts/run_delivery.py"
 CONFIG = ".agents/run-delivery.json"
 # Earlier names, still honoured when the new one is absent: (old, new).
 LEGACY_NAMES = (
@@ -697,33 +699,77 @@ def node_minimum(release: Path) -> str | None:
     return (load_json(release / "runtime/runtime.json") or {}).get("nodeMinimum") or None
 
 
+# The nvm Node this process put first on its PATH, as adopt_node found it: {"path", "version", "replaced"}, where
+# `replaced` names the first node on PATH before it, or None when there was none. None when nothing was adopted.
+ADOPTED_NODE: dict | None = None
+
+
+def adopt_node(release: Path) -> dict | None:
+    """When the first node on PATH is missing or below the runtime's nodeMinimum and an nvm Node meets it, put that
+    Node's bin folder first on this process's PATH, so the tool and every process it starts, the supervisor, its
+    queue and their checks, the gates and the lanes' commands among them, run it; and say so once, on stderr. The
+    newest nvm Node that meets the minimum is the one adopted. Returns what was adopted, or None."""
+    global ADOPTED_NODE
+    wanted = node_minimum(release)
+    if not wanted:
+        return ADOPTED_NODE
+    minimum = numbers(wanted) or ()
+    found = node_on_path()
+    if found and found[1] and meets(found[1], minimum):
+        return ADOPTED_NODE
+    for node in nvm_nodes():
+        version = node_version(node)
+        if version and meets(version, minimum):
+            break
+    else:
+        return None
+    folder = str(Path(node).parent)
+    os.environ["PATH"] = os.pathsep.join([folder, *[p for p in os.environ.get("PATH", "").split(os.pathsep) if p]])
+    replaced = ({"path": found[0], "version": dotted(found[1]) if found[1] else None} if found else None)
+    ADOPTED_NODE = {"path": node, "version": dotted(version), "replaced": replaced}
+    print(f"run-delivery: using nvm's Node {dotted(version)} at {node}, put first on PATH for this command and every "
+          f"process it starts: {replaced_words(ADOPTED_NODE, wanted)}", file=sys.stderr, flush=True)
+    return ADOPTED_NODE
+
+
+def replaced_words(adopted: dict, wanted: str) -> str:
+    """Why a Node was adopted: what the first node on PATH was before it."""
+    replaced = adopted.get("replaced")
+    if not replaced:
+        return f"there was no node on PATH, and the runtime needs Node {wanted}"
+    if not replaced.get("version"):
+        return f"the first node on PATH, {replaced['path']}, prints no version to compare with nodeMinimum {wanted}"
+    return f"the first node on PATH, {replaced['path']}, is Node {replaced['version']}, below nodeMinimum {wanted}"
+
+
 def node_problem(release: Path) -> tuple[str, str] | None:
-    """Why the Node first on PATH doesn't meet the runtime's nodeMinimum, as (status, detail), or None: `missing` with
-    no `node` on PATH, `wrong` below the minimum, even with an nvm Node that meets it, which the fix then names."""
+    """Why no Node this process can run meets the runtime's nodeMinimum, as (status, detail), or None. A first node on
+    PATH below the minimum, or none, is put right first by adopting an nvm Node that meets it; only with no such Node
+    is it a problem: `missing` with no `node` on PATH, `wrong` below the minimum or of no readable version."""
     wanted = node_minimum(release)
     if not wanted:
         return None
+    adopt_node(release)
     minimum = numbers(wanted) or ()
     found = node_on_path()
     if found and found[1] and meets(found[1], minimum):
         return None
-    nvm = next((node for node in nvm_nodes() if meets(node_version(node) or (0,), minimum)), None)
-    fix = (f"fix: put {Path(nvm).parent} first on PATH, the nvm Node that meets it" if nvm else
-           f"fix: install Node {wanted} or newer and put its bin folder first on PATH")
-    elsewhere = (f"; nvm's {nvm} meets it, but a process and its children run the node first on PATH" if nvm else "")
+    fix = (f"fix: install Node {wanted} or newer, through nvm (the tool finds nvm's Nodes and puts one that meets it "
+           f"first on PATH itself) or with its bin folder first on PATH")
     if not found:
-        return "missing", f"no node on PATH, and the runtime needs Node {wanted}{elsewhere}; {fix}"
+        return "missing", f"no node on PATH or in nvm, and the runtime needs Node {wanted}; {fix}"
     node, version = found
     where = f"{node}, the first node on PATH, from the PATH entry {Path(node).parent}"
     if not version:
-        return "wrong", (f"{where}, prints no version to compare with the runtime's nodeMinimum {wanted}{elsewhere}; "
-                         f"{fix}")
-    return "wrong", f"Node {dotted(version)} is below the runtime's nodeMinimum {wanted}: it is {where}{elsewhere}; {fix}"
+        return "wrong", (f"{where}, prints no version to compare with the runtime's nodeMinimum {wanted}, and no nvm "
+                         f"Node meets it; {fix}")
+    return "wrong", (f"Node {dotted(version)} is below the runtime's nodeMinimum {wanted}: it is {where}, and no nvm "
+                     f"Node meets it; {fix}")
 
 
 def require_node(release: Path, command: str) -> None:
     """Refuse a command whose processes would run a Node below the runtime's minimum, before it writes or starts
-    anything."""
+    anything: only when neither the first node on PATH nor any nvm Node meets it."""
     problem = node_problem(release)
     if problem:
         raise Stop(f"{command} refuses: {problem[1]}")
@@ -10824,7 +10870,8 @@ LIVE_HOST = "127.0.0.1"
 LIVE_PORT_BASE, LIVE_PORT_SPAN = 20000, 10000
 # What each recorded reason says, in the status line and on the view's banner.
 STOPPED_WORDS = {"close": "it closed the delivery", "replaced": "lead-init --replace replaced the record",
-                 "held": "lead-close asked it to stop"}
+                 "held": "lead-close asked it to stop",
+                 "upgrade": "it stopped to start again on the newly applied generation; if none runs, its log says why"}
 UNRECORDED_STOP = "stopped without recording why"
 NOT_STARTED = "not started"
 
@@ -14064,6 +14111,15 @@ def last_line(path: Path) -> str:
     return lines[-1].strip()[-300:] if lines else ""
 
 
+def running_pointer(c) -> Path | None:
+    """The repository's `.agent-skills/current`, when it resolves to the generation this tool runs from; else None."""
+    pointer = c.root / ".agent-skills/current"
+    try:
+        return pointer if pointer.resolve() == GENERATION else None
+    except (OSError, RuntimeError):
+        return None
+
+
 class Supervisor:
     """lead-run: one process per record. It holds the flow log's supervisor lock, recording its pid, start time,
     children and the live view's address; keeps `serve` and the live view running; and runs one pass after another
@@ -14092,6 +14148,12 @@ class Supervisor:
         self.node = {"path": found[0], "version": dotted(found[1]) if found[1] else None} if found else None
         # Why it stopped serving, once what it serves is gone: then it exits instead of passing on over nothing.
         self.lost: str | None = None
+        # The applied generation's pointer it watches, when it runs from the generation that pointer resolves to; and
+        # the generation the pointer has moved to since, once it has: then it stops and starts again on that one.
+        self.watched: Path | None = running_pointer(c)
+        self.moved_to: Path | None = None
+        # The `caffeinate` that keeps the machine awake while it runs, on macOS.
+        self.awake: subprocess.Popen | None = None
 
     def gone(self) -> str | None:
         """What it serves that is no longer there: its record (the record's state file, which the state tool only ever
@@ -14103,8 +14165,39 @@ class Supervisor:
             return f"its install {GENERATION} is gone"
         return None
 
+    def moved(self) -> Path | None:
+        """The generation `.agent-skills/current` resolves to now, once that is no longer the one it runs, holds this
+        tool and is the one the receipt names, which the lifecycle writes just after it moves the pointer: a release
+        applied while it runs. It says so in its log the first time. Never for --once."""
+        if self.moved_to is None and self.watched is not None and not self.once:
+            with contextlib.suppress(OSError, RuntimeError, ValueError):
+                target = self.watched.resolve()
+                if (target != GENERATION and (target / GENERATION_TOOL).is_file()
+                        and json_object(receipt_path(self.c)).get("generation") == target.name):
+                    self.moved_to = target
+                    print(f"{now()} supervisor: {self.watched} now resolves to {target.name}, not {GENERATION.name}: "
+                          "stopping to start again on it", flush=True)
+        return self.moved_to
+
+    def keep_awake(self) -> None:
+        """On macOS, hold `caffeinate -i -w <its pid>`, which keeps the machine from idle sleep until this process
+        exits, however it exits. Elsewhere, or with no caffeinate on PATH, nothing; doctor says so."""
+        program = shutil.which("caffeinate") if sys.platform == "darwin" else None
+        if not program:
+            return
+        try:
+            self.awake = subprocess.Popen([program, "-i", "-w", str(os.getpid())], stdin=subprocess.DEVNULL,
+                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as error:
+            self.say(f"couldn't keep the machine awake: {program} didn't start: {error}")
+            return
+        self.say(f"keeping the machine awake while it runs: {program} -i -w {os.getpid()} (pid {self.awake.pid})")
+
     def lose(self) -> bool:
-        """Whether it has lost what it serves; the first time, it says so in its log, which stays open."""
+        """Whether it has lost what it serves, or a newly applied generation should serve it instead; the first time
+        it loses what it serves, it says so in its log, which stays open."""
+        if self.moved():
+            return True
         if self.lost is None:
             self.lost = self.gone()
             if self.lost:
@@ -14550,6 +14643,7 @@ class Supervisor:
                 write_supervisor_status(c.state, os.getpid(), True)
                 for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
                     self.before_signals[number] = signal.signal(number, self.on_signal)
+                self.keep_awake()
                 self.start_live()
                 with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
                     for line in clear_suite_checkouts(c)[0]:
@@ -14573,12 +14667,20 @@ class Supervisor:
                         break
                     self.keep_alive()
                     time.sleep(0.2)
-                if self.stop_asked() or self.lost:
+                if self.stop_asked() or self.lost or self.moved_to:
                     break
             if not closed and self.stop_asked():
                 stopped_by = self.stop_reason()
+            elif not closed and self.moved_to:
+                stopped_by = "upgrade"
         finally:
             self.stop_children()
+            if self.awake is not None and not self.moved_to:
+                # Its caffeinate ends with it anyway; stopped here so none outlives a supervisor that returns. One
+                # that starts again on a new generation keeps it, and the pid it watches, until that one starts.
+                self.awake.terminate()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    self.awake.wait(timeout=5)
             # Drawn and copied once more, so neither the line map nor `latest` keeps the last running list; not when
             # the record or install is gone, which would only write a record back that no one is serving.
             if not self.lost:
@@ -14604,6 +14706,13 @@ class Supervisor:
             elif stopped_by and not self.once and not self.lost:
                 with contextlib.suppress(OSError):
                     write_supervisor_status(c.state, os.getpid(), False, stopped_by)
+            if self.moved_to and self.view is not None:
+                # A view it started is its child, which the process it becomes would never reap: stopped here, as the
+                # new generation's supervisor would stop it anyway, leaving live.json's port for that one's view.
+                with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
+                    said = stop_view(c.state, self.view)
+                    if said:
+                        print(f"{now()} supervisor: {said}", flush=True)
             if self.lost and self.view_pid:
                 # What it served is gone: so is what its view serves. Stopped by the pid it holds, as live.json may
                 # have gone with the record.
@@ -14635,7 +14744,41 @@ def lead_run(args) -> None:
         address = start_supervisor(c)
         print(f"supervisor: running; live view {address}{live_fallback(c.state)}" + listener_words(c))
         return
-    Supervisor(c, once=args.once).run()
+    supervisor = Supervisor(c, once=args.once)
+    supervisor.run()
+    if supervisor.moved_to is not None:
+        restart_on_generation(c, supervisor.watched)
+
+
+def restart_on_generation(c, pointer: Path) -> None:
+    """Replace this supervisor, its lock released and its children stopped, with the newly applied generation's own
+    restart, run from `pointer`: `lead-upgrade-writer` when the record pins its writer generation, which moves the pin
+    to the applied archive (leaving a pin that already names it as it is) and resumes the supervisor from it, or
+    `lead-run --resume` for a record that pins none. Either stops what this one left and starts the supervisor on the
+    new generation, which carries on from the record and the flow log, so nothing done is done twice. The hosted
+    token, which only this process holds, goes along through the pipe start_supervisor uses."""
+    tool = pointer / GENERATION_TOOL
+    pinned = (json_object(c.state / "state.json").get("meta") or {}).get("writerGeneration")
+    if isinstance(pinned, dict) and isinstance(pinned.get("archiveSha256"), str):
+        command = ["lead-upgrade-writer", "--expected", pinned["archiveSha256"], "--reason",
+                   f"the supervisor found {pointer.resolve().name} applied at {pointer} and started again on it"]
+    else:
+        command = ["lead-run", "--resume"]
+    argv = [sys.executable, "-B", str(tool), "--delivery", c.delivery, *command]
+    print(f"{now()} supervisor: starting again on {pointer.resolve().name}: {shlex.join(argv[2:])}", flush=True)
+    environment = dict(os.environ)
+    descriptor = hosted_credentials_pipe(c)
+    if descriptor is not None:
+        os.set_inheritable(descriptor, True)
+        environment["RUN_DELIVERY_HOSTED_FD"] = str(descriptor)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.chdir(c.root)
+    try:
+        os.execve(sys.executable, argv, environment)
+    except OSError as error:
+        raise Stop(f"the supervisor couldn't start again on {pointer.resolve().name}: {error}; run "
+                   f"{flow_command()} lead-run --resume") from None
 
 
 def program_version(program: str, checkout: Path) -> tuple[str | None, str | None]:
@@ -15397,6 +15540,7 @@ class Doctor:
             ("adapters", "in-app adapter contract", ("in-app",), self.adapters),
             ("video", "video evidence tools", ("config",), self.video),
             ("node", "Node", ("platform",), self.node),
+            ("awake", "keep awake", ("platform",), self.awake),
             ("harness", "harness configuration", ("config", "generation", "node"), self.harness),
             ("knowledge", "knowledge library properties", ("platform",), self.knowledge),
             ("delivery", "delivery file", ("config", "binding"), self.check_delivery),
@@ -15906,7 +16050,21 @@ class Doctor:
         wanted = node_minimum(self.release())
         if not wanted:
             return self.not_applicable("the generation carries no runtime")
+        if ADOPTED_NODE:
+            return "ok", (f"{ADOPTED_NODE['path']}, nvm's Node {ADOPTED_NODE['version']}, meets the runtime's "
+                          f"nodeMinimum {wanted}; the tool puts it first on PATH for itself and every process it starts, "
+                          f"since {replaced_words(ADOPTED_NODE, wanted)}")
         return "ok", f"{node_on_path()[0]} meets the runtime's nodeMinimum {wanted}"
+
+    def awake(self):
+        if sys.platform != "darwin":
+            return self.not_applicable("not macOS: lead-run keeps nothing awake here, so keep the machine from "
+                                       "sleeping while a delivery runs")
+        program = shutil.which("caffeinate")
+        if not program:
+            return "warn", ("no caffeinate on PATH, so lead-run can't keep the machine awake while it runs; fix: put "
+                            "/usr/bin back on PATH")
+        return "ok", f"lead-run holds {program} -i -w <its pid> while it runs, so the machine doesn't idle-sleep under it"
 
     def in_app(self):
         ia = self.c.in_app
@@ -16210,7 +16368,7 @@ class Doctor:
         their profile says otherwise, judged against the runtime's nodeMinimum: (status, words)."""
         wanted = node_minimum(self.delivery.release)
         restart = (f"stop it (pid {recorded.get('pid')}), then run {flow_command()} lead-run --resume"
-                   + (f" with Node {wanted} or newer first on PATH" if wanted else ""))
+                   + (f" with Node {wanted} or newer first on PATH or in nvm" if wanted else ""))
         if "node" not in recorded:
             return "warn", f"it recorded no Node, as an older generation's supervisor doesn't; fix: {restart}, which records it"
         node = recorded["node"]
@@ -16655,6 +16813,10 @@ def main(argv: list[str] | None = None) -> None:
     if later and args.delivery and later != args.delivery:
         parser.error(f"--delivery {args.delivery} and --delivery {later} name two deliveries; name one")
     DELIVERY_ARG = args.delivery or later
+    # Before anything starts: a Node below the minimum first on PATH, with an nvm Node that meets it, is put right here,
+    # so every process this command starts runs that one. A configured release elsewhere is judged where it's read.
+    with contextlib.suppress(OSError, ValueError):
+        adopt_node(GENERATION)
     for _signal in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(_signal, _terminate)
     try:
