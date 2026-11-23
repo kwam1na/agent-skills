@@ -130,6 +130,18 @@ reads status, retries exactly and survives a server restart, and the page
 renders the last committed cut. That is source and fixture proof; an installed
 adopter publishing over HTTPS stays with live acceptance.
 
+`npm run test:browser` runs the Chromium suite against both servers.
+`node test/conformance/bundle.mjs` is `hosted.conformance-node`: it builds the
+release's service bundle with `scripts/cut-release.py --service-bundle`, checks
+its `.sha256`, extracts it under `TMPDIR` outside any git worktree, and from that
+extraction alone installs, builds the server and runs the fast tier against it.
+`node test/conformance/container.mjs` builds the image from the same extraction's
+Dockerfile, checks that it runs as `node`, provisions two tokens with it, runs it
+read-only with its volume at `/data`, and runs the fast tier against it. It removes
+the image, container and volume it named. Where Docker is missing it exits 3 and
+says the check is unavailable, never that it passed. The service CI runs it as its
+own job, beside the fast checks and the two slow tiers.
+
 ## Local development and proof boundary
 
 `npm run dev` binds to `127.0.0.1` with real local DO/R2 simulation. Use only

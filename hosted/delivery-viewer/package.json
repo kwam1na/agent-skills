@@ -15,7 +15,7 @@
     "test": "npm run generate:core && vitest run && vitest run -c vitest.ui.config.ts",
     "test:node": "npm run build:node && vitest run -c vitest.node.config.ts",
     "dev": "npm run generate && wrangler dev --ip 127.0.0.1",
-    "test:browser": "npm run build && playwright test",
+    "test:browser": "npm run build && npm run build:node && playwright test && playwright test -c playwright.node.config.ts",
     "test:worker": "npm run generate:core && vitest run",
     "test:viewer": "npm run generate:core && vitest run -c vitest.ui.config.ts",
     "test:browser:node": "npm run build:node && playwright test -c playwright.node.config.ts"

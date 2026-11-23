@@ -280,7 +280,7 @@ binding = Path(".agents/orchestration.json")
 target = json.loads(subprocess.check_output(["git", "show", "origin/main:.agents/orchestration.json"]))
 source = json.loads(subprocess.check_output(["git", "show", "origin/integrate/<name>:.agents/orchestration.json"]))
 assert json.loads(binding.read_text()) == target, "restore the target binding first"
-service = ["hosted.install", "hosted.typecheck", "hosted.build", "hosted.test", "hosted.browser-install", "hosted.browser", "hosted.conformance"]
+service = ["hosted.install", "hosted.typecheck", "hosted.build", "hosted.test", "hosted.browser-install", "hosted.browser", "hosted.conformance", "hosted.node-test", "hosted.conformance-node"]
 allowed = ["tests.test_delivery_views_hosted", "tests.test_delivery_views_hosted_projection", "tests.test_run_delivery_hosted", *service]
 reader = {"paths": ["hosted/delivery-viewer/**", "hosted/protocol/**", "hosted/conformance/**", "skills/delivery-views/assets/**", "skills/delivery-views/scripts/render.py", "skills/delivery-views/scripts/hosted.py", "skills/delivery-views/scripts/views_common.py", "skills/delivery-views/references/hosted-snapshot.schema.json", "tests/fixtures/delivery-views/hosted/**", ".nvmrc", ".github/workflows/hosted-delivery-viewer.yml"], "checks": service}
 assert reader in source["selection"]["readers"], "reviewed service reader differs"
@@ -411,9 +411,20 @@ source and hosted fixture changes select the service checks through binding
 readers, and so do the protocol spec, the conformance suite and the corpus
 publisher's transport (`hosted.py` and `views_common.py`). The catalogue IDs are
 `hosted.install`, `hosted.typecheck`, `hosted.build`, `hosted.test`,
-`hosted.browser-install`, `hosted.browser` and `hosted.conformance`, which runs
-the conformance suite's fast tier against the built Worker and its planted-failure
-copies; their dependencies keep service installation out of unrelated Python checks. Use supported Node
+`hosted.browser-install`, `hosted.browser` (Chromium against the Worker and the
+portable server), `hosted.conformance`, which runs the conformance suite's fast
+tier against the built Worker and its planted-failure copies, `hosted.node-test`,
+the portable server's tests, and `hosted.conformance-node`, which builds the
+release's service bundle with `scripts/cut-release.py --service-bundle`, extracts
+it under `TMPDIR` and runs the fast tier against a server built from that
+extraction alone. Their dependencies keep service installation out of unrelated
+Python checks. The browser install sets `PLAYWRIGHT_SKIP_BROWSER_GC=1`, so it
+leaves the machine's other Playwright browsers in place. The service CI runs four
+parallel jobs: these fast checks, the Worker's slow tier, the portable server's
+slow tier, and the container image built from an extracted bundle, which runs
+read-only against the fast tier. Docker is optional locally:
+`node test/conformance/container.mjs` exits 3 and says the check is unavailable
+where Docker is missing, never that it passed. Use supported Node
 22.22.2+ or 24.15+ on the merge runner's PATH, and install Chromium's operating
 system prerequisites there. The separate Ubuntu service CI installs them itself.
 The lead must verify its exact main-push result before publishing a candidate or
