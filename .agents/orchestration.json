@@ -2167,6 +2167,8 @@
       {
         "id": "hosted.browser-install",
         "argv": [
+          "env",
+          "PLAYWRIGHT_SKIP_BROWSER_GC=1",
           "npx",
           "playwright",
           "install",
@@ -2211,6 +2213,35 @@
         "prerequisites": [
           "hosted.build"
         ],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.node-test",
+        "argv": [
+          "npm",
+          "run",
+          "test:node"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [
+          "hosted.install"
+        ],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.conformance-node",
+        "argv": [
+          "node",
+          "test/conformance/bundle.mjs"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [],
         "timeoutSeconds": 1200
       }
     ],
@@ -2277,7 +2308,9 @@
           "hosted.test",
           "hosted.browser-install",
           "hosted.browser",
-          "hosted.conformance"
+          "hosted.conformance",
+          "hosted.node-test",
+          "hosted.conformance-node"
         ]
       }
     ]

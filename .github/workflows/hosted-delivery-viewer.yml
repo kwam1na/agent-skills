@@ -41,9 +41,9 @@
     "cancel-in-progress": "${{ github.event_name == 'pull_request' }}"
   },
   "jobs": {
-    "service": {
+    "fast": {
       "runs-on": "ubuntu-latest",
-      "timeout-minutes": 20,
+      "timeout-minutes": 30,
       "defaults": {
         "run": {
           "working-directory": "hosted/delivery-viewer"
@@ -78,13 +78,19 @@
           "run": "npm test"
         },
         {
+          "run": "npm run test:node"
+        },
+        {
           "run": "npx playwright install --with-deps chromium"
         },
         {
           "run": "npm run test:browser"
         },
         {
-          "run": "node test/conformance/check.mjs --slow"
+          "run": "node test/conformance/check.mjs"
+        },
+        {
+          "run": "node test/conformance/bundle.mjs"
         },
         {
           "uses": "actions/upload-artifact@v4",
@@ -94,6 +100,105 @@
             "path": "hosted/delivery-viewer/test-results/",
             "if-no-files-found": "ignore"
           }
+        }
+      ]
+    },
+    "worker-slow": {
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 30,
+      "defaults": {
+        "run": {
+          "working-directory": "hosted/delivery-viewer"
+        }
+      },
+      "env": {
+        "WRANGLER_SEND_METRICS": "false",
+        "CI": "true"
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "uses": "actions/setup-node@v4",
+          "with": {
+            "node-version-file": ".nvmrc",
+            "cache": "npm",
+            "cache-dependency-path": "hosted/delivery-viewer/package-lock.json"
+          }
+        },
+        {
+          "run": "npm ci --ignore-scripts --no-audit --no-fund --engine-strict"
+        },
+        {
+          "run": "npm run build"
+        },
+        {
+          "run": "node test/conformance/check.mjs --slow"
+        }
+      ]
+    },
+    "node-slow": {
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 30,
+      "defaults": {
+        "run": {
+          "working-directory": "hosted/delivery-viewer"
+        }
+      },
+      "env": {
+        "WRANGLER_SEND_METRICS": "false",
+        "CI": "true"
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "uses": "actions/setup-node@v4",
+          "with": {
+            "node-version-file": ".nvmrc",
+            "cache": "npm",
+            "cache-dependency-path": "hosted/delivery-viewer/package-lock.json"
+          }
+        },
+        {
+          "run": "npm ci --ignore-scripts --no-audit --no-fund --engine-strict"
+        },
+        {
+          "run": "npm run build:node"
+        },
+        {
+          "run": "node test/conformance/check-node.mjs --slow"
+        }
+      ]
+    },
+    "container": {
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 30,
+      "defaults": {
+        "run": {
+          "working-directory": "hosted/delivery-viewer"
+        }
+      },
+      "env": {
+        "WRANGLER_SEND_METRICS": "false",
+        "CI": "true"
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "uses": "actions/setup-node@v4",
+          "with": {
+            "node-version-file": ".nvmrc",
+            "cache": "npm",
+            "cache-dependency-path": "hosted/delivery-viewer/package-lock.json"
+          }
+        },
+        {
+          "run": "node test/conformance/container.mjs"
         }
       ]
     }
