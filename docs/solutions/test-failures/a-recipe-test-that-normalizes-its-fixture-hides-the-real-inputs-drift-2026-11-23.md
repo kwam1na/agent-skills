@@ -56,6 +56,8 @@ assertion for the property the normalization assumed.
 
 ## Related Issues
 
-- The same script also refuses a changed row with a reviewed id, by design. A delivery that changes an existing
-  service check, as the portable hosted service changed `hosted.browser-install` and `hosted.browser`, still has to restore by hand. Once
-  main holds the reviewed rows, later deliveries are unaffected.
+- The same script also refuses, by design, when a reviewed id's binding row differs from the target's. It does not
+  refuse when only the command that row runs changes. The portable hosted service changed one row,
+  `hosted.browser-install`, whose argv gained `PLAYWRIGHT_SKIP_BROWSER_GC=1`, so its restore had to be built by hand.
+  `hosted.browser`'s row was unchanged; only the npm script it runs changed. Once main holds the reviewed rows, later
+  deliveries are unaffected.
