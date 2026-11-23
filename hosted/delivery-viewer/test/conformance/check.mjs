@@ -11,14 +11,10 @@ import { fileURLToPath } from "node:url";
 import { runSuite } from "../../../conformance/suite.mjs";
 import { builtWorker, credentials, startWorker } from "../launcher.mjs";
 import { PLANTED, buildWorker } from "./planted.mjs";
+import { FAST, SLOW } from "./scenarios.mjs";
 
 const slow = process.argv.includes("--slow");
-// Kept here rather than read from the suite, so a scenario dropped from it, or a slow tier that never ran, is red.
-const FAST = ["round-trip.first-repository", "round-trip.second-repository", "host-headers-ignored", "exact-retry",
-  "sequence-rules", "writer-fencing", "repository-scope", "errors.400", "errors.401", "errors.404", "errors.405", "errors.409",
-  "errors.413", "errors.415", "errors.422", "projection-fixtures", "streamed-body-limit", "refused-requests",
-  "no-redirect-listing-or-history", "anonymous-read", "security-headers"];
-const SLOW = ["slow.lease-expiry", "slow.resume", "slow.takeover", "slow.staleness"];
+
 const CLI = fileURLToPath(new URL("../../../conformance/cli.mjs", import.meta.url));
 const unknown = process.argv.slice(2).filter((arg) => arg !== "--slow");
 if (unknown.length) {

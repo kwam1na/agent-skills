@@ -1,0 +1,14 @@
+# Read by BuildKit for hosted/delivery-viewer/Dockerfile: the context is the repository or bundle root.
+**/node_modules
+**/.wrangler
+hosted/delivery-viewer/dist
+hosted/delivery-viewer/build
+hosted/delivery-viewer/test-results
+hosted/delivery-viewer/playwright-report
+hosted/delivery-viewer/src/generated-*
+hosted/delivery-viewer/test/fixtures.generated.ts
+hosted/delivery-viewer/test/assets.generated.json
+hosted/delivery-viewer/worker-configuration.d.ts
+**/.dev.vars*
+**/.env*
+**/__pycache__

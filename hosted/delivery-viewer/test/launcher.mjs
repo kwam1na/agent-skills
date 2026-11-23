@@ -1,8 +1,12 @@
-// The one place a local test run starts the built Worker: the browser run and the conformance run take their
-// runtime and their synthetic repository credentials from here.
+// The one place a local test run starts a server: the built Worker in Miniflare, or the built portable Node server.
+// The browser run and the conformance runs take their runtime and synthetic repository credentials from here.
 import { Miniflare, Log, LogLevel } from "miniflare";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Two synthetic repositories, each with a token of 256 random bits made for this process alone. */
 export const credentials = Object.freeze([
@@ -66,4 +70,53 @@ export async function startWorker({ script } = {}) {
     throw error;
   }
   return { origin: String(origin).replace(/\/$/, ""), dispose: () => runtime.dispose() };
+}
+
+export const builtNode = new URL("../build/node/server.mjs", import.meta.url);
+
+/**
+ * Starts the built portable server (`npm run build:node`) as its own process on a free loopback port, with the
+ * credentials above in `PUBLISHERS`. With no `dataDir` it serves a fresh temporary one, removed on dispose.
+ * The process is stopped by its recorded pid: `stop(signal)` sends one signal and waits for the exit.
+ */
+/** @param {{ dataDir?: string, env?: Record<string, string | undefined> }} [options] */
+export async function startNode({ dataDir, env = {} } = {}) {
+  const own = !dataDir;
+  const directory = dataDir ?? mkdtempSync(join(tmpdir(), "hosted-node-"));
+  const child = spawn(process.execPath, [fileURLToPath(builtNode)], {
+    // An override of undefined removes that variable.
+    env: Object.fromEntries(Object.entries({ PATH: process.env.PATH, HOST: "127.0.0.1", PORT: "0", DATA_DIR: directory,
+      PUBLISHERS: publishers(), ...env }).filter(([, value]) => value !== undefined)),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const exited = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
+  const origin = await new Promise((resolve, reject) => {
+    let stdout = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      const match = /listening on (http:\/\/\S+)/.exec(stdout);
+      if (match) resolve(match[1]);
+    });
+    exited.then(({ code, signal }) => reject(Object.assign(new Error(`the portable server exited before listening (${code ?? signal}): ${stderr.trim()}`), { stderr, code })));
+  }).catch((error) => { if (own) rmSync(directory, { recursive: true, force: true }); throw error; });
+  const pid = child.pid;
+  async function stop(signal = "SIGTERM") {
+    if (child.exitCode === null && child.signalCode === null) process.kill(pid, signal);
+    return exited;
+  }
+  return {
+    origin, pid, dataDir: directory, exited, stop, stderr: () => stderr,
+    async dispose() {
+      await stop("SIGTERM");
+      if (own) rmSync(directory, { recursive: true, force: true });
+    },
+  };
+}
+
+/** The server the run targets: the portable server when HOSTED_TARGET is "node", otherwise the Worker. */
+export const target = process.env.HOSTED_TARGET === "node" ? "node" : "worker";
+export function startServer() {
+  return target === "node" ? startNode() : startWorker();
 }

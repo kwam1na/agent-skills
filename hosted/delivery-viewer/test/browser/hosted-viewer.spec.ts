@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
-import { credentials, startWorker } from "../launcher.mjs";
+import { credentials, startServer } from "../launcher.mjs";
 
-// The runtime and its synthetic credentials come from the shared launcher, as the conformance run's do.
+// The runtime and its synthetic credentials come from the shared launcher, as the conformance run's do: the Worker,
+// or the portable server under HOSTED_TARGET=node (playwright.node.config.ts).
 const [{ repository, token }] = credentials;
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -17,9 +18,9 @@ const fixture = (name = "valid-dissent-markup.json") =>
       "utf8",
     ),
   );
-let runtime: Awaited<ReturnType<typeof startWorker>> | undefined, origin: string;
+let runtime: Awaited<ReturnType<typeof startServer>> | undefined, origin: string;
 test.beforeAll(async () => {
-  runtime = await startWorker();
+  runtime = await startServer();
   origin = runtime.origin;
 });
 test.afterAll(async () => {

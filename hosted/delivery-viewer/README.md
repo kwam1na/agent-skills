@@ -20,6 +20,11 @@ production or installed-adopter evidence.
   its R2 publisher records, and `delivery-object.ts`, the Durable Object
   `MetadataStore` and the R2 `BlobStore`. It typechecks under `tsconfig.json`
   with the Workers types.
+- `src/node/` is the portable server: the core over one SQLite database and
+  write-once filesystem blobs in a data directory, behind `node:http`, with no
+  runtime dependencies. `npm run build:node` bundles it to
+  `build/node/server.mjs`; it typechecks under `tsconfig.node.json`, and
+  `Dockerfile` builds its container image. See [Portable server](#portable-server).
 - `src/viewer.ts`, `src/view-store.ts` and `src/viewer.css` are the browser viewer
   the build bundles into the asset table.
 
@@ -57,6 +62,73 @@ What is particular to this Worker:
   `PUBLISHERS` Worker secret, as the spec's authentication section says.
 - Worker observability is disabled so request paths are not collected by
   default.
+
+## Portable server
+
+One process, one data directory, single writer. Configure it with:
+
+- `HOST` (default `127.0.0.1`; the image sets `0.0.0.0`) and `PORT` (default `8080`);
+- `DATA_DIR`, an absolute path on a local block volume (the image uses `/data`);
+- exactly one of `PUBLISHERS`, the JSON map of repository IDs to token digests,
+  or `PUBLISHERS_FILE`, a file holding it. The file is read on every check, so a
+  rotation takes effect without a restart, and a file that cannot be read denies
+  access.
+
+`node build/node/server.mjs provision-token <repositoryId>` prints a new token
+once, 256 random bits as unpadded base64url, and the `PUBLISHERS` entry that
+accepts it. Nothing is stored. Add the entry to the map and hand the token to the
+publisher.
+
+The server answers on one line, `hosted delivery service listening on <origin>`,
+and logs nothing per request. A missing, ambiguous or malformed configuration
+stops it at startup with a named error (`hosted.config_invalid`,
+`hosted.publishers_invalid`). SIGTERM or SIGINT stops it gracefully: it accepts
+nothing new, lets requests in flight finish for up to ten seconds, and exits 0.
+
+Storage, per the plan's decisions:
+
+- `DATA_DIR/metadata.sqlite` holds every delivery, keyed by public ID, opened
+  with `locking_mode=EXCLUSIVE` and `synchronous=FULL`, with each operation in a
+  `BEGIN IMMEDIATE` transaction. Startup takes the lock with `BEGIN EXCLUSIVE`, so
+  a second instance on the same data directory fails at startup with
+  `hosted.data_dir_in_use`, even against an idle first one. The OS releases the
+  lock with a crashed process, so no lock file is left behind.
+- A snapshot is written to `DATA_DIR/staging/`, fsynced, `link()`ed to its
+  content-addressed name in `DATA_DIR/blobs/` (an existing name with identical
+  bytes counts as success), and the directory is fsynced before the metadata
+  transaction. Startup clears what a crash left in `staging/`.
+- SQLite and `link()` need local block-device semantics. Network filesystems are
+  unsupported: AWS EFS, Azure Files, Cloud Run volume mounts, GCS FUSE and NFS.
+  Nothing detects them.
+
+The server speaks HTTP; TLS terminates in a reverse proxy or load balancer in
+front of it, whose access logging must be off or path-free, because capability
+links sit in URL paths. It never reads `Host` or `X-Forwarded-*`. It bounds every
+request with header, request and keep-alive timeouts, a header size limit and a
+connection cap, and streams bodies with the core's byte counting. A request that
+fails before it reaches the core (headers or body too slow, a header block over
+the limit, a malformed request line, a connection over the cap) is closed with
+no bytes written; Node's own 400, 408 and 431 responses are never sent.
+Health checks read the fixed `{"error":"not_found"}` 404 that `GET /` answers.
+
+The image is a two-stage build on one base pinned by digest. The build stage runs
+`npm ci --ignore-scripts` and `npm run build:node`; the runtime stage holds only
+Node and `server.mjs`, runs as the non-root `node` user, and works on a read-only
+root filesystem with its volume at `/data`. Build it from the root of an
+extracted service bundle or a checkout:
+`docker build -f hosted/delivery-viewer/Dockerfile .`.
+
+Its checks: `npm run test:node` runs the core storage contract against SQLite and
+the filesystem, the durability settings and write order, a fault between the blob
+and the transaction, the startup lock, a crash restart, the pre-core HTTP
+failures and provisioned tokens. `node test/conformance/check-node.mjs [--slow]`
+runs the conformance suite against the built server, and
+`npm run test:browser:node` runs the Chromium suite against it, with
+`test/browser/portable-publisher.spec.ts`: the corpus publisher's own
+`Transport`, through its loopback test seam, acquires, commits twice, confirms,
+reads status, retries exactly and survives a server restart, and the page
+renders the last committed cut. That is source and fixture proof; an installed
+adopter publishing over HTTPS stays with live acceptance.
 
 ## Local development and proof boundary
 
