@@ -85,6 +85,25 @@ arguments, delivery notes or share links. Cloudflare management credentials are
 not publishing credentials. Share the delivery's `/d/…` link; anyone receiving it
 can view its saved progress.
 
+## Runs on the live view
+
+Every delivery workflow run here, a plan, a diagnosis, a ticket or a routed
+request, reports its run through the run-event command `AGENTS.md` declares, and
+the binding's `state.liveRuns` has the live server watch the run store. The runs
+page is the front page while no delivery record exists; a lead's delivery server
+serves it too. Start or find the standing server from the repository root, after
+making the state directory:
+
+```bash
+mkdir -p .orchestration/state
+python3 -B .agent-skills/current/skills/orchestrate-work/scripts/render_state.py live --dir .orchestration/state --binding .agents/orchestration.json --if-absent
+```
+
+It prints the address of a running server, or serves and announces one. Stop the
+one this checkout started with `--stop` in place of `--if-absent`. The run store
+sits under the git common directory, so one server shows every worktree's runs.
+Runs are observability: no gate, approval or finish line reads them.
+
 ## Tracker updates
 
 The binding names run-delivery's tracker publisher, which posts this repository's

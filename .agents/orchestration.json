@@ -2344,6 +2344,23 @@
         ],
         "output": "delivery-history.html",
         "timeoutSeconds": 60
+      },
+      {
+        "id": "runs",
+        "argv": [
+          "python3",
+          "-B",
+          ".agent-skills/current/skills/delivery-views/scripts/render.py",
+          "runs",
+          "--config",
+          ".agents/delivery-views.json",
+          "--binding",
+          ".agents/orchestration.json",
+          "--state-dir",
+          "{stateDirectory}"
+        ],
+        "output": "runs.html",
+        "timeoutSeconds": 60
       }
     ],
     "publishers": [
@@ -2400,7 +2417,22 @@
       "timeoutSeconds": 180
     },
     "refreshSeconds": 180,
-    "liveHome": "line-map"
+    "liveHome": "line-map",
+    "liveRuns": {
+      "renderer": "runs",
+      "inventory": {
+        "argv": [
+          "python3",
+          "-B",
+          ".agent-skills/current",
+          "--root",
+          ".",
+          "harness",
+          "runs"
+        ],
+        "timeoutSeconds": 10
+      }
+    }
   },
   "fullHealthTimeoutSeconds": 5400,
   "reuse": {
