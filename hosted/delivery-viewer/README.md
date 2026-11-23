@@ -1,12 +1,33 @@
 # Hosted delivery ingestion
 
-Private Worker + SQLite Durable Object + private R2 snapshot storage. This package
-implements ingestion, committed read APIs and the trusted read-only browser viewer.
-Local runtime tests are not production or installed-adopter evidence.
+A neutral service core with a Cloudflare adapter: private Worker + SQLite Durable
+Object + private R2 snapshot storage. This package implements ingestion, committed
+read APIs and the trusted read-only browser viewer. Local runtime tests are not
+production or installed-adopter evidence.
+
+## Layout
+
+- `src/core/` is the service on Web-standard `Request`, `Response`,
+  `crypto.subtle`, `TextEncoder` and streams, plus `node:crypto`
+  `timingSafeEqual`, which both runtimes provide. `service.ts` routes,
+  authenticates, validates and serves the viewer's asset table; `deliveries.ts` is
+  the delivery state machine; `ports.ts` states the `MetadataStore` and write-once
+  `BlobStore` contracts it is written against; `publishers.ts` reads a
+  `PUBLISHERS` map. With `src/protocol.ts`, `src/projection-v2.ts` and the
+  generated validators and assets, it typechecks under `tsconfig.core.json`, which
+  loads neither Workers nor Node types.
+- `src/cloudflare/` is the Cloudflare adapter: `worker.ts`, the Worker entry and
+  its R2 publisher records, and `delivery-object.ts`, the Durable Object
+  `MetadataStore` and the R2 `BlobStore`. It typechecks under `tsconfig.json`
+  with the Workers types.
+- `src/viewer.ts`, `src/view-store.ts` and `src/viewer.css` are the browser viewer
+  the build bundles into the asset table.
 
 Use Node 22.22.2+ or 24.15+ (an even, supported Node release), then `npm ci`.
 Run `npm test`, `npm run typecheck`, and `npm run build`. The build is a Wrangler
-dry run and deploys nothing. `generate` compiles the corpus's fixed JSON Schema
+dry run and deploys nothing. `generate:core` compiles the validators and builds
+the asset table, with no Wrangler; `generate` adds `wrangler types` for the
+Cloudflare target. `generate` compiles the corpus's fixed JSON Schema
 2020-12 with Ajv standalone at build time and generates bindings from
 `wrangler.jsonc`; the Worker never compiles schemas or uses eval/new Function.
 The package consumes the shared fixture manifest directly at generation time.
@@ -50,8 +71,15 @@ tokens and capability paths.
 
 The test suite uses current Cloudflare Vitest integration and actual local
 Worker/SQLite DO/private R2 bindings. It pauses the real R2 await, lets competing
-commits run, and injects R2 failure. A SQLite abort trigger tests rollback after the
-receipt insert and before pointer update. Eviction tests use the runtime's actual
+commits run, and injects R2 failure. The core storage contract,
+`test/contract/storage.ts`, holds a store's first blob write until a takeover, a
+lease expiry on an injected clock, a competing commit or an exact retry has run,
+and faults the commit transaction after its receipt insert. It expects
+`writer_fenced`, `lease_expired` or `sequence_superseded`, one immutable receipt,
+and no receipt row for a rolled-back commit. `test/storage-contract.test.ts` runs it
+against the Durable Object store and R2. `test/versions.test.ts` holds the
+conformance suite's versions and bounds equal to the core's and the spec's.
+Eviction tests use the runtime's actual
 eviction helper and retain session/receipt/binding state. Shared schema and
 boundary fixtures run through HTTP handling. These checks prove local runtime
 behavior only. No hosted CI, deployment, DNS, live browser or installed-archive
@@ -63,7 +91,8 @@ qualification is claimed by this package.
 run uses, and runs the conformance suite's fast tier against it; `--slow` adds
 the slow tier, which waits out a lease and staleness in real time. It then
 builds a copy of `src/` unchanged, which must pass, and one planted-failure copy
-per rule in `test/conformance/planted.mjs`, each with exactly one rule removed,
+per rule in `test/conformance/planted.mjs`, each the core under the Cloudflare
+adapter with exactly one rule removed,
 which must start and fail exactly the scenarios it names. The Worker's run must
 cover exactly the scenario names the check lists, and `hosted/conformance/cli.mjs`
 must exit 0 against the Worker and 1 against a planted copy. A planted copy that

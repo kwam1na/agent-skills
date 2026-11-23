@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "hosted-delivery-viewer",
-  "main": "src/worker.ts",
+  "main": "src/cloudflare/worker.ts",
   "compatibility_date": "2026-11-15",
   "compatibility_flags": [
     "nodejs_compat"

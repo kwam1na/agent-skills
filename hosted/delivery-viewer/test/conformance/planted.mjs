@@ -1,4 +1,5 @@
-// Planted-failure servers: each is a copy of the Worker's source with exactly one rule removed, built at test time.
+// Planted-failure servers: each is the neutral core, under the Cloudflare adapter, with exactly one rule removed,
+// built at test time.
 // Each must fail the conformance suite in exactly the scenarios it names, so a weakened suite turns the check red.
 // A patch whose text is not found exactly as often as it says is drift, and the proof fails rather than passing.
 import { build } from "esbuild";
@@ -25,24 +26,23 @@ export const PLANTED = Object.freeze([
     name: "retry-refreshes-freshness",
     rule: "an exact retry returns its original receipt without refreshing source confirmation",
     patches: [{
-      file: "delivery-object.ts",
-      find: "    const retry = this.admissible(repo, commit);\n    if (retry) return retry;",
-      replace: "    const retry = this.admissible(repo, commit);\n" +
-        "    if (retry) { this.ctx.storage.sql.exec('UPDATE delivery SET confirmedAt=? WHERE singleton=1', Date.now()); return retry; }",
+      file: "core/deliveries.ts",
+      find: "    if (retry) return retry;",
+      replace: "    if (retry) { this.metadata.transact(publicId, tx => tx.confirm(this.clock.now(), tx.row()!.leaseUntil)); return retry; }",
     }],
     fails: ["exact-retry"],
   },
   {
     name: "no-writer-fencing",
     rule: "a commit or confirmation at an epoch the delivery is not at is fenced",
-    patches: [{ file: "delivery-object.ts", find: "    if (row.epoch !== epoch) fail('writer_fenced', 409);\n", replace: "" }],
+    patches: [{ file: "core/deliveries.ts", find: "    if (row.epoch !== epoch) fail('writer_fenced', 409);\n", replace: "" }],
     fails: ["writer-fencing"],
   },
   {
     name: "query-strings-accepted",
     rule: "a request with a query string is refused",
     patches: [{
-      file: "worker.ts",
+      file: "core/service.ts",
       find: "if (url.search || url.hash || /[%\\\\]/.test(url.pathname))",
       replace: "if (url.hash || /[%\\\\]/.test(url.pathname))",
     }],
@@ -52,9 +52,9 @@ export const PLANTED = Object.freeze([
     name: "first-publisher-only",
     rule: "every repository in PUBLISHERS is honoured, not only the first",
     patches: [{
-      file: "worker.ts",
-      find: "expected = Object.hasOwn(legacy, repo) ? legacy[repo] : undefined;",
-      replace: "expected = Object.keys(legacy)[0] === repo ? legacy[repo] : undefined;",
+      file: "core/publishers.ts",
+      find: "const value = Object.hasOwn(map, repository) ? map[repository] : undefined;",
+      replace: "const value = Object.keys(map)[0] === repository ? map[repository] : undefined;",
     }],
     fails: ["round-trip.second-repository", "repository-scope", "anonymous-read"],
   },
@@ -62,7 +62,7 @@ export const PLANTED = Object.freeze([
     name: "oversized-body-closes",
     rule: "an oversized body is answered with 413 body_too_large, not a closed connection",
     patches: [{
-      file: "worker.ts",
+      file: "core/service.ts",
       find: "    } catch (error) { return errorResponse(error); }",
       replace: "    } catch (error) {\n" +
         "      if (error instanceof Error && error.message === 'body_too_large') return new Response(new ReadableStream({ start(c) { c.error(new Error('closed')); } }));\n" +
@@ -79,13 +79,22 @@ export const PLANTED = Object.freeze([
   {
     name: "wrong-error-status",
     rule: "each fixed error code is sent with its own HTTP status",
-    patches: [{ file: "worker.ts", find: "fail('method_not_allowed', 405)", replace: "fail('method_not_allowed', 400)" }],
+    patches: [{ file: "core/service.ts", find: "fail('method_not_allowed', 405)", replace: "fail('method_not_allowed', 400)" }],
     fails: ["errors.405"],
+  },
+  {
+    name: "unsupported-type-as-400",
+    rule: "each refusal answers the status its code names, which the error rows check through their shared helper",
+    patches: [{ file: "protocol.ts", find: "fail('unsupported_content_type', 415)", replace: "fail('unsupported_content_type', 400)" }],
+    fails: ["errors.415"],
   },
   {
     name: "routes-by-host",
     rule: "routing and identity never read Host",
-    patches: [{ file: "worker.ts", find: "env.DELIVERIES.getByName(", replace: "env.DELIVERIES.getByName(url.host + '/' + ", count: 6 }],
+    patches: [
+      { file: "core/service.ts", find: "deliveries(publicId)", replace: "deliveries(url.host + '/' + publicId)", count: 5 },
+      { file: "core/service.ts", find: "deliveries(page[1])", replace: "deliveries(url.host + '/' + page[1])" },
+    ],
     fails: ["host-headers-ignored"],
   },
 ]);
@@ -107,7 +116,7 @@ export async function buildWorker(patches = []) {
       writeFileSync(path, text.split(patch.find).join(patch.replace));
     }
     const bundle = await build({
-      entryPoints: [join(src, "worker.ts")], bundle: true, write: false, format: "esm", platform: "neutral",
+      entryPoints: [join(src, "cloudflare", "worker.ts")], bundle: true, write: false, format: "esm", platform: "neutral",
       target: "es2022", external: ["cloudflare:*", "node:*"], conditions: ["workerd", "worker", "browser"],
       mainFields: ["browser", "module", "main"], logLevel: "silent",
     });
