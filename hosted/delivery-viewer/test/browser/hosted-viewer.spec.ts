@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { Miniflare, Log, LogLevel } from "miniflare";
 import { readFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
+import { credentials, startWorker } from "../launcher.mjs";
 
-const token = "synthetic-browser-publisher-".padEnd(64, "x");
+// The runtime and its synthetic credentials come from the shared launcher, as the conformance run's do.
+const [{ repository, token }] = credentials;
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 const fixture = (name = "valid-dissent-markup.json") =>
@@ -16,59 +17,16 @@ const fixture = (name = "valid-dissent-markup.json") =>
       "utf8",
     ),
   );
-let runtime: Miniflare, origin: string;
+let runtime: Awaited<ReturnType<typeof startWorker>> | undefined, origin: string;
 test.beforeAll(async () => {
-  runtime = new Miniflare({
-    host: "127.0.0.1",
-    port: 0,
-    log: new Log(LogLevel.NONE),
-    logRequests: false,
-    telemetry: { enabled: false },
-    enableDevRegistry: false,
-    workers: [
-      {
-        config: {
-          name: "browser-viewer",
-          compatibilityDate: "2026-11-15",
-          compatibilityFlags: ["nodejs_compat"],
-          manifest: {
-            mainModule: "worker.js",
-            modules: {
-              "worker.js": {
-                type: "esm",
-                contents: readFileSync(
-                  new URL("../../dist/worker.js", import.meta.url),
-                  "utf8",
-                ),
-              },
-            },
-          },
-          exports: {
-            DeliveryObject: { type: "durable-object", storage: "sqlite" },
-          },
-          env: {
-            PUBLISHERS: {
-              type: "text",
-              value: JSON.stringify({ "browser-repo": hash(token) }),
-            },
-            SNAPSHOTS: { type: "r2", name: "SNAPSHOTS" },
-            DELIVERIES: {
-              type: "durable-object",
-              worker: "browser-viewer",
-              exportName: "DeliveryObject",
-            },
-          },
-        },
-      },
-    ],
-  });
-  origin = (await runtime.ready).origin;
+  runtime = await startWorker();
+  origin = runtime.origin;
 });
 test.afterAll(async () => {
   await runtime?.dispose();
 });
 const route = (id: string, action: string) =>
-  `${origin}/api/v1/repos/browser-repo/deliveries/${id}/${action}`;
+  `${origin}/api/v1/repos/${repository}/deliveries/${id}/${action}`;
 async function publish(id: string, value: unknown, sequence = 1, renderer = "delivery-line-map/3") {
   const body = JSON.stringify(value);
   const headers = {
