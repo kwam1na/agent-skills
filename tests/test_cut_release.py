@@ -505,11 +505,14 @@ class ServiceBundleCommandTests(unittest.TestCase):
                     self.assertFalse(inside.exists())
                     continue
                 if case == "already there":
-                    self.out.mkdir()
-                    (self.out / BUNDLE).write_bytes(b"earlier")
-                    self.assertEqual(self._bundle()[0], 2)
-                    self.assertEqual({path.name for path in self.out.iterdir()}, {BUNDLE})
-                    self.assertEqual((self.out / BUNDLE).read_bytes(), b"earlier")
+                    for earlier in (BUNDLE, f"{BUNDLE}.sha256"):
+                        if self.out.exists():
+                            shutil.rmtree(self.out)
+                        self.out.mkdir()
+                        (self.out / earlier).write_bytes(b"earlier")
+                        self.assertEqual(self._bundle()[0], 2, earlier)
+                        self.assertEqual({path.name for path in self.out.iterdir()}, {earlier})
+                        self.assertEqual((self.out / earlier).read_bytes(), b"earlier")
                 elif case == "bad version":
                     with mock.patch("sys.stderr"):
                         self.assertEqual(self.command.main(["--version", "1.2.3", "--out", str(self.out), "--service-bundle"]), 2)
@@ -532,17 +535,62 @@ class ServiceBundleCommandTests(unittest.TestCase):
                 bundle.write(b"\0")
             return digest
 
-        for case, patcher, phrase in (
+        check = self.command.check_service_bundle
+        checks = []
+
+        def refuse_after_the_rename(version: str, directory: Path) -> str:
+            checks.append(directory)
+            if len(checks) == 2:
+                raise ValueError("cut_release.service_bundle_digest: refused after the rename")
+            return check(version, directory)
+
+        not_a_checkout = Path(self.out.parent) / "not-a-checkout"
+        not_a_checkout.mkdir()
+        for case, patcher, phrase, extra in (
             ("missing root", mock.patch.object(self.command, "SERVICE_ROOTS", (*self.command.SERVICE_ROOTS, "hosted/no-such-root/")),
-             "cut_release.service_root_missing: hosted/no-such-root/"),
-            ("corrupted", mock.patch.object(self.command, "write_service_bundle", corrupt), "cut_release.service_bundle_digest"),
+             "cut_release.service_root_missing: hosted/no-such-root/", ()),
+            ("corrupted", mock.patch.object(self.command, "write_service_bundle", corrupt), "cut_release.service_bundle_digest", ()),
+            ("after the rename", mock.patch.object(self.command, "check_service_bundle", refuse_after_the_rename),
+             "refused after the rename", ()),
+            ("not a checkout", contextlib.nullcontext(), "cut_release.service_bundle_source: git cannot list",
+             ("--root", str(not_a_checkout))),
         ):
             with self.subTest(case=case):
                 with patcher:
-                    code, stderr = self._bundle()
+                    code, stderr = self._bundle(*extra)
                 self.assertEqual(code, 1)
                 self.assertIn(phrase, stderr)
                 self.assertEqual(list(self.out.iterdir()), [])
+        self.assertEqual(len(checks), 2, "the output was never checked after the rename")
+
+    def test_a_link_or_submodule_under_a_root_refuses_by_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            tree = Path(temporary) / "tree"
+            (tree / "a").mkdir(parents=True)
+            (tree / "a" / "file").write_text("file\n", encoding="utf-8")
+            subprocess.run(["git", "init", "-q", str(tree)], check=True, capture_output=True)
+            quieten(tree)
+            subprocess.run(["git", "add", "a/file"], cwd=tree, check=True, capture_output=True)
+            commit = "0" * 39 + "1"
+            for case, path, where in (("a tracked link", "a/link", "in git's index"), ("a submodule", "a/sub", "in git's index"),
+                                      ("a link in the tree", "a/file", "in the tree")):
+                with self.subTest(case=case):
+                    if case == "a tracked link":
+                        os.symlink("file", tree / "a" / "link")
+                        subprocess.run(["git", "add", "a/link"], cwd=tree, check=True, capture_output=True)
+                    elif case == "a submodule":
+                        subprocess.run(["git", "rm", "-q", "--cached", "a/link"], cwd=tree, check=True, capture_output=True)
+                        (tree / "a" / "link").unlink()
+                        subprocess.run(["git", "update-index", "--add", "--cacheinfo", f"160000,{commit},a/sub"], cwd=tree,
+                                       check=True, capture_output=True)
+                    else:
+                        subprocess.run(["git", "rm", "-q", "--cached", "a/sub"], cwd=tree, check=True, capture_output=True)
+                        (tree / "a" / "file").unlink()
+                        os.symlink("/etc/hosts", tree / "a" / "file")
+                    archive = Path(temporary) / f"{path.replace('/', '-')}.zip"
+                    with mock.patch.object(self.command, "SERVICE_ROOTS", ("a/",)), self.assertRaises(ValueError) as caught:
+                        self.command.build_service_bundle(tree, archive)
+                    self.assertIn(f"cut_release.service_bundle_source: {path} is not a regular file {where}", str(caught.exception))
 
 
 class RealRunTests(unittest.TestCase):
