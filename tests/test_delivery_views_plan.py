@@ -620,7 +620,100 @@ class PlanReviewContractTests(unittest.TestCase):
         self.assertTrue(list(validator.iter_errors(document)))
 
 
-SKILL = PRODUCT_ROOT / "skills/delivery-views/SKILL.md"
+def preview_plan(**preview) -> dict:
+    """A plan preview as its builder writes one: the plan as its own approved snapshot, no changes, no evidence, no
+    review reference, and the preview member."""
+    document = plan()
+    units = [unit for unit in document["units"] if not unit.get("removed")]
+    for unit in units:
+        unit["proofs"] = ["review", "merged"]
+    finish = [{**document["finish"][0], "covers": {"criteria": [], "proofs": []}}]
+    document.update(units=units, finish=finish, changes=[], evidence={},
+                    proofKinds=[kind for kind in document["proofKinds"] if kind["source"] == "record"],
+                    approved={"at": "2026-10-30T09:00:00Z", "snapshot": {"units": copy.deepcopy(units), "finish": copy.deepcopy(finish)}},
+                    approvals=[{"text": "The operator approves the plan", "state": "waiting"}])
+    document["preview"] = {"plan": "docs/plans/fx.md", "commit": HEAD, "approval": "agents-only", "layout": "delivery",
+                           "decisions": ["One optional member.", "No new renderer version."], **preview}
+    return document
+
+
+class PlanPreviewContractTests(unittest.TestCase):
+    """The optional `preview` member: closed, bounded, and held alike by the schema and by `validate_plan`."""
+
+    def validator(self):
+        import jsonschema
+
+        return jsonschema.Draft202012Validator(json.loads(SCHEMA.read_text(encoding="utf-8")))
+
+    def test_a_preview_is_accepted_whole_by_both(self) -> None:
+        validator = self.validator()
+        cases = {
+            "agents only": preview_plan(),
+            "handed": preview_plan(approval="handed", delivery="FX-1"),
+            "another layout": preview_plan(layout="other", decisions=[]),
+            "at its caps": preview_plan(plan="p" * 600, decisions=["d" * 600] * 100),
+        }
+        for name, document in cases.items():
+            with self.subTest(case=name):
+                if name == "another layout":
+                    document.update(units=[], approved={**document["approved"], "snapshot": {"units": [], "finish": document["finish"]}})
+                self.assertEqual(views.validate_plan(copy.deepcopy(document)), document)
+                self.assertEqual(list(validator.iter_errors(document)), [])
+
+    def test_each_refusal_is_the_schemas_and_the_validators_and_echoes_no_value(self) -> None:
+        validator = self.validator()
+        refused = {
+            "an unknown field": (lambda p: p.update(extra=SECRET), "preview: holds an unknown key"),
+            "a delivery without handed": (lambda p: p.update(delivery="FX-1"), "preview.delivery: is only given when the approval is handed"),
+            "handed without a delivery": (lambda p: p.update(approval="handed"), "preview.delivery: is required when the approval is handed"),
+            "a short commit": (lambda p: p.update(commit=HEAD[:12]), "preview.commit: must be a full 40-character commit id"),
+            "a 64-character commit": (lambda p: p.update(commit="a" * 64), "preview.commit: must be a full 40-character commit id"),
+            "an approved approval": (lambda p: p.update(approval="approved"), "preview.approval: must be agents-only or handed"),
+            "an unknown layout": (lambda p: p.update(layout="x"), "preview.layout: must be delivery or other"),
+            "a 601-character decision": (lambda p: p["decisions"].append(SECRET + "d" * 600), "preview.decisions[2]: holds 625 characters, over the cap of 600"),
+            "a 601-character plan": (lambda p: p.update(plan="p" * 601), "preview.plan: holds 601 characters, over the cap of 600"),
+            "101 decisions": (lambda p: p.update(decisions=["d"] * 101), "preview.decisions: holds 101 entries, over the cap of 100"),
+            "a missing layout": (lambda p: p.pop("layout"), "preview.layout: is required"),
+            "a missing decisions list": (lambda p: p.pop("decisions"), "preview.decisions: is required"),
+            "an empty decision": (lambda p: p.update(decisions=[""]), "preview.decisions[0]: must be non-empty text"),
+            "a malformed delivery key": (lambda p: p.update(approval="handed", delivery="FX 1"), "preview.delivery: must be an id"),
+        }
+        for name, (edit, message) in refused.items():
+            with self.subTest(case=name):
+                document = preview_plan()
+                edit(document["preview"])
+                self.assertTrue(list(validator.iter_errors(document)), name)
+                said = refusal(document)
+                self.assertTrue(said.startswith(message), said)
+                self.assertNotIn(SECRET, said)
+        document = preview_plan()
+        document["preview"] = [SECRET]
+        self.assertTrue(list(validator.iter_errors(document)))
+        self.assertEqual(refusal(document), "preview: must be an object")
+
+    def test_the_schema_names_the_validators_preview_fields(self) -> None:
+        member = json.loads(SCHEMA.read_text(encoding="utf-8"))["properties"]["preview"]
+        self.assertIs(member["additionalProperties"], False)
+        self.assertEqual(list(member["properties"]), list(views.PLAN_PREVIEW_KEYS))
+        self.assertEqual(set(member["required"]), set(views.PLAN_PREVIEW_KEYS) - {"delivery"})
+        self.assertEqual(member["properties"]["approval"]["enum"], list(views.PLAN_PREVIEW_APPROVALS))
+        self.assertEqual(member["properties"]["layout"]["enum"], list(views.PLAN_PREVIEW_LAYOUTS))
+        self.assertEqual(member["properties"]["decisions"]["maxItems"], views.PLAN_LIST)
+        self.assertEqual(member["properties"]["decisions"]["items"]["maxLength"], views.PLAN_TEXT)
+        self.assertEqual(member["properties"]["plan"]["maxLength"], views.PLAN_TEXT)
+        self.assertNotIn("preview", views.PLAN_REQUIRED)
+
+    def test_every_delivery_plan_fixture_validates_unchanged_and_carries_no_preview(self) -> None:
+        for case in ("plan-in-app", "plan-record-only", "plan-review"):
+            with self.subTest(case=case):
+                path = PRODUCT_ROOT / "tests/fixtures/delivery-views/line-map" / case / "plan.json"
+                document = json.loads(path.read_text(encoding="utf-8"))
+                self.assertNotIn("preview", document)
+                self.assertEqual(views.validate_plan(copy.deepcopy(document)), document)
+                self.assertEqual(list(self.validator().iter_errors(document)), [])
+
+
+SKILL =PRODUCT_ROOT / "skills/delivery-views/SKILL.md"
 LINE_MAP = PRODUCT_ROOT / "skills/delivery-views/assets/line-map.js"
 # C7: what needs the engineer, in the order the chapter shows it, each with the words that make it the rule it is.
 FLAGS = [

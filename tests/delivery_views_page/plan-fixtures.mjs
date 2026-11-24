@@ -241,6 +241,63 @@ export function planReviewDelivery() {
   return { document, plan };
 }
 
+/**
+ * A plan review for a preview, `count` rounds long, ending as `state` says. "open" leaves the last round with one lens
+ * approving and the other asking for changes, so the round card names the approving lens's own verdict; "notes-open"
+ * gives the last round that outcome; "ended" carries the operator's reason.
+ */
+export function previewReview(count, state = "aligned") {
+  const [oc, at] = LENSES;
+  const counts = (P1 = 0) => ({ P0: 0, P1, P2: 0, P3: 0 });
+  const rounds = [];
+  for (let number = 1; number <= count; number += 1) {
+    const last = number === count;
+    const commit = String(number).repeat(40);
+    const settled = number > 1 ? [{ id: `c${number - 1}-1`, lens: oc, state: "fixed", fixCommit: commit, resolution: `Fixed in round ${number}.` }] : [];
+    const verdicts = !last ? { [oc]: "changes", [at]: "approve" }
+      : state === "aligned" || state === "notes-open" ? { [oc]: "approve", [at]: "approve" } : { [oc]: "changes", [at]: "approve" };
+    const outcome = !last ? "changes" : state === "aligned" ? "approve" : state === "notes-open" ? "notes-open" : "changes";
+    const raised = outcome === "approve" ? [] : [{ id: `c${number}-1`, lens: oc, severity: "P1", summary: `Round ${number} found a gap in the plan.`,
+      state: last ? "unresolved" : "resolved" }];
+    rounds.push({ round: number, candidateRef: commit, at: minute(-60 * (count - number + 1)), outcome, verdicts,
+      findings: counts(raised.length), raised, settled });
+  }
+  return { lenses: [...LENSES], state: state === "notes-open" ? "aligned" : state, ...(state === "ended" ? { endedReason: "The operator ended the review to replan." } : {}),
+    rounds };
+}
+
+/**
+ * A plan preview as its builder writes one: the plan as its own snapshot, no changes or evidence, finish lines only a
+ * person checks, the plan's approvals waiting, and the preview member. `rounds` and `state` give its review, none by
+ * default; `approval: "handed"` names the delivery that took it; `layout: "other"` has no stories.
+ */
+export function previewDelivery({ rounds = 0, state = "aligned", approval = "agents-only", delivery = "SHOP-90", layout = "delivery" } = {}) {
+  const units = layout === "other" ? [] : [unit("SHOP-91", { criteria: 2, title: "Saved addresses" }), unit("SHOP-92", { title: "Address book export" })];
+  const finish = [finishLine("finish-1", { criteria: [], proofs: [] }, { label: "Finish 1", text: "Every saved address survives a sign-out" })];
+  const plan = planFor(units, { finish, approvedAt: minute(-400), updated: "2026-10-30T11:00:00Z",
+    outcome: { summary: "Plan preview (agent review only): Saved addresses", text: "Shoppers keep their addresses between visits." },
+    approvals: [{ text: "Product Owner signs off the copy", state: "waiting" }, { text: "The operator approves the plan", state: "waiting" }],
+    outOfScope: ["Importing addresses"], requiredLenses: [] });
+  plan.preview = { plan: "docs/plans/saved-addresses.md", commit: headOf("plan"), approval, ...(approval === "handed" ? { delivery } : {}), layout,
+    decisions: ["Addresses are kept per account, never per device.", "No new renderer version."] };
+  if (rounds) plan.planReview = previewReview(rounds, state);
+  const document = record({ planned: units.map((entry) => ({ subject: entry.subject, title: entry.title, lane: "lane-1", stage: "planned" })),
+    finish: finish.map((line) => ({ id: line.id, text: line.text, met: false })), meta: { headline: plan.outcome.summary } });
+  return { document, plan };
+}
+
+/** The preview fixtures: no round, three rounds open, aligned, ended, handed, and a plan outside the delivery layout. */
+export const PREVIEW_CASES = {
+  "preview-none": () => previewDelivery(),
+  "preview-open": () => previewDelivery({ rounds: 3, state: "open" }),
+  "preview-aligned": () => previewDelivery({ rounds: 3 }),
+  "preview-aligned-first": () => previewDelivery({ rounds: 1 }),
+  "preview-notes-open": () => previewDelivery({ rounds: 2, state: "notes-open" }),
+  "preview-ended": () => previewDelivery({ rounds: 2, state: "ended" }),
+  "preview-handed": () => previewDelivery({ rounds: 3, approval: "handed" }),
+  "preview-other": () => previewDelivery({ rounds: 2, layout: "other" }),
+};
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const PLAN_CASES = { "plan-in-app": inAppDelivery, "plan-record-only": recordOnlyDelivery, "plan-review": planReviewDelivery };
 

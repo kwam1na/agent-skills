@@ -156,7 +156,27 @@ function richWords(words, hooks) {
   if (last < said.length) { nodes.push(document.createTextNode(said.slice(last))); }
   return nodes;
 }
+// A plan preview's words for every approving string below: a plan under agent review has had its lenses align, and no
+// person has approved it. Under `options.preview` each string takes its wording here; without it, none changes. Every
+// string literal in this file that matches /approv/i is a key here, but the enum values it compares and never shows.
+var RUN_PREVIEW_WORDS = {
+  "Approved on the first round": "Lenses aligned on the first round",
+  "Approved on round ": "Lenses aligned on round ",
+  " approved, notes open": " aligned, notes open",
+  "approved": "aligned",
+  "approved, notes open": "aligned, notes open",
+  "Approved": "Aligned",
+  "Approved with ": "Aligned with ",
+  "Approved, notes open": "Aligned, notes open",
+  "The plan's review has no round bound: it runs until every lens approves or the operator ends it.":
+    "The plan's review has no round bound: it runs until every lens aligns or the operator ends it.",
+};
+// The values compared against and never displayed.
+var RUN_PREVIEW_ENUMS = ["approve"];
 function runSummaryNode(summary, options) {
+  var preview = Boolean(options && options.preview === true);
+  // A string as it reads here: a preview's wording for it, or the string itself.
+  function say(words) { return preview && Object.prototype.hasOwnProperty.call(RUN_PREVIEW_WORDS, words) ? RUN_PREVIEW_WORDS[words] : words; }
   var SEVERITIES = ["P0", "P1", "P2", "P3"];
   var WORDS = { P0: "critical", P1: "serious", P2: "moderate", P3: "minor" };
   var PIPS_SHOWN = 8;
@@ -274,9 +294,9 @@ function runSummaryNode(summary, options) {
     });
     var head;
     var number = numberOf(last, rounds.length - 1);
-    if (last.outcome === "approve") { head = number === 1 ? "Approved on the first round" : "Approved on round " + number; }
+    if (last.outcome === "approve") { head = number === 1 ? say("Approved on the first round") : say("Approved on round ") + number; }
     else if (last.outcome === "changes") { head = "Round " + number + " asked for changes"; }
-    else if (last.outcome === "notes-open") { head = "Round " + number + " approved, notes open"; }
+    else if (last.outcome === "notes-open") { head = "Round " + number + say(" approved, notes open"); }
     else { head = rounds.length + (rounds.length === 1 ? " review round" : " review rounds"); }
     var raised = noteWords(total);
     var tail = !reported ? "findings not reported" : raised ? raised + " raised" : "nothing raised";
@@ -286,9 +306,9 @@ function runSummaryNode(summary, options) {
   // "approved", "asked for changes", "approved, notes open", "reported as <outcome>" for any other outcome, or "outcome not reported".
   function outcomeWords(round) {
     var outcome = outcomeOf(round);
-    if (outcome === "approve") { return "approved"; }
+    if (outcome === "approve") { return say("approved"); }
     if (outcome === "changes") { return "asked for changes"; }
-    if (outcome === "notes-open") { return "approved, notes open"; }
+    if (outcome === "notes-open") { return say("approved, notes open"); }
     return typeof round.outcome === "string" && round.outcome !== "" ? "reported as " + round.outcome : "outcome not reported";
   }
   function numberOf(round, index) { return round.round === null || round.round === undefined ? index + 1 : round.round; }
@@ -339,7 +359,7 @@ function runSummaryNode(summary, options) {
   // A lens's own verdict, never an inherited property for a lens named like one.
   function verdictOf(verdicts, lens) { return Object.prototype.hasOwnProperty.call(verdicts, lens) ? verdicts[lens] : undefined; }
   function verdictKind(verdict) { return verdict === "approve" || verdict === "changes" ? verdict : "unknown"; }
-  function verdictWords(kind, verdict) { return kind === "approve" ? "approved" : kind === "changes" ? "asked for changes" : String(verdict); }
+  function verdictWords(kind, verdict) { return kind === "approve" ? say("approved") : kind === "changes" ? "asked for changes" : String(verdict); }
   // A lens's icon and name; its verdict is said only where it differs from the round's, which the header gives.
   function reviewerHead(className, lens, verdict, outcome) {
     var kind = verdict === undefined ? "unknown" : verdictKind(verdict);
@@ -867,8 +887,8 @@ function runSummaryNode(summary, options) {
     // An approval that came with findings its lenses filed as deferred counts them, whatever later rounds made of them.
     var deferrable = Array.isArray(round.raised) && !isFold(round)
       ? round.raised.filter(function (entry) { return isNote(entry) && entry.filed === "deferred"; }).length : 0;
-    var pill = outcome === "approve" ? (deferrable ? "Approved with " + deferrable + (deferrable === 1 ? " deferrable note" : " deferrable notes") : "Approved")
-      : outcome === "changes" ? "Changes requested" : outcome === "notes-open" ? "Approved, notes open" : outcomeWords(round);
+    var pill = outcome === "approve" ? (deferrable ? say("Approved with ") + deferrable + (deferrable === 1 ? " deferrable note" : " deferrable notes") : say("Approved"))
+      : outcome === "changes" ? "Changes requested" : outcome === "notes-open" ? say("Approved, notes open") : outcomeWords(round);
     head.appendChild(node("span", "run-card-outcome", pill.charAt(0).toUpperCase() + pill.slice(1)));
     box.appendChild(head);
     var verdicts = round.verdicts && typeof round.verdicts === "object" ? round.verdicts : {};
@@ -981,7 +1001,7 @@ function runSummaryNode(summary, options) {
   var planReview = summary.planReview && typeof summary.planReview === "object" ? summary.planReview : null;
   if (planReview) {
     // A plan's review is unbounded: it ends when every lens approves, or when the operator ends it, with a reason.
-    box.appendChild(node("p", "run-quiet", "The plan's review has no round bound: it runs until every lens approves or the operator ends it."));
+    box.appendChild(node("p", "run-quiet", say("The plan's review has no round bound: it runs until every lens approves or the operator ends it.")));
     if (planReview.state === "ended") { box.appendChild(node("p", "run-ended", "Ended without alignment: " + (planReview.endedReason || "no reason recorded."))); }
   }
   else if (summary.observational) { box.appendChild(node("p", "run-quiet", "Recorded reviewer reports · display only")); }

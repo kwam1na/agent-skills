@@ -943,7 +943,7 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 .plan-proof.waived { color: var(--ink); }
 .plan-proof.stuck { color: var(--wait); }
 .plan-changes { display: grid; gap: 12px; }
-.plan-changes ul, .plan-waivers, .plan-approvals, .plan-scope-out { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; font-size: 14px; }
+.plan-changes ul, .plan-waivers, .plan-approvals, .plan-scope-out, .plan-decisions { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; font-size: 14px; }
 .plan-scope { width: 100%; max-width: 600px; height: auto; overflow: visible; }
 /* Scope as one quiet step line in ink; its marks name the kind of change: added ink, changed held back in wait,
    removed held. The tail since the last change is dotted, the counts sit at the ends, the dates beneath. */
@@ -967,6 +967,7 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 .redline del { color: var(--held); }
 .redline ins { color: var(--ink); text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
 .plan-clipped { margin: 0; font-size: 13px; color: var(--faint); }
+.plan-decisions li { color: var(--ink); }
 .plan-approvals li { color: var(--ink); font-size: 14px; }
 .plan-approvals li span { font-size: 13px; font-weight: 600; color: var(--wait); }
 .plan-approvals li.done span { color: var(--ink); }

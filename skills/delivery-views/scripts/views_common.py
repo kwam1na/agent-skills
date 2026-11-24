@@ -739,7 +739,7 @@ PLAN_LIST = 100
 PLAN_RECORD_KINDS = ("handed", "merged", "review")
 PLAN_CHANGE_KINDS = ("added", "removed", "relaxed", "changed", "finish")
 PLAN_KEYS = ("schemaVersion", "updated", "outcome", "requiredLenses", "proofKinds", "units", "finish", "approved",
-             "changes", "evidence", "approvals", "outOfScope", "planReview", "closeOut")
+             "changes", "evidence", "approvals", "outOfScope", "planReview", "closeOut", "preview")
 PLAN_REQUIRED = ("schemaVersion", "updated", "outcome", "requiredLenses", "proofKinds", "units", "finish", "approved",
                  "changes", "evidence")
 PLAN_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
@@ -751,6 +751,11 @@ PLAN_REVIEW_VERDICTS = ("approve", "changes", "unavailable")
 PLAN_REVIEW_ENTRY = ("round", "fromRound", "candidateRef", "at", "outcome", "verdicts", "findings", "raised", "settled",
                      "clipped")
 SEVERITY_NAMES = ("P0", "P1", "P2", "P3")
+# A plan preview, written while a plan is under agent review: what `approved` means there, and the plan's decisions.
+PLAN_PREVIEW_KEYS = ("plan", "commit", "approval", "delivery", "layout", "decisions")
+PLAN_PREVIEW_APPROVALS = ("agents-only", "handed")
+PLAN_PREVIEW_LAYOUTS = ("delivery", "other")
+PLAN_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _plan_object(value: object, where: str, allowed: set[str], required: set[str] = frozenset()) -> dict:
@@ -1079,7 +1084,29 @@ def validate_plan(value: object) -> dict:
             raise ConfigError("closeOut.posture: must be focused")
         _text(close_out["source"], "closeOut.source", PLAN_LABEL)
         _text(close_out["reason"], "closeOut.reason", PLAN_TEXT)
+    if "preview" in plan:
+        _plan_preview(plan["preview"])
     return plan
+
+
+def _plan_preview(value: object) -> None:
+    """A preview member: the plan's path and commit, who has approved it so far, its layout and its decisions."""
+    preview = _plan_object(value, "preview", set(PLAN_PREVIEW_KEYS), set(PLAN_PREVIEW_KEYS) - {"delivery"})
+    _text(preview["plan"], "preview.plan", PLAN_TEXT)
+    if not isinstance(preview["commit"], str) or not PLAN_COMMIT.fullmatch(preview["commit"]):
+        raise ConfigError("preview.commit: must be a full 40-character commit id")
+    if preview["approval"] not in PLAN_PREVIEW_APPROVALS:
+        raise ConfigError(f"preview.approval: must be {' or '.join(PLAN_PREVIEW_APPROVALS)}")
+    if preview["approval"] == "handed" and "delivery" not in preview:
+        raise ConfigError("preview.delivery: is required when the approval is handed")
+    if preview["approval"] != "handed" and "delivery" in preview:
+        raise ConfigError("preview.delivery: is only given when the approval is handed")
+    if "delivery" in preview:
+        _plan_id(preview["delivery"], "preview.delivery")
+    if preview["layout"] not in PLAN_PREVIEW_LAYOUTS:
+        raise ConfigError(f"preview.layout: must be {' or '.join(PLAN_PREVIEW_LAYOUTS)}")
+    for i, text in enumerate(_bounded(preview["decisions"], "preview.decisions", PLAN_LIST)):
+        _text(text, f"preview.decisions[{i}]", PLAN_TEXT)
 
 
 def read_plan(path: Path) -> dict:
