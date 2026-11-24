@@ -562,7 +562,7 @@ Out of scope:
   | Input | Rule |
   | --- | --- |
   | flow log `supervisor`, `prepares`, `suite` (results are journalled as `integration.suite`), `ship-gates`; `sessions.json`; `needs-you.json`; `lane-changes.json`; the peer registry under the git common directory; the machine ledger | local |
-  | flow logs `acceptance`, `app-checks` and `lane-starts` | carried by `lane:<L>`'s holder, because `plan_evidence`, every seat's Needs you and the tracker publisher read them. `acceptance` and `app-checks` are keyed by subject and head, `lane-starts` by subject |
+  | flow logs `acceptance`, `app-checks` and `lane-starts` | carried by `lane:<L>`'s holder, because `plan_evidence`, every seat's Needs you and the tracker publisher read them. `acceptance` is keyed by subject and head, `lane-starts` by subject. `app-checks` keeps every entry, in its origin seat's order, never collapsed to one per subject and head |
   | flow log `videos` | carried by the seat that recorded each entry, keyed by subject, clip name and head with the latest entry for a name winning, so the plan view's clip proof (`plan_evidence`) is right on every seat. A lane's recordings serve that story's review and plan view only. They never count for the close (D22) |
   | flow log `tracker-marks` | carried by `delivery`'s holder with the tracker ledger, keyed by `<seat>.<seq>` (D12) |
   | flow log `full-health` `result` entries, keyed by head | carried by `queue`'s holder |
@@ -607,17 +607,25 @@ Out of scope:
     `delivery`. Elsewhere each refuses with `scope.not_held` before it writes
     anything.
   - **Recording:** on a shared record, `record` takes each story's hold and fail
-    spec from the latest passing entry of that mode in the carried `app-checks`
-    log (`specValue`, `passthrough`), not from app-check files in story folders.
-    So it records stories in every seat's lanes on the holder's merged base.
+    spec from the carried `app-checks` log, not from app-check files in story
+    folders. So it records stories in every seat's lanes on the holder's merged
+    base. For each mode:
+    - **eligible entries** are those that passed, are of that mode, and are
+      neither baseline (`head` null) nor passthrough runs, the same exclusions
+      `record` applies today;
+    - **the one chosen** is at the story's latest head that has one, by git
+      ancestry, never by `at`. Among several at that head, it is the last in its
+      origin seat's log order, with ties between seats broken by seat id;
+    - its `specValue` is the spec recorded.
   - **What counts:** on a shared record, `evidence_status` and `lead-evidence
     page` read only the holder's merged-base folder (`work/review/<key>`), never
     a lane checkout or `evidence_dir`. The page comparison is the same as on an
     unshared record.
   - **Taking `delivery`:** a seat that receives `delivery` moves its own earlier
-    `evidence-page.json` and merged-base recordings aside before its first
-    evidence command. So a seat that held `delivery` before never judges against
-    a stale page.
+    `evidence-page.json` and merged-base recordings aside when it ingests the
+    transfer, before `evidence_status`, `lead-close` or any `lead-evidence`
+    command reads them. Its `evidence-notes.json` is replaced by the carried one.
+    So a seat that held `delivery` before never judges against a stale page.
   - **Lanes:** a clip recorded in a lane serves that story's review and the plan
     view's clip proof, and never counts for the close. Handing over a lane
     therefore never touches evidence.
@@ -1213,7 +1221,15 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
     `a`, holding `delivery`, runs `lead-evidence record` on the merged base and
     publishes, and `a`'s `lead-close` reports the evidence current;
   - a story in `b`'s lane whose app-checks ran only on `b` is recorded by `a`'s
-    `lead-evidence record` on the merged base, and appears on `a`'s page;
+    `lead-evidence record` on the merged base, and appears on `a`'s page. Its
+    entries on `b`, in order, are:
+    - a passing hold with spec S1;
+    - a failing hold with spec S2;
+    - a passing fail with spec F1;
+    - a later passing hold with spec S3, run with passthrough.
+
+    `a` makes both a hold and a fail clip, and the video records' specs are S1
+    and F1;
   - `lead-evidence record`, `page` and `published` on `b` each give
     `scope.not_held`. Each leaves the D20 surfaces unchanged, as well as
     `evidence-page.json`, `evidence-notes.json`, the `--out` folder and `b`'s
@@ -1232,9 +1248,11 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
     not recorded until `b` records on the merged base and publishes. Before the
     move, `b` ran a refused `lead-evidence page --title`; after it, `b`'s page
     carries `a`'s title and notes, not `b`'s;
-  - `delivery` moves from `a` to `b` and back to `a`; `a`'s close does not pass
-    against its page from before the moves, and needs a fresh recording and
-    publish;
+  - `delivery` moves from `a` to `b` and back to `a`, with no new video story
+    merged while `b` held it. `a` runs `lead-close` before any `lead-evidence`
+    command, and its close does not pass against its page from before the moves;
+    it needs a fresh recording and publish. `a`'s page then carries the title `b`
+    set;
   - handing that lane to `a` while the story's checkout is on `b` gives
     `scope.handover_busy`, and succeeds after `b`'s cleanup;
   - **full health:** `b`, holding `queue`, runs fullHealth at H. After the scopes
