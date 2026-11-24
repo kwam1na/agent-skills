@@ -1,0 +1,643 @@
+{
+  "name": "10-target-moved",
+  "title": "Target moved",
+  "now": "2026-10-30T12:00:00Z",
+  "document": {
+    "state": {
+      "version": 3,
+      "meta": {
+        "headline": "Fixture delivery",
+        "updatedAt": "2026-10-30T11:59:00Z",
+        "trackerParent": "APP-10",
+        "baseHead": "01b202080242b13102d3605a03640f8303f4beac",
+        "integration": {
+          "base": "integrate/app",
+          "target": "main",
+          "remote": "origin"
+        }
+      },
+      "lanes": [
+        {
+          "id": "lane-1",
+          "title": "Lane one",
+          "focus": "",
+          "state": "working",
+          "waitingOn": null,
+          "since": "2026-10-30T06:00:00Z"
+        }
+      ],
+      "queue": [
+        {
+          "order": 1,
+          "subject": "A1",
+          "title": "Work A1",
+          "lane": "lane-1",
+          "stage": "merged",
+          "head": "0000670500008d2d0000b3550000d97d0000ffa5",
+          "syncedHead": null,
+          "leadInputs": [],
+          "reportedRounds": null,
+          "runId": null,
+          "checks": []
+        },
+        {
+          "order": 2,
+          "subject": "A2",
+          "title": "Work A2",
+          "lane": "lane-1",
+          "stage": "merged",
+          "head": "0000670800008d310000b35a0000d9830000ffac",
+          "syncedHead": null,
+          "leadInputs": [],
+          "reportedRounds": null,
+          "runId": null,
+          "checks": []
+        },
+        {
+          "order": 3,
+          "subject": "A3",
+          "title": "Work A3",
+          "lane": "lane-1",
+          "stage": "merged",
+          "head": "0000670b00008d350000b35f0000d9890000ffb3",
+          "syncedHead": null,
+          "leadInputs": [],
+          "reportedRounds": null,
+          "runId": null,
+          "checks": []
+        },
+        {
+          "order": 4,
+          "subject": "A4",
+          "title": "Work A4",
+          "lane": "lane-1",
+          "stage": "merged",
+          "head": "0000670e00008d390000b3640000d98f0000ffba",
+          "syncedHead": null,
+          "leadInputs": [],
+          "reportedRounds": null,
+          "runId": null,
+          "checks": []
+        },
+        {
+          "order": 5,
+          "subject": "B1",
+          "title": "Work B1",
+          "lane": "lane-2",
+          "stage": "merged",
+          "head": "0000676200008da90000b3f00000da370001007e",
+          "syncedHead": null,
+          "leadInputs": [],
+          "reportedRounds": null,
+          "runId": null,
+          "checks": []
+        },
+        {
+          "order": 6,
+          "subject": "B2",
+          "title": "Work B2",
+          "lane": "lane-2",
+          "stage": "merged",
+          "head": "0000676500008dad0000b3f50000da3d00010085",
+          "syncedHead": null,
+          "leadInputs": [],
+          "reportedRounds": null,
+          "runId": null,
+          "checks": []
+        },
+        {
+          "order": 7,
+          "subject": "B3",
+          "title": "Work B3",
+          "lane": "lane-2",
+          "stage": "merged",
+          "head": "0000676800008db10000b3fa0000da430001008c",
+          "syncedHead": null,
+          "leadInputs": [],
+          "reportedRounds": null,
+          "runId": null,
+          "checks": []
+        },
+        {
+          "order": 8,
+          "subject": "C1",
+          "title": "Work C1",
+          "lane": "lane-3",
+          "stage": "merged",
+          "head": "000067bf00008e250000b48b0000daf100010157",
+          "syncedHead": null,
+          "leadInputs": [],
+          "reportedRounds": null,
+          "runId": null,
+          "checks": []
+        },
+        {
+          "order": 9,
+          "subject": "C2",
+          "title": "Work C2",
+          "lane": "lane-3",
+          "stage": "merged",
+          "head": "000067c200008e290000b4900000daf70001015e",
+          "syncedHead": null,
+          "leadInputs": [],
+          "reportedRounds": null,
+          "runId": null,
+          "checks": []
+        }
+      ],
+      "planned": [],
+      "finish": [],
+      "followups": [],
+      "leases": []
+    },
+    "journal": [
+      {
+        "id": 1,
+        "at": "2026-10-30T06:10:00Z",
+        "kind": "review.round",
+        "lane": "lane-1",
+        "subject": "A1",
+        "data": {
+          "round": 1,
+          "startedAt": "2026-10-30T06:10:00Z",
+          "finishedAt": "2026-10-30T06:10:00Z",
+          "verdicts": {
+            "lens.outcome-correctness": "approve",
+            "lens.adversarial-testing": "approve"
+          },
+          "findings": {
+            "P0": 0,
+            "P1": 0,
+            "P2": 0,
+            "P3": 0
+          }
+        }
+      },
+      {
+        "id": 2,
+        "at": "2026-10-30T06:11:00Z",
+        "kind": "candidate.handed",
+        "lane": "lane-1",
+        "subject": "A1",
+        "data": {
+          "head": "0000670500008d2d0000b3550000d97d0000ffa5",
+          "checks": []
+        }
+      },
+      {
+        "id": 3,
+        "at": "2026-10-30T06:12:00Z",
+        "kind": "candidate.merged",
+        "lane": "lane-1",
+        "subject": "A1",
+        "data": {
+          "head": "0000670500008d2d0000b3550000d97d0000ffa5"
+        }
+      },
+      {
+        "id": 4,
+        "at": "2026-10-30T06:13:00Z",
+        "kind": "review.round",
+        "lane": "lane-1",
+        "subject": "A2",
+        "data": {
+          "round": 1,
+          "startedAt": "2026-10-30T06:13:00Z",
+          "finishedAt": "2026-10-30T06:13:00Z",
+          "verdicts": {
+            "lens.outcome-correctness": "approve",
+            "lens.adversarial-testing": "approve"
+          },
+          "findings": {
+            "P0": 0,
+            "P1": 0,
+            "P2": 0,
+            "P3": 0
+          }
+        }
+      },
+      {
+        "id": 5,
+        "at": "2026-10-30T06:14:00Z",
+        "kind": "candidate.handed",
+        "lane": "lane-1",
+        "subject": "A2",
+        "data": {
+          "head": "0000670800008d310000b35a0000d9830000ffac",
+          "checks": []
+        }
+      },
+      {
+        "id": 6,
+        "at": "2026-10-30T06:15:00Z",
+        "kind": "candidate.merged",
+        "lane": "lane-1",
+        "subject": "A2",
+        "data": {
+          "head": "0000670800008d310000b35a0000d9830000ffac"
+        }
+      },
+      {
+        "id": 7,
+        "at": "2026-10-30T06:16:00Z",
+        "kind": "review.round",
+        "lane": "lane-1",
+        "subject": "A3",
+        "data": {
+          "round": 1,
+          "startedAt": "2026-10-30T06:16:00Z",
+          "finishedAt": "2026-10-30T06:16:00Z",
+          "verdicts": {
+            "lens.outcome-correctness": "approve",
+            "lens.adversarial-testing": "approve"
+          },
+          "findings": {
+            "P0": 0,
+            "P1": 0,
+            "P2": 0,
+            "P3": 0
+          }
+        }
+      },
+      {
+        "id": 8,
+        "at": "2026-10-30T06:17:00Z",
+        "kind": "candidate.handed",
+        "lane": "lane-1",
+        "subject": "A3",
+        "data": {
+          "head": "0000670b00008d350000b35f0000d9890000ffb3",
+          "checks": []
+        }
+      },
+      {
+        "id": 9,
+        "at": "2026-10-30T06:18:00Z",
+        "kind": "candidate.merged",
+        "lane": "lane-1",
+        "subject": "A3",
+        "data": {
+          "head": "0000670b00008d350000b35f0000d9890000ffb3"
+        }
+      },
+      {
+        "id": 10,
+        "at": "2026-10-30T06:19:00Z",
+        "kind": "review.round",
+        "lane": "lane-1",
+        "subject": "A4",
+        "data": {
+          "round": 1,
+          "startedAt": "2026-10-30T06:19:00Z",
+          "finishedAt": "2026-10-30T06:19:00Z",
+          "verdicts": {
+            "lens.outcome-correctness": "approve",
+            "lens.adversarial-testing": "approve"
+          },
+          "findings": {
+            "P0": 0,
+            "P1": 0,
+            "P2": 0,
+            "P3": 0
+          }
+        }
+      },
+      {
+        "id": 11,
+        "at": "2026-10-30T06:20:00Z",
+        "kind": "candidate.handed",
+        "lane": "lane-1",
+        "subject": "A4",
+        "data": {
+          "head": "0000670e00008d390000b3640000d98f0000ffba",
+          "checks": []
+        }
+      },
+      {
+        "id": 12,
+        "at": "2026-10-30T06:21:00Z",
+        "kind": "candidate.merged",
+        "lane": "lane-1",
+        "subject": "A4",
+        "data": {
+          "head": "0000670e00008d390000b3640000d98f0000ffba"
+        }
+      },
+      {
+        "id": 13,
+        "at": "2026-10-30T06:22:00Z",
+        "kind": "review.round",
+        "lane": "lane-2",
+        "subject": "B1",
+        "data": {
+          "round": 1,
+          "startedAt": "2026-10-30T06:22:00Z",
+          "finishedAt": "2026-10-30T06:22:00Z",
+          "verdicts": {
+            "lens.outcome-correctness": "approve",
+            "lens.adversarial-testing": "approve"
+          },
+          "findings": {
+            "P0": 0,
+            "P1": 0,
+            "P2": 0,
+            "P3": 0
+          }
+        }
+      },
+      {
+        "id": 14,
+        "at": "2026-10-30T06:23:00Z",
+        "kind": "candidate.handed",
+        "lane": "lane-2",
+        "subject": "B1",
+        "data": {
+          "head": "0000676200008da90000b3f00000da370001007e",
+          "checks": []
+        }
+      },
+      {
+        "id": 15,
+        "at": "2026-10-30T06:24:00Z",
+        "kind": "candidate.merged",
+        "lane": "lane-2",
+        "subject": "B1",
+        "data": {
+          "head": "0000676200008da90000b3f00000da370001007e"
+        }
+      },
+      {
+        "id": 16,
+        "at": "2026-10-30T06:25:00Z",
+        "kind": "review.round",
+        "lane": "lane-2",
+        "subject": "B2",
+        "data": {
+          "round": 1,
+          "startedAt": "2026-10-30T06:25:00Z",
+          "finishedAt": "2026-10-30T06:25:00Z",
+          "verdicts": {
+            "lens.outcome-correctness": "approve",
+            "lens.adversarial-testing": "approve"
+          },
+          "findings": {
+            "P0": 0,
+            "P1": 0,
+            "P2": 0,
+            "P3": 0
+          }
+        }
+      },
+      {
+        "id": 17,
+        "at": "2026-10-30T06:26:00Z",
+        "kind": "candidate.handed",
+        "lane": "lane-2",
+        "subject": "B2",
+        "data": {
+          "head": "0000676500008dad0000b3f50000da3d00010085",
+          "checks": []
+        }
+      },
+      {
+        "id": 18,
+        "at": "2026-10-30T06:27:00Z",
+        "kind": "candidate.merged",
+        "lane": "lane-2",
+        "subject": "B2",
+        "data": {
+          "head": "0000676500008dad0000b3f50000da3d00010085"
+        }
+      },
+      {
+        "id": 19,
+        "at": "2026-10-30T06:28:00Z",
+        "kind": "review.round",
+        "lane": "lane-2",
+        "subject": "B3",
+        "data": {
+          "round": 1,
+          "startedAt": "2026-10-30T06:28:00Z",
+          "finishedAt": "2026-10-30T06:28:00Z",
+          "verdicts": {
+            "lens.outcome-correctness": "approve",
+            "lens.adversarial-testing": "approve"
+          },
+          "findings": {
+            "P0": 0,
+            "P1": 0,
+            "P2": 0,
+            "P3": 0
+          }
+        }
+      },
+      {
+        "id": 20,
+        "at": "2026-10-30T06:29:00Z",
+        "kind": "candidate.handed",
+        "lane": "lane-2",
+        "subject": "B3",
+        "data": {
+          "head": "0000676800008db10000b3fa0000da430001008c",
+          "checks": []
+        }
+      },
+      {
+        "id": 21,
+        "at": "2026-10-30T06:30:00Z",
+        "kind": "candidate.merged",
+        "lane": "lane-2",
+        "subject": "B3",
+        "data": {
+          "head": "0000676800008db10000b3fa0000da430001008c"
+        }
+      },
+      {
+        "id": 22,
+        "at": "2026-10-30T06:31:00Z",
+        "kind": "review.round",
+        "lane": "lane-3",
+        "subject": "C1",
+        "data": {
+          "round": 1,
+          "startedAt": "2026-10-30T06:31:00Z",
+          "finishedAt": "2026-10-30T06:31:00Z",
+          "verdicts": {
+            "lens.outcome-correctness": "approve",
+            "lens.adversarial-testing": "approve"
+          },
+          "findings": {
+            "P0": 0,
+            "P1": 0,
+            "P2": 0,
+            "P3": 0
+          }
+        }
+      },
+      {
+        "id": 23,
+        "at": "2026-10-30T06:32:00Z",
+        "kind": "candidate.handed",
+        "lane": "lane-3",
+        "subject": "C1",
+        "data": {
+          "head": "000067bf00008e250000b48b0000daf100010157",
+          "checks": []
+        }
+      },
+      {
+        "id": 24,
+        "at": "2026-10-30T06:33:00Z",
+        "kind": "candidate.merged",
+        "lane": "lane-3",
+        "subject": "C1",
+        "data": {
+          "head": "000067bf00008e250000b48b0000daf100010157"
+        }
+      },
+      {
+        "id": 25,
+        "at": "2026-10-30T06:34:00Z",
+        "kind": "review.round",
+        "lane": "lane-3",
+        "subject": "C2",
+        "data": {
+          "round": 1,
+          "startedAt": "2026-10-30T06:34:00Z",
+          "finishedAt": "2026-10-30T06:34:00Z",
+          "verdicts": {
+            "lens.outcome-correctness": "approve",
+            "lens.adversarial-testing": "approve"
+          },
+          "findings": {
+            "P0": 0,
+            "P1": 0,
+            "P2": 0,
+            "P3": 0
+          }
+        }
+      },
+      {
+        "id": 26,
+        "at": "2026-10-30T06:35:00Z",
+        "kind": "candidate.handed",
+        "lane": "lane-3",
+        "subject": "C2",
+        "data": {
+          "head": "000067c200008e290000b4900000daf70001015e",
+          "checks": []
+        }
+      },
+      {
+        "id": 27,
+        "at": "2026-10-30T06:36:00Z",
+        "kind": "candidate.merged",
+        "lane": "lane-3",
+        "subject": "C2",
+        "data": {
+          "head": "000067c200008e290000b4900000daf70001015e"
+        }
+      },
+      {
+        "id": 28,
+        "at": "2026-10-30T06:50:00Z",
+        "kind": "integration.suite",
+        "lane": null,
+        "subject": "APP-10",
+        "data": {
+          "head": "7057f247eb1ff18565e7f0c3e0aff0015b77ef3f",
+          "result": "passed",
+          "seconds": 1500
+        }
+      },
+      {
+        "id": 29,
+        "at": "2026-10-30T07:00:00Z",
+        "kind": "review.round",
+        "lane": null,
+        "subject": "APP-10",
+        "data": {
+          "round": 1,
+          "startedAt": "2026-10-30T07:00:00Z",
+          "finishedAt": "2026-10-30T07:00:00Z",
+          "verdicts": {
+            "lens.outcome-correctness": "approve",
+            "lens.adversarial-testing": "approve"
+          },
+          "findings": {
+            "P0": 0,
+            "P1": 0,
+            "P2": 0,
+            "P3": 0
+          },
+          "head": "7057f247eb1ff18565e7f0c3e0aff0015b77ef3f"
+        }
+      },
+      {
+        "id": 30,
+        "at": "2026-10-30T07:10:00Z",
+        "kind": "integration.requested",
+        "lane": null,
+        "subject": "APP-10",
+        "data": {
+          "changeRequest": "https://github.com/acme/app/pull/7",
+          "head": "7057f247eb1ff18565e7f0c3e0aff0015b77ef3f"
+        }
+      },
+      {
+        "id": 31,
+        "at": "2026-10-30T07:20:00Z",
+        "kind": "integration.merged",
+        "lane": null,
+        "subject": "APP-10",
+        "data": {
+          "target": "main",
+          "targetHead": "1a0f98ef22bf7a652b6f5bdb341f3d513ccf1ec7",
+          "head": "ba248d76a2db6b198b9248bc7449265f5d000402",
+          "conflicts": []
+        }
+      }
+    ],
+    "stats": {},
+    "estimates": {},
+    "status": {
+      "source": "derived",
+      "text": ""
+    },
+    "focus": {}
+  },
+  "needs": null,
+  "integration": null,
+  "expected": {
+    "sentence": "main moved. The lead is bringing #7 up to date.",
+    "link": [
+      "#7",
+      "https://github.com/acme/app/pull/7"
+    ],
+    "stop": false,
+    "marks": [
+      [
+        "Suite",
+        "done",
+        null
+      ],
+      [
+        "Review",
+        "done",
+        null
+      ],
+      [
+        "Merge · updating",
+        "live",
+        "lead"
+      ],
+      [
+        "Landed",
+        "todo",
+        null
+      ]
+    ],
+    "fact": null,
+    "factStop": false
+  }
+}
