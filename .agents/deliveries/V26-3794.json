@@ -351,6 +351,10 @@
         {
           "id": "v26-3809-2",
           "text": "plan-open on a slug with a running preview leaves its last hosted cut handed to the key with its server and publisher gone; later rebuilds touch only the planning record."
+        },
+        {
+          "id": "v26-3809-3",
+          "text": "A planning record's plan.json carries preview.approval agents-only until every approver seat endorses the current commit, then endorsed with the endorsements; an endorsement of an older commit is shown stale."
         }
       ],
       "after": [
