@@ -5528,6 +5528,72 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
         self.assertEqual(checked.stdout.strip(), "ok", checked.stderr)
 
 
+    def test_integration_setup_runs_beside_untracked_files_it_never_reads(self) -> None:
+        """lead-setup --integration reads only the committed tree: an untracked file elsewhere is named and left alone,
+        while a tracked change, or an untracked file where setup writes, still refuses it, writing nothing."""
+        fx = self.fixture()
+        m = fx.main
+        binding = doctor_binding()
+        binding["bases"] = ["integrate/*"]
+        del binding["state"]["trackerSnapshot"]
+        (m / ".agents/orchestration.json").write_text(json.dumps(binding, indent=2))
+        conf = json.loads((m / ".agents/run-delivery.json").read_text())
+        del conf["gates"]  # the binding's fallback checks are the gates
+        (m / ".agents/run-delivery.json").write_text(json.dumps(conf, indent=2))
+        (m / ".gitignore").write_text(".orchestration/\nout/\nlanes/\n")
+        commit(m, "The standing binding serves integration bases")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+
+        def setup(key: str, branch: str) -> tuple[int, str]:
+            return fx.flow("lead-setup", key, "--plan", "docs/plan.md", "--integration", branch, "--pattern", PATTERN,
+                           "--no-authority", cwd=m)
+
+        def nothing_written(key: str, branch: str) -> None:
+            self.assertFalse((m / "lanes" / key).exists())
+            self.assertEqual(sh("git", "branch", "--list", branch, cwd=m).stdout.strip(), "")
+            self.assertEqual(sh("git", "worktree", "list", "--porcelain", cwd=m).stdout.count("worktree "), 1)
+
+        notes = m / "docs/delivery/notes.md"
+        notes.parent.mkdir(parents=True)
+        notes.write_bytes(b"the operator's own notes\n")
+        code, out = setup("FX-1", "integrate/one")
+        self.assertEqual(code, 0, out)
+        self.assertIn("docs/delivery/notes.md", out)
+        self.assertEqual(notes.read_bytes(), b"the operator's own notes\n")
+        lead = m / "lanes/FX-1"
+        self.assertEqual(json.loads((lead / ".agents/deliveries/FX-1.json").read_text())["baseBranch"], "integrate/one")
+        self.assertFalse((lead / "docs/delivery/notes.md").exists())
+        sh("git", "worktree", "remove", "--force", lead, cwd=m)
+
+        with self.subTest("a modified tracked file"):
+            (m / "src/app.txt").write_text("changed\n")
+            code, out = setup("FX-5", "integrate/five")
+            self.assertEqual(code, 2, out)
+            self.assertIn("src/app.txt", out)
+            self.assertIn("commit or remove", out)
+            nothing_written("FX-5", "integrate/five")
+            sh("git", "checkout", "-q", "--", "src/app.txt", cwd=m)
+        with self.subTest("a staged new file"):
+            (m / "src/staged.txt").write_text("staged\n")
+            sh("git", "add", "src/staged.txt", cwd=m)
+            code, out = setup("FX-5", "integrate/five")
+            self.assertEqual(code, 2, out)
+            self.assertIn("src/staged.txt", out)
+            nothing_written("FX-5", "integrate/five")
+            sh("git", "rm", "-q", "--cached", "src/staged.txt", cwd=m)
+            (m / "src/staged.txt").unlink()
+        for path in (".agents/deliveries/FX-6.json", "docs/plan.lane-brief.md"):
+            with self.subTest("an untracked file where setup writes", path=path):
+                (m / path).parent.mkdir(parents=True, exist_ok=True)
+                (m / path).write_text("{}\n")
+                code, out = setup("FX-6", "integrate/six")
+                self.assertEqual(code, 2, out)
+                self.assertIn(path, out)
+                self.assertEqual((m / path).read_text(), "{}\n")
+                nothing_written("FX-6", "integrate/six")
+                (m / path).unlink()
+        self.assertEqual(notes.read_bytes(), b"the operator's own notes\n")
+
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class RunDeliveryPlanTests(unittest.TestCase):
     """The plan chapter's producer: plan.json from the delivery file, the changes log and the lead-side flow logs,
