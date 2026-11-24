@@ -592,6 +592,8 @@
   }
   tabButton.addEventListener("click", function () { openTab(tabList.hidden); });
   tabList.addEventListener("click", function (event) { if (event.target.closest && event.target.closest("a")) { openTab(false); } });
+  // Filled once now, shut, so the page holds its links (the history page among them) before the tab is ever opened.
+  fillTab();
   layoutButton.addEventListener("click", function () {
     PAGED = !PAGED;
     try { localStorage.setItem(LAYOUT_KEY, PAGED ? "paged" : "scroll"); } catch (error) { /* lasts until reload */ }
