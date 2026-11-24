@@ -174,10 +174,6 @@
           "text": "With review aligned on X and plan-rekey at Y, both seats endorsing Y lets lead-init pass; each D11 failure gives its own code, earlier codes winning pairwise; a --no-approver seat does not hold it."
         },
         {
-          "id": "v26-3798-6",
-          "text": "plan-open on a slug with a running preview leaves its last hosted cut handed to the key with its server and publisher gone; later rebuilds touch only the planning record."
-        },
-        {
           "id": "v26-3798-7",
           "text": "PlanReviewWithoutDeliveryTests stays unchanged."
         }
