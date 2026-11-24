@@ -212,8 +212,16 @@ Out of scope:
         (`ELEMENT_KEYS`, for example `queue[subject=K]/stage` or
         `lanes[id=L]/focus`), never by index. `origin` is the `{seat, seq}` of the
         write that set the value. An entry may carry `removed: true` in place of
-        `value` for a keyed element its writer deleted. D7 filters it like any
-        value, and ingest deletes the element;
+        `value` for a keyed element its writer deleted:
+        - **Who may remove:** a scope permitted to create that element in D6.
+          For `planned[subject=K]` that is `delivery` and the acceptance by
+          `lane:<its lane>`. D7 filters a removal like any value.
+        - **Removal against a concurrent write:** a removal wins over any field
+          write on the same key that its origin does not causally follow. A
+          field entry for a removed key is ignored unless its origin causally
+          follows the removal and its writer may create the element, which
+          re-creates it.
+        - Ingest applies an accepted removal by deleting the element;
       - `hosted`, only while the seat holds `delivery`: the hosted identity's
         `publicId`, `ownerId`, `epoch`, `sequence`, `receipt` and `pending`, never
         the token (D12);
@@ -265,8 +273,10 @@ Out of scope:
       machine-local. Each machine derives them from its own local id of the
       `delivery.closed` entry, by the rule `_with_closing` applies on append.
   - **Every integer field is listed.** A COLLAB-2 test walks every integer field
-    in `delivery-state/1` and checks it against an explicit list marking each as a
-    journal id or not. The fields that are not journal ids:
+    in `delivery-state/1`, following `$ref`, `items` and `additionalProperties`. It
+    asserts that the set of paths it finds equals the union of the two lists here
+    (fourteen paths at this commit). A planted unlisted integer inside an array
+    element reached through a `$ref` turns it red. The fields that are not journal ids:
     - `version`;
     - `queue[].order` and `queue[].reportedRounds`;
     - `laneRegions[].start` and `laneRegions[].end`;
@@ -372,8 +382,11 @@ Out of scope:
     change outside the sections the seat holds is refused before any commit or
     push, with `plan.section_not_held` and the
     `scope.requested` command that asks for it.
-  - **Re-keying is exempt.** A `plan-rekey` commit is exempt from the scope
-    check, because D11's map-equality rule already constrains its text.
+  - **Re-keying is exempt.** The exemption is keyed on the commit, not on any
+    section: a commit is exempt only when a `plan.rekeyed` entry names it and its
+    text equals its parent's with the map applied. D11's map-equality rule
+    already constrains that text. Any other commit touching the same sections is
+    still checked.
   - **Retries:** a push rejected for being behind recomposes and retries, up to 5
     times, the bound `RECONCILE_ATTEMPTS` already uses. The sixth rejection stops
     with `plan.push_exhausted`, leaving the local branch at its last composed
@@ -439,16 +452,22 @@ Out of scope:
       supervisor. Nothing else pushes or ingests a partition.
   - Only the `queue` holder's supervisor starts `merge_queue.py serve` and runs
     `fullHealth`.
-  - Only the `delivery` holder's supervisor runs the hosted and tracker publishers.
-    It alone also runs these pass steps, each of which writes `delivery` fields or
-    journals once per delivery:
-    - `reconcile`;
-    - `regions` (`settle_landings`);
-    - `finish`;
-    - `lenses`;
-    - `deferrals`.
+  - **Every supervisor pass step has one rule** on a shared record. The steps are
+    those of `Supervisor.one_pass` (`run_delivery.py:14375-14383`) plus the
+    close-out it runs after them:
 
-    Every other seat's pass skips them.
+    | Step | Runs on |
+    | --- | --- |
+    | `reconcile`, `regions`, `peers`, `finish`, `deferrals`, `publish` (the hosted and tracker publishers), close-out (`cleanupBeforeClose`, the friction stub, `close_out`) | the `delivery` holder's machine only |
+    | `fullHealth` | the `queue` holder's machine only |
+    | `lenses`, `cleanup` | every seat, for the stories of lanes that seat holds only, because their checkouts and results live there |
+    | `blockers` | every seat, journalling only blockers about its own supervisor's children |
+    | `peerWaits`, `laneChanges`, `needs`, `render`, `latest` | every seat; they write only files beside the local record, which are never sliced |
+
+    A COLLAB-8 test reads the step names from `one_pass` and fails on a step
+    missing from this table.
+  - The hosted and tracker publishers are the `publish` step, so only the
+    `delivery` holder's supervisor runs them.
   - On a shared record the tracker marker uses `<seat>.<seq>` in place of the
     local id. Its ledger keys by origin, so moving `delivery` never posts twice.
   - **Handing over `delivery`** is a parked transition, like D13:
@@ -714,6 +733,8 @@ This story relieves the pain on its own and needs no record.
   - only one side edits the front matter;
   - ours adds a section after S while theirs deletes S; the addition lands after
     the section before S;
+  - ours adds a section right after the first section while theirs deletes that
+    first section; the addition lands directly after `(preamble)`;
   - an edit at the end of one section and an edit to the next section's heading,
     the case git's three-way merge would conflict on.
 - **Scenarios, refusals:**
@@ -793,7 +814,11 @@ Lane 1, tier 1, not blocked. Characterization-first. Files: `skills/orchestrate-
     naming the merge of the same origin;
   - a close journalled on one seat leaves both records with closing marks naming
     their own local ids of the same origin;
-  - the integer walk finds every integer field on one of D4's two lists;
+  - the integer walk's set of paths equals D4's two lists, and a planted
+    unlisted integer reached through a `$ref` turns it red;
+  - `delivery` edits `planned[subject=K].after` on `a` while `b`'s lane accepts
+    K on `b`. Both machines end with K absent from `planned` and present in
+    `queue`, whichever order the entries arrive in;
   - an element removed on one machine is absent on both after exchange, and a
     removal by a seat without a permitted scope is ignored;
   - a checkout with no seat ingests every admitted partition into a new record,
@@ -942,8 +967,11 @@ Lane 2, tier 2, after COLLAB-1 and COLLAB-3. Test-first. Files: `skills/run-deli
   - open blocking feedback gives `plan.feedback_blocking`;
   - a `--no-approver` seat's missing endorsement does not hold `lead-init`;
   - `plan-rekey` by a non-holder gives `scope.not_held`;
-  - with both an endorsement missing and blocking feedback open,
-    `plan.endorsement_missing` is the code returned;
+  - for each adjacent pair in D11's order (missing then stale, stale then not
+    aligned, not aligned then feedback), a record failing both returns the
+    earlier code;
+  - an ordinary `plan-sync` commit touching a section a `plan-rekey` commit
+    touched is still checked against held sections;
   - `plan-open` on an uncommitted plan gives `plan.uncommitted`, and one without
     `reviewSlug` gives `plan.no_review_slug`.
 - **Scenarios, the plan schema:** a plan with both `draft` and `approved`, or
@@ -1008,6 +1036,12 @@ Lane 1, tier 3, after COLLAB-3. Characterization-first. Files: `skills/orchestra
   - `b` accepts its lane's hand-off while `a` holds `queue`; `a`'s record holds
     the element at `stage: queued`, without the planned item, and `a`'s queue
     merges it;
+  - `b` re-hands off K after `a`'s queue sent it back; `a`'s record resets K to
+    the `QUEUE_START` values and `a`'s queue runs it again;
+  - `b`'s lane writes `stage: merged`, or a non-start `checks` value, on an
+    existing element; `a` ignores it and keeps its own value;
+  - `b` holds `delivery` and `a` holds `queue`. `b`'s reconcile adopts a missed
+    hand-off, and `a`'s record gets the element at `stage: queued`;
   - a reuse grant recorded on `a`, then the queue handed to `b`: `b`'s
     `check.reused` names, through `because`, the entry of the grant's origin;
   - the COLLAB-3 label scenarios, repeated with lanes and queue elements held by
@@ -1051,9 +1085,18 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
     after the move;
   - a delivery handover with a hosted publication pending, or a tracker post in
     flight, gives `scope.handover_busy`;
-  - the non-holder's supervisor pass skips reconcile, regions, finish, lenses and
-    deferrals and writes nothing, and a finish line met once yields one
-    `finish.met` on both machines;
+  - **before `delivery` moves:** a merge accepted on either machine is settled by
+    `a`'s pass, so `regionsSettled` advances, and `b`'s pass runs none of the
+    `delivery`-only steps and writes nothing;
+  - **after `collab give delivery --to b`:** the next merge is settled by `b`'s
+    pass, a missed hand-off is adopted by `b`'s reconcile, and `a`'s pass writes
+    nothing;
+  - a finish line met once yields one `finish.met` on both machines;
+  - a peer merge seen on both machines yields one `peer.merged` on both;
+  - a merged story of `b`'s lane yields one `cleanup.done`, journalled by `b`;
+  - lens returns of `b`'s lane's round are journalled once by `b` and reach both
+    records;
+  - the step-table test fails on a planted step missing from D12's table;
   - a supervisor restart keeps its roles;
   - a write on one machine reaches the peer's record within two
     `collab.pollSeconds` ticks plus one push, with no explicit sync command.
