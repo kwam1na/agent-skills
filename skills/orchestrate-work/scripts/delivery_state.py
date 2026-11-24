@@ -7279,6 +7279,8 @@ def main(argv: list[str] | None = None) -> int:
     given = scope_action.add_parser("give", help="the holder passes a scope to an admitted seat")
     given.add_argument("--scope", required=True, help="delivery, queue, lane:<lane> or plan:<section>")
     given.add_argument("--to", required=True, help="the seat that takes it")
+    given.add_argument("--wait", type=float, default=60.0,
+                       help="for the queue: seconds to wait for it to be idle before refusing")
     asked = scope_action.add_parser("request", help="ask the holder of a scope for it")
     asked.add_argument("--scope", required=True, help="delivery, queue, lane:<lane> or plan:<section>")
     asked.add_argument("--reason", required=True, help="why, in the person's words")
@@ -7314,7 +7316,7 @@ def main(argv: list[str] | None = None) -> int:
             result = {"ok": True}
         elif args.command == "scope":
             module = _collab()
-            entry = (module.give_scope(args.dir, args.scope, args.to) if args.scope_action == "give"
+            entry = (module.give_scope(args.dir, args.scope, args.to, wait=args.wait) if args.scope_action == "give"
                      else module.request_scope(args.dir, args.scope, args.reason) if args.scope_action == "request"
                      else module.decline_request(args.dir, args.request))
             result = {"ok": True, "entry": entry}

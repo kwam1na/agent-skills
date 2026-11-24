@@ -58,6 +58,8 @@ MIN_POLL_SECONDS = 2.0
 # record alone.
 FETCHED_REFRESH_SECONDS = 60.0
 GIT_TIMEOUT_SECONDS = 120
+# How long a queue handover waits for the queue to be idle before it refuses.
+HANDOVER_WAIT_SECONDS = 60.0
 ZERO = "0" * 40
 
 state_tool = None
@@ -232,8 +234,10 @@ def admit_seat(directory: Path, seat: str, *, approver: bool = True) -> dict:
                                answers=[request["id"]])
 
 
-def give_scope(directory: Path, scope: str, to: str) -> dict:
-    """Pass ``scope`` from this seat, its holder, to the admitted seat ``to``."""
+def give_scope(directory: Path, scope: str, to: str, *, wait: float = HANDOVER_WAIT_SECONDS,
+               poll: float = 0.5, sleep=time.sleep) -> dict:
+    """Pass ``scope`` from this seat, its holder, to the admitted seat ``to``. The queue is handed over only once it is
+    idle, waiting up to ``wait`` seconds for that."""
     tool = _state_tool()
     _check_scope(scope)
     journal = tool.read_journal(directory)
@@ -242,7 +246,42 @@ def give_scope(directory: Path, scope: str, to: str) -> dict:
         raise _refuse("collab.seat_unknown", f"seat {to} is not an admitted seat of this record")
     if to == seat:
         raise _refuse("scope.held", f"seat {seat} holds {scope} already")
+    if scope == "queue":
+        return _hand_over_queue(directory, seat, to, wait=wait, poll=poll, sleep=sleep)
     return tool.append_journal(directory, kind="scope.transferred", data={"scope": scope, "from": seat, "to": to})
+
+
+def _queue_busy(state: dict) -> str | None:
+    """What keeps the queue from being handed over: a check running, or a merge in progress."""
+    running = state["meta"]["checking"].get("now")
+    if running:
+        return f"the check of {running['subject']} ({running['title']}) is running"
+    merging = [item["subject"] for item in state["queue"] if item["stage"] == "merging"]
+    return f"the merge of {', '.join(merging)} is in progress" if merging else None
+
+
+def _hand_over_queue(directory: Path, seat: str, to: str, *, wait: float, poll: float, sleep) -> dict:
+    """D13: once the queue is idle, holding the queue lock so no turn starts, journal that this machine's queue takes
+    no more work, then pass the queue on. Busy past ``wait``, refuse naming what is running."""
+    tool = _state_tool()
+    deadline = time.monotonic() + wait
+    while True:
+        busy = None
+        try:
+            with tool.file_lock(directory / tool.QUEUE_LOCK, timeout=min(poll, max(0.0, deadline - time.monotonic()))):
+                busy = _queue_busy(tool.read_state(directory))
+                if busy is None:
+                    tool.append_journal(directory, kind="queue.stopped", data={"seat": seat})
+                    return tool.append_journal(directory, kind="scope.transferred",
+                                               data={"scope": "queue", "from": seat, "to": to})
+        except tool.StateError as error:
+            if error.code != "lock_timeout":
+                raise
+            busy = _queue_busy(tool.read_state(directory)) or "a turn of the queue is running"
+        if time.monotonic() >= deadline:
+            raise _refuse("scope.handover_busy", f"the queue is not idle: {busy}; hand it over once it is, or wait "
+                          "longer")
+        sleep(poll)
 
 
 def request_scope(directory: Path, scope: str, reason: str) -> dict:

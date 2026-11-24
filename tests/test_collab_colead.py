@@ -161,6 +161,28 @@ class LaneAndRunnerTests(LaneScopeFixture):
         self.assertEqual({key: adopted[key] for key in state_tool.QUEUE_START}, state_tool.QUEUE_START)
         self.assertIsNone(self.element(self.a, "planned", "subject", "APP-2"))
 
+    def test_a_reuse_grant_recorded_on_a_names_its_entry_by_origin_on_b_once_b_takes_the_queue(self) -> None:
+        record = {"check": "full", "definition": "sha256:" + "d" * 64, "head": HEAD, "tree": "e" * 40,
+                  "result": "passed", "where": "runner"}
+        state_tool.handoff(self.a.directory, lane="lane-2", subject="APP-2", head=HEAD, change_request="cr-2",
+                           evidence=[record])
+        check = {"id": "parser", "argv": ["python3", "-m", "pytest", "tests/parser"], "cwd": ".",
+                 "reasons": ["the parser changed"], "prerequisites": []}
+        binding = {"selection": {"lead": True}, "alwaysRun": [{**check, "id": "always"}],
+                   "fallback": [{**check, "id": "fallback"}], "profiles": {"default": {"environment": {}}},
+                   "checkTimeoutCeiling": 600}
+        granted = state_tool.select_checks(self.a.directory, "APP-2", binding=binding, head=HEAD, checks=[check],
+                                           reason="only the parser changed", reuse=["full"], why="docs only since")
+        grant = next(entry for entry in self.a.journal() if entry["id"] == granted["leadSelection"]["reuse"]["decision"])
+        self.b.decide("Only on b, so b's local ids run ahead of a's.")
+        collab.give_scope(self.a.directory, "queue", self.second)
+        self.exchange(self.a, self.b)
+        self.assertEqual(state_tool.holder(self.b.journal(), "queue"), self.second)
+        on_b = self.element(self.b, "queue", "subject", "APP-2")["leadSelection"]["reuse"]["decision"]
+        self.assertEqual(on_b, self.b.local_id(grant["origin"]["seat"], grant["origin"]["seq"]))
+        self.assertNotEqual(on_b, grant["id"])
+        self.assertEqual(next(entry for entry in self.b.journal() if entry["id"] == on_b)["kind"], "decision.recorded")
+
     def test_holders_and_refusals_are_the_same_whatever_the_labels(self) -> None:
         def seen() -> tuple:
             journal = self.b.journal()
@@ -179,6 +201,43 @@ class LaneAndRunnerTests(LaneScopeFixture):
                 collab.label_seat(self.b.directory, second_label)
                 self.exchange(self.a, self.b)
                 self.assertEqual(seen(), before)
+
+
+class HandoverTests(LaneScopeFixture):
+    """The queue passes on only once it is idle: no check running and no merge in progress."""
+
+    def runner(self, **changes) -> dict:
+        return state_tool.patch(self.a.directory, writer="runner", version=self.a.state()["version"], changes=changes)
+
+    def hand_over(self, wait: float = 0.05) -> dict:
+        return collab.give_scope(self.a.directory, "queue", self.second, wait=wait, poll=0.01)
+
+    def test_a_handover_while_a_check_runs_waits_then_refuses_naming_the_check(self) -> None:
+        running = {"subject": "APP-2", "title": "Story APP-2", "startedAt": "2026-11-24T00:00:00Z", "steps": []}
+        self.runner(meta={"checking": {"now": running, "next": []}})
+        said = self.refused(self.hand_over, self.a, "scope.handover_busy")
+        self.assertIn("the check of APP-2 (Story APP-2) is running", str(said))
+        self.assertEqual(state_tool.holder(self.a.journal(), "queue"), self.first)
+
+    def test_a_handover_while_a_merge_is_in_progress_waits_then_refuses_naming_the_merge(self) -> None:
+        state_tool.handoff(self.a.directory, lane="lane-2", subject="APP-2", head=HEAD, change_request="cr-2")
+        state_tool.patch(self.a.directory, writer="runner", version=self.a.state()["version"],
+                         selector="queue[subject=APP-2]", changes={"stage": "merging"})
+        said = self.refused(self.hand_over, self.a, "scope.handover_busy")
+        self.assertIn("the merge of APP-2 is in progress", str(said))
+
+    def test_a_handover_while_a_turn_holds_the_queue_lock_waits_for_it(self) -> None:
+        with state_tool.file_lock(self.a.directory / state_tool.QUEUE_LOCK):
+            said = self.refused(self.hand_over, self.a, "scope.handover_busy")
+        self.assertIn("a turn of the queue is running", str(said))
+
+    def test_an_idle_handover_journals_the_queue_stopped_before_the_transfer(self) -> None:
+        moved = self.hand_over()
+        stopped, transferred = self.a.journal()[-2:]
+        self.assertEqual((stopped["kind"], stopped["data"]), ("queue.stopped", {"seat": self.first}))
+        self.assertEqual((transferred["id"], transferred["kind"], transferred["data"]),
+                         (moved["id"], "scope.transferred", {"scope": "queue", "from": self.first, "to": self.second}))
+        self.assertEqual(state_tool.holder(self.a.journal(), "queue"), self.second)
 
 
 class QueueAcrossSeatsTests(mq.MergeQueueTestCase):
@@ -255,6 +314,22 @@ class QueueAcrossSeatsTests(mq.MergeQueueTestCase):
         self.assertEqual(({key: item[key] for key in state_tool.QUEUE_START}, item["head"]), (state_tool.QUEUE_START, again))
         results = self.runner().run_command("run", ["feature"])
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
+
+    def test_after_a_handover_the_old_machines_serve_ends_and_the_new_ones_serves(self) -> None:
+        handed = []
+
+        def hand_over(_: float) -> None:
+            if not handed:
+                handed.append(collab.give_scope(self.a.directory, "queue", self.second, wait=1, poll=0.01))
+
+        with self.assertRaises(mq.queue.delivery_state.StateError) as ended:
+            mq.queue.serve(self.adopter.operator, self.a.directory, remote="origin", base="main", poll=0,
+                           sleep=hand_over)
+        self.assertEqual((ended.exception.code, len(handed)), ("queue.not_held", 1))
+        self.a.push()
+        self.b.take()
+        self.assertEqual(mq.queue.serve(self.b.repo, self.b.directory, remote="origin", base="main",
+                                        until_idle=True, poll=0), [])
 
     def test_serve_refuses_where_the_seat_does_not_hold_the_queue(self) -> None:
         with self.assertRaises(mq.queue.delivery_state.StateError) as refused:

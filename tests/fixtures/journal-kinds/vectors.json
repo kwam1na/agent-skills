@@ -2669,6 +2669,16 @@
       "line": "It's in D3."
     },
     {
+      "kind": "queue.stopped",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-0a1b2c3d4e5f"
+      },
+      "head": "Seat s-0a1b2c3d4e5f's queue takes no more work",
+      "line": "Its queue is being handed to another seat"
+    },
+    {
       "kind": "delivery.closed",
       "lane": "lane-1",
       "subject": "APP-12",
