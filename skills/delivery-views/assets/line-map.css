@@ -1214,3 +1214,15 @@ body.paged .chapter-now.is-fresh > .inner { margin-bottom: 0; }
   .expected li { grid-template-columns: minmax(0, 1fr) auto; row-gap: 2px; padding: 10px 0; }
   .expected-first { grid-column: 1 / -1; padding-left: 28px; }
 }
+
+/* Parked, with nothing parked: what lands here, and what the plan already set aside. */
+.aside-box { display: grid; gap: 10px; max-width: 980px; margin-top: 8px; }
+.aside-top { display: flex; align-items: baseline; gap: 8px; }
+.aside-label { font-size: 12px; font-weight: 500; color: var(--faint); text-decoration: none; }
+.aside-label:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--edge); }
+.aside-count { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+.aside { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hair); columns: 2 320px; column-gap: 40px; }
+.aside li { break-inside: avoid; display: flex; gap: 12px; align-items: baseline; padding: 11px 0; border-bottom: 1px solid var(--hair); font-size: 14px; color: var(--soft); }
+.aside li { align-items: flex-start; line-height: 1.45; }
+.aside li::before { content: ""; flex: none; width: 10px; height: 1px; margin-top: 0.72em; background: var(--faint); opacity: 0.6; }
+.aside-head { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }

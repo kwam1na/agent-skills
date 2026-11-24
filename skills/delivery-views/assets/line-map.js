@@ -5023,7 +5023,7 @@
     var inner = parts.parked;
     var items = list(doc.state.followups).filter(isObject);
     var nodes = [el("div", "kicker", "Parked for later"),
-      el("h2", "title", items.length ? items.length + (items.length === 1 ? " thing found and set aside." : " things found and set aside.") : "Nothing parked.")];
+      el("h2", "title", items.length ? items.length + (items.length === 1 ? " thing found and set aside." : " things found and set aside.") : "Nothing parked yet.")];
     if (items.length) {
       var ul = el("ul", "parked");
       var known = Object.create(null);
@@ -5035,6 +5035,23 @@
       });
       nodes.push(ul);
       prev.parked = known;
+    } else if (!closedEntry(doc)) {
+      nodes.push(el("p", "say", "What a lane finds outside its story is set aside here, not added to the work."));
+      // What the plan itself leaves for later, so the page says what is already out of this delivery.
+      var aside = plan ? list(plan.outOfScope).map(text).filter(Boolean) : [];
+      if (aside.length) {
+        var label = el("a", "aside-label", "Set aside by the plan");
+        label.setAttribute("href", "#plan");
+        var asideList = el("ol", "aside");
+        aside.forEach(function (words) {
+          var cut = words.search(/[.(;:]\s/);
+          var head = cut > 12 && cut < 90 ? words.slice(0, cut) : words;
+          var row = add(el("li"), el("span", "aside-head", head.replace(/[.;:]$/, "")));
+          row.title = words;
+          asideList.appendChild(row);
+        });
+        nodes.push(add(el("div", "aside-box"), add(el("div", "aside-top"), label, el("span", "aside-count", String(aside.length))), asideList));
+      }
     }
     var elsewhere = elsewhereFold(doc);
     if (elsewhere) { nodes.push(elsewhere); }
