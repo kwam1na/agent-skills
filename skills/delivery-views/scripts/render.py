@@ -1662,7 +1662,7 @@ def left_open(document: dict) -> dict | None:
 
 # The integration facts that name the integration's head, in journal order; integration.landed ends it and names the
 # target's. A review round is one only under the delivery's own key.
-INTEGRATION_HEADS = ("integration.merged", "integration.suite", "integration.suite.started", "integration.requested")
+INTEGRATION_HEADS = ("integration.merged", "integration.suite", "integration.requested")
 DRIFT_TIMEOUT_SECONDS = 5
 
 
