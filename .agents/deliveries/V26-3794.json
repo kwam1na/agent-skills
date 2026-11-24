@@ -355,6 +355,10 @@
         {
           "id": "v26-3809-3",
           "text": "A planning record's plan.json carries preview.approval agents-only until every approver seat endorses the current commit, then endorsed with the endorsements; an endorsement of an older commit is shown stale."
+        },
+        {
+          "id": "v26-3809-4",
+          "text": "plan-sync landing a push rebuilds the preview, or the planning record when one exists."
         }
       ],
       "after": [
