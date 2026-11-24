@@ -166,15 +166,19 @@ def validate_config(value: object) -> dict:
     forges = []
     for index, entry in enumerate(_list(config.get("forges", []), "forges")):
         where = f"forges[{index}]"
-        raw = _object(entry, where, {"name", "repository", "pullUrl", "commitUrl"},
+        raw = _object(entry, where, {"name", "repository", "pullUrl", "commitUrl", "fileUrl"},
                       {"name", "repository", "pullUrl", "commitUrl"})
         repository = _text(raw["repository"], f"{where}.repository", MAX_TEXT)
-        forges.append({
+        forge = {
             "name": _text(raw["name"], f"{where}.name", MAX_NAME),
             "repository": repository,
             "pullUrl": _template(raw["pullUrl"], f"{where}.pullUrl", {"repository", "number"}),
             "commitUrl": _template(raw["commitUrl"], f"{where}.commitUrl", {"repository", "sha"}),
-        })
+        }
+        # Optional: a file at a commit, opened at a line, for the references review notes make to a file's lines.
+        if "fileUrl" in raw:
+            forge["fileUrl"] = _template(raw["fileUrl"], f"{where}.fileUrl", {"repository", "sha", "path", "line"})
+        forges.append(forge)
     result["forges"] = forges
 
     runs = None
@@ -269,7 +273,9 @@ def validate_config(value: object) -> dict:
 
 
 def _segments(name: str, value: str) -> list[str]:
-    # A repository keeps its single slash: owner/name.
+    # A repository keeps its single slash: owner/name; a file's path keeps every one of its slashes.
+    if name == "path":
+        return value.split("/")
     return value.split("/", 1) if name == "repository" else [value]
 
 
@@ -310,6 +316,16 @@ def commit_link(sha: str, forge: dict | None) -> str | None:
     if forge is None or not re.fullmatch(r"[0-9a-f]{7,40}", sha):
         return None
     return link(forge["commitUrl"], {"repository": forge["repository"], "sha": sha})
+
+
+def file_link(sha: str, path: str, line: str, forge: dict | None) -> str | None:
+    """A file at a commit, opened at a line, by the forge's optional fileUrl; None without one or for a path that
+    climbs out of the repository."""
+    if forge is None or not forge.get("fileUrl") or not re.fullmatch(r"[0-9a-f]{7,40}", sha):
+        return None
+    if not path or path.startswith("/") or not re.fullmatch(r"[0-9]+", line):
+        return None
+    return link(forge["fileUrl"], {"repository": forge["repository"], "sha": sha, "path": path, "line": line})
 
 
 def _pull_path(template: str) -> re.Pattern:

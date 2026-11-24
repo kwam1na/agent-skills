@@ -1,5 +1,5 @@
 // Opens a rendered delivery-views page under jsdom, as the page lane does, and prints what a reader can
-// reach: every link on the page and in each piece's detail, and whether any markup the record carried
+// reach: every link on the page, in its corner and in each piece's detail, and whether any markup the record carried
 // became an element.
 //
 //   node open-page.mjs <page.html> <hostile text>
@@ -8,14 +8,18 @@ import { openPage } from "../../delivery_views_page/support.mjs";
 
 const [file, hostile] = process.argv.slice(2);
 const page = readFileSync(file, "utf8");
-const [first] = await openPage(page, { now: "2026-10-23T12:00:00Z" });
+// The page's corner (the chapters tab, with the history page, and the delivery's name) sits outside the app.
+const cornerHrefs = [];
+const [first] = await openPage(page, { now: "2026-10-23T12:00:00Z", steps: [
+  { run: (window) => { for (const link of window.document.querySelectorAll(".corner a[href], a.page-where[href]")) cornerHrefs.push(link.getAttribute("href")); } },
+] });
 const subjects = [...first.app.querySelectorAll("[data-subject]")].map((node) => node.getAttribute("data-subject"));
 const views = [first];
 for (const subject of [...new Set(subjects)]) {
   const shown = await openPage(page, { now: "2026-10-23T12:00:00Z", steps: [{ click: `[data-subject="${subject}"]` }] });
   views.push(shown[1]);
 }
-const hrefs = new Set();
+const hrefs = new Set(cornerHrefs);
 let elements = 0;
 let shownAsText = false;
 for (const view of views) {

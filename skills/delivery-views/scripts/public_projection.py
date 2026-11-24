@@ -215,6 +215,9 @@ def project(document: dict, runs: dict, config: dict, *, source_fingerprint: str
     selected = {key: value for key, value in runs.items() if key in named}
     data = render.line_map_data(document, selected, config, theme_key='hosted-delivery', history=None,
                                 plan=plan, needs=needs, files=files, repository=repository)
+    # The hosted snapshot's links are issues, commits and changes only: a file link stays on the local page, and the
+    # hosted page shows the reference as words.
+    data = {**data, 'links': {key: value for key, value in data['links'].items() if key != 'files'}}
     value = copy.deepcopy({'schemaVersion': SCHEMA['properties']['schemaVersion']['const'],
                            'sourceFingerprint': source_fingerprint, **data})
     _without_capabilities(value)

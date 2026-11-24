@@ -442,8 +442,9 @@ you".
 2. **The base is broken**: the last base event in the record is `base.broken`.
    While it holds, the title can't read "Every criterion is proven".
 3. **Approvals are blocking work**: an `approvals` entry is `blocking` and
-   `waiting`. The flag names each. A waiting approval that isn't blocking
-   raises nothing and stays in "Approvals ahead".
+   `waiting`. The flag names each, in a list, and is headed with the count:
+   "An approval is blocking work" or "N approvals are blocking work". A waiting
+   approval that isn't blocking raises nothing and stays in "Approvals ahead".
 4. **Work in the record isn't in the plan**: a queue or planned subject has no
    unit. The flag names the subjects.
 5. **The plan and the record disagree on finish lines**: a finish line in the
@@ -495,7 +496,7 @@ rendered or reloaded after the change shows none.
 | `spec` | `delivery-views-config/1`. |
 | `title` | The pages' title, at most 80 characters; `Delivery` when absent. |
 | `tracker` | `{name, issueUrl, keyPattern?}`. `issueUrl` takes `{key}`; an item is linked only when `keyPattern`, at most 200 characters, matches the whole key. The host takes no placeholder. |
-| `forges` | Each `{name, repository, pullUrl, commitUrl}`. `pullUrl` takes `{repository}` and `{number}`; `commitUrl` takes `{repository}` and `{sha}`. |
+| `forges` | Each `{name, repository, pullUrl, commitUrl, fileUrl?}`. `pullUrl` takes `{repository}` and `{number}`; `commitUrl` takes `{repository}` and `{sha}`; the optional `fileUrl` takes `{repository}`, `{sha}`, `{path}` and `{line}`, as `https://github.com/{repository}/blob/{sha}/{path}#L{line}` or `https://bitbucket.org/{repository}/src/{sha}/{path}#lines-{line}`. With it, a review note's reference to a file's lines, written `(path:line)` or `(path:start-end)`, opens the file at the commit the note was written about, when the page is made in the repository and the path names exactly one file in that commit. The hosted page shows the reference unlinked. |
 | `runs` | `{argv, timeoutSeconds?}`: the command that prints a delivery run, `{root}` being the repository top level; `timeoutSeconds` is 10 when absent. Absent: no run section and no command run. |
 | `findings` | `{reportSpecs}`: the round report specs read, in preference order; `["review-round-report/1"]` when absent. |
 | `lenses` | `{"<lens id>": {name, icon?}}`. `icon` names a shipped icon (`bullseye`, `spy`, `shield`, `bug`, `gauge`, `lock`, `book`); a lens with none shows its initial. `lens.outcome-correctness` and `lens.adversarial-testing` have defaults. |

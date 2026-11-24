@@ -697,7 +697,77 @@ def _facts_named(value: object, commits: list, changes: list) -> None:
         commits.extend(SHORT_COMMIT.findall(value))
 
 
-def page_links(document: object, runs: dict, config: dict, reviews: dict | None = None) -> dict:
+# A review note's reference to a file's lines, as the words mark it: in parentheses, one or several, "(path:12-18)".
+FILE_REFS = re.compile(r"\(([\w./-]+:\d+(?:-\d+)?(?:,\s*[\w./-]+:\d+(?:-\d+)?)*)\)")
+FILE_REF = re.compile(r"([\w./-]+):(\d+)(?:-\d+)?")
+FILE_LINKS_MAX = 2000
+TREE_TIMEOUT_SECONDS = 5
+
+
+def _review_words(runs: dict, reviews: dict | None, plan: dict | None):
+    """Each review note's words with the commit they were written about: a raised finding's at the round's reviewed
+    commit, a settled note's resolution at its fix."""
+    summaries = [*runs.values(), *(reviews.values() if isinstance(reviews, dict) else ())]
+    planned = plan.get("plan") if _is_object(plan) and _is_object(plan.get("plan")) else None
+    review = planned.get("planReview") if planned and _is_object(planned.get("planReview")) else None
+    rounds = [entry for summary in summaries if _is_object(summary) for entry in summary.get("roundDetail") or []]
+    rounds += list(review.get("rounds") or []) if review else []
+    for entry in rounds:
+        if not _is_object(entry):
+            continue
+        for note in entry.get("raised") if isinstance(entry.get("raised"), list) else ():
+            if _is_object(note):
+                yield entry.get("candidateRef"), note.get("summary")
+        for note in entry.get("settled") if isinstance(entry.get("settled"), list) else ():
+            if _is_object(note):
+                yield note.get("fixCommit"), note.get("resolution")
+
+
+def file_links(runs: dict, reviews: dict | None, plan: dict | None, forge: dict | None,
+               repository: Path | None) -> dict:
+    """The files review notes refer to, each opened at its line in the commit the words were written about, by
+    "<commit> <reference as written>". A reference names a file the commit holds, by its path from the repository's
+    root or, failing that, by a path only one of its files ends with; a reference that names no file, or several,
+    stays words. Nothing is linked without a forge fileUrl or the repository to read the commits from."""
+    if repository is None or forge is None or not forge.get("fileUrl"):
+        return {}
+    trees: dict[str, list[str] | None] = {}
+
+    def tree(sha: str) -> list[str] | None:
+        if sha not in trees:
+            try:
+                listed = subprocess.run(["git", "ls-tree", "-r", "-z", "--name-only", sha, "--"], cwd=repository,
+                                        capture_output=True, timeout=TREE_TIMEOUT_SECONDS)
+                trees[sha] = (listed.stdout.decode("utf-8", "replace").split("\0")
+                              if listed.returncode == 0 else None)
+            except (OSError, subprocess.SubprocessError):
+                trees[sha] = None
+        return trees[sha]
+
+    links: dict[str, str] = {}
+    for sha, words in _review_words(runs, reviews, plan):
+        if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{7,40}", sha) or not isinstance(words, str):
+            continue
+        for group in FILE_REFS.findall(words):
+            for ref in re.split(r",\s*", group):
+                key = f"{sha} {ref}"
+                found = FILE_REF.fullmatch(ref)
+                if key in links or not found or len(links) >= FILE_LINKS_MAX:
+                    continue
+                paths = tree(sha)
+                if paths is None:
+                    continue
+                path = found.group(1).removeprefix("./")
+                named = [path] if path in paths else [each for each in paths if each.endswith("/" + path)]
+                if len(named) == 1:
+                    href = views_common.file_link(sha, named[0], found.group(2), forge)
+                    if href:
+                        links[key] = href
+    return links
+
+
+def page_links(document: object, runs: dict, config: dict, reviews: dict | None = None, *,
+               plan: dict | None = None, repository: Path | None = None) -> dict:
     """The links the page may open, worked out here so the page holds no link rules of its own:
     ticket ids by key, change requests by value, and by hash the fix commits, the commits a round reviewed and those the
     journal's facts name."""
@@ -747,7 +817,12 @@ def page_links(document: object, runs: dict, config: dict, reviews: dict | None 
                                 "repository": identity["repository"]}
     fixes = {sha: href for sha in commits if isinstance(sha, str)
              for href in [views_common.commit_link(sha, forges[0] if forges else None)] if href}
-    return {"issues": issues, "changes": pulls, "commits": fixes}
+    links = {"issues": issues, "changes": pulls, "commits": fixes}
+    # Only a page made where the commits can be read links files; the key is left out otherwise.
+    files = file_links(runs, reviews, plan, forges[0] if forges else None, repository)
+    if files:
+        links["files"] = files
+    return links
 
 
 def _renderer_output(binding: dict, subcommand: str) -> str | None:
@@ -1635,7 +1710,8 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
         "lenses": config["lenses"],
     }
     data = {"document": document, "runs": runs, "reviews": reviews, "view": view,
-            "links": page_links(document, runs, config, reviews), "plan": plan, "needs": needs}
+            "links": page_links(document, runs, config, reviews, plan=plan, repository=repository), "plan": plan,
+            "needs": needs}
     if files is not None:
         # The lanes' branches, as the supervisor's pass read them beside the record: a cut made without them has none.
         data["files"] = files
@@ -1651,9 +1727,9 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
 
 def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
                     plan: dict | None = None, needs: dict | None = None, files: dict | None = None,
-                    operator: str | None = None) -> str:
+                    operator: str | None = None, repository: Path | None = None) -> str:
     data = line_map_data(document, runs, config, theme_key=theme_key, history=history, plan=plan, needs=needs,
-                         files=files)
+                         files=files, repository=repository)
     document, runs, reviews, view = (data[key] for key in ("document", "runs", "reviews", "view"))
     return "\n".join([
         "<!doctype html>",
@@ -1764,7 +1840,7 @@ def line_map(arguments: argparse.Namespace) -> int:
                            plan=read_plan_block(inputs.state_directory, document),
                            needs=read_needs_block(inputs.state_directory),
                            files=read_lane_changes_block(inputs.state_directory),
-                           operator=checkout_operator(inputs.root))
+                           operator=checkout_operator(inputs.root), repository=inputs.root)
     sys.stdout.write(page)
     return 0
 

@@ -866,7 +866,8 @@ test("a reader within the plan stays where they are, and one past it moves with 
   const { document, plan, replanned } = replanning();
   const line = finishLine("grown", { criteria: [], proofs: ["merged"] }, { label: "A finish line added above the chapter" });
   const after = render(replanned, { ...plan, updated: "2026-10-30T13:00:00Z", units: [...plan.units, { ...unit("GROWN"), proofs: plan.units[0].proofs }], finish: [...plan.finish, line] });
-  const scenario = (y) => ({ scroll: { y }, quicker: 10 });
+  // Read as one scrolling page, the layout the chapters tab offers beside the paged one: there a reader can be within or past the plan.
+  const scenario = (y) => ({ scroll: { y }, quicker: 10, stored: { "delivery-views:test:layout": "scroll" } });
   const within = await live(render(document, plan), after, [{ push: replanned }, SETTLE], scenario(10));
   expect(within[2].text).toContain("GROWN");
   expect(within.scrollY).toBe(10);
@@ -936,7 +937,8 @@ test("folds stored for this page start open on the next load", async () => {
 test("each stop on the line opens its unit in the chapter, in the open list or in the folded units", async () => {
   const { document, plan } = inAppDelivery();
   const page = render(document, plan);
-  let snaps = await open(page, { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="CART-105"]' }, { click: "#detail .d-plan" }] });
+  // The plan is its own page: the button moves to it through the address's hash, so the page needs an address to rewrite.
+  let snaps = await open(page, { rendered: page, steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="CART-105"]' }, { click: "#detail .d-plan" }] });
   expect(snaps[1].app.querySelector("#detail .d-plan").textContent).toBe("See in the plan");
   expect(snaps[1].app.querySelector("#detail .d-plan-row").className).toBe("d-plan-row");
   // The card says where the story is in its state line, so the proofs left and the next proof stay in the plan.
@@ -945,7 +947,7 @@ test("each stop on the line opens its unit in the chapter, in the open list or i
   expect(snaps[1].app.querySelector("#detail .d-plan-next")).toBeNull();
   expect(snaps[2].focused).toBe("li");
   expect(snaps[2].app.querySelector('.plan-fold[data-fold="units"]').open).toBe(false);
-  snaps = await open(page, { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="CART-101"]' }, { click: "#detail .d-plan" }] });
+  snaps = await open(page, { rendered: page, steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="CART-101"]' }, { click: "#detail .d-plan" }] });
   expect(snaps[1].app.querySelector("#detail .d-plan-row").className).toBe("d-plan-row proven");
   expect(snaps[1].app.querySelector("#detail .d-plan-row").textContent).toBe("ProvenSee in the plan");
   // Where the unit stands sits with the stop's title and links, above its run and steps.
@@ -953,7 +955,7 @@ test("each stop on the line opens its unit in the chapter, in the open list or i
   expect(snaps[2].focused).toBe("div");
   expect(snaps[2].app.querySelector('.plan-fold[data-fold="units"]').open).toBe(true);
   // From the plan as approved, a unit added since is found once the switch is back on the plan as amended.
-  snaps = await open(page, { steps: [{ toggle: '.plan-fold[data-fold="units"]' }, { click: ".plan-switch button", index: 1 },
+  snaps = await open(page, { rendered: page, steps: [{ toggle: '.plan-fold[data-fold="units"]' }, { click: ".plan-switch button", index: 1 },
     { click: ':is(.stop-btn, .mg-tick)[data-subject="CART-113"]' }, { click: "#detail .d-plan" }] });
   expect([...snaps[4].app.querySelectorAll(".plan-switch button")].map((button) => button.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
   expect(snaps[4].focused).toBe("div");
@@ -968,7 +970,10 @@ test("each stop on the line opens its unit in the chapter, in the open list or i
 
 test("on a phone each unit is a card with labelled proofs, and both themes colour the chapter from their tokens", async () => {
   const css = readFileSync(path.join(ROOT, "skills", "delivery-views", "assets", "line-map.css"), "utf8");
-  const section = css.slice(css.indexOf("/* The plan:"));
+  // The plan's rules run up to the pages' own, and its blocking approvals' rows sit later, between their two comments.
+  const between = (start, end) => css.slice(css.indexOf(start), css.indexOf(end));
+  const section = between("/* The plan:", "/* Pages: one chapter at a time. */") +
+    between("/* Blocking approvals:", "/* The corner's way into the launcher:");
   const phone = section.slice(section.indexOf("@media (max-width: 640px)"));
   expect(phone).toContain(".plan-unit { grid-template-columns: 1fr;");
   expect(phone).toContain(".plan-grid-head { display: none; }");
@@ -1067,7 +1072,9 @@ test("a closed delivery reads as closed, and work resuming after the close reope
   expect(short.querySelector("#now .checking")).toBeNull();
 
   const resumed = await first(closing([...landed, close, [50, "candidate.handed", "A"]], [item("A", "queued")]), plan);
-  expect(resumed.querySelector("#now .now-count").textContent).not.toMatch(/Delivered|Closed/);
+  // Reopened with nothing landed now, Now looks ahead to the piece again, and nothing on it says delivered or closed.
+  expect(resumed.querySelector("#now").classList.contains("is-fresh")).toBe(true);
+  expect(resumed.querySelector("#now").textContent).not.toMatch(/Delivered|Closed/);
   expect(resumed.querySelector("#left .left-number").textContent).toBe("1piece to go");
   expect(resumed.querySelector("#who .st").textContent).toContain("waiting on lead");
   expect(resumed.querySelector("#plan .plan-calm, #plan .plan-needs .ah")).not.toBeNull();
@@ -1248,7 +1255,7 @@ test("plan text never becomes markup, and a ref becomes a link only through the 
       before: hostile, after: `${hostile} now`, source: hostile, ref: "javascript:alert(3)" }] });
   const page = render(document, plan);
   expect(page).not.toContain("<img src=x");
-  const snaps = await open(page, { steps: [{ toggle: '.plan-fold[data-fold="changes"]' }, { click: ".stop-btn" }, { click: "#detail .d-plan" }] });
+  const snaps = await open(page, { rendered: page, steps: [{ toggle: '.plan-fold[data-fold="changes"]' }, { click: ".stop-btn" }, { click: "#detail .d-plan" }] });
   const app = snaps[1].app;
   expect(app.querySelectorAll("img, script")).toHaveLength(0);
   expect(app.querySelector(".plan-change .pc-title").textContent).toBe(hostile);

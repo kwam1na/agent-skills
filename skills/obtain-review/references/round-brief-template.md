@@ -119,6 +119,11 @@ optional `lateFindings`.
   In a verification round, for delivery review, a new finding outside the delta
   is filed only at P0, and a P1 becomes a deferral with a follow-up item; for
   plan review (`unbounded`), it is filed at P0 or P1, with no deferral.
+- Words a reader sees (a finding's summary, failure scenario and proposed
+  change, and each resolution): put a name from the code (a function, field,
+  flag, command or file name) in backticks, and cite lines in parentheses as
+  `(path:line)` or `(path:start-end)`, the path from the repository's root, so
+  a view can set the one as code and link the other to the file at the commit.
 - `evidence`: the reviewed tree SHA and the successful start and end identity
   checks; the re-check of every carried finding of this lens, deferrals
   included, each reported closed, open, raised with its new severity, withdrawn

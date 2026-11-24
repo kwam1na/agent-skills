@@ -682,9 +682,12 @@ class PlanSkillTextTests(unittest.TestCase):
                     self.assertIn(rule, item)
         # The page draws exactly these titles, and the calm line, as the skill text names them.
         page = LINE_MAP.read_text(encoding="utf-8")
+        # The blocking approvals flag is headed with its count, in the words the skill text gives for each.
+        counted = {"Approvals are blocking work": ('"An approval is blocking work"', '" approvals are blocking work"')}
         for title, _ in FLAGS:
             with self.subTest(drawn=title):
-                self.assertIn(f'"{title}"', page)
+                for drawn in counted.get(title, (f'"{title}"',)):
+                    self.assertIn(drawn, page)
         self.assertIn('"Nothing in the plan needs attention right now."', page)
 
 

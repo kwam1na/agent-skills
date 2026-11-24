@@ -64,6 +64,10 @@ Return `review-lens-result/1` as one JSON object, and nothing else, as your fina
   evidence.
 - `findings`: every finding, with a unique id starting `{{short}}-r{{round}}-` and one severity, P0 to P3.
 {{severities}}
+- Words a reader sees (a finding's summary, failure scenario and proposed change, and each resolution): put a name
+  from the code (a function, field, flag, command or file name) in backticks, and cite lines in parentheses as
+  `(path:line)` or `(path:start-end)`, the path from the repository's root, so a view can set the one as code and link
+  the other to the file at the commit.
 - `evidence` (strings, required): the reviewed tree SHA `{{tree}}` and the successful start and end identity checks;
   the re-check of every carried finding; the model class you ran under; the realization basis `host-convention`.
   End `evidence` with the approval conditions: for each finding you raise, whether its proposed change, adopted as

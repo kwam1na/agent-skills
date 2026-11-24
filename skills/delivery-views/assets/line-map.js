@@ -212,11 +212,11 @@
   var VIEW = {};
   try { VIEW = JSON.parse(document.getElementById("delivery-view").textContent); } catch (error) { VIEW = {}; }
   if (!isObject(VIEW)) { VIEW = {}; }
-  var LINKS = { issues: {}, changes: {}, commits: {} };
+  var LINKS = { issues: {}, changes: {}, commits: {}, files: {} };
   function readLinks(value) {
     if (!isObject(value)) { return; }
     LINKS = { issues: table(isObject(value.issues) ? value.issues : {}), changes: table(isObject(value.changes) ? value.changes : {}),
-      commits: table(isObject(value.commits) ? value.commits : {}) };
+      commits: table(isObject(value.commits) ? value.commits : {}), files: table(isObject(value.files) ? value.files : {}) };
   }
   try { readLinks(JSON.parse(document.getElementById("delivery-links").textContent)); } catch (error) { /* nothing is linked */ }
   function issueHref(id) { return typeof LINKS.issues[id] === "string" ? LINKS.issues[id] : null; }
@@ -449,15 +449,15 @@
   }
   CHAPTERS.forEach(function (chapter) { chapterOf(chapter); });
   // The history page, when the binding declares one: served live at /view/<output>, beside the page as a file.
-  if (typeof VIEW.history === "string" && VIEW.history) {
-    var historyLink = el("a", "history-link", "Past deliveries and runs");
-    historyLink.setAttribute("href", (typeof location === "object" && /^https?:$/.test(location.protocol) ? "/view/" : "") + VIEW.history.split("/").map(encodeURIComponent).join("/"));
-    app.appendChild(add(el("footer", "foot"), historyLink));
-  }
+  // It sits in the chapter tab, below the chapters (see the corner's tab).
+  var historyHref = typeof VIEW.history === "string" && VIEW.history
+    ? (typeof location === "object" && /^https?:$/.test(location.protocol) ? "/view/" : "") + VIEW.history.split("/").map(encodeURIComponent).join("/")
+    : null;
   if (typeof IntersectionObserver === "function") {
     var watch = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
-        if (!entry.isIntersecting) { return; }
+        if (!entry.isIntersecting || PAGED) { return; }
+        followScroll(entry.target.id);
         Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
           link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + entry.target.id));
         });
@@ -478,6 +478,482 @@
       });
     }, { threshold: 0.2 });
     Array.prototype.forEach.call(app.querySelectorAll(".chapter"), function (section) { arrive.observe(section); });
+  }
+
+  // Pages: each chapter is its own page, routed by the address's hash (#now, #line, ...). A hash that names something
+  // inside a chapter opens that chapter's page and brings the thing into view. The rail, the corner's chapter tab and
+  // each page's foot step between pages; [ and ] do too. With no hash the page opens on Now.
+  // The reader picks the layout in the chapter tab: one chapter per page (the default) or every chapter on one page.
+  var LAYOUT_KEY = (typeof VIEW.themeKey === "string" && VIEW.themeKey ? VIEW.themeKey.replace(/:theme$/, "") : "delivery-views") + ":layout";
+  var PAGED = true;
+  try { PAGED = localStorage.getItem(LAYOUT_KEY) !== "scroll"; } catch (error) { /* paged */ }
+  var currentPage = null;
+  var corner = document.querySelector(".corner");
+  var themeSwitch = document.querySelector(".theme-switch");
+  if (!corner && themeSwitch) {
+    // The hosted page has no operator mark, so the switch stands alone; the tab joins it in a corner group.
+    corner = el("div", "corner");
+    themeSwitch.parentNode.insertBefore(corner, themeSwitch);
+    corner.appendChild(themeSwitch);
+  }
+  var tab = el("div", "chapter-tab");
+  var tabButton = el("button", "chapter-tab-button");
+  tabButton.type = "button";
+  tabButton.setAttribute("aria-haspopup", "true");
+  tabButton.setAttribute("aria-expanded", "false");
+  tabButton.setAttribute("aria-controls", "chapter-tab-list");
+  var tabIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  tabIcon.setAttribute("viewBox", "0 0 24 24");
+  tabIcon.setAttribute("aria-hidden", "true");
+  tabIcon.innerHTML = '<path d="M9 6h11M9 12h11M9 18h11M5 6h.01M5 12h.01M5 18h.01"/>';
+  var tabLabel = el("span", "chapter-tab-label", "Now");
+  var tabChevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  tabChevron.setAttribute("viewBox", "0 0 24 24");
+  tabChevron.setAttribute("aria-hidden", "true");
+  tabChevron.setAttribute("class", "chapter-tab-chevron");
+  tabChevron.innerHTML = '<path d="M6 9l6 6l6 -6"/>';
+  add(tabButton, tabIcon, tabLabel, tabChevron);
+  var tabList = el("ol", "chapter-tab-list");
+  tabList.id = "chapter-tab-list";
+  tabList.hidden = true;
+  var tabPanel = el("div", "chapter-tab-panel");
+  var layoutButton = el("button", "chapter-tab-layout");
+  layoutButton.type = "button";
+  var hint = el("span", "chapter-tab-hint");
+  hint.innerHTML = "<kbd>[</kbd> <kbd>]</kbd> step between pages";
+  var historyItem = null;
+  if (historyHref) {
+    historyItem = el("a", "chapter-tab-history");
+    historyItem.setAttribute("href", historyHref);
+    // Named apart from the page's clock(), which a var here would replace for the whole page.
+    var historyIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    historyIcon.setAttribute("viewBox", "0 0 24 24");
+    historyIcon.setAttribute("aria-hidden", "true");
+    historyIcon.innerHTML = '<path d="M3 12a9 9 0 1 0 3 -6.7"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/>';
+    add(historyItem, historyIcon, el("span", null, "Past deliveries and runs"));
+  }
+  var tabFoot = add(el("div", "chapter-tab-foot"), layoutButton, hint);
+  add(tab, tabButton, tabList);
+  if (corner) { corner.insertBefore(tab, corner.querySelector(".theme-switch")); }
+  // The delivery's name stays in the top-left corner on every page but Now, which opens with it.
+  var where = el("a", "page-where");
+  where.setAttribute("href", "#now");
+  // The line map in small: three lanes running into one line, the page's own mark for going back to the start.
+  var mark = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  mark.setAttribute("viewBox", "0 0 22 14");
+  mark.setAttribute("aria-hidden", "true");
+  mark.setAttribute("class", "page-where-mark");
+  mark.innerHTML = '<path class="w1" d="M1 2.5h5c3 0 4 4.5 7 4.5"/><path class="w2" d="M1 7h12"/><path class="w3" d="M1 11.5h5c3 0 4 -4.5 7 -4.5"/>' +
+    '<path class="w0" d="M13 7h8"/><circle class="wd" cx="13" cy="7" r="1.6"/>';
+  var whereTitle = el("span", "page-where-title");
+  var whereNote = el("span", "page-where-note");
+  add(where, mark, whereTitle, whereNote);
+  document.body.appendChild(where);
+  /** The delivery's name in the corner: its title, and a closing parenthetical (its status) set apart. */
+  function fillWhere(name) {
+    var words = name.replace(/\s+/g, " ").trim();
+    var note = /^(.*\S)\s*\(([^()]{1,80})\)$/.exec(words);
+    whereTitle.textContent = note ? note[1] : words;
+    whereNote.textContent = note ? note[2] : "";
+    where.setAttribute("aria-label", (note ? note[1] : words) + ", back to the start");
+  }
+
+  // The chapters that are pages now: one a record has emptied (Across repositories, with no sibling left) is no page.
+  function chapterIds() {
+    return Array.prototype.filter.call(app.querySelectorAll(".chapter"), function (section) { return !section.classList.contains("is-absent"); })
+      .map(function (section) { return section.id; });
+  }
+  function chapterName(id) {
+    var link = rail.querySelector('a[href="#' + id + '"]');
+    return link ? link.getAttribute("aria-label") : id;
+  }
+  function fillTab() {
+    var ids = chapterIds();
+    tabList.replaceChildren();
+    ids.forEach(function (id, index) {
+      var link = el("a");
+      link.setAttribute("href", "#" + id);
+      if (id === currentPage) { link.setAttribute("aria-current", "page"); }
+      add(link, el("span", "chapter-tab-index", String(index + 1).padStart(2, "0")), el("span", null, chapterName(id)));
+      tabList.appendChild(add(el("li"), link));
+    });
+    layoutButton.textContent = PAGED ? "Show all chapters on one page" : "Show one chapter per page";
+    if (historyItem) { tabList.appendChild(add(el("li", "chapter-tab-history-row"), historyItem)); }
+    tabList.appendChild(add(el("li", "chapter-tab-foot-row"), tabFoot));
+  }
+  function openTab(open) {
+    tabList.hidden = !open;
+    tabButton.setAttribute("aria-expanded", String(open));
+    if (open) {
+      fillTab();
+      var current = tabList.querySelector('[aria-current="page"]') || tabList.querySelector("a");
+      if (current) { current.focus(); }
+    }
+  }
+  tabButton.addEventListener("click", function () { openTab(tabList.hidden); });
+  tabList.addEventListener("click", function (event) { if (event.target.closest && event.target.closest("a")) { openTab(false); } });
+  // Filled once now, shut, so the page holds its links (the history page among them) before the tab is ever opened.
+  fillTab();
+  layoutButton.addEventListener("click", function () {
+    PAGED = !PAGED;
+    try { localStorage.setItem(LAYOUT_KEY, PAGED ? "paged" : "scroll"); } catch (error) { /* lasts until reload */ }
+    var keep = currentPage;
+    showPage(keep);
+    var section = app.querySelector("#" + keep);
+    if (!PAGED && section && typeof section.scrollIntoView === "function") { section.scrollIntoView({ block: "start" }); }
+    openTab(false);
+    tabButton.focus();
+  });
+  tabList.addEventListener("keydown", function (event) {
+    var links = Array.prototype.slice.call(tabList.querySelectorAll("a"));
+    var at = links.indexOf(document.activeElement);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      var next = links[(at + (event.key === "ArrowDown" ? 1 : links.length - 1)) % links.length];
+      if (next) { next.focus(); }
+    }
+  });
+  document.addEventListener("click", function (event) { if (!tab.contains(event.target)) { openTab(false); } });
+  document.addEventListener("keydown", function (event) {
+    if (launcherOpen()) { return; }
+    if (event.key === "Escape" && !tabList.hidden) { openTab(false); tabButton.focus(); return; }
+    var typing = event.target && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
+    if (!PAGED || typing || event.metaKey || event.ctrlKey || event.altKey) { return; }
+    if (event.key === "[" || event.key === "]") {
+      var ids = chapterIds();
+      var to = ids[ids.indexOf(currentPage) + (event.key === "]" ? 1 : -1)];
+      if (to) { location.hash = to; }
+    }
+  });
+
+  /** Shows one chapter's page; with a target inside it, brings the target into view. */
+  function showPage(id, target) {
+    var ids = chapterIds();
+    if (ids.indexOf(id) < 0) { id = ids[0]; }
+    var changed = id !== currentPage;
+    currentPage = id;
+    document.body.classList.toggle("paged", PAGED);
+    Array.prototype.forEach.call(app.querySelectorAll(".chapter"), function (section) {
+      var on = section.id === id;
+      section.hidden = section.classList.contains("is-absent") || (PAGED && !on);
+    });
+    var landAtEnd = landNextAtEnd;
+    landNextAtEnd = false;
+    Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
+      link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + id));
+    });
+    tabLabel.textContent = chapterName(id);
+    tabButton.setAttribute("aria-label", "Chapters: " + chapterName(id));
+    var heading = document.querySelector("h1");
+    fillWhere(heading ? heading.textContent : document.title);
+    where.hidden = id === ids[0];
+    document.title = (heading ? heading.textContent : document.title.split(" · ").pop()).replace(/\s+/g, " ") +
+      (id === ids[0] ? "" : " · " + chapterName(id));
+    if (target && target !== app.querySelector("#" + id) && typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ block: "center" });
+    } else if (changed && PAGED && landAtEnd) {
+      window.scrollTo(0, document.documentElement.scrollHeight);
+    } else if (changed && PAGED) {
+      window.scrollTo(0, 0);
+    } else if (!PAGED && target && typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ block: "start" });
+    }
+  }
+  /** The page a node lives on, opened, so a caller can bring the node into view. */
+  function revealPage(node) {
+    var section = node && node.closest ? node.closest(".chapter") : null;
+    if (PAGED && section && section.id !== currentPage) {
+      // A page whose address can't be rewritten (an opaque or embedded one) still turns to the chapter.
+      try { if (history.replaceState) { history.replaceState(null, "", "#" + section.id); } } catch (error) { /* the address stays */ }
+      showPage(section.id);
+    }
+  }
+  function route() {
+    var hash = decodeURIComponent((location.hash || "").slice(1));
+    var target = hash ? document.getElementById(hash) : null;
+    var section = target && target.closest ? target.closest(".chapter") : null;
+    showPage(section ? section.id : hash, target);
+  }
+  window.addEventListener("hashchange", route);
+
+  // The launcher: one place to reach anything on the page by name. It is a registry of commands, each
+  // { id, group, title, detail?, keywords?, current?(), run() }, read afresh each time it opens, so a feature adds what
+  // it offers with launcher.add(...) and nothing else changes. Opened with Cmd/Ctrl-K, with / when not typing, or from
+  // the corner; arrows move, Enter runs, Escape closes and gives focus back.
+  var launcher = (function () {
+    var sources = [];
+    var shown = [];
+    var active = 0;
+    var before = null;
+    var root = el("div", "launcher");
+    root.hidden = true;
+    var scrim = el("div", "launcher-scrim");
+    var panel = el("div", "launcher-panel");
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
+    panel.setAttribute("aria-label", "Go to");
+    var field = el("div", "launcher-field");
+    var glass = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    glass.setAttribute("viewBox", "0 0 24 24");
+    glass.setAttribute("aria-hidden", "true");
+    glass.innerHTML = '<path d="M10.5 18a7.5 7.5 0 1 0 0 -15a7.5 7.5 0 0 0 0 15z"/><path d="M21 21l-5.2 -5.2"/>';
+    var input = el("input", "launcher-input");
+    input.type = "text";
+    input.setAttribute("role", "combobox");
+    input.setAttribute("aria-expanded", "true");
+    input.setAttribute("aria-controls", "launcher-list");
+    input.setAttribute("aria-autocomplete", "list");
+    input.setAttribute("autocomplete", "off");
+    input.setAttribute("spellcheck", "false");
+    input.placeholder = "Go to a page…";
+    var esc = el("kbd", "launcher-esc", "esc");
+    add(field, glass, input, esc);
+    var listing = el("div", "launcher-list");
+    listing.id = "launcher-list";
+    listing.setAttribute("role", "listbox");
+    var hints = el("div", "launcher-hints");
+    hints.innerHTML = "<span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span>";
+    add(panel, field, listing, hints);
+    add(root, scrim, panel);
+    document.body.appendChild(root);
+
+    function commands() {
+      var all = [];
+      sources.forEach(function (source) { (typeof source === "function" ? source() : [source]).forEach(function (command) { if (command) { all.push(command); } }); });
+      return all;
+    }
+    /** How well a command answers what's typed: 0 for not at all, higher for a closer match. */
+    function score(command, query) {
+      if (!query) { return 1; }
+      var hay = [command.title, command.detail || "", (command.keywords || []).join(" ")].join(" ").toLowerCase();
+      var title = command.title.toLowerCase();
+      var words = query.toLowerCase().split(/\s+/).filter(Boolean);
+      var total = 0;
+      for (var i = 0; i < words.length; i += 1) {
+        var word = words[i];
+        if (title.indexOf(word) === 0) { total += 4; }
+        else if ((" " + title).indexOf(" " + word) >= 0) { total += 3; }
+        else if (hay.indexOf(word) >= 0) { total += 1; }
+        else { return 0; }
+      }
+      return total;
+    }
+    function draw() {
+      var query = input.value.trim();
+      shown = commands().map(function (command, order) { return { command: command, rank: score(command, query), order: order }; })
+        .filter(function (entry) { return entry.rank > 0; })
+        .sort(function (a, b) { return query ? b.rank - a.rank || a.order - b.order : a.order - b.order; })
+        .map(function (entry) { return entry.command; });
+      if (active >= shown.length) { active = Math.max(0, shown.length - 1); }
+      listing.replaceChildren();
+      if (!shown.length) { listing.appendChild(el("p", "launcher-none", "Nothing matches “" + query + "”.")); }
+      var group = null;
+      shown.forEach(function (command, index) {
+        if (command.group !== group && !query) { group = command.group; listing.appendChild(el("div", "launcher-group", group)); }
+        var row = el("div", "launcher-item" + (command.current && command.current() ? " is-here" : ""));
+        row.id = "launcher-item-" + index;
+        row.setAttribute("role", "option");
+        row.setAttribute("aria-selected", String(index === active));
+        add(row, el("span", "launcher-lead", command.lead || ""), el("span", "launcher-title", command.title),
+          command.detail ? el("span", "launcher-detail", command.detail) : null,
+          command.current && command.current() ? el("span", "launcher-here", "You’re here") : null);
+        row.addEventListener("pointermove", function () { if (active !== index) { active = index; mark(); } });
+        row.addEventListener("click", function () { runAt(index); });
+        listing.appendChild(row);
+      });
+      mark();
+    }
+    function mark() {
+      Array.prototype.forEach.call(listing.querySelectorAll(".launcher-item"), function (row, index) {
+        row.setAttribute("aria-selected", String(index === active));
+        if (index === active && typeof row.scrollIntoView === "function") { row.scrollIntoView({ block: "nearest" }); }
+      });
+      input.setAttribute("aria-activedescendant", shown.length ? "launcher-item-" + active : "");
+    }
+    function runAt(index) {
+      var command = shown[index];
+      if (!command) { return; }
+      close(false);
+      command.run();
+    }
+    function open() {
+      if (!root.hidden) { return; }
+      before = document.activeElement;
+      openTab(false);
+      input.value = "";
+      active = 0;
+      var here = commands().findIndex(function (command) { return command.current && command.current(); });
+      if (here >= 0) { active = here; }
+      root.hidden = false;
+      document.documentElement.classList.add("launcher-open");
+      draw();
+      input.focus();
+    }
+    function close(giveBack) {
+      if (root.hidden) { return; }
+      root.hidden = true;
+      document.documentElement.classList.remove("launcher-open");
+      if (giveBack !== false && before && typeof before.focus === "function") { before.focus(); }
+    }
+    input.addEventListener("input", function () { active = 0; draw(); });
+    input.addEventListener("keydown", function (event) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        if (shown.length) { active = (active + (event.key === "ArrowDown" ? 1 : shown.length - 1)) % shown.length; mark(); }
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        runAt(active);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      } else if (event.key === "Tab") {
+        event.preventDefault();
+      }
+    });
+    scrim.addEventListener("click", function () { close(); });
+    document.addEventListener("keydown", function (event) {
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && (event.key === "k" || event.key === "K")) {
+        event.preventDefault();
+        if (root.hidden) { open(); } else { close(); }
+        return;
+      }
+      var typing = event.target && (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) || event.target.isContentEditable);
+      if (event.key === "/" && !typing && root.hidden && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        open();
+      }
+    });
+    return {
+      add: function (source) { sources.push(source); },
+      open: open,
+      close: close,
+      isOpen: function () { return !root.hidden; }
+    };
+  })();
+  function launcherOpen() { return launcher.isOpen(); }
+
+  // The pages, numbered as the chapter tab numbers them.
+  launcher.add(function () {
+    return chapterIds().map(function (id, index) {
+      return { id: "page:" + id, group: "Pages", lead: String(index + 1).padStart(2, "0"), title: chapterName(id),
+        keywords: [String(index + 1), id],
+        current: function () { return id === currentPage; },
+        run: function () {
+          if (PAGED) { location.hash = id; return; }
+          var section = app.querySelector("#" + id);
+          if (section && typeof section.scrollIntoView === "function") { section.scrollIntoView({ block: "start" }); }
+        } };
+    });
+  });
+  if (historyHref) {
+    launcher.add({ id: "history", group: "Elsewhere", lead: "↺", title: "Past deliveries and runs", keywords: ["history", "archive", "runs"],
+      run: function () { location.href = historyHref; } });
+  }
+
+  // The corner's way in, for a reader who doesn't know the shortcut.
+  var launchButton = el("button", "launch-button");
+  launchButton.type = "button";
+  var isMac = typeof navigator === "object" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
+  launchButton.setAttribute("aria-label", "Go to… (" + (isMac ? "Command" : "Control") + " K)");
+  launchButton.setAttribute("aria-keyshortcuts", isMac ? "Meta+K" : "Control+K");
+  add(launchButton, el("span", "launch-label", "Go to"), el("kbd", "launch-key", (isMac ? "⌘" : "Ctrl ") + "K"));
+  launchButton.addEventListener("click", function () { launcher.open(); });
+  if (corner) { corner.insertBefore(launchButton, tab); }
+
+  // Scrolling on past a page's end turns to the next page, and on past its top back to the one before, landing at its
+  // end, so the pages still read as one scroll. A pull has to build past a threshold, counting starts only once the
+  // reader has rested at the edge (a fling that reaches the end doesn't turn the page), and a turn is followed by a
+  // short pause. A ring at that edge fills toward the page it would open.
+  var landNextAtEnd = false;
+  var PULL_WHEEL = 460, PULL_TOUCH = 170, REST_MS = 220, PAUSE_MS = 700;
+  var pull = { dir: 0, amount: 0, idle: null, edgeSince: 0, pausedUntil: 0, touchY: null };
+  var pullEl = el("div", "page-pull");
+  pullEl.setAttribute("aria-hidden", "true");
+  // The ring fills toward the turn around an arrow pointing the way; the words hold still, so the pill keeps its width.
+  var pullRing = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  pullRing.setAttribute("class", "page-pull-ring");
+  pullRing.setAttribute("viewBox", "0 0 20 20");
+  [["circle", "track", { cx: 10, cy: 10, r: 8.25 }], ["circle", "fill", { cx: 10, cy: 10, r: 8.25, pathLength: 1 }],
+    ["path", "arrow", { d: "M10 6.2v7.2M6.9 10.6 10 13.6l3.1-3" }]].forEach(function (part) {
+    var node = document.createElementNS("http://www.w3.org/2000/svg", part[0]);
+    node.setAttribute("class", part[1]);
+    Object.keys(part[2]).forEach(function (name) { node.setAttribute(name, String(part[2][name])); });
+    pullRing.appendChild(node);
+  });
+  var pullLead = el("span", "page-pull-lead");
+  var pullName = el("span", "page-pull-name");
+  var pullWords = el("span", "page-pull-words");
+  add(pullWords, pullLead, pullName);
+  add(pullEl, pullRing, pullWords);
+  document.body.appendChild(pullEl);
+  function atEnd() { return window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2; }
+  function atTop() { return window.scrollY <= 1; }
+  function neighbour(dir) { var ids = chapterIds(); return ids[ids.indexOf(currentPage) + dir]; }
+  function drawPull() {
+    var to = pull.dir ? neighbour(pull.dir) : null;
+    var share = to ? Math.min(1, pull.amount) : 0;
+    pullEl.classList.toggle("is-on", share > 0.04);
+    pullEl.classList.toggle("is-up", pull.dir < 0);
+    pullEl.classList.toggle("is-full", share >= 1);
+    pullEl.style.setProperty("--pull", String(share));
+    if (to) { pullLead.textContent = pull.dir > 0 ? "Keep scrolling for" : "Keep scrolling up for"; pullName.textContent = chapterName(to); }
+  }
+  function resetPull() { pull.dir = 0; pull.amount = 0; drawPull(); }
+  function turn(dir) {
+    var to = neighbour(dir);
+    resetPull();
+    pull.pausedUntil = Date.now() + PAUSE_MS;
+    pull.edgeSince = 0;
+    if (!to) { return; }
+    landNextAtEnd = dir < 0;
+    location.hash = to;
+  }
+  function addPull(dir, amount, threshold) {
+    if (pull.dir !== dir) { pull.dir = dir; pull.amount = 0; }
+    pull.amount += amount / threshold;
+    drawPull();
+    clearTimeout(pull.idle);
+    // A pull let go fades back rather than staying armed.
+    pull.idle = setTimeout(resetPull, 260);
+    if (pull.amount >= 1) { turn(dir); }
+  }
+  function edgeOf(dir) { return dir > 0 ? atEnd() : atTop(); }
+  window.addEventListener("scroll", function () {
+    if (!PAGED) { return; }
+    if (atEnd() || atTop()) { if (!pull.edgeSince) { pull.edgeSince = Date.now(); } } else { pull.edgeSince = 0; if (pull.dir) { resetPull(); } }
+  }, { passive: true });
+  window.addEventListener("wheel", function (event) {
+    if (!PAGED || event.ctrlKey || !tabList.hidden || launcherOpen() || Math.abs(event.deltaX) > Math.abs(event.deltaY)) { return; }
+    var dir = event.deltaY > 0 ? 1 : event.deltaY < 0 ? -1 : 0;
+    if (!dir || !edgeOf(dir) || !neighbour(dir) || Date.now() < pull.pausedUntil) { return; }
+    if (!pull.edgeSince) { pull.edgeSince = Date.now(); }
+    if (Date.now() - pull.edgeSince < REST_MS) { return; }
+    var lines = event.deltaMode === 1 ? 32 : event.deltaMode === 2 ? window.innerHeight : 1;
+    addPull(dir, Math.min(Math.abs(event.deltaY) * lines, 120), PULL_WHEEL);
+  }, { passive: true });
+  window.addEventListener("touchstart", function (event) {
+    pull.touchY = event.touches.length === 1 ? event.touches[0].clientY : null;
+    pull.touchEdge = { end: atEnd(), top: atTop() };
+  }, { passive: true });
+  window.addEventListener("touchmove", function (event) {
+    if (!PAGED || pull.touchY === null || launcherOpen() || Date.now() < pull.pausedUntil) { return; }
+    var moved = pull.touchY - event.touches[0].clientY;
+    var dir = moved > 0 ? 1 : -1;
+    if (!(dir > 0 ? pull.touchEdge.end && atEnd() : pull.touchEdge.top && atTop()) || !neighbour(dir)) { return; }
+    pull.dir = dir;
+    pull.amount = Math.min(1, Math.abs(moved) / PULL_TOUCH);
+    drawPull();
+  }, { passive: true });
+  window.addEventListener("touchend", function () {
+    if (pull.touchY !== null && pull.dir && pull.amount >= 1) { turn(pull.dir); } else if (pull.dir) { resetPull(); }
+    pull.touchY = null;
+  }, { passive: true });
+  /** In the one-page layout the tab names the chapter being read. */
+  function followScroll(id) {
+    if (id !== currentPage && history.replaceState) { history.replaceState(null, "", "#" + id); }
+    currentPage = id;
+    tabLabel.textContent = chapterName(id);
+    tabButton.setAttribute("aria-label", "Chapters: " + chapterName(id));
   }
 
   // One card for the whole page, kept outside the chapters so no redraw removes it.
@@ -806,6 +1282,51 @@
   function plural(count, one, many) { return count + " " + (count === 1 ? one : many || one + "s"); }
 
   /* 1. Now */
+  /** Before anything lands: what the delivery holds, as a row of large figures. */
+  function readyFigures(doc, all) {
+    var lanes = [];
+    all.forEach(function (piece) { var lane = text(piece.item.lane); if (lanes.indexOf(lane) < 0) { lanes.push(lane); } });
+    var figuresRow = [[all.length, all.length === 1 ? "piece to land" : "pieces to land"], [lanes.length, lanes.length === 1 ? "lane" : "lanes"]];
+    if (plan) {
+      var counts = planCounts(doc);
+      if (counts.total) { figuresRow.push([counts.total, counts.total === 1 ? "criterion to prove" : "criteria to prove", "#plan"]); }
+    }
+    var finish = list(doc.state.finish).filter(isObject).length;
+    if (finish) { figuresRow.push([finish, finish === 1 ? "finish line" : "finish lines"]); }
+    var row = el("dl", "ready");
+    figuresRow.forEach(function (figure) {
+      var value = el("dd", "ready-number", String(figure[0]));
+      var label = el("dt", "ready-label", figure[1]);
+      var cell = add(el("div", "ready-cell"), value, label);
+      if (figure[2]) {
+        var link = add(el("a", "ready-cell is-link"), value, label);
+        link.setAttribute("href", figure[2]);
+        cell = link;
+      }
+      row.appendChild(cell);
+    });
+    return row;
+  }
+  /** Before anything lands: every piece as an open stop in its lane's colour, in landing order, up to the finish post. */
+  function startingLine(doc, all) {
+    var box = el("div", "starting");
+    var stops = el("ol", "starting-stops");
+    all.forEach(function (piece, index) {
+      var key = subjectOf(piece.item);
+      var stop = el("a", "starting-stop");
+      stop.setAttribute("href", "#line");
+      stop.style.setProperty("--c", laneColour(text(piece.item.lane)));
+      stop.style.setProperty("--i", String(index));
+      // Its name opens toward the room it has: rightward near the start, leftward near the finish.
+      stop.classList.add(index < all.length / 3 ? "opens-right" : index >= all.length * 2 / 3 ? "opens-left" : "opens-mid");
+      stop.setAttribute("aria-label", (key ? key + ", " : "") + titleOf(doc, piece.item) + ", not started");
+      stop.appendChild(el("span", "starting-name", (key ? key + " · " : "") + titleOf(doc, piece.item)));
+      stops.appendChild(add(el("li"), stop));
+    });
+    add(box, el("div", "starting-end is-start", "Ready to start"), stops, add(el("div", "starting-post"), el("span", "starting-post-mark")),
+      el("div", "starting-end is-finish", "Finish line"));
+    return box;
+  }
   function drawNow(doc, all) {
     // A redraw can remove what the card describes without a mouseleave; such a card hides.
     if (!card.hidden && cardTarget && !cardTarget.isConnected) { hideCard(); }
@@ -845,11 +1366,15 @@
     var name = text(meta.headline) || outcome || pageTitle();
     var keyed = name.match(/^([A-Z][A-Z0-9]*-\d+):\s*(.+)$/);
     if (keyed && (!parent || keyed[1] === parent)) { name = keyed[2].charAt(0).toUpperCase() + keyed[2].slice(1); }
+    // A closing parenthetical on the name ("(draft, as of d3db458b6)") is its status, not its name: it moves to the kicker.
+    var status = /^(.*\S)\s*\(([^()]{1,80})\)$/.exec(name);
+    if (status) { name = status[1]; }
     var title = add(el("h1", "title"), name);
     // The kicker is one line: the tracker item the delivery's work is listed under, linked when the renderer linked it,
     // then how long it has run.
     var kicker = el("div", "kicker");
     if (parent) { add(kicker, issue(parent)); }
+    if (status) { add(kicker, kicker.firstChild ? " · " : null, el("span", "now-status", status[2])); }
     // How long the delivery has run, from the record's first entry: to now while it delivers, to its close once delivered.
     // The start, and for a closed one the end, read on pointing at it, in local time with UTC beside it.
     var first = list(doc.journal).filter(isObject)[0];
@@ -885,15 +1410,28 @@
       time.addEventListener("blur", hideCard);
       add(kicker, kicker.firstChild ? " · " : null, time);
     }
+    // Before anything has landed, the page looks ahead: what is about to be delivered, rather than how much of it is zero.
+    var fresh = !closed && all.length > 0 && landed === 0 && !step && !partDone.length;
+    inner.parentNode.classList.toggle("is-fresh", fresh);
+    if (fresh) {
+      var stamp = since(doc, meta, closed).querySelector(".fact-value");
+      if (stamp && text(stamp.textContent)) { add(kicker, kicker.firstChild ? " · " : null, el("span", "now-since", stamp.textContent)); }
+    }
     var nodes = kicker.firstChild ? [kicker, title] : [title];
     // The outcome when it says more than the name, then the count, how much of the plan is proven and how often it
     // changed, linked to the plan chapter.
     var said = outcome && outcome !== text(meta.headline) && outcome !== name ? outcome : null;
     var planLink = planNow(doc);
-    nodes.push(add(el("p", "plan-now"), said, add(el("span", "plan-now-line"), count, planLink ? " · " : null, planLink)));
+    if (fresh) {
+      nodes.push(add(el("p", "plan-now"), said));
+      nodes.push(readyFigures(doc, all));
+      nodes.push(startingLine(doc, all));
+    } else {
+      nodes.push(add(el("p", "plan-now"), said, add(el("span", "plan-now-line"), count, planLink ? " · " : null, planLink)));
+    }
     if (behind) { nodes.push(el("p", "say say-across", behind)); }
-    var status = sayLine(doc, all);
-    if (status) { nodes.push(el("p", "say", status)); }
+    var sayWords = fresh ? "" : sayLine(doc, all);
+    if (sayWords) { nodes.push(el("p", "say", sayWords)); }
     var rejoining = step && !step.landed && landed === all.length && all.length ? driftLine(step) : "";
     if (rejoining) { nodes.push(figures(el("p", "say say-drift"), "drift", rejoining)); }
     // What the lead waits on in another delivery sharing the base, and what waits on the lead, as the state tool says.
@@ -906,9 +1444,11 @@
     if (left) { nodes.push(left); }
     var partway = closeStoppedPartway(doc, closed);
     if (partway) { nodes.push(partway); }
-    nodes.push(journey(doc, all, closed ? tally.landed : landed));
-    // Under the line, three facts in one shape: how many stories have landed, what landed last, and the record's state.
-    nodes.push(add(el("div", "facts"), storiesFact(all, closed ? tally : null), lastLanded(doc, all), since(doc, meta, closed)));
+    if (!fresh) {
+      nodes.push(journey(doc, all, closed ? tally.landed : landed));
+      // Under the line, three facts in one shape: how many stories have landed, what landed last, and the record's state.
+      nodes.push(add(el("div", "facts"), storiesFact(all, closed ? tally : null), lastLanded(doc, all), since(doc, meta, closed)));
+    }
     var was = prev.checkingHeight;
     inner.replaceChildren.apply(inner, nodes);
     // A live update that changes the sheet's height, a check starting or a failure listed, eases it there instead of jumping.
@@ -2676,7 +3216,7 @@
         var box = el("div", "d-run");
         if (note) { box.appendChild(el("div", "d-run-none", note)); }
         var shown = isObject(finished) ? finished : { observational: true, observationKey: item.subject, open: false, roundDetail: [] };
-        box.appendChild(runSummaryNode(Object.assign({}, shown, { running: inFlight }), { commitHref: commitHref, issueHref: issueHref, followUpOf: followUpOf(doc, item.subject), lenses: VIEW.lenses, subject: item.subject }));
+        box.appendChild(runSummaryNode(Object.assign({}, shown, { running: inFlight }), { commitHref: commitHref, issueHref: issueHref, fileHref: fileHref, tickets: Object.keys(LINKS.issues || {}), ticket: function (id) { return issue(id); }, followUpOf: followUpOf(doc, item.subject), lenses: VIEW.lenses, subject: item.subject }));
         return box;
       };
       if (inFlight && !native && !events.length) { return underWay(null); }
@@ -2703,7 +3243,7 @@
       if (inFlight) { return underWay(native); }
       var nativeBox = el("div", "d-run");
       if (carried) { nativeBox.appendChild(el("div", "d-run-carried", "Carried by the lead. " + text(carried.note))); }
-      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, issueHref: issueHref, followUpOf: followUpOf(doc, item.subject), lenses: VIEW.lenses, subject: item.subject }));
+      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, issueHref: issueHref, fileHref: fileHref, tickets: Object.keys(LINKS.issues || {}), ticket: function (id) { return issue(id); }, followUpOf: followUpOf(doc, item.subject), lenses: VIEW.lenses, subject: item.subject }));
       return nativeBox;
     }
     if (VIEW.runs !== true) { return null; }
@@ -2733,7 +3273,7 @@
       return Object.assign({}, round, { verdicts: verdicts, outcome: outcome });
     });
     var box = el("div", "d-run");
-    box.appendChild(runSummaryNode(Object.assign({}, summary, { roundDetail: rounds }), { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses }));
+    box.appendChild(runSummaryNode(Object.assign({}, summary, { roundDetail: rounds }), { commitHref: commitHref, issueHref: issueHref, fileHref: fileHref, tickets: Object.keys(LINKS.issues || {}), ticket: function (id) { return issue(id); }, lenses: VIEW.lenses }));
     return box;
   }
 
@@ -3008,6 +3548,33 @@
       });
       nodes.push(people);
       prev.lanes = seen;
+    } else if (!closed && all.length) {
+      // Nobody has reported yet: who is expected, from the planned work's lanes, each with the piece it starts on.
+      var expected = [];
+      var byLane = Object.create(null);
+      all.forEach(function (piece) {
+        var lane = text(piece.item.lane);
+        if (!lane) { return; }
+        if (!byLane[lane]) { byLane[lane] = []; expected.push(lane); }
+        byLane[lane].push(piece);
+      });
+      if (expected.length) {
+        nodes.push(el("p", "say", plural(expected.length, "lane") + " will report here as " + (expected.length === 1 ? "it starts." : "they start.")));
+        var waiting = el("ol", "expected");
+        expected.forEach(function (lane) {
+          var pieces = byLane[lane];
+          var first = pieces[0];
+          var key = subjectOf(first.item);
+          var rings = el("span", "expected-rings");
+          rings.setAttribute("aria-label", plural(pieces.length, "piece"));
+          pieces.forEach(function () { rings.appendChild(el("i")); });
+          var opener = add(el("span", "expected-first"), key ? issue(key) : null, key ? " \u00b7 " : null, titleOf(doc, first.item));
+          var row = add(el("li"), add(el("span", "expected-lane"), add(el("span", "swatch"), persona("lane")), el("span", null, lane)), rings, opener);
+          row.style.setProperty("--c", laneColour(lane));
+          waiting.appendChild(row);
+        });
+        nodes.push(waiting);
+      }
     }
     if (list(doc.state.laneRegions).filter(isObject).length && filesToShow()) { nodes.push(filesView(doc, colours)); }
     var leases = list(doc.state.leases).filter(isObject);
@@ -3082,6 +3649,7 @@
           if (!stop) { return; }
           stop.click();
           var section = parts.line.closest ? parts.line.closest(".chapter") || parts.line : parts.line;
+          revealPage(section);
           if (typeof section.scrollIntoView === "function") { section.scrollIntoView({ behavior: reduced() ? "auto" : "smooth", block: "start" }); }
           // The stop is pointed out by its ticket's card, as if pointed at, once the page has stopped moving: a scroll
           // hides the card, so it is shown after the last one. It goes with the reader's next scroll.
@@ -3374,7 +3942,10 @@
     if (baseBroken(doc)) { flags.push({ title: "The base is broken", why: toldLine(doc, events[events.length - 1]) || "No reason recorded.", fix: "Repair the base; nothing lands until it is." }); }
     // Only an approval the lead marked blocking needs the engineer; one that is merely ahead stays in its fold.
     var blocking = list(plan.approvals).filter(function (entry) { return isObject(entry) && entry.blocking === true && entry.state === "waiting"; });
-    if (blocking.length) { flags.push({ title: "Approvals are blocking work", why: blocking.map(function (entry) { return text(entry.text); }).join("; "), fix: blocking.length === 1 ? "Give or refuse this approval." : "Give or refuse each approval." }); }
+    if (blocking.length) {
+      flags.push({ title: blocking.length === 1 ? "An approval is blocking work" : blocking.length + " approvals are blocking work",
+        approvals: blocking });
+    }
     var known = Object.create(null);
     planUnits(plan.units).forEach(function (unit) { known[text(unit.subject)] = true; });
     var stray = [];
@@ -3423,6 +3994,61 @@
     if (waivedOpen.length) { flags.push({ title: "A waived proof on a unit not yet proven", why: waivedOpen.map(unitName).join(", "), fix: "Finish the unit's other proofs, or check the waiver was meant." }); }
     return flags;
   }
+  /**
+   * An approval's short title and the rest of its text. The title is what comes before the text's first colon, or else
+   * its first sentence, without a leading copy of the approval's own id; a text with neither is cut short.
+   */
+  function approvalParts(entry) {
+    var words = text(entry.text).replace(/\s+/g, " ").trim();
+    var id = text(entry.id);
+    if (id && words.indexOf(id) === 0) { words = words.slice(id.length).replace(/^[.:\s-]+/, ""); }
+    var colon = words.indexOf(": ");
+    if (colon > 0 && colon <= 90) { return { title: words.slice(0, colon), rest: words.slice(colon + 2) }; }
+    var stop = words.search(/\.\s/);
+    if (stop > 0 && stop <= 120) { return { title: words.slice(0, stop), rest: words.slice(stop + 2) }; }
+    if (words.length <= 120) { return { title: words.replace(/\.$/, ""), rest: "" }; }
+    var cut = words.lastIndexOf(" ", 96);
+    return { title: words.slice(0, cut > 40 ? cut : 96) + "…", rest: words };
+  }
+  /** The blocking approvals: who holds how many, then one folded row per approval, opened to read the whole of it. */
+  function approvalList(entries) {
+    var owners = [];
+    var held = Object.create(null);
+    // An approval held by several ("Product, Engineering") counts for each of them.
+    entries.forEach(function (entry) {
+      (text(entry.who) || "Unassigned").split(/\s*,\s*|\s+and\s+/).filter(Boolean).forEach(function (who) {
+        if (!held[who]) { held[who] = 0; owners.push(who); }
+        held[who] += 1;
+      });
+    });
+    owners.sort(function (a, b) { return held[b] - held[a]; });
+    var SHOWN = 4;
+    var byOwner = el("p", "ap-owners");
+    owners.slice(0, SHOWN).forEach(function (who, index) {
+      if (index) { byOwner.appendChild(document.createTextNode(" · ")); }
+      add(byOwner, el("span", "ap-owner-name", who), el("span", "ap-owner-count", String(held[who])));
+    });
+    if (owners.length > SHOWN) { byOwner.appendChild(el("span", "ap-owner-more", " · +" + (owners.length - SHOWN) + " more")); }
+    var listing = el("ol", "ap-list");
+    entries.forEach(function (entry) {
+      var parts = approvalParts(entry);
+      var row = el("details", "ap-row");
+      row.addEventListener("toggle", function () { if (row.classList.contains("is-whole") && row.open) { row.open = false; } });
+      var summary = el("summary");
+      var id = text(entry.id);
+      // An id that only numbers its row (handoff-3) says nothing a reader needs; a named one (PD1, O25) does.
+      var shownId = id && !/^[a-z]+-\d+$/i.test(id) ? id : "";
+      var who = text(entry.who);
+      add(summary, el("span", "ap-id", shownId), el("span", "ap-title", parts.title), el("span", "ap-who", who === parts.title ? "" : who),
+        el("span", "ap-caret"));
+      add(row, summary, parts.rest ? el("p", "ap-rest", parts.rest) : null);
+      if (!parts.rest) { row.classList.add("is-whole"); }
+      listing.appendChild(add(el("li"), row));
+    });
+    // What clears the flag. The operator doesn't run anything: they tell the agent leading the work, which records it.
+    var how = el("p", "ap-how", "Tell the agent leading this which you approve; it records each one in the plan.");
+    return add(el("div", "ap"), owners.length > 1 ? byOwner : null, listing, how);
+  }
   function flagList(flags, closed) {
     var box = el("div", "plan-needs");
     if (!flags.length) { return closed ? null : add(box, el("p", "plan-calm", "Nothing in the plan needs attention right now.")); }
@@ -3431,7 +4057,7 @@
       // What is wrong, what it names, then what settles it. Nobody asked the reader for these: the page found the plan and
       // the record out of step, so the heading says so rather than "Needs you", which is the supervisor's request.
       ul.appendChild(add(el("li"), glyph("stop"), add(el("div"), el("div", "a1", flag.title), flag.why ? el("div", "a2", flag.why) : null,
-        flag.fix && !closed ? el("div", "a3", flag.fix) : null)));
+        flag.approvals ? approvalList(flag.approvals) : null, flag.fix && !closed ? el("div", "a3", flag.fix) : null)));
     });
     return add(box, el("div", "ah", closed ? "Left open at close" : "The plan needs attention"), ul);
   }
@@ -3703,7 +4329,7 @@
     var summary = { observational: true, observationKey: "plan-review", open: false, roundDetail: list(review.rounds).filter(isObject),
       planReview: { state: text(review.state), endedReason: text(review.endedReason) } };
     var box = el("div", "plan-review");
-    box.appendChild(runSummaryNode(summary, { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses }));
+    box.appendChild(runSummaryNode(summary, { commitHref: commitHref, issueHref: issueHref, fileHref: fileHref, tickets: Object.keys(LINKS.issues || {}), ticket: function (id) { return issue(id); }, lenses: VIEW.lenses }));
     return fold("review", "Plan review (" + count + (count === 1 ? " round)" : " rounds)"), null, box);
   }
 
@@ -3974,6 +4600,7 @@
         row = planRows["all:" + subject];
       }
       if (row) {
+        revealPage(row);
         if (typeof row.scrollIntoView === "function") { row.scrollIntoView({ block: "center" }); }
         row.focus({ preventScroll: true });
       }
@@ -4048,38 +4675,26 @@
     return commit;
   }
   /**
-   * The story's words, made readable without changing what they say: each ticket id they name links to its ticket, so
-   * a reader can open it or see its card as anywhere else on the page; a full commit id is cut short and opens on the
-   * forge; and a change request's address shows as its number. The ids are the record's own, the ones the renderer gave
-   * addresses for.
+   * The story's words, made readable without changing what they say, through the page's one formatter (richWords, with
+   * the run summary): each ticket id they name links to its ticket, so a reader can open it or see its card as anywhere
+   * else on the page; a commit opens on the forge, cut short to read; a change request's address shows as its number; a
+   * `quoted` name reads as code. The ids are the record's own, the ones the renderer gave addresses for.
    */
   function linked(words) {
-    var said = text(words);
-    var ids = Object.keys(LINKS.issues || {}).filter(function (id) { return id && said.indexOf(id) >= 0; })
-      .sort(function (a, b) { return b.length - a.length; });
-    var tickets = ids.length ? "|(?:^|[^\\w-])(" + ids.map(function (id) { return id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }).join("|") + ")(?![\\w-])" : "";
-    // A commit is named in full or cut short; a short one links only when it begins exactly one commit the page knows.
-    var pattern = new RegExp("(\\b[0-9a-f]{7,40}\\b)|(https?:\\/\\/[^\\s)]+)" + tickets, "g");
-    var nodes = [], last = 0, found;
-    while ((found = pattern.exec(said))) {
-      var match = found[1] || found[2] || found[3];
-      var at = found.index + found[0].indexOf(match);
-      if (at > last) { nodes.push(said.slice(last, at)); }
-      if (found[1]) {
-        var named = found[1].length === 40 ? [found[1]] : Object.keys(LINKS.commits || {}).filter(function (sha) { return sha.indexOf(found[1]) === 0; });
-        nodes.push(named.length === 1 ? commitRef(named[0]) : found[1]);
-      } else if (found[2]) {
-        // Punctuation that ends the sentence is not part of the address.
-        var address = found[2].replace(/[.,;:]+$/, "");
-        nodes.push(changeTarget(address) ? changeLink(address) : address);
-        if (address.length < found[2].length) { nodes.push(found[2].slice(address.length)); }
-      } else {
-        nodes.push(issue(found[3]));
-      }
-      last = at + match.length;
-    }
-    if (last < said.length) { nodes.push(said.slice(last)); }
-    return nodes;
+    return richWords(text(words), {
+      tickets: Object.keys(LINKS.issues || {}),
+      ticket: function (id) { return issue(id); },
+      // A commit is named in full or cut short; a short one links only when it begins exactly one commit the page knows.
+      commit: function (sha) {
+        var named = sha.length === 40 ? [sha] : Object.keys(LINKS.commits || {}).filter(function (known) { return known.indexOf(sha) === 0; });
+        return named.length === 1 ? commitRef(named[0]) : null;
+      },
+      change: function (address) { return changeTarget(address) ? changeLink(address) : null; },
+    });
+  }
+  /** A reference to a file's lines, as the renderer linked it at the commit the words were written about, or null. */
+  function fileHref(sha, ref) {
+    return typeof LINKS.files[sha + " " + ref] === "string" ? LINKS.files[sha + " " + ref] : null;
   }
   function timeOf(instant) {
     var parts = clockParts(instant);
@@ -4189,6 +4804,7 @@
       inner.replaceChildren(el("div", "kicker", "What happened"), el("h2", "title", "The story could not be told from this record."));
       return;
     }
+    if (!story.beats.some(isObject)) { drawStoryAhead(inner, story); prev.story = Object.create(null); return; }
     var depth = storyDepth(story);
     var seen = Object.create(null);
     story.beats.forEach(function (beat) { if (isObject(beat)) { seen[beatKey(beat)] = true; } });
@@ -4243,6 +4859,22 @@
       ledger && ledger.length && (storyFilter === "all" || storyFilter === "problems") ? setbackLedger(ledger) : null, ol);
     // Depth changes density in place: the chapter eases from the height it had, on the shared fold's motion.
     runEaseHeight(inner, from);
+  }
+  /**
+   * Before anything has happened: no switches over an empty list, just what the chapter will tell and the marks it
+   * will tell it with, so the first landing, decision or setback reads at once when it comes.
+   */
+  function drawStoryAhead(inner, story) {
+    var started = isObject(story.digest) && text(story.digest.startedAt);
+    var key = add.apply(null, [el("ul", "ahead")].concat(
+      [["landed", "Landings", "Each piece as it merges, and how long it took."],
+       ["decision", "Decisions", "Each call the lead makes, and why."],
+       ["problem", "Setbacks", "What stopped work, until when, and what it cost."]].map(function (kind) {
+        return add(el("li", "is-" + kind[0]), toneMark(kind[0]), add(el("div", "ahead-words"), el("b", null, kind[1]), el("span", null, kind[2])));
+      })));
+    inner.replaceChildren(el("div", "kicker", "What happened"), el("h2", "title", "Nothing has happened yet."),
+      el("p", "say", started ? "The story is told here as it unfolds, newest first." : "The story starts with the first lane, and is told here as it unfolds, newest first."),
+      key);
   }
   function beatKey(beat) { return text(beat.form) + ":" + list(beat.entries).join(","); }
   var NUMBER_WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
@@ -4317,6 +4949,7 @@
       if (!target) { return; }
       event.preventDefault();
       target.focus();
+      revealPage(target);
       if (typeof target.scrollIntoView === "function") { target.scrollIntoView({ block: "nearest" }); }
     });
     return add(el("p", "chapter-setback" + (row.state === "open" ? " is-open" : "")), glyph("stop"), link);
@@ -4356,9 +4989,15 @@
     if (!groups.length && !parts.across) { return; }
     var section = parts.across ? parts.across.parentNode : chapterOf(["across", "Across repositories"], PLAN ? "plan" : "happened");
     var link = rail.querySelector('a[href="#across"]');
-    section.hidden = !groups.length;
+    section.classList.toggle("is-absent", !groups.length);
+    section.hidden = !groups.length || (PAGED && section.id !== currentPage);
     if (link) { link.hidden = !groups.length; }
-    if (!groups.length) { parts.across.replaceChildren(); return; }
+    if (!groups.length) {
+      parts.across.replaceChildren();
+      // A reader on the chapter as it empties turns to the first page rather than an empty one.
+      if (currentPage === "across") { showPage(chapterIds()[0]); }
+      return;
+    }
     // A group of another epic delivers nothing of this one: it is named after the epic's own, under Also linked.
     var others = groups.filter(function (group) { return group.lastOutcome === "other-epic"; });
     groups = groups.filter(function (group) { return group.lastOutcome !== "other-epic"; });
@@ -4412,11 +5051,52 @@
   }
 
   /* 6. Parked */
+  // Set-aside rows the reader opened, kept across live redraws.
+  var asideOpen = {};
+  function asideChevron() {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("class", "aside-chevron");
+    svg.innerHTML = '<path d="M6 9l6 6l6 -6"/>';
+    return svg;
+  }
+  function toggleAside(row, words) {
+    if (!row.classList.contains("clamps")) return;
+    var open = row.classList.toggle("open");
+    asideOpen[words] = open;
+    row.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  // Only rows whose text runs past two lines become openable.
+  function markClamped(listNode) {
+    Array.prototype.forEach.call(listNode.children, function (row) {
+      var head = row.firstChild;
+      var wasOpen = row.classList.contains("open");
+      if (wasOpen) row.classList.remove("open");
+      var clamps = head.scrollHeight > head.clientHeight + 1;
+      if (wasOpen) row.classList.add("open");
+      row.classList.toggle("clamps", clamps);
+      if (clamps) {
+        row.tabIndex = 0;
+        row.setAttribute("role", "button");
+        row.setAttribute("aria-expanded", wasOpen ? "true" : "false");
+      } else {
+        row.removeAttribute("tabindex");
+        row.removeAttribute("role");
+        row.removeAttribute("aria-expanded");
+        row.classList.remove("open");
+      }
+    });
+  }
+  window.addEventListener("resize", function () {
+    Array.prototype.forEach.call(document.querySelectorAll("ol.aside"), markClamped);
+  });
+
   function drawParked(doc) {
     var inner = parts.parked;
     var items = list(doc.state.followups).filter(isObject);
     var nodes = [el("div", "kicker", "Parked for later"),
-      el("h2", "title", items.length ? items.length + (items.length === 1 ? " thing found and set aside." : " things found and set aside.") : "Nothing parked.")];
+      el("h2", "title", items.length ? items.length + (items.length === 1 ? " thing found and set aside." : " things found and set aside.") : "Nothing parked yet.")];
     if (items.length) {
       var ul = el("ul", "parked");
       var known = Object.create(null);
@@ -4428,6 +5108,29 @@
       });
       nodes.push(ul);
       prev.parked = known;
+    } else if (!closedEntry(doc)) {
+      nodes.push(el("p", "say", "What a lane finds outside its story is set aside here, not added to the work."));
+      // What the plan itself leaves for later, so the page says what is already out of this delivery.
+      var aside = plan ? list(plan.outOfScope).map(text).filter(Boolean) : [];
+      if (aside.length) {
+        var label = el("a", "aside-label", "Set aside by the plan");
+        label.setAttribute("href", "#plan");
+        var asideList = el("ol", "aside");
+        aside.forEach(function (words) {
+          // The full text, clamped to two lines; a row that overflows opens in place to show all of it.
+          var row = add(el("li"), el("span", "aside-head", words), asideChevron());
+          if (asideOpen[words]) row.classList.add("open");
+          row.addEventListener("click", function () { toggleAside(row, words); });
+          row.addEventListener("keydown", function (event) {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            toggleAside(row, words);
+          });
+          asideList.appendChild(row);
+        });
+        requestAnimationFrame(function () { markClamped(asideList); });
+        nodes.push(add(el("div", "aside-box"), add(el("div", "aside-top"), label, el("span", "aside-count", String(aside.length))), asideList));
+      }
     }
     var elsewhere = elsewhereFold(doc);
     if (elsewhere) { nodes.push(elsewhere); }
@@ -4542,6 +5245,8 @@
         try { draw(lastGood); } catch (again) { /* the last drawing stays */ }
       }
     }
+    // Every draw keeps the reader on their page; the first one opens the page the address names.
+    if (currentPage === null) { route(); } else if (PAGED) { showPage(currentPage); }
   }
 
   safely(embedded);

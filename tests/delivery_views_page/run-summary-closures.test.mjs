@@ -28,7 +28,7 @@ function document() {
     entry(CORRECTNESS, 1, A, [finding("C1", "P1", "The receipt keeps the first total."), finding("C2", "P2", "The banner hides the error."),
       finding("C3", "P3", "The empty state says nothing"), finding("C4", "P2", CUT)], [])] };
   const two = { round: 2, outcome: "aligned", entries: [
-    entry(TESTING, 2, B, [], [closure("T1", "closed", "A case now times out the first attempt and asserts one charge."),
+    entry(TESTING, 2, B, [], [closure("T1", "closed", "Adopted as written. A case now times out the first attempt and asserts one charge."),
       closure("T2", "closed", "test_dropped_attempt covers it."), closure("T3", "closed", "The id is logged once.")]),
     entry(CORRECTNESS, 2, B, [], [closure("C1", "closed", "The receipt reads the last attempt."),
       closure("C2", "withdrawn", "The banner was never shown on error."), closure("C3", "withdrawn", "The empty state was dropped."),
@@ -89,22 +89,30 @@ test("round 1's raised rows keep the same rule for a summary at the cap and one 
   expect(raised.filter((text) => text.startsWith("x") || text.startsWith("y"))).toEqual([NEAR + ".", CUT]);
 });
 
-test("opened, a confirmed note shows its resolution, its commit and its id", async () => {
+test("opened, a confirmed note shows its fix on a sheet of its own: how it ended and its commit, then its resolution", async () => {
   const [, , opened] = await openPage(page, { steps: [{ click: ".run-closure-lens > summary", index: 0 }, { click: ".run-closures > summary", index: 0 }] });
   const testing = groups(opened.app)[0];
   expect(testing.querySelector(".run-closure-lens").hasAttribute("open")).toBe(true);
   const first = testing.querySelector(".run-closures");
   expect(first.hasAttribute("open")).toBe(true);
-  expect([...first.children].slice(1).map((part) => [part.className, part.textContent])).toEqual([
-    ["run-closure-resolution", "A case now times out the first attempt and asserts one charge."],
-    ["run-closure-evidence", "Fixed in bbbbbbb"],
-    ["run-closure", "T1"]]);
-  expect(first.querySelector(".run-closure-evidence a").getAttribute("href")).toBe("https://github.com/acme/shop/commit/" + B);
-  // A note whose ending wasn't a fix names no fix commit; a deferred one names its follow-up.
+  // Beneath the finding, one sheet: the note's id is not repeated, since the finding it was raised as is known.
+  expect([...first.children].slice(1).map((part) => part.className)).toEqual(["run-closure-fix"]);
+  const fix = first.querySelector(".run-closure-fix");
+  // A short opening verdict joins the head beside the commit, and the resolution goes on from what changed.
+  expect([...fix.children].map((part) => [part.className, part.textContent])).toEqual([
+    ["run-closure-evidence", "Fixed in bbbbbbbAdopted as written"],
+    ["run-closure-resolution", "A case now times out the first attempt and asserts one charge."]]);
+  expect(fix.querySelector(".run-closure-evidence .run-closure-verdict").textContent).toBe("Adopted as written");
+  expect(fix.querySelector(".run-closure-evidence a").getAttribute("href")).toBe("https://github.com/acme/shop/commit/" + B);
+  // A note whose ending wasn't a fix names no fix commit, and a one-sentence resolution has no verdict to lift; a
+  // deferred one names its follow-up.
   const [withdrawn, , deferred] = groups(opened.app)[1].querySelectorAll(":scope > .run-findings .run-closures");
-  expect([...withdrawn.children].slice(1).map((part) => part.className)).toEqual(["run-closure-resolution", "run-closure"]);
-  expect([...deferred.children].slice(1).map((part) => [part.className, part.textContent])).toEqual([
-    ["run-closure-resolution", "The copy waits for the writer."], ["run-followup", "\u21b3 SHOP-12"], ["run-closure", "C4"]]);
+  expect([...withdrawn.children].slice(1).map((part) => part.className)).toEqual(["run-closure-fix"]);
+  expect([...withdrawn.querySelector(".run-closure-fix").children].map((part) => [part.className, part.textContent])).toEqual([
+    ["run-closure-evidence", "Withdrawn"], ["run-closure-resolution", "The banner was never shown on error."]]);
+  expect(withdrawn.querySelector(".run-closure-evidence a")).toBeNull();
+  expect([...deferred.querySelector(".run-closure-fix").children].map((part) => [part.className, part.textContent])).toEqual([
+    ["run-closure-evidence", "Deferred"], ["run-closure-resolution", "The copy waits for the writer."], ["run-followup", "\u21b3 SHOP-12"]]);
 });
 
 test("a note whose finding isn't on the page leads with its resolution and opens on its id, as before", async () => {
