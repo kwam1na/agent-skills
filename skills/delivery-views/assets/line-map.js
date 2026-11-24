@@ -1239,9 +1239,11 @@
    * The integration step: a delivery whose record names an integration rejoins its target after its pieces land. Its
    * facts are the target merged in, the suite, the integration review's rounds under the delivery's own key and the
    * change request, each at a head; the newest head any of them names is the integration's current head. A suite, a
-   * round or a request at another head is superseded; a merge only by a later merge. The landing ends it.
+   * round or a request at another head is superseded; a merge only by a later merge. The landing ends it. A suite's
+   * start runs until its finish or a later start; a start the suite then finished at the same head times that suite.
    */
-  var INTEGRATION_FACTS = table({ "integration.merged": "merged", "integration.suite": "suite", "integration.requested": "requested" });
+  var INTEGRATION_FACTS = table({ "integration.merged": "merged", "integration.suite": "suite", "integration.requested": "requested",
+    "integration.suite.started": "started" });
   var INTEGRATION_STOPS = ["merged", "suite", "round", "requested"];
   function integrationOf(doc) {
     var meta = isObject(doc.state.meta) ? doc.state.meta : {};
@@ -1249,7 +1251,7 @@
     if (!isObject(named) || !text(named.target)) { return null; }
     var key = text(meta.trackerParent);
     var step = { base: text(named.base), target: text(named.target), head: text(meta.baseHead) || null, merges: [],
-      latest: { merged: null, suite: null, round: null, requested: null }, landed: null };
+      latest: { merged: null, suite: null, round: null, requested: null, started: null }, landed: null, running: null, timed: null };
     list(doc.journal).forEach(function (entry) {
       if (!isObject(entry) || !isObject(entry.data)) { return; }
       if (entry.kind === "integration.landed") { step.landed = step.landed || entry; return; }
@@ -1257,6 +1259,11 @@
       if (!name || step.landed) { return; }
       step.latest[name] = entry;
       if (name === "merged") { step.merges.push(entry); }
+      if (name === "started") { step.running = step.timed = entry; }
+      if (name === "suite") {
+        step.running = null;
+        if (step.timed && text(step.timed.data.head) !== text(entry.data.head)) { step.timed = null; }
+      }
       if (text(entry.data.head)) { step.head = entry.data.head; }
     });
     return step;
@@ -1267,24 +1274,46 @@
     if (!entry) { return false; }
     return name === "merged" || text(entry.data.head) === step.head;
   }
+  // The suite running at the current head, from its start, or null.
+  function suiteRunning(step) { return step.running && text(step.running.data.head) === step.head ? step.running : null; }
+  // The start of the suite at the current head, running or finished since, or null: a timed suite draws its step wider.
+  function suiteTimed(step) { return step.timed && text(step.timed.data.head) === step.head ? step.timed : null; }
+  // How long a running suite has run and usually takes, in seconds, each null when the record can't say.
+  function suiteClock(entry) {
+    var from = seconds(entry.data.startedAt);
+    if (from === null) { from = seconds(entry.at); }
+    var usual = typeof entry.data.expectedSeconds === "number" && entry.data.expectedSeconds > 0 ? entry.data.expectedSeconds : null;
+    return { spent: from === null ? null : Math.max(0, Date.now() / 1000 - from), usual: usual };
+  }
+  // "<n> min, about <m> usual", with ", so <k> over" once past the usual time.
+  function suiteRunWords(entry) {
+    var clock = suiteClock(entry);
+    if (clock.spent === null) { return ""; }
+    var spent = Math.floor(clock.spent / 60);
+    if (clock.usual === null) { return spent + " min"; }
+    var usual = Math.round(clock.usual / 60), over = clock.spent > clock.usual ? spent - usual : 0;
+    return spent + " min, about " + usual + " usual" + (over >= 1 ? ", so " + over + " over" : "");
+  }
   function suitePasses(entry) { return Boolean(entry) && (entry.data.result === "passed" || entry.data.result === "over-budget"); }
   function roundApproves(entry) {
     var verdicts = entry && isObject(entry.data.verdicts) ? entry.data.verdicts : {};
     var lenses = Object.keys(verdicts);
     return lenses.length > 0 && lenses.every(function (lens) { return verdicts[lens] === "approve"; });
   }
-  // Each stop's state: "filled" when its standing fact passed, "danger" or "warning" when it stands and did not, "next"
-  // for the first of the rest, and "hollow" otherwise. After the landing every stop is filled.
+  // Each stop's state: "filled" when its standing fact passed, "danger" or "warning" when it stands and did not,
+  // "running" for a suite running at the current head, "next" for the first of the rest while nothing runs, and
+  // "hollow" otherwise. After the landing every stop is filled.
   function integrationStops(step) {
     var states = INTEGRATION_STOPS.map(function (name) {
       if (step.landed) { return "filled"; }
+      if (name === "suite" && suiteRunning(step)) { return "running"; }
       if (!standing(step, name)) { return "hollow"; }
       var entry = step.latest[name];
       if (name === "suite") { return suitePasses(entry) ? "filled" : "danger"; }
       if (name === "round") { return roundApproves(entry) ? "filled" : "warning"; }
       return "filled";
     });
-    var next = states.indexOf("hollow");
+    var next = states.indexOf("running") < 0 ? states.indexOf("hollow") : -1;
     if (next >= 0) { states[next] = "next"; }
     return states;
   }
@@ -2327,6 +2356,36 @@
   // With an integration step a bar of its four steps follows the ticks, and the line bends into the target at the finish
   // post, drawn this far beneath it.
   var BAR_GAP = 34, BAR_WIDTH = 140, BAR_TO_POST = 56, TARGET_DROP = 34, TARGET_RUN = 64;
+  // A timed suite's step takes about 44% of the bar, as the study draws it; each other step takes this share.
+  var TIMED_SHARE = 44 / 236;
+  /**
+   * A timed suite's step, over its rect. Running: a stripe that moves (still under reduced motion), filling the step as
+   * the run nears its usual time, with a tick at that time; past it the stripe fills the step and the tick moves back
+   * to where the usual time falls. Over its budget: a cap at the step's end. Passed and failed draw as their rect does.
+   */
+  function timedSuite(svg, step, state, x, trunkY, width) {
+    var y = trunkY - 5;
+    if (state === "running") {
+      var clock = suiteClock(step.running);
+      var share = clock.usual !== null && clock.spent !== null ? clock.spent / clock.usual : null;
+      var fill = share === null ? width : width * Math.min(1, share);
+      var clip = shape(svg, "clipPath", { id: "mg-suite-clip" });
+      shape(clip, "rect", { x: x, y: y, width: fill, height: 10, rx: 2 });
+      var run = shape(svg, "g", { class: "mg-suite-run", "clip-path": "url(#mg-suite-clip)", "aria-hidden": "true" });
+      var stripes = shape(run, "g", { class: "mg-stripes" });
+      shape(stripes, "rect", { class: "mg-stripe-ground", x: x - 8, y: y, width: width + 16, height: 10 });
+      var d = "";
+      for (var at = x - 16; at < x + width + 8; at += 8) { d += "M" + at + " " + (y + 10) + "l10 -10h4l-10 10z"; }
+      shape(stripes, "path", { class: "mg-stripe", d: d });
+      if (clock.usual !== null && clock.spent !== null) {
+        var tickX = x + width * (share > 1 ? 1 / share : 1);
+        shape(svg, "path", { class: "mg-suite-usual", d: "M" + tickX + " " + (y - 3) + "V" + (y + 13), "aria-hidden": "true" });
+      }
+    } else if (state === "filled" && step.latest.suite && step.latest.suite.data.result === "over-budget") {
+      shape(svg, "rect", { class: "mg-suite-over", x: x + width - Math.max(4, width * 10 / 104), y: y, width: Math.max(4, width * 10 / 104),
+        height: 10, "aria-hidden": "true" });
+    }
+  }
   // Without one the post stands this far past the last tick. With sibling repositories drawn, the epic's line runs on past
   // the post to a join where the siblings turn in, and a post of its own.
   var POST_GAP = 40, EPIC_JOIN_GAP = 66, EPIC_POST_GAP = 128, MERGE_TOP = 16, MOST_DRAWN = 2;
@@ -2525,17 +2584,27 @@
       // Every step in but not yet rejoined: it waits on its last step, the change request, and says so.
       if (current < 0 && !rejoined) { current = stops.length - 1; }
       shape(svg, "text", { class: "mg-step-label mg-bar-label", x: barX, y: trunkY - 22 },
-        "Rejoin " + step.target + (rejoined ? " · done" : " · " + STEP_TITLES[current].toLowerCase()));
+        "Rejoin " + step.target + (rejoined ? " · done" : " · " + STEP_TITLES[current].toLowerCase() + (stops[current] === "running" ? " running" : "")));
       var segment = (BAR_WIDTH - 6) / 4;
+      // A timed suite's step is drawn wider, so the time it fills reads at a glance; the other three share the rest.
+      var timed = rejoined ? null : suiteTimed(step);
+      var widths = INTEGRATION_STOPS.map(function (name) {
+        return !timed ? segment : name === "suite" ? (BAR_WIDTH - 6) * (1 - 3 * TIMED_SHARE) : (BAR_WIDTH - 6) * TIMED_SHARE;
+      });
+      var lefts = widths.map(function (width, i) { return barX + widths.slice(0, i).reduce(function (sum, w) { return sum + w + 2; }, 0); });
       stops.forEach(function (state, i) {
         // A step says what its latest fact shows; once rejoined the ledger has no words left, and every step is done.
         var words = said[i] || (state === "filled" ? "Done." : "Not yet.");
-        var r = shape(svg, "rect", { class: "mg-step " + state, x: barX + i * (segment + 2), y: trunkY - 5, width: segment, height: 10, rx: 2,
+        var r = shape(svg, "rect", { class: "mg-step " + state, x: lefts[i], y: trunkY - 5, width: widths[i], height: 10, rx: 2,
           tabindex: 0, role: "img", "data-step": INTEGRATION_STOPS[i], "data-state": state, "aria-label": STEP_TITLES[i] + ": " + words });
+        if (timed && INTEGRATION_STOPS[i] === "suite") { timedSuite(svg, step, state, lefts[i], trunkY, widths[i]); }
         // Only the step the bar is on reads "now".
         look.wire(r, null, STEP_TITLES[i] + " · " + (i === current ? "now" : state === "filled" ? "done" : "later"), words);
       });
-      var sentence = rejoined ? "Rejoined " + step.target + "." : STEP_TITLES[current] + ". " + (said[current] || "");
+      var running = rejoined ? null : suiteRunning(step), runFor = running ? suiteRunWords(running) : "";
+      var sentence = rejoined ? "Rejoined " + step.target + "."
+        : running && stops[current] === "running" ? "The full suite is running at " + short(running.data.head) + "." + (runFor ? " " + runFor + "." : "")
+        : STEP_TITLES[current] + ". " + (said[current] || "");
       var saidLines = wrapWords(sentence, 34).slice(0, 3);
       saidLines.forEach(function (line, k) {
         shape(svg, "text", { class: "mg-why mg-step-said", x: barX, y: trunkY + 22 + k * 12 }, line);
@@ -2717,8 +2786,9 @@
       }, []), list(merges[merges.length - 1].data.conflicts).length
         ? [", resolving " + plural(list(merges[merges.length - 1].data.conflicts).length, "conflict") + " by hand"] : [])
       : ["Not yet: the lead merges " + step.target + " in and records it."]));
-    var suite = step.latest.suite;
-    rows.push(rejoinRow("suite", "Suite", suite ? [suiteWords(suite) + " at ", rejoinHead(step, suite.data.head, !standing(step, "suite"))]
+    var suite = step.latest.suite, running = suiteRunning(step), runFor = running ? suiteRunWords(running) : "";
+    rows.push(rejoinRow("suite", "Suite", running ? ["running at ", rejoinHead(step, running.data.head, false), runFor ? " for " + runFor : ""]
+      : suite ? [suiteWords(suite) + " at ", rejoinHead(step, suite.data.head, !standing(step, "suite"))]
       : ["Not yet: the lead runs the full suite at the integration's head."]));
     var round = step.latest.round;
     if (round) {

@@ -15369,6 +15369,9 @@ def suite_run(c, binding: dict, commit: str, argv: list[str]) -> int:
     # A stop ends the run through main's handler, as an interruption does: its command's group is stopped, by
     # run_group, and its checkout removed, by in_detached_checkout.
     began = time.monotonic()
+    integration = record_integration()
+    if integration:
+        suite_started(c, commit, argv)
 
     def suite(checkout: Path) -> tuple[int, str, tuple[str | None, str | None], float | None]:
         asked = program_version(argv[0], checkout)
@@ -15385,6 +15388,12 @@ def suite_run(c, binding: dict, commit: str, argv: list[str]) -> int:
     except Stop as error:  # the checkout or a prepare step failed, before the interpreter was asked
         code, out, version, unread, budget = 1, str(error), None, "the run ended before its interpreter was asked", None
         started = False
+    except (KeyboardInterrupt, Terminated):
+        # A run stopped part way ends its start entry as a failure, so the record never shows it running on.
+        if integration:
+            state_tool("journal", "--kind", "integration.suite", "--subject", c.delivery, "--data", json.dumps(
+                {"head": commit, "result": "failed", "seconds": round(time.monotonic() - began, 1)}), check=False)
+        raise
     seconds = round(time.monotonic() - began, 1)
     # Exit 3 is over its budget only where the run itself was held to a suite-budget/1 file; elsewhere it is a failure.
     result = ("unreadable" if not started else "passed" if code == 0 else
@@ -15392,7 +15401,6 @@ def suite_run(c, binding: dict, commit: str, argv: list[str]) -> int:
     append_log("suite", c.delivery, {"commit": commit, "result": result, "exit": code, "argv": argv, "seconds": seconds,
                                      "output": out[-2000:], "platform": platform.platform(), "interpreter": version,
                                      **({"interpreterUnread": unread} if unread else {})})
-    integration = record_integration()
     if integration:
         state_tool("journal", "--kind", "integration.suite", "--subject", c.delivery, "--data", json.dumps(
             {"head": commit, "result": result, "seconds": seconds,
@@ -15404,18 +15412,53 @@ def suite_run(c, binding: dict, commit: str, argv: list[str]) -> int:
 # The run's budget: the file a --budget argument names, read in the run's own checkout at the head it ran, as its
 # wall seconds when it reads as suite-budget/1, and None otherwise.
 def suite_budget(argv: list[str], checkout: Path) -> float | None:
-    named = next((argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--budget"),
-                 next((arg.split("=", 1)[1] for arg in argv if arg.startswith("--budget=")), None))
+    named = budget_named(argv)
     if not named:
         return None
     try:
-        budget = json.loads((checkout / named).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return budget_seconds((checkout / named).read_text(encoding="utf-8"))
+    except OSError:
+        return None
+# The path a --budget argument names, or None.
+def budget_named(argv: list[str]) -> str | None:
+    return next((argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--budget"),
+                next((arg.split("=", 1)[1] for arg in argv if arg.startswith("--budget=")), None))
+# A budget file's wall seconds when it reads as suite-budget/1, and None otherwise.
+def budget_seconds(text: str) -> float | None:
+    try:
+        budget = json.loads(text)
+    except ValueError:
         return None
     if not isinstance(budget, dict) or budget.get("schemaVersion") != "suite-budget/1":
         return None
     wall = budget.get("wallSeconds")
     return wall if isinstance(wall, (int, float)) and not isinstance(wall, bool) and wall >= 0 else None
+# The start of lead-suite's run at commit, journalled before its checkout is made: when it began and, from the last
+# run of the integration suite that finished under the same budget, how long it usually takes. The budget is read
+# from the commit itself, as the run will read it in its checkout. A start the journal refuses never holds the run.
+SUITE_FINISHED = ("passed", "over-budget", "failed")
+
+
+def suite_started(c, commit: str, argv: list[str]) -> None:
+    named = budget_named(argv)
+    shown = git("show", f"{commit}:{named}", check=False) if named else None
+    budget = budget_seconds(shown) if shown else None
+    try:
+        earlier = journal_entries("integration.suite", c.delivery)
+    except (Stop, OSError, ValueError, KeyError):
+        earlier = []
+    usual = next((entry["data"]["seconds"] for entry in reversed(earlier) if isinstance(entry.get("data"), dict)
+                  and entry["data"].get("result") in SUITE_FINISHED and entry["data"].get("budgetSeconds") == budget
+                  and isinstance(entry["data"].get("seconds"), (int, float))
+                  and not isinstance(entry["data"].get("seconds"), bool)), None)
+    done = state_tool("journal", "--kind", "integration.suite.started", "--subject", c.delivery, "--data", json.dumps(
+        {"head": commit, "startedAt": now(), **({"expectedSeconds": usual} if usual is not None else {}),
+         **({"budgetSeconds": budget} if budget is not None else {})}), check=False)
+    if done.returncode:
+        print(f"lead-suite: the journal refused the run's start, so the live view shows it only once it finishes: "
+              f"{(done.stderr or done.stdout).strip()}", file=sys.stderr, flush=True)
+
+
 # The record's integration step, {base, target, remote}, or None for a delivery without one or with no record yet.
 def record_integration() -> dict | None:
     if not (cfg().state / "state.json").exists():

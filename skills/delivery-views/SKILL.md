@@ -117,6 +117,15 @@ the same shape at any delivery size:
   the step it is on, that step's status sentence under it, and the line bends
   into the target at the finish post, so the target is drawn once. A delivery
   straight to its base ends at the post, with no bar.
+- **A suite running.** From `lead-suite`'s start entry until its finish or a
+  later start, the suite's step is drawn wider with a moving stripe, still
+  under reduced motion, filling as the run nears its usual time, with a tick
+  at that time. The label reads "Rejoin main · suite running" (the target's
+  name in place of main), and the sentence under it "The full suite is
+  running at <commit>. <n> min, about <m> usual.", with ", so <k> over" once
+  past it. A timed suite's finish keeps the wider step: solid when it passed,
+  with a cap at its end when it went over its budget, and in the setback
+  colour when it failed. A record with no start draws the bar as before.
 - **The finish post** carries its label and, beside it, one square per finish
   line, filled once met, with how many are met.
 - **Naming and lighting.** Hovering or focusing a tick names its story and state
