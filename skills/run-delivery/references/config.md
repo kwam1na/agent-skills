@@ -338,6 +338,12 @@ changes: the branch comes down by an explicit refspec into its remote-tracking r
   `lead-init` take the planning record over in place: its journal, partitions and `hosted-identity.json` carry on,
   `lead-init`'s entries follow the planning ones, and `meta.phase` becomes `delivery`, once. A delivery file whose
   `stateDirectory` points elsewhere is refused with `collab.record_elsewhere`.
+- **Joining and feedback.** `collab join` builds a clone's record only from partitions, so every seat's journal starts
+  with the first seat's `record.started` and the tracker's init id agrees across machines. A seat that isn't admitted
+  writes only its own `seat.requested`; once admitted, each join journals `plan.seen` for the commit it showed. Where
+  its last join left off is kept in the clone's own git config, as `agent-skills.joined.<key>`. Feedback is on a
+  section, settled by the holder of that section's `plan:` scope, and blocking feedback is a Needs you item that holds
+  until it is.
 - **Settings.** `collab.pollSeconds` is a number of seconds, at least 2, default 5; `collab.autoGrant` is true or false,
   default false: when true, on a shared record the `delivery` holder's supervisor grants a requested plan section
   nobody holds on its next pass. Any other value is refused by both commands, naming the setting.

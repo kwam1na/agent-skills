@@ -360,12 +360,16 @@ def endorsements(journal: list[dict]) -> dict[str, list[str]]:
     return found
 
 
-def blocking_feedback(journal: list[dict]) -> list[dict]:
-    """Every `feedback.raised` that stops approval and no `feedback.resolved` answers."""
+def open_feedback(journal: list[dict]) -> list[dict]:
+    """Every `feedback.raised` no `feedback.resolved` answers."""
     answered = {target for entry in journal if entry["kind"] == "feedback.resolved"
                 for target in entry.get("answers", [])}
-    return [entry for entry in journal if entry["kind"] == "feedback.raised" and entry["data"].get("blocking") is True
-            and entry["id"] not in answered]
+    return [entry for entry in journal if entry["kind"] == "feedback.raised" and entry["id"] not in answered]
+
+
+def blocking_feedback(journal: list[dict]) -> list[dict]:
+    """Every open `feedback.raised` that stops approval."""
+    return [entry for entry in open_feedback(journal) if entry["data"].get("blocking") is True]
 
 
 def aligned_to(aligned: str | None, current: str, journal: list[dict], text_at: Callable[[str], str | None]) -> bool:

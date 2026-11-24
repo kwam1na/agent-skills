@@ -538,7 +538,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
-          "sha256": "9cb138c8138229b0e144b6fce5174974915d8ef8ac8b51266605f85014f3cc98"
+          "sha256": "946595febec3243a2a97da1bd684282746b67bb54a2ac6c3c22c86fa6272f514"
         },
         {
           "path": "skills/orchestrate-work/scripts/collab.py",
@@ -562,7 +562,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/narrator.py",
-          "sha256": "ff218d68c524bd81dda3e3db244c0b1df04ccea0a8c74f17cca6ba49f1b39c8a"
+          "sha256": "d870cf9ddf8698ffe80a4a5fc7ed4103c9cff4288e64d54db39e3d2fedbd8d24"
         },
         {
           "path": "skills/orchestrate-work/scripts/region_ownership.py",
@@ -1099,7 +1099,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "4870cf382d5a47b1c12953e0f6a53d623564bd5bf993e7d1acf310ab7231e61b"
+          "sha256": "a9e8dc2047d6ae914491c4bb1bc66c431a9bb29580c22cf30d630d2f2f2f3435"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1131,7 +1131,7 @@
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "1d30c978de44f7bf155b1cc9c94d78952512f9880dc412c47fe304a9dda73920"
+          "sha256": "15e1bbdf8a76d4cf52d2c721daace1682a7c203ca1ff2f8b14b65ac43a951a3f"
         },
         {
           "path": "skills/run-delivery/scripts/gaps.py",
@@ -1139,7 +1139,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/plan_sync.py",
-          "sha256": "d92c622080dda4cd2cfd44291ccf9c6f9819edd7eb2d7846dd1afba73d5b4dfd"
+          "sha256": "312fa34e6abbf4b91d2c96d963bf106bcd85050f5b8a0ab96d7658840a21e640"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
@@ -1147,7 +1147,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "bac174ba80c7ba7e3fb5e38b6a1195ff8ac04670d3a671cb9830f2f10196860f"
+          "sha256": "ffa419151f01bf6352423149aefceb63980a06f8651e7badd6c2df0d42a68958"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
