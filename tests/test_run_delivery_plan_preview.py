@@ -372,16 +372,31 @@ class PlanPreviewTests(unittest.TestCase):
         store.rename(moved)
         store.mkdir()
         (store / "adopted.json").write_text(json.dumps({"delivery": "FX-9", "store": str(moved), "at": "now"}))
-        done, out = self.fx.flow("plan-view", "--plan", path, cwd=self.fx.main)
-        self.assertEqual((done, out), (0, "plan preview: handed to delivery FX-9; its preview stops once the hosted "
-                                          "page shows that\n"))
         here = folder(self.fx, slug)
-        finisher = json.loads((here / "handed.json").read_text())["finisher"]
-        deadline = time.monotonic() + 60
-        while runs(finisher):
-            self.assertLess(time.monotonic(), deadline, "the handed finish ends")
-            time.sleep(0.1)
-        self.assertIn(" live: ", (here / "finish.log").read_text())
+
+        def finish() -> str:
+            """A handed finish started by plan-view, through to its finisher's exit: its log's last line."""
+            done, out = self.fx.flow("plan-view", "--plan", path, cwd=self.fx.main)
+            self.assertEqual((done, out), (0, "plan preview: handed to delivery FX-9; its preview stops once the "
+                                              "hosted page shows that\n"))
+            finisher = json.loads((here / "handed.json").read_text())["finisher"]
+            deadline = time.monotonic() + 60
+            while runs(finisher):
+                self.assertLess(time.monotonic(), deadline, "the handed finish ends")
+                time.sleep(0.1)
+            return (here / "finish.log").read_text().splitlines()[-1]
+        # live.json names a pid that no longer runs the live view: the finisher says so and leaves it alone.
+        bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: (bystander.kill(), bystander.wait()))
+        (here / "live.json").write_text(json.dumps({"pid": bystander.pid, "port": 9}))
+        self.assertTrue(finish().endswith(f" live: left pid {bystander.pid} alone: live.json names it, but it no "
+                                          "longer runs the live view"))
+        self.assertTrue(runs(bystander.pid))
+        # Once that pid has gone, a finish started again says the view isn't running.
+        bystander.kill()
+        bystander.wait()
+        (here / "handed.json").unlink()
+        self.assertTrue(finish().endswith(" live: not running"))
         plan, _, _ = self.built(slug)
         self.assertEqual((plan["preview"]["approval"], plan["preview"]["delivery"]), ("handed", "FX-9"))
         self.assertEqual(plan["planReview"], expected)
