@@ -257,6 +257,10 @@
         {
           "id": "v26-3810-2",
           "text": "After lead-setup adopts a running preview's store, no file in the preview folder changes once lead-setup has returned; the live server and hosted watcher pids are gone and the last hosted cut carries approval: handed."
+        },
+        {
+          "id": "v26-3810-3",
+          "text": "test_adoption_hands_the_preview_over_and_its_processes_stop passes in 20 consecutive runs alone and in 3 full runs of tests.test_run_delivery_plan_preview under load."
         }
       ]
     }
