@@ -4770,6 +4770,14 @@
           "seq": {
             "type": "integer",
             "minimum": 1
+          },
+          "seen": {
+            "description": "What the writing seat had ingested of every other seat when it wrote the value, by each seat's last seq. A write that journals nothing takes its seat's last entry as its seq, so this is what says which scopes the seat held: one it took since that entry still counts.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         }
       },

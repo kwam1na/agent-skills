@@ -138,6 +138,15 @@ TABLE = {
     "seat.labeled": ("B", "note", "seat label", "", "-"),
     "partition.held": ("S", "problem", "seat reason", "", "-"),
     "partition.resumed": ("S", "landed", "seat", "answers:partition.held", "-"),
+    "scope.transferred": ("S", "decision", "scope from to", "", "-"),
+    "scope.requested": ("S", "note", "scope reason", "", "-"),
+    "scope.declined": ("S", "decision", "scope", "answers:scope.requested", "-"),
+    "plan.endorsed": ("H", "decision", "commit", "", "-"),
+    "plan.seen": ("B", "note", "commit", "", "-"),
+    "plan.rekeyed": ("S", "decision", "from to map", "", "-"),
+    "deferral.held": ("B", "note", "finding *title*", "", "-"),
+    "feedback.raised": ("S", "note", "anchor *text* blocking", "", "-"),
+    "feedback.resolved": ("S", "decision", "outcome reason", "answers:feedback.raised", "-"),
     "delivery.closed": ("H", "landed", "skipped?", "", "epic: Delivery closed"),
 }
 ALTITUDES = {"H": "headline", "S": "story", "B": "bookkeeping"}

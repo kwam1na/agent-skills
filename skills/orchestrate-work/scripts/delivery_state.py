@@ -1094,11 +1094,162 @@ def derived_seats(journal: list[dict]) -> dict:
         if entry["kind"] not in SEAT_KINDS:
             continue
         data = entry["data"]
+        if entry["kind"] == "seat.admitted" and "origin" in entry \
+                and holder(journal, "delivery", at=entry["origin"]) != entry["origin"]["seat"]:
+            continue  # only the delivery holder admits a seat
         seat = seats.setdefault(data["seat"], {"label": data["label"], "admitted": False, "approver": False})
         seat["label"] = data["label"]
         if entry["kind"] == "seat.admitted":
             seat.update(admitted=True, approver=data["approver"])
     return seats
+
+
+# D6's scopes. Each has one holder, derived from the journal and never stored: the record's first seat holds every
+# scope until its holder passes it on with scope.transferred, and a plan section nobody holds is the delivery holder's.
+SCOPE = re.compile(r"^(delivery|queue|lane:\S.*|plan:\S.*)$")
+# A row's placeholder for the lane its element names, and for any lane at all.
+LANE, ANY_LANE = "lane", "lane:*"
+# D6: who may write each field of a shared record, by a tuple of the scopes permitted, or as "local" (this machine's
+# own, never carried), "tool" or "derived". Every delivery-state/1 property has a row. Until the lane and queue checks
+# land, a local write is checked only against the rows the delivery holder alone writes; the sync filter checks all.
+FIELD_MAP = {
+    "": {"schemaVersion": "tool", "version": "local", "meta": "meta", "siblings": ("delivery",), "lanes": "lanes",
+         "queue": "queue", "liveFlakes": ("queue",), "laneOwnership": ("delivery",), "laneRegions": ("delivery",),
+         "regionsSettled": ("delivery",), "planned": "planned", "tickets": ("delivery",), "outside": ("delivery",),
+         "finish": ("delivery",), "followups": ("delivery", ANY_LANE), "leases": ("delivery",),
+         "extensions": ("delivery",)},
+    "meta": {"updatedAt": "local", "writerGeneration": "local", "closing": "local", "collab": "local",
+             **{name: ("delivery",) for name in ("headline", "planFile", "trackerParent", "hold", "statusOverride",
+                                                  "handoffsNeedAcceptance", "integration", "phase")},
+             **{name: ("queue",) for name in ("checking", "baseHead", "releasedHead", "checkHistory", "baseReruns",
+                                               "sources", "sourceReports", "baseMove")}},
+    "lanes": {"id": ("delivery",), "title": ("delivery",),
+              **{name: (LANE, "queue") for name in ("focus", "state", "waitingOn", "since", "focusAt", "focusBy",
+                                                     "waitingBy", "restedFrom", "waitingFrom", "freed")}},
+    "queue": {**{name: ("queue",) for name in ("stage", "checks", "syncedHead", "checkSelection", "repair", "order")},
+              **{name: (LANE,) for name in ("subject", "title", "lane", "assignedLane", "after", "files", "head",
+                                             "supersededAt", "leadInputs", "reportedRounds", "runId", "changeRequest",
+                                             "trackerStarted", "pending", "evidence", "leadSelection",
+                                             "acceptedRegionPaths", "namedChecks")}},
+    "planned": {**{name: ("delivery",) for name in ("subject", "lane", "after")},
+                **{name: (LANE,) for name in ("title", "stage", "files", "changeRequest", "runId", "trackerStarted",
+                                               "noChange")}},
+}
+# Who may create or remove an element of a keyed array: a lane's acceptance makes its queue element and removes its
+# planned one, and the delivery holder's reconcile may adopt a missed hand-off.
+ELEMENT_SCOPES = {"lanes": ("delivery",), "queue": (LANE, "delivery"), "planned": ("delivery", LANE),
+                  "followups": ("delivery", ANY_LANE), "leases": ("delivery",), "finish": ("delivery",)}
+
+
+def field_map_gaps(schema: dict) -> list[str]:
+    """Every delivery-state/1 property with no row in FIELD_MAP: at the top, in meta, and in the elements of lanes,
+    queue and planned."""
+    def items(name: str) -> dict:
+        node = schema["properties"][name]["items"]
+        return schema["$defs"][node["$ref"].rsplit("/", 1)[1]] if "$ref" in node else node
+    where = {"": schema["properties"], "meta": schema["properties"]["meta"]["properties"],
+             **{name: items(name)["properties"] for name in ("lanes", "queue", "planned")}}
+    return [f"{place or 'top'}: {name}" for place, properties in where.items() for name in properties
+            if name not in FIELD_MAP[place]]
+
+
+def _vector(journal: list[dict], at: dict) -> dict[str, int]:
+    """What the write at origin ``at`` had seen: the seen it carries, or else its entry's, and its own seat through its
+    seq."""
+    if isinstance(at.get("seen"), dict):
+        return {**at["seen"], at["seat"]: at["seq"]}
+    entry = next((item for item in journal if (item.get("origin") or {}).get("seat") == at["seat"]
+                  and item["origin"]["seq"] == at["seq"]), None)
+    return {**((entry or {}).get("origin") or {}).get("seen", {}), at["seat"]: at["seq"]}
+
+
+def scope_register(journal: list[dict], *, at: dict | None = None) -> tuple[str | None, dict[str, str]]:
+    """The record's first seat, and each scope passed on since, by its holder; as of origin ``at`` when given, from
+    the entries that write had seen. A transfer counts only when the scope's holder made it."""
+    through = None if at is None else _vector(journal, at)
+    first, held = None, {}
+    for entry in journal:
+        origin = entry.get("origin")
+        if origin is None or through is not None and through.get(origin["seat"], 0) < origin["seq"]:
+            continue
+        if entry["kind"] == "record.started" and first is None:
+            first = origin["seat"]
+        elif entry["kind"] == "scope.transferred":
+            scope = entry["data"]["scope"]
+            if _held_by(first, held, scope) == origin["seat"] == entry["data"]["from"]:
+                held[scope] = entry["data"]["to"]
+    return first, held
+
+
+def _held_by(first: str | None, held: dict[str, str], scope: str) -> str | None:
+    if scope in held:
+        return held[scope]
+    if scope.startswith("plan:"):
+        return held.get("delivery", first)
+    return first
+
+
+def holder(journal: list[dict], scope: str, *, at: dict | None = None) -> str | None:
+    """The seat holding ``scope``, as of origin ``at`` when given; None on an unshared record."""
+    return _held_by(*scope_register(journal, at=at), scope)
+
+
+def holds(journal: list[dict], seat: str | None, scope: str, *, at: dict | None = None) -> bool:
+    """Whether ``seat`` holds ``scope``; ``lane:*`` is any lane."""
+    if scope != ANY_LANE:
+        return seat is not None and holder(journal, scope, at=at) == seat
+    first, held = scope_register(journal, at=at)
+    return seat is not None and (seat == first or any(name.startswith("lane:") and owner == seat
+                                                      for name, owner in held.items()))
+
+
+def held_sections(journal: list[dict], seat: str, plan: str) -> list[str]:
+    """The plan sections ``seat`` holds, by name as region_ownership finds them: (preamble), then each heading."""
+    lines = plan.splitlines()
+    names = ["(preamble)", *(lines[line - 1].strip() for line in sorted(_region().markdown_headings(lines)))]
+    return [name for name in dict.fromkeys(names) if holds(journal, seat, f"plan:{name}")]
+
+
+def _region():
+    return _sibling("region_ownership")
+
+
+def path_scopes(state: dict, path: str, element: dict | None = None) -> tuple[str, ...] | str:
+    """The scopes that may write a partition path of ``state``, or "local", "tool" or "derived". ``element`` stands in
+    for a keyed element the record does not hold yet, for the lane it names."""
+    if path.startswith("meta/"):
+        return FIELD_MAP["meta"].get(path[len("meta/"):], ("delivery",))
+    matched = re.match(r"^(?P<array>[a-z]+)\[(?P<key>[A-Za-z]+)=(?P<value>[^\]]+)\](?:/(?P<field>.+))?$", path)
+    array = path[:-2] if path.endswith("[]") else matched.group("array") if matched else path
+    row = FIELD_MAP[""].get(array, ("delivery",))
+    if path.endswith("[]") or not matched:
+        return ELEMENT_SCOPES.get(array, row) if path.endswith("[]") else row
+    if element is None:
+        element = next((item for item in state.get(array, []) if isinstance(item, dict)
+                        and str(item.get(matched.group("key"))) == matched.group("value")), {})
+    scopes = ELEMENT_SCOPES.get(array, ("delivery",)) if matched.group("field") is None else \
+        FIELD_MAP[array].get(matched.group("field"), ("delivery",)) if array in ("lanes", "queue", "planned") else row
+    lane = matched.group("value") if array == "lanes" else element.get("lane")
+    return tuple(dict.fromkeys((f"lane:{lane}" if lane else "delivery") if scope == LANE else scope for scope in scopes))
+
+
+def scope_violations(directory: Path, before: dict, after: dict) -> list[str]:
+    """What a local write to a shared record changed in a field only the delivery holder writes, while this seat does
+    not hold delivery. An unshared record has none."""
+    collab = collab_of(after)
+    if collab is None:
+        return []
+    journal = _raw_journal(directory)
+    seat = local_seat(directory, collab["key"])
+    if holds(journal, seat, "delivery"):
+        return []
+    old, new = partition_paths(before), partition_paths(after)
+    # An element made or removed is judged by who may make it, not by its fields' rows.
+    whole = {path for path in set(old) ^ set(new) if path.endswith("]")}
+    return [f"{path} is written only by the delivery holder, seat {holder(journal, 'delivery')}"
+            for path in sorted(set(old) | set(new))
+            if old.get(path, ...) != new.get(path, ...) and path.split("]/", 1)[0] + "]" not in whole - {path}
+            and path_scopes(after if path in new else before, path) == ("delivery",)]
 
 
 def partition_paths(state: dict) -> dict[str, object]:
@@ -1209,7 +1360,10 @@ def _store_state(directory: Path, updated: dict) -> None:
                            if path not in before or before[path] != value or origins.get(path, {}).get("removed")]
                 for path in [*written, *(path for path in before if path not in after)]:
                     previous = origins.get(path)
-                    origin: dict = {"seat": seat, "seq": seq}
+                    # What this seat had ingested of every other when it wrote, so a scope it took since its own last
+                    # entry counts for the write.
+                    origin: dict = {"seat": seat, "seq": seq, "seen": {other: count for other, count in
+                                                                       sorted(seat_counts(journal).items()) if other != seat}}
                     if previous is not None and previous["seat"] == seat:
                         if "replaces" in previous:
                             origin["replaces"] = previous["replaces"]
@@ -3098,6 +3252,9 @@ def patch(
             violations = ownership_violations(current, updated, writer)
             if violations:
                 raise StateError("field_not_owned", "; ".join(sorted(set(violations))))
+            held = scope_violations(directory, current, updated) if writer == "lead" else []
+            if held:
+                raise StateError("scope.not_held", "; ".join(held))
             _stamp_waiting(current, updated, writer, _written_field(selector, changes, assignments, "waitingOn"))
             _stamp_focus(current, updated, writer, None)
             _stamp_wait_rows(current, updated)
@@ -6597,7 +6754,9 @@ def _checks_argument(value: str) -> object:
 # What a running `wait` returns on: the journal kinds that need the lead. A blocked lane and machine pressure also end it.
 # A held runner wakes the lead as a blocker does: the queue writes its hold as serving.held.
 WAIT_KINDS = frozenset({"candidate.handed", "check.failed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded",
-                        "serving.held", "sibling.landed"})
+                        "serving.held", "sibling.landed",
+                        # On a shared record: a peer's feedback, request for a scope and request to join.
+                        "feedback.raised", "scope.requested", "seat.requested"})
 # 0 is a wake and 1 an error, so a lead can tell what ended a wait left running in the background.
 WAIT_EXPIRED_EXIT = 3
 WAIT_TIMEOUT_SECONDS = 1800.0
@@ -7090,6 +7249,21 @@ def main(argv: list[str] | None = None) -> int:
             step.add_argument("--remote", required=True, help="the binding's base remote, where the partitions live")
         if name != "collab-push":
             step.add_argument("--key", help="the shared record's key, for a checkout with no record yet")
+    scoped = commands.add_parser("scope", help="on a shared record: pass a scope on, ask for one, or keep one asked for")
+    scope_action = scoped.add_subparsers(dest="scope_action", required=True)
+    given = scope_action.add_parser("give", help="the holder passes a scope to an admitted seat")
+    given.add_argument("--scope", required=True, help="delivery, queue, lane:<lane> or plan:<section>")
+    given.add_argument("--to", required=True, help="the seat that takes it")
+    asked = scope_action.add_parser("request", help="ask the holder of a scope for it")
+    asked.add_argument("--scope", required=True, help="delivery, queue, lane:<lane> or plan:<section>")
+    asked.add_argument("--reason", required=True, help="why, in the person's words")
+    kept = scope_action.add_parser("decline", help="the holder keeps a scope another seat asked for")
+    kept.add_argument("--request", type=int, required=True, help="the scope.requested entry's id")
+    seated = commands.add_parser("seat", help="on a shared record: the delivery holder admits a seat")
+    seat_action = seated.add_subparsers(dest="seat_action", required=True)
+    admitted = seat_action.add_parser("admit", help="admit a requested seat, or change whether it approves the plan")
+    admitted.add_argument("--seat", required=True)
+    admitted.add_argument("--no-approver", action="store_true", help="the seat writes but does not approve the plan")
     moved = commands.add_parser("base-move", help="reconcile a published merge and its applied writer")
     moved.add_argument("--writer", choices=WRITERS, required=True)
     for flag in ("from-head", "to-head", "default-head", "expected-base", "expected-writer", "reason"):
@@ -7113,6 +7287,14 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "validate":
             show(args.dir)
             result = {"ok": True}
+        elif args.command == "scope":
+            module = _collab()
+            entry = (module.give_scope(args.dir, args.scope, args.to) if args.scope_action == "give"
+                     else module.request_scope(args.dir, args.scope, args.reason) if args.scope_action == "request"
+                     else module.decline_request(args.dir, args.request))
+            result = {"ok": True, "entry": entry}
+        elif args.command == "seat":
+            result = {"ok": True, "entry": _collab().admit_seat(args.dir, args.seat, approver=not args.no_approver)}
         elif args.command == "collab-push":
             result = _collab().push(args.dir, remote=args.remote)
         elif args.command == "collab-fetch":
@@ -7261,6 +7443,9 @@ def journal_patched(directory: Path, *, version: int | None, selector: str, chan
         violations = ownership_violations(current, patched, "lead")
         if violations:
             raise StateError("field_not_owned", "; ".join(sorted(set(violations))))
+        held = scope_violations(directory, current, patched)
+        if held:
+            raise StateError("scope.not_held", "; ".join(held))
         _stamp_waiting(current, patched, "lead", _written_field(selector, changes, None, "waitingOn"))
         _stamp_focus(current, patched, "lead", None)
         _stamp_wait_rows(current, patched)

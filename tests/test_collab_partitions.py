@@ -297,6 +297,12 @@ class SharedFixture(unittest.TestCase):
         commit = git(work, "commit-tree", tree, "-p", tip, "-m", "Planted")
         git(work, "push", "--quiet", str(self.remote), f"{commit}:{ref}")
 
+    def give(self, scope: str, machine: Machine) -> None:
+        """a, holding every scope, passes ``scope`` to ``machine``, which reads the transfer before it writes."""
+        collab.give_scope(self.a.directory, scope, machine.seat())
+        self.a.push()
+        machine.take()
+
     def exchange(self, *machines: Machine) -> None:
         """Every machine pushes, then every machine ingests, so each has every other's latest."""
         for machine in machines:
@@ -346,6 +352,7 @@ class ExchangeTests(SharedFixture):
     def test_concurrent_queue_elements_with_different_subjects_survive_on_both_machines_in_one_order(self) -> None:
         self.open()
         self.join(self.b)
+        self.give("lane:lane-1", self.b)
         self.a.patch({"queue": [queue_element("APP-1")]})
         self.b.patch({"queue": [queue_element("APP-2")]})
         self.exchange(self.a, self.b)
@@ -412,6 +419,8 @@ class ExchangeTests(SharedFixture):
                 self.setUp()
                 self.open()
                 self.join(self.b)
+                # b's lane accepts its story: it holds lane-1.
+                self.give("lane:lane-1", self.b)
                 self.a.patch({"planned": [planned_element("APP-1")]})
                 self.exchange(self.a, self.b)
                 self.a.patch({"planned": [planned_element("APP-1", after=["APP-0"])]})
@@ -432,6 +441,8 @@ class ExchangeTests(SharedFixture):
         self.open()
         self.join(self.b)
         third = self.join(self.c, admit=False)
+        # b removes lane-1's planned story as its lane's acceptance would: it holds lane-1.
+        self.give("lane:lane-1", self.b)
         self.a.patch({"planned": [planned_element("APP-1"), planned_element("APP-2")]})
         self.exchange(self.a, self.b)
         self.b.patch({"planned": [planned_element("APP-2")]})
@@ -457,6 +468,8 @@ class ExchangeTests(SharedFixture):
         self.open()
         self.join(self.b)
         third = self.join(self.c, admit=False)
+        # b removes lane-1's planned story as its lane's acceptance would: it holds lane-1.
+        self.give("lane:lane-1", self.b)
         self.a.patch({"planned": [planned_element("APP-1"), planned_element("APP-2")]})
         self.exchange(self.a, self.b)
         self.b.patch({"planned": [planned_element("APP-2")]})
@@ -467,8 +480,11 @@ class ExchangeTests(SharedFixture):
                        if item["path"] == "planned[subject=APP-1]")
         created = json.loads((self.a.directory / state_tool.FIELD_ORIGINS_FILE).read_text())["planned[subject=APP-1]"]
         self.assertEqual(removal, {"path": "planned[subject=APP-1]", "removed": True,
-                                   "origin": {"seat": self.b.seat(), "seq": removal["origin"]["seq"]},
-                                   "replaces": {**created, "digest": state_tool.value_digest(True)}})
+                                   "origin": {"seat": self.b.seat(), "seq": removal["origin"]["seq"],
+                                              "seen": {seat: seq for seat, seq in state_tool.seat_counts(self.b.journal()).items()
+                                                       if seat != self.b.seat()}},
+                                   "replaces": {"seat": created["seat"], "seq": created["seq"],
+                                                "digest": state_tool.value_digest(True)}})
         self.plant(third, [{"path": "planned[subject=APP-2]", "removed": True, "origin": {"seat": third, "seq": 1}}])
         self.exchange(self.a, self.b)
         self.assertConverged(self.a, self.b)
@@ -847,36 +863,46 @@ class ConcurrentValueTests(SharedFixture):
             git(machine.repo, "config", "--local", f"agent-skills.seat.{KEY}", seat)
         self.open()
         self.join(self.b)
+        self.a.patch({"lanes": [{"id": "lane-1", "title": "Lane 1", "focus": "Idle", "state": "idle", "waitingOn": None,
+                                 "since": "2026-11-24T00:00:00Z"}]})
+        # Lane 1's rows are its lane's holder's and the queue's: b takes the lane, a keeps the queue.
+        self.give("lane:lane-1", self.b)
 
-    def headlines(self) -> list[str]:
-        return [machine.state()["meta"]["headline"] for machine in (self.a, self.b)]
+    def focuses(self) -> list[str]:
+        return [next(row for row in machine.state()["lanes"] if row["id"] == "lane-1")["focus"]
+                for machine in (self.a, self.b)]
+
+    def focus(self, machine: Machine, text: str) -> None:
+        """A write to lane-1's focus, which its lane's holder, b, and the queue's, a, may both make."""
+        state_tool.patch(machine.directory, writer="lead", version=machine.state()["version"],
+                         selector="lanes[id=lane-1]", changes={"focus": text})
 
     def test_the_lower_seats_overwrite_of_the_higher_seats_value_stands_on_both_machines(self) -> None:
-        self.a.patch({"meta": {"headline": "a's"}})
+        self.focus(self.a, "a's")
         self.exchange(self.a, self.b)
-        self.b.patch({"meta": {"headline": "b's, over a's"}})
+        self.focus(self.b, "b's, over a's")
         self.exchange(self.a, self.b)
-        self.assertEqual(self.headlines(), ["b's, over a's"] * 2)
+        self.assertEqual(self.focuses(), ["b's, over a's"] * 2)
         self.assertConverged(self.a, self.b)
 
     def test_concurrent_values_go_to_the_higher_seat_on_both_machines(self) -> None:
-        self.a.patch({"meta": {"headline": "a's"}})
-        self.b.patch({"meta": {"headline": "b's"}})
+        self.focus(self.a, "a's")
+        self.focus(self.b, "b's")
         self.exchange(self.a, self.b)
-        self.assertEqual(self.headlines(), ["a's"] * 2)
+        self.assertEqual(self.focuses(), ["a's"] * 2)
         self.assertConverged(self.a, self.b)
 
     def test_an_overwrite_follows_only_the_value_it_replaced_not_a_later_one_at_the_same_seq(self) -> None:
-        self.a.patch({"meta": {"headline": "a's first"}})
+        self.focus(self.a, "a's first")
         self.exchange(self.a, self.b)
         seq = self.a.journal()[-1]["origin"]["seq"]
-        self.b.patch({"meta": {"headline": "b's, over a's first"}})
+        self.focus(self.b, "b's, over a's first")
         self.b.push()
         # a writes again at the same seq before it reads b's: b's write replaced a's first value, not this one.
-        self.a.patch({"meta": {"headline": "a's second"}})
+        self.focus(self.a, "a's second")
         self.assertEqual(self.a.journal()[-1]["origin"]["seq"], seq)
         self.exchange(self.a, self.b)
-        self.assertEqual(self.headlines(), ["a's second"] * 2)
+        self.assertEqual(self.focuses(), ["a's second"] * 2)
         self.assertConverged(self.a, self.b)
 
 
@@ -914,13 +940,16 @@ class ShapeAndHoldTests(SharedFixture):
                 self.setUp()
                 self.open()
                 second = self.join(self.b)
+                # b holds delivery, so the planted headline is its to write, and only its validity is left to judge.
+                self.give("delivery", self.b)
                 before = composed(self.a)
                 # The planted value replaces a's headline, so it is applied, and held, whatever the seat ids are.
                 headline = json.loads((self.a.directory / state_tool.FIELD_ORIGINS_FILE).read_text())["meta/headline"]
                 replaces = {"seat": headline["seat"], "seq": headline["seq"],
                             "digest": state_tool.value_digest(self.a.state()["meta"]["headline"])}
-                self.plant(second, [{**item, "origin": {"seat": second, "seq": 1}, "replaces": replaces} for item in held],
-                           through=through)
+                seen = {first: count for first, count in state_tool.seat_counts(self.a.journal()).items() if first != second}
+                self.plant(second, [{**item, "origin": {"seat": second, "seq": 1, "seen": seen}, "replaces": replaces}
+                                    for item in held], through=through)
                 taken = self.a.take()
                 self.assertEqual(taken["held"], {second: "slice_invalid"})
                 self.assertEqual(self.a.state()["meta"]["collab"]["peers"][second]["heldReason"], "slice_invalid")
