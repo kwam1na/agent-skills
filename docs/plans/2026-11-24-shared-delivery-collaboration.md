@@ -613,9 +613,11 @@ Out of scope:
     - **eligible entries** are those that passed, are of that mode, and are
       neither baseline (`head` null) nor passthrough runs, the same exclusions
       `record` applies today;
-    - **the one chosen** is at the story's latest head that has one, by git
-      ancestry, never by `at`. Among several at that head, it is the last in its
-      origin seat's log order, with ties between seats broken by seat id;
+    - **the one chosen** is the last eligible entry in the carried log's causal
+      order. Within one origin seat, that is its log order. Across seats, it is
+      the entry from the seat that held `lane:<L>` later in the record's lane
+      transfers. It needs no git object, so rebased, squash-merged or missing
+      heads do not matter, and it never compares `at`;
     - its `specValue` is the spec recorded.
   - **What counts:** on a shared record, `evidence_status` and `lead-evidence
     page` read only the holder's merged-base folder (`work/review/<key>`), never
@@ -1228,8 +1230,16 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
     - a passing fail with spec F1;
     - a later passing hold with spec S3, run with passthrough.
 
-    `a` makes both a hold and a fail clip, and the video records' specs are S1
-    and F1;
+    All four are at one head H1. `a` makes both a hold and a fail clip, and the
+    video records' specs are S1 and F1;
+  - the same story then gets a passing hold S4 at H1 that is not passthrough;
+    the hold recording uses S4, not S1;
+  - `b` then rebases the story to H2, so H1 is not an ancestor and is absent from
+    `a`'s clone, and runs a passing hold S5 on a clock set behind S4's. The hold
+    recording uses S5;
+  - after `lane:x` moves from `b` to `a`, both seats have an eligible hold for a
+    story at the same head; the recording uses `a`'s, the later lane holder's,
+    even with `a`'s clock behind `b`'s;
   - `lead-evidence record`, `page` and `published` on `b` each give
     `scope.not_held`. Each leaves the D20 surfaces unchanged, as well as
     `evidence-page.json`, `evidence-notes.json`, the `--out` folder and `b`'s
