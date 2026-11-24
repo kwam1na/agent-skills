@@ -3476,8 +3476,9 @@ class SupervisorPassTests(unittest.TestCase):
 
     def test_a_requeue_drops_the_stop_from_the_status_line_and_the_close_hold(self) -> None:
         """After the lead requeues a stopped candidate, the lane row no longer says it stopped and waits on the lead,
-        so neither the close's hold nor a lead command's status line names the resolved stop, before the queue takes
-        it again and after its check.started."""
+        so neither the close's hold nor a lead command's status line names the resolved stop. check.started writes no
+        lane row, so the row the requeue put back is the one the status line reads until the outcome. The requeue
+        leaves every other candidate in the queue as it was."""
         fx = self.fixture(grant_ready=False, merge_needs_ready=False)
         hand_off(fx, "FX-2", "lane-1")
         code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
@@ -3486,11 +3487,18 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual([e["data"]["reason"] for e in kinds(fx, "candidate.stopped")], ["merge_refused"])
         stopped = "lane-1 waits on you: FX-2 stopped: merge_refused"
         self.assertTrue(any(stopped in h for h in self.once(fx)["closeHeldBy"]))
+        # Another candidate stands in the queue, accepted and not yet run.
+        hand_off(fx, "FX-3", "lane-2")
+        code, out = fx.flow("lead-accept", "FX-3", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        other = next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-3")
+        self.assertEqual(other["stage"], "queued", other)
         forge = json.loads((fx.tmp / "forge.json").read_text())
         forge["https://forge.test/pr/1"]["draft"] = False  # the lead marks it ready by hand
         (fx.tmp / "forge.json").write_text(json.dumps(forge))
         code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
         self.assertEqual(code, 0, out)
+        self.assertEqual(next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-3"), other)
         row = next(lane for lane in record(fx)["state"]["lanes"] if lane["id"] == "lane-1")
         self.assertFalse(row.get("focus", "").startswith("FX-2 stopped:"), row)
         self.assertNotEqual(row.get("waitingOn"), "lead", row)
