@@ -3484,6 +3484,28 @@
       "tracker": null,
       "instruction": "None: settled feedback shows on the plan's own page and in the record."
     },
+    "queue.stopped": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Queue stopped",
+      "data": {
+        "seat": {
+          "type": "seat"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "Seat {seat}'s queue takes no more work",
+        "line": "Its queue is being handed to another seat"
+      },
+      "explain": "The queue's holder stopped its queue, idle, so it can pass the queue to another seat.",
+      "tracker": null,
+      "instruction": "None: the queue's handover journals it just ahead of the transfer, and the entry shows in the record and the views."
+    },
     "delivery.closed": {
       "altitude": "headline",
       "tone": "landed",

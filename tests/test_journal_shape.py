@@ -157,6 +157,8 @@ INVENTORY = {
         _key("give_scope", {"scope.transferred"}): 1,
         _key("request_scope", {"scope.requested"}): 1,
         _key("decline_request", {"scope.declined"}): 1,
+        _key("_hand_over_queue", {"queue.stopped"}): 1,
+        _key("_hand_over_queue", {"scope.transferred"}): 1,
     }),
 }
 

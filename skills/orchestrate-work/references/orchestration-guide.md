@@ -307,6 +307,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `deferral.held` | None: the close-out files the follow-up, and the entry shows in the record and the views. | nowhere | - |
 | `feedback.raised` | None: feedback shows on the plan's own page and in the record. | nowhere | - |
 | `feedback.resolved` | None: settled feedback shows on the plan's own page and in the record. | nowhere | - |
+| `queue.stopped` | None: the queue's handover journals it just ahead of the transfer, and the entry shows in the record and the views. | nowhere | - |
 | `delivery.closed` | On the epic: the close-out summary; the epic moves to its final state. | the epic | Delivery closed |
 
 The lead posts the updates in this table, including every cross-lane
