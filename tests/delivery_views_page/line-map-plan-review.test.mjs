@@ -20,7 +20,8 @@ async function shown(document, plan, steps = []) {
 }
 const FOLD = '.plan-fold[data-fold="review"]';
 const flags = (app) => [...app.querySelectorAll("#plan .plan-needs .a1")].map((node) => node.textContent);
-const flagWhy = (app) => [...app.querySelectorAll("#plan .plan-needs .a2")].map((node) => node.textContent);
+// Blocking approvals are listed one per row under their flag, by title.
+const approvalRows = (app) => [...app.querySelectorAll("#plan .plan-needs .ap-list .ap-title")].map((node) => node.textContent);
 const line = (app) => app.querySelector("#plan .plan-approval")?.textContent ?? null;
 const folds = (app) => [...app.querySelectorAll("#plan .plan-folds > .plan-fold > summary")].map((node) => node.textContent);
 
@@ -75,8 +76,10 @@ test("the fold draws the track and each round's card, with the closing commit of
   // The newest round is picked: it raised nothing and confirmed round 2's finding fixed in round 3's commit.
   expect(fold.querySelector(".run-card").textContent).toBe(
     "Reviewed at 3333333Round 3ApprovedTestingCorrectnessNothing new raisedThis round confirmed 1 earlier note: 1 fixed in 3333333." +
-    "Correctness · 1 fixedScenario 6 reads the wrong rounds.seriousfixedThe off-by-one is corrected: scenario 6 reads rounds 2 to 10." +
-    "Fixed in 3333333c2-1");
+    "Correctness · 1 fixedScenario 6 reads the wrong rounds.seriousfixedFixed in 3333333The off-by-one is corrected: scenario 6 reads rounds 2 to 10.");
+  // The fix sits on its own sheet under the finding, headed by its commit; the note's id line is gone once its finding is known.
+  expect(fold.querySelector(".run-card .run-closure-fix").textContent).toBe("Fixed in 3333333The off-by-one is corrected: scenario 6 reads rounds 2 to 10.");
+  expect(fold.querySelector(".run-card .run-closure")).toBeNull();
   const [, , first] = await openPage(render(document, plan), { now: NOW, store: false,
     steps: [{ toggle: FOLD }, { click: `${FOLD} .run-pick`, index: 0 }] });
   expect(first.app.querySelector(`${FOLD} .run-card`).textContent).toBe(
@@ -111,15 +114,20 @@ test("an ended review shows its reason in the fold, never in the line", async ()
 test("blocking approvals raise one flag naming each, after a broken base, until each is done", async () => {
   const { document, plan } = planReviewDelivery();
   let app = await shown(document, plan);
-  expect(flags(app)).toEqual(["Approvals are blocking work"]);
-  expect(flagWhy(app)).toEqual(["Product Owner signs off the copy; Security reviews the token scope"]);
+  expect(flags(app)).toEqual(["2 approvals are blocking work"]);
+  expect(approvalRows(app)).toEqual(["Product Owner signs off the copy", "Security reviews the token scope"]);
+  // Each row is its title alone: a numbering id (approval-1) and an absent owner say nothing, and a row with no more to say doesn't open.
+  expect([...app.querySelectorAll("#plan .ap-row")].map((row) => [row.querySelector(".ap-id").textContent, row.querySelector(".ap-who").textContent,
+    row.classList.contains("is-whole")])).toEqual([["", "", true], ["", "", true]]);
+  expect(app.querySelector("#plan .plan-needs .ap-how").textContent).toBe("Tell the agent leading this which you approve; it records each one in the plan.");
   expect(app.querySelector("#plan .plan-calm")).toBeNull();
   const broken = structuredClone(document);
   broken.journal.push({ id: broken.journal.length + 1, at: "2026-10-30T11:00:00Z", kind: "base.broken", lane: null, subject: null, data: { source: "queue", detail: "Main is red" } });
-  expect(flags(await shown(broken, plan))).toEqual(["The base is broken", "Approvals are blocking work"]);
+  expect(flags(await shown(broken, plan))).toEqual(["The base is broken", "2 approvals are blocking work"]);
   // One done: the other still blocks. Both done: the calm line returns, and the fold counts nothing ahead.
   plan.approvals[0].state = "done";
-  expect(flagWhy(await shown(document, plan))).toEqual(["Security reviews the token scope"]);
+  const one = await shown(document, plan);
+  expect([flags(one), approvalRows(one)]).toEqual([["An approval is blocking work"], ["Security reviews the token scope"]]);
   plan.approvals[1].state = "done";
   app = await shown(document, plan);
   expect(flags(app)).toEqual([]);

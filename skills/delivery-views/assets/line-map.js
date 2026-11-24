@@ -525,11 +525,12 @@
   if (historyHref) {
     historyItem = el("a", "chapter-tab-history");
     historyItem.setAttribute("href", historyHref);
-    var clock = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    clock.setAttribute("viewBox", "0 0 24 24");
-    clock.setAttribute("aria-hidden", "true");
-    clock.innerHTML = '<path d="M3 12a9 9 0 1 0 3 -6.7"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/>';
-    add(historyItem, clock, el("span", null, "Past deliveries and runs"));
+    // Named apart from the page's clock(), which a var here would replace for the whole page.
+    var historyIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    historyIcon.setAttribute("viewBox", "0 0 24 24");
+    historyIcon.setAttribute("aria-hidden", "true");
+    historyIcon.innerHTML = '<path d="M3 12a9 9 0 1 0 3 -6.7"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/>';
+    add(historyItem, historyIcon, el("span", null, "Past deliveries and runs"));
   }
   var tabFoot = add(el("div", "chapter-tab-foot"), layoutButton, hint);
   add(tab, tabButton, tabList);
@@ -555,10 +556,13 @@
     whereTitle.textContent = note ? note[1] : words;
     whereNote.textContent = note ? note[2] : "";
     where.setAttribute("aria-label", (note ? note[1] : words) + ", back to the start");
-    where.title = words;
   }
 
-  function chapterIds() { return Array.prototype.map.call(app.querySelectorAll(".chapter"), function (section) { return section.id; }); }
+  // The chapters that are pages now: one a record has emptied (Across repositories, with no sibling left) is no page.
+  function chapterIds() {
+    return Array.prototype.filter.call(app.querySelectorAll(".chapter"), function (section) { return !section.classList.contains("is-absent"); })
+      .map(function (section) { return section.id; });
+  }
   function chapterName(id) {
     var link = rail.querySelector('a[href="#' + id + '"]');
     return link ? link.getAttribute("aria-label") : id;
@@ -629,7 +633,7 @@
     document.body.classList.toggle("paged", PAGED);
     Array.prototype.forEach.call(app.querySelectorAll(".chapter"), function (section) {
       var on = section.id === id;
-      section.hidden = PAGED && !on;
+      section.hidden = section.classList.contains("is-absent") || (PAGED && !on);
     });
     var landAtEnd = landNextAtEnd;
     landNextAtEnd = false;
@@ -657,7 +661,8 @@
   function revealPage(node) {
     var section = node && node.closest ? node.closest(".chapter") : null;
     if (PAGED && section && section.id !== currentPage) {
-      if (history.replaceState) { history.replaceState(null, "", "#" + section.id); }
+      // A page whose address can't be rewritten (an opaque or embedded one) still turns to the chapter.
+      try { if (history.replaceState) { history.replaceState(null, "", "#" + section.id); } } catch (error) { /* the address stays */ }
       showPage(section.id);
     }
   }
@@ -4968,9 +4973,15 @@
     if (!groups.length && !parts.across) { return; }
     var section = parts.across ? parts.across.parentNode : chapterOf(["across", "Across repositories"], PLAN ? "plan" : "happened");
     var link = rail.querySelector('a[href="#across"]');
-    section.hidden = !groups.length;
+    section.classList.toggle("is-absent", !groups.length);
+    section.hidden = !groups.length || (PAGED && section.id !== currentPage);
     if (link) { link.hidden = !groups.length; }
-    if (!groups.length) { parts.across.replaceChildren(); return; }
+    if (!groups.length) {
+      parts.across.replaceChildren();
+      // A reader on the chapter as it empties turns to the first page rather than an empty one.
+      if (currentPage === "across") { showPage(chapterIds()[0]); }
+      return;
+    }
     // A group of another epic delivers nothing of this one: it is named after the epic's own, under Also linked.
     var others = groups.filter(function (group) { return group.lastOutcome === "other-epic"; });
     groups = groups.filter(function (group) { return group.lastOutcome !== "other-epic"; });
