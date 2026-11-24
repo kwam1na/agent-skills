@@ -165,6 +165,10 @@ class SyncFilterTests(ScopeFixture):
     def test_a_value_written_while_its_seat_held_the_lane_counts_and_one_written_after_it_passed_it_on_does_not(self) -> None:
         self.a.patch({"lanes": [LANE_ROW]})
         self.give("lane:lane-1", self.b)
+        # b journals nothing after taking the lane: its own last entry is still its request to join, from before the
+        # transfer, so only the seen its write carries says it held lane-1.
+        own = [entry for entry in self.b.journal() if entry["origin"]["seat"] == self.second]
+        self.assertEqual(own[-1]["kind"], "seat.requested")
         self.focus(self.b, "b's, holding lane-1")
         collab.give_scope(self.b.directory, "lane:lane-1", self.first)
         self.b.push()
