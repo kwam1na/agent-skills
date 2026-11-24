@@ -410,3 +410,15 @@ A local base merge into a story branch needs the separate authorization recorded
 - **In-app:** `inApp.build`, `inApp.serve` and `inApp.check` are argv commands. The check reads a JSON spec
   (`{spec}`) and prints a report with `ready`, `build` (the served stamp), `held`, `failed`, `evals`, `afterEvals`,
   `pageErrors` and `consoleErrors`. The contract is in `references/config.md`.
+
+## Collaboration
+
+Two engineers can write one plan together, each in their own clone, with no delivery record. The plan's branch is
+`plan/<reviewSlug>` until a delivery file names the plan, then `lead/<key>`, pushed to the base remote and never forced.
+Run `run_delivery.py plan-sync --plan P` after an edit, and follow a peer's edits with `run_delivery.py plan-watch
+--plan P` under the host's monitor. `references/config.md` has the rules and the `collab` settings.
+
+| Who | Command | What it does |
+| --- | --- | --- |
+| Lead | `plan-sync --plan P [--message M]` | From a checkout on the plan's branch: composes the working copy's plan with the remote branch section by section, commits and pushes it. A section changed on both sides is refused with `plan.sections_overlap`, naming it with both diffs, before anything is written. A push rejected because a peer pushed first composes again, up to 5 times; the sixth rejection is `plan.push_exhausted`. |
+| Lead | `plan-watch --plan P [--timeout S] [--until RE]` | Prints one flushed line per peer push of the plan's branch, and nothing else, fetching it every `collab.pollSeconds` (default 5, at least 2). Exits 0 at the timeout (default 1800), or with `--until`, 0 after the first matching line and 3 at the timeout. Never pushes. |

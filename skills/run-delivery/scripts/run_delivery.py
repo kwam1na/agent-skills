@@ -74,6 +74,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pr_review_gates  # noqa: E402
 import gaps  # noqa: E402
+import plan_sync  # noqa: E402
 import tracker_publisher  # noqa: E402
 
 TOOL = Path(__file__).resolve().parent.parent
@@ -16402,6 +16403,79 @@ class Doctor:
         return "ok", f"every gate passes on {ref}, in a fresh prepared checkout (removed)"
 
 
+# -- co-authored plan text -------------------------------------------------------------------------------------
+# Before a delivery adopts it, a plan two engineers write together lives on plan/<reviewSlug>; once a delivery file
+# names it, on lead/<key>. Both are pushed to the base remote. plan-sync composes the working copy's plan with the
+# remote branch section by section (plan_sync.py) and pushes it; plan-watch prints one line per peer push. Neither
+# needs a record.
+
+COLLAB_POLL_SECONDS = 5
+COLLAB_POLL_FLOOR = 2
+
+
+def collab_settings(c) -> dict:
+    """`collab.pollSeconds` (default 5, at least 2: each tick is one git fetch) and `collab.autoGrant` (default
+    false), refused when out of range."""
+    raw = c.flow_raw.get("collab", {})
+    if not isinstance(raw, dict):
+        raise Stop(f"{c.name} collab must be an object, not {raw!r}")
+    poll = raw.get("pollSeconds", COLLAB_POLL_SECONDS)
+    if isinstance(poll, bool) or not isinstance(poll, (int, float)) or poll < COLLAB_POLL_FLOOR:
+        raise Stop(f"{c.name} collab.pollSeconds must be a number of seconds, at least {COLLAB_POLL_FLOOR}, not {poll!r}")
+    grant = raw.get("autoGrant", False)
+    if not isinstance(grant, bool):
+        raise Stop(f"{c.name} collab.autoGrant must be true or false, not {grant!r}")
+    return {"pollSeconds": poll, "autoGrant": grant}
+
+
+def plan_branch(c, plan: Path) -> str:
+    """lead/<key> when a delivery file names the plan, otherwise plan/<reviewSlug>."""
+    path = c.root / plan
+    if not path.is_file():
+        raise Stop(f"no plan at {path}")
+    slug = review_slug(plan, path.read_text(encoding="utf-8"))
+    if slug is None:
+        raise Stop(f"plan.no_review_slug: {plan} has no reviewSlug in its front matter, which names its branch, "
+                   f"plan/<reviewSlug>; add one and commit it")
+    named = os.path.normpath(plan)
+    keys = sorted(d["delivery"] for d in (load_json(f) or {} for f in sorted(c.deliveries.glob("*.json")))
+                  if isinstance(d.get("plan"), str) and os.path.normpath(d["plan"]) == named and d.get("delivery"))
+    if len(keys) > 1:
+        raise Stop(f"{len(keys)} delivery files name {plan}: {', '.join(keys)}; keep the plan in one")
+    return f"lead/{keys[0]}" if keys else f"plan/{slug}"
+
+
+def plan_collab_config(args):
+    global CFG
+    c = CFG = Config(repo(), need_delivery=False, pick=False)
+    settings = collab_settings(c)
+    return c, Path(args.plan), plan_branch(c, Path(args.plan)), settings
+
+
+def plan_sync_command(args) -> None:
+    c, plan, branch, _ = plan_collab_config(args)
+    try:
+        for line in plan_sync.sync(c.root, plan.as_posix(), branch, c.remote, _region_ownership(), message=args.message):
+            print(line)
+    except plan_sync.Refused as error:
+        raise Stop(str(error)) from None
+
+
+def plan_watch_command(args) -> None:
+    c, plan, branch, settings = plan_collab_config(args)
+    try:
+        re.compile(args.until or "")
+    except re.error as error:
+        raise Stop(f"--until {args.until!r} isn't a regular expression: {error}") from None
+    if args.timeout < 0:
+        raise Stop(f"--timeout must be zero or more seconds, not {args.timeout:g}")
+    code = plan_sync.watch(c.root, plan.as_posix(), branch, c.remote, _region_ownership(),
+                           poll=settings["pollSeconds"], timeout=args.timeout, until=args.until,
+                           write=lambda line: print(line, flush=True))
+    if code:
+        sys.exit(code)
+
+
 def doctor(args) -> None:
     """Check this repository's setup for a delivery: every missing prerequisite, and how to fix it."""
     global OFFLINE
@@ -16784,6 +16858,15 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=ship)
     p = command(sub, "adapter-test"); p.set_defaults(fn=adapter_test)
     p = command(sub, "config"); p.set_defaults(fn=show_config)
+    p = command(sub, "plan-sync", help="compose the plan with its shared branch, section by section, and push it")
+    p.add_argument("--plan", required=True, help="the plan file, which names its branch by its reviewSlug")
+    p.add_argument("--message", help="the commit message for an uncommitted plan edit")
+    p.set_defaults(fn=plan_sync_command)
+    p = command(sub, "plan-watch", help="print one line per peer push of the plan's shared branch, and nothing else")
+    p.add_argument("--plan", required=True, help="the plan file, which names its branch by its reviewSlug")
+    p.add_argument("--timeout", type=float, default=1800, help="exit after this many seconds (default 1800)")
+    p.add_argument("--until", help="exit 0 after the first line matching this regular expression, or 3 at the timeout")
+    p.set_defaults(fn=plan_watch_command)
     p = sub.add_parser("doctor", help="check this repository's setup: every missing prerequisite and its fix")
     p.add_argument("--delivery", dest="doctor_delivery", help="also check this delivery's file")
     p.add_argument("--offline", action="store_true", help="don't fetch the base or ask the forge; read local refs")
