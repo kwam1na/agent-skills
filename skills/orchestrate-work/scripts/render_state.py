@@ -2732,10 +2732,10 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
                         help="the repository whose registry lists this record's peers on its base, on every page; "
                              "its git common directory keeps the live servers' entries (the state directory's "
                              "repository when absent)")
-    once = parser.add_mutually_exclusive_group()
     parser.add_argument("--preview", action="store_true",
                         help="mark this server as a plan preview's, in its entry and /health: --if-absent never "
                              "names it, and the standing server's runs page lists it")
+    once = parser.add_mutually_exclusive_group()
     once.add_argument("--if-absent", action="store_true",
                       help="print the address of this repository's verified live server, preferring one with "
                            "liveRuns, and exit; serve only when there is none. A plan preview's server is never "
