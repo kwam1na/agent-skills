@@ -308,7 +308,8 @@ changes: the branch comes down by an explicit refspec into its remote-tracking r
   first heading, front matter included, is one more, `(preamble)`. A section changed on one side only takes that
   side's text: an addition lands after its nearest earlier section that still exists on the other side, or right after
   `(preamble)`. A section changed differently on both sides, or deleted on one and edited on the other, is refused
-  with `plan.sections_overlap`, naming each section with both diffs, before anything is committed. An uncommitted plan
+  with `plan.sections_overlap`, naming each section with both diffs, before anything is committed; one found on a
+  retry puts the branch and the working copy back as they were. An uncommitted plan
   edit is committed first, under the author's own git identity, and a composed result is a merge commit of both
   heads.
 - **Retries.** A push rejected because a peer pushed first composes again and retries, up to 5 times. The sixth
@@ -316,9 +317,11 @@ changes: the branch comes down by an explicit refspec into its remote-tracking r
   left it: sync again.
 - **Watching.** `plan-watch [--timeout S] [--until RE]` fetches the branch once every `collab.pollSeconds` and prints
   one flushed line per peer push, with its head, author, subject and the sections it changed, and nothing else, so a
-  host monitor or a terminal can follow it. A push this checkout's own branch already holds is not a peer's. With no
-  `--until` it exits 0 at its timeout (default 1800 seconds); with `--until` it exits 0 after the first matching line,
-  and 3 at the timeout if none matched. It never pushes.
+  host monitor or a terminal can follow it. A push is a peer's unless every commit it brings was committed under this
+  checkout's own `user.email`, so a sync from here shows nothing, and a peer's push still shows when a sync here pulled
+  it in first. With no `--until` it exits 0 at its timeout (default 1800 seconds); with `--until` it exits 0 after the
+  first matching line, and 3 at the timeout if none matched. A watch none of whose fetches reached the remote ends with
+  `plan.git_failed` instead. It never pushes.
 - **Settings.** `collab.pollSeconds` is a number of seconds, at least 2, default 5; `collab.autoGrant` is true or false,
   default false: when true, on a shared record the `delivery` holder's supervisor grants a requested plan section
   nobody holds on its next pass. Any other value is refused by both commands, naming the setting.

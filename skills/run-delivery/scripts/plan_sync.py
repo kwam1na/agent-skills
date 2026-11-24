@@ -195,7 +195,8 @@ def sync(root: Path, path: str, branch: str, remote: str, markdown, *, message: 
     The working copy's plan text is ours, committed or not. A refusal before the first commit leaves the branch, the
     working copy and the remote as they were. A push rejected for being behind recomposes and retries, up to
     RECONCILE_ATTEMPTS times; the next rejection stops with `plan.push_exhausted`, leaving the branch at its last
-    composed commit and the remote as the peer left it. `before_push(attempt)` runs before each push."""
+    composed commit and the remote as the peer left it. An overlap found on a retry, after the plan edit was committed,
+    puts the branch and the working copy back as they were. `before_push(attempt)` runs before each push."""
     checked_out(root, branch)
     file = root / path
     if not file.is_file():
@@ -208,10 +209,28 @@ def sync(root: Path, path: str, branch: str, remote: str, markdown, *, message: 
         base = git(root, "merge-base", head, theirs, check=False)
         compose(shown(root, base, path) or "" if base else "", ours_text, shown(root, theirs, path) or "", markdown)
         merged_tree(root, head, theirs, path, ours_text)  # refuses another file's overlap before anything is written
+    start = head
     if shown(root, head, path) != ours_text or git(root, "status", "--porcelain", "--", path):
         git(root, "add", "--", path)
         git(root, "commit", "-q", "-m", message or f"Edit the plan {Path(path).name}", "--", path)
         said.append(f"committed {path}")
+    try:
+        return pushed(root, path, branch, remote, markdown, theirs, said, before_push)
+    except Refused as error:
+        if error.code in OVERLAPS:
+            # A peer's push between tries overlapped: the branch and the working copy go back to how they were.
+            git(root, "reset", "-q", "--keep", start)
+            file.write_text(ours_text, encoding="utf-8")
+        raise
+
+
+# Refusals that leave the branch as it was before the sync, wherever they are raised.
+OVERLAPS = ("plan.sections_overlap", "plan.files_overlap")
+
+
+def pushed(root: Path, path: str, branch: str, remote: str, markdown, theirs: str | None, said: list[str],
+           before_push: Callable[[int], None] | None) -> list[str]:
+    """Compose HEAD with the remote's `theirs` and push it, recomposing after each rejection, within the bound."""
     rejected = 0
     while True:
         head = resolved(root, "HEAD")
@@ -264,21 +283,26 @@ def watch(root: Path, path: str, branch: str, remote: str, markdown, *, poll: fl
           until: str | None, write: Callable[[str], None], sleep: Callable[[float], None] = time.sleep,
           clock: Callable[[], float] = time.monotonic) -> int:
     """Print one line per peer push of the branch, and nothing else. Exits 0 at the timeout, or with `until`, 0 after
-    the first line matching it and 3 at the timeout. Each tick fetches the branch once; it never pushes.
+    the first line matching it and 3 at the timeout. Each tick fetches the branch once; it never pushes. A watch none
+    of whose fetches reached the remote ends with the last fetch's refusal instead.
 
-    A push is a peer's when this checkout's own branch doesn't already hold it, so a sync from here shows nothing.
-    What this checkout last fetched is where the watch starts, so a push just before it starts is still shown."""
+    A push is a peer's unless every commit it brings was committed under this checkout's own `user.email`, so a sync
+    from here shows nothing, and a peer's push shows even when a sync here pulled it in before the next tick. What this
+    checkout last fetched is where the watch starts, so a push just before it starts is still shown."""
     pattern = re.compile(until) if until is not None else None
     seen = resolved(root, tracking(remote, branch))
+    me = git(root, "config", "user.email", check=False)
     deadline = clock() + timeout
+    reached, failed = False, None
     while True:
         try:
             head = fetch(root, remote, branch)
-        except Refused:
-            head = seen  # an unreachable remote is tried again on the next tick
+            reached = True
+        except Refused as error:
+            head, failed = seen, error  # an unreachable remote is tried again on the next tick
         if head and head != seen:
-            own = resolved(root, f"refs/heads/{branch}")
-            if not (own and ancestor(root, head, own)):
+            brought = git(root, "log", "--format=%ce", *([f"{seen}..{head}"] if seen else ["-1", head]))
+            if not me or any(email != me for email in brought.split()):
                 line = push_line(root, path, branch, markdown, seen, head)
                 write(line)
                 if pattern and pattern.search(line):
@@ -286,5 +310,7 @@ def watch(root: Path, path: str, branch: str, remote: str, markdown, *, poll: fl
             seen = head
         left = deadline - clock()
         if left <= 0:
+            if not reached and failed:
+                raise failed
             return 3 if pattern else 0
         sleep(min(poll, left))

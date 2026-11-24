@@ -137,8 +137,12 @@ class PlanSyncTests(unittest.TestCase):
         self.assertEqual((self.ours / path).read_text(), expected)
         self.assertEqual(self.remote_text(branch, path), expected)
         self.assertEqual(git("status", "--porcelain", cwd=self.ours), "")
+        landed = git("rev-parse", f"refs/heads/{branch}", cwd=self.remote)
         self.sync(self.theirs, path, branch)
         self.assertEqual((self.theirs / path).read_text(), expected)
+        # Theirs, strictly behind with no edit, fast-forwards: no merge commit of its own, and the remote stays put.
+        self.assertEqual(git("rev-parse", "HEAD", cwd=self.theirs), landed)
+        self.assertEqual(git("rev-parse", f"refs/heads/{branch}", cwd=self.remote), landed)
         assert_fast_forwards_only(self.remote, f"refs/heads/{branch}")
 
     # -- composing --------------------------------------------------------------------------------------------------
@@ -208,6 +212,19 @@ class PlanSyncTests(unittest.TestCase):
         self.assertNotEqual(theirs, expected)
         self.compose_case(ours, theirs, expected)
 
+    def test_a_heading_repeated_under_two_parents_is_two_sections(self) -> None:
+        slug = f"case-{self.count + 1}"
+        twice = [("# The plan", "Its intro."), ("## S1", "one"), ("### Scope", "scope one"), ("## S2", "two"),
+                 ("### Scope", "scope two")]
+        both = lambda first, second: plan(slug, twice).replace("scope one\n", f"{first}\n").replace(
+            "scope two\n", f"{second}\n")
+        slug_, branch, path = self.start(twice)
+        self.write(self.theirs, path, both("scope one", "theirs scope two"))
+        self.sync(self.theirs, path, branch)
+        self.write(self.ours, path, both("ours scope one", "scope two"))
+        self.sync(self.ours, path, branch)
+        self.assertEqual(self.remote_text(branch, path), both("ours scope one", "theirs scope two"))
+
     def test_ours_committed_edits_compose_too(self) -> None:
         slug, branch, path = self.start()
         self.write(self.theirs, path, plan(slug, edited(BASE, "## Alpha", "theirs alpha")))
@@ -262,6 +279,52 @@ class PlanSyncTests(unittest.TestCase):
         slug = f"case-{self.count + 1}"
         self.refused(plan(slug, BASE, matter="title: Our title"), plan(slug, BASE, matter="title: Their title"),
                      "(preamble)", ours_line="+title: Our title", theirs_line="+title: Their title")
+
+    def test_another_file_changed_on_both_sides_is_refused(self) -> None:
+        slug, branch, path = self.start()
+        notes = f"docs/{slug}-notes.md"
+        for clone, text in ((self.theirs, "theirs notes\n"), (self.ours, "ours notes\n")):
+            self.write(clone, notes, text)
+            git("add", notes, cwd=clone)
+            git("commit", "-qm", "notes", cwd=clone)
+        self.sync(self.theirs, path, branch)
+        self.write(self.ours, path, plan(slug, edited(BASE, "## Beta", "ours beta")))
+        before = self.surfaces(branch)
+        with self.assertRaises(PLAN_SYNC.Refused) as caught:
+            self.sync(self.ours, path, branch)
+        self.assertEqual(caught.exception.code, "plan.files_overlap")
+        self.assertIn(notes, str(caught.exception))
+        self.assertEqual(self.surfaces(branch), before)
+        self.assertEqual((self.ours / path).read_text(), plan(slug, edited(BASE, "## Beta", "ours beta")))
+        # The allowed case beside it: once ours' notes read as theirs, the plan composes.
+        self.write(self.ours, notes, "theirs notes\n")
+        git("commit", "-qam", "notes as theirs", cwd=self.ours)
+        self.write(self.ours, path, plan(slug, edited(BASE, "## Beta", "ours beta")))
+        self.sync(self.ours, path, branch)
+        self.assertEqual(self.remote_text(branch, path), plan(slug, edited(BASE, "## Beta", "ours beta")))
+
+    def test_an_overlap_found_on_a_retry_puts_the_branch_back(self) -> None:
+        slug, branch, path = self.start()
+        ours = plan(slug, edited(BASE, "## Alpha", "ours alpha"))
+        self.write(self.ours, path, ours)
+        before = self.surfaces(branch)
+
+        def overlapping(attempt: int) -> None:
+            self.write(self.theirs, path, plan(slug, edited(BASE, "## Alpha", "theirs alpha")))
+            self.sync(self.theirs, path, branch)
+        with self.assertRaises(PLAN_SYNC.Refused) as caught:
+            self.sync(self.ours, path, branch, before_push=overlapping)
+        self.assertEqual(caught.exception.code, "plan.sections_overlap")
+        self.assertIn("## Alpha", str(caught.exception))
+        self.assertEqual(git("rev-parse", "HEAD", cwd=self.ours), before[0])
+        self.assertEqual((self.ours / path).read_text(), ours)
+        self.assertEqual(git("rev-parse", f"refs/heads/{branch}", cwd=self.remote),
+                         git("rev-parse", "HEAD", cwd=self.theirs))
+        assert_fast_forwards_only(self.remote, f"refs/heads/{branch}")
+        # The allowed case beside it: once ours takes theirs' Alpha, it syncs.
+        self.write(self.ours, path, plan(slug, edited(BASE, "## Alpha", "theirs alpha")))
+        self.sync(self.ours, path, branch)
+        self.assertEqual(git("status", "--porcelain", cwd=self.ours), "")
 
     def peer_pushes(self, branch: str, path: str, times: int):
         """A before-push hook: on each of A's first `times` attempts, B first pushes one more line ending Delta."""
@@ -363,8 +426,17 @@ class PlanSyncTests(unittest.TestCase):
     def test_each_peer_push_is_one_line_within_two_ticks_and_the_watch_exits_0_at_its_timeout(self) -> None:
         slug, branch, path = self.start()
         lines, seen_at = [], {}
-        clock, sleep, state = self.ticking(2, {1: self.peer_edit(branch, path, "## Peer one", "one"),
-                                               3: self.peer_edit(branch, path, "## Peer two", "two")})
+
+        def own_sync() -> None:
+            self.write(self.ours, path, (self.ours / path).read_text().replace("gamma body\n", "ours gamma\n"))
+            self.sync(self.ours, path, branch)
+
+        def peer_then_pulled() -> None:
+            # A peer pushes, and a sync here pulls it in before the watch's next tick: still the peer's push.
+            self.peer_edit(branch, path, "## Peer two", "two")()
+            self.sync(self.ours, path, branch)
+        clock, sleep, state = self.ticking(2, {1: self.peer_edit(branch, path, "## Peer one", "one"), 2: own_sync,
+                                               3: peer_then_pulled})
 
         def write(line: str) -> None:
             lines.append(line)
@@ -382,7 +454,16 @@ class PlanSyncTests(unittest.TestCase):
         self.assertIn("## Peer one", lines[0])
         self.assertIn("## Peer two", lines[1])
         self.assertTrue(all("\n" not in line for line in lines))
+        self.assertTrue(all("ours gamma" not in line and "## Gamma" not in line for line in lines), lines)
         self.assertGreaterEqual(state["now"], 12)
+
+    def test_a_watch_that_never_reaches_the_remote_ends_refused(self) -> None:
+        slug, branch, path = self.start()
+        clock, sleep, state = self.ticking(2, {})
+        with self.assertRaises(PLAN_SYNC.Refused) as caught:
+            PLAN_SYNC.watch(self.ours, path, branch, str(self.folder / "missing.git"), MARKDOWN, poll=2, timeout=4,
+                            until=None, write=self.fail, sleep=sleep, clock=clock)
+        self.assertEqual(caught.exception.code, "plan.git_failed")
 
     def test_until_exits_0_on_the_first_matching_line(self) -> None:
         slug, branch, path = self.start()
@@ -481,7 +562,7 @@ class PlanSyncCommandTests(unittest.TestCase):
         git("reset", "-q", "--hard", "origin/plan/streamed", cwd=self.theirs)
         started = time.monotonic()
         watch = subprocess.Popen([sys.executable, "-B", str(TOOL), "plan-watch", "--plan", "docs/streamed.md",
-                                  "--timeout", "30", "--until", "Epsilon"],
+                                  "--timeout", "60", "--until", "never printed"],
                                  cwd=self.ours, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  env={**clean_environment(), "RUN_DELIVERY_CONFIG": str(self.config)})
         self.addCleanup(lambda: watch.poll() is None and watch.kill())
@@ -492,11 +573,14 @@ class PlanSyncCommandTests(unittest.TestCase):
         pushed = time.monotonic()
         line = watch.stdout.readline()
         arrived = time.monotonic()
-        out, err = watch.communicate(timeout=30)
-        self.assertEqual(watch.returncode, 0, err)
+        # Still running: the line came through the pipe because it was flushed, not because the watch exited.
+        self.assertIsNone(watch.poll())
         self.assertIn("## Epsilon", line)
-        self.assertEqual(out, "")
+        self.assertIn("by Ben", line)
         self.assertLess(arrived - pushed, 2 * 2 + 3, (started, pushed, arrived))
+        watch.kill()
+        out, _ = watch.communicate(timeout=30)
+        self.assertEqual(out, "")
 
     def test_a_poll_below_two_seconds_is_refused_by_the_settings(self) -> None:
         config = self.folder / "fast.json"
