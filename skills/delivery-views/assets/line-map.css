@@ -1199,3 +1199,11 @@ body.paged .chapter-now.is-fresh > .inner { margin-bottom: 0; }
   .starting-stop { width: 12px; height: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .starting-stop { animation: none; transition: none; } }
+
+/* Who, before anyone reports: the lanes the plan expects, drawn as waiting rather than working. */
+.person.is-expected { background: transparent; box-shadow: inset 0 0 0 1px var(--hair); }
+.person.is-expected .swatch { color: color-mix(in oklab, var(--c) 70%, var(--paper)); }
+.person.is-expected h3 { color: var(--soft); font-weight: 500; }
+.person.is-expected .doing .issue-link { color: var(--soft); }
+.chip.expected { background: transparent; color: var(--faint); font-weight: 400; box-shadow: inset 0 0 0 1px var(--hair); border: 0; }
+.chip.expected::before { content: ""; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid var(--edge); }

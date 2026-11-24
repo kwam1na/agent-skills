@@ -3527,6 +3527,34 @@
       });
       nodes.push(people);
       prev.lanes = seen;
+    } else if (!closed && all.length) {
+      // Nobody has reported yet: who is expected, from the planned work's lanes, each with the piece it starts on.
+      var expected = [];
+      var byLane = Object.create(null);
+      all.forEach(function (piece) {
+        var lane = text(piece.item.lane);
+        if (!lane) { return; }
+        if (!byLane[lane]) { byLane[lane] = []; expected.push(lane); }
+        byLane[lane].push(piece);
+      });
+      if (expected.length) {
+        nodes.push(el("p", "say", plural(expected.length, "lane") + (expected.length === 1 ? " is" : " are") +
+          " planned. Each reports here once it picks up its first piece."));
+        var waiting = el("div", "people is-expected");
+        expected.forEach(function (lane) {
+          var pieces = byLane[lane];
+          var first = pieces[0];
+          var key = subjectOf(first.item);
+          var row = el("div", "person is-expected");
+          row.style.setProperty("--c", laneColour(lane));
+          var opener = add(el("p", "doing"), "Starts with ", key ? issue(key) : null, key ? " \u00b7 " : null, titleOf(doc, first.item));
+          var who = add(el("div"), el("h3", null, lane), opener);
+          var st = add(el("div", "st"), el("span", "chip expected", "Not reported"), el("span", "on", plural(pieces.length, "piece")));
+          add(row, add(el("span", "swatch"), persona("lane")), who, st);
+          waiting.appendChild(row);
+        });
+        nodes.push(waiting);
+      }
     }
     if (list(doc.state.laneRegions).filter(isObject).length && filesToShow()) { nodes.push(filesView(doc, colours)); }
     var leases = list(doc.state.leases).filter(isObject);
