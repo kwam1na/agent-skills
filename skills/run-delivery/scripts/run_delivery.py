@@ -220,19 +220,22 @@ def hosted_settings(c):
     return raw,validated['hosted']
 
 
-def hosted_files(c):
+def hosted_files(c,folder):
+    """The publisher's configuration and binding, written into the record folder it publishes."""
     settings=hosted_settings(c)
     if settings is None:return None
     raw,member=settings;module=hosted_module(c.release)
-    c.state.mkdir(parents=True,exist_ok=True)
-    config=c.state/'hosted-view-config.json';binding=c.state/'hosted-view-binding.json'
+    folder.mkdir(parents=True,exist_ok=True)
+    config=folder/'hosted-view-config.json';binding=folder/'hosted-view-binding.json'
     module.atomic(config,raw)
-    module.atomic(binding,{'state':{'directory':str(c.state)}})
+    module.atomic(binding,{'state':{'directory':str(folder)}})
     return module,member,config,binding
 
 
-def hosted_call(c,operation,*,resume=False,timeout=5):
-    files=hosted_files(c)
+def hosted_call(c,operation,folder,key,*,archive=True,resume=False,timeout=5):
+    """Run the publisher's `operation` on the record in `folder`, published under `key`: a delivery's record, with its
+    archive root, or a plan preview's, which has none."""
+    files=hosted_files(c,folder)
     if files is None:return {'state':'disabled'}
     module,member,config,binding=files
     environment=dict(os.environ)
@@ -241,9 +244,9 @@ def hosted_call(c,operation,*,resume=False,timeout=5):
     pointer=c.root/'.agent-skills/current'
     watched=pointer if pointer.exists() and pointer.resolve()==c.release.resolve() else c.release
     command=[sys.executable,'-B',str(c.release/'skills/delivery-views/scripts/hosted.py'),operation,
-             '--config',str(config),'--binding',str(binding),'--state-dir',str(c.state),'--key',c.delivery,
+             '--config',str(config),'--binding',str(binding),'--state-dir',str(folder),'--key',key,
              '--generation',str(watched),'--generation-target',str(c.release.resolve()),
-             '--archive-root',str(archive_root(c)),'--record-root',str(c.state)]
+             *(['--archive-root',str(archive_root(c))] if archive else []),'--record-root',str(folder)]
     if resume:command.append('--resume')
     done=run(command,cwd=c.root,check=False,timeout=timeout,env=environment,_publishing=True)
     try:answer=json.loads(done.stdout)
@@ -253,7 +256,7 @@ def hosted_call(c,operation,*,resume=False,timeout=5):
 
 
 def start_hosted(c,*,resume=False,timeout=5):
-    try:return hosted_call(c,'start',resume=resume,timeout=timeout)
+    try:return hosted_call(c,'start',c.state,c.delivery,resume=resume,timeout=timeout)
     except (Stop,OSError,ValueError,subprocess.SubprocessError):return {'state':'failed','code':'publisher_unavailable'}
 
 
@@ -318,7 +321,8 @@ def owned_hosted_processes(c):
 
 def hosted_retry(args):
     if not args.archive:
-        print(json.dumps(hosted_call(cfg(),'retry',resume=args.resume)))
+        c=cfg()
+        print(json.dumps(hosted_call(c,'retry',c.state,c.delivery,resume=args.resume)))
         return
     # The current checkout supplies trusted collection configuration. An archive
     # supplies only its bounded record and identity, never executable commands.
@@ -348,7 +352,7 @@ def hosted_retry(args):
     from types import SimpleNamespace
     proxy=SimpleNamespace(root=c.root,state=record,release=c.release,shelf=c.shelf,
                           delivery=identity['deliveryKey'],flow_raw={'cleanup':{'archive':str(record)}},main=c.main)
-    print(json.dumps(hosted_call(proxy,'retry',resume=args.resume)))
+    print(json.dumps(hosted_call(proxy,'retry',proxy.state,proxy.delivery,resume=args.resume)))
 
 
 def finalize_hosted(c,archive,closed,*,seconds=HOSTED_CLOSE_SECONDS):
@@ -2620,6 +2624,18 @@ def needed_review_slug(plan: Path, text: str) -> str:
     return slug
 
 
+def with_preview(command):
+    """A plan-review command that, with --plan, ends by rebuilding the plan's preview and printing its links. A
+    preview that can't be built is said, and never changes the command's outcome."""
+    def run_then_preview(args) -> None:
+        command(args)
+        if getattr(args, "plan", None):
+            sys.stdout.flush()
+            preview_quietly(args.plan)
+    run_then_preview.__name__ = command.__name__
+    return run_then_preview
+
+
 def plan_review_config(args):
     """The config a plan-review command runs under: the delivery's, or with --plan the plan's own store, which needs no
     delivery file, binding or record."""
@@ -2657,6 +2673,20 @@ def adoptable_plan_review(c, plan: Path) -> Path | None:
     return source if n > 1 else None
 
 
+def preview_handed_quietly(c, slug: str, delivery: str) -> None:
+    """After an adoption: the preview's handed finish, best effort and silent. It starts only where a preview folder
+    exists for the slug, and nothing it does or fails at reaches the adoption's output or exit code."""
+    try:
+        folder = preview_folder(c, slug)
+        facts = load_json(folder / PREVIEW_FILE) if folder.is_dir() else None
+        if not facts or (folder / PREVIEW_HANDED).exists():
+            return
+        with open(os.devnull, "w") as quiet, contextlib.redirect_stdout(quiet):
+            preview_handed_finish(c, folder, Path(facts["plan"]), {"delivery": delivery})
+    except Exception:  # noqa: BLE001  (best effort: the adoption stands whatever happens here)
+        return
+
+
 def adopt_plan_review(c, source: Path, delivery: str) -> str:
     """Move the plan's own review store into the delivery's, leaving a pointer behind, so the plan chapter shows it."""
     target = c.main / c.work / "review" / delivery / "plan"
@@ -2676,6 +2706,7 @@ def adopt_plan_review(c, source: Path, delivery: str) -> str:
     source.mkdir()
     (source / "adopted.json").write_text(json.dumps({"delivery": delivery, "store": str(target), "at": now()},
                                                     indent=2) + "\n")
+    preview_handed_quietly(c, source.name, delivery)
     return f"adopted the plan review ({rounds} round{'' if rounds == 1 else 's'}) from {source} into {target}"
 
 
@@ -6722,19 +6753,207 @@ def rebuild_preview(c, plan: Path) -> tuple[Path, str | None]:
     return folder, ", ".join(said) or None
 
 
-def plan_view_command(args) -> None:
-    """`plan-view --plan PATH`: build or rebuild the plan's preview record from the plan at HEAD and its review store.
-    Needs no delivery file, binding, record, tracker or forge."""
+PREVIEW_HANDED = "handed.json"
+PREVIEW_LOG = "live.log"
+PREVIEW_FINISH_LOG = "finish.log"
+# How long the handed finish waits for the hosted page to hold the handed cut before it stops the processes anyway.
+PREVIEW_HANDED_SECONDS = 120
+
+
+def preview_key(slug: str) -> str:
+    """The preview's key: its hosted publisher's, and the one its live port is derived from."""
+    return f"plan-{slug}"
+
+
+def preview_live_config(c, folder: Path) -> dict | None:
+    """The live view's state configuration for a preview, derived from the binding: its folder, the one renderer
+    `state.liveHome` names, and `liveHome`; no publishers, snapshots, runs page or other renderers. None when the
+    binding names no liveHome, or one that isn't an argv renderer."""
+    state = binding_state(c) or {}
+    home = state.get("liveHome")
+    renderer = next((entry for entry in state.get("renderers") or [] if isinstance(entry, dict)
+                     and entry.get("id") == home and entry.get("argv")), None)
+    if not isinstance(home, str) or renderer is None:
+        return None
+    return {"directory": str(folder), "renderers": [renderer], "liveHome": home}
+
+
+def preview_hosted_on(c) -> bool:
+    try:
+        return hosted_settings(c) is not None
+    except Stop:
+        return True  # configured, if not validly: the publisher's own answer says why
+
+
+def start_preview_live(c, folder: Path, slug: str, config: dict) -> str:
+    """The preview's live view: the one `live.json` names, while it serves from this generation's render_state.py;
+    otherwise one started detached, a running one of another generation stopped by its recorded pid first, on the
+    recorded port, else the one derived from the main checkout and the preview's key, else a free one. Its address."""
+    script = str((c.release / "skills/orchestrate-work/scripts/render_state.py").resolve())
+    live = recorded_live(folder)
+    if live and pid_runs(live["pid"]) and listens(live["pid"], live["port"]):
+        if live.get("renderState") == script:
+            return live_address(live["port"])
+        stop_view(folder)
+        free = time.monotonic() + 10
+        while port_open(live["port"]) and time.monotonic() < free:
+            time.sleep(0.1)
+    wanted = (live.get("port") or 0) if live_port_setting() == 0 else wanted_live_port(folder, live_top(c),
+                                                                                         preview_key(slug))
+    holders = port_takers(wanted) if wanted else []
+    argv = [sys.executable, "-B", script, "live", "--dir", str(folder), "--repo", str(c.root), "--state-config",
+            json.dumps(config), "--preview"]
+    log = folder / PREVIEW_LOG
+    started = spawn_live_view([*argv, "--port", str(0 if holders else wanted)], log, c.root, 0 if holders else wanted)
+    if started is None:  # the port was taken between the look and the bind
+        holders = port_takers(wanted)
+        started = spawn_live_view([*argv, "--port", "0"], log, c.root, 0)
+    proc, bound = started
+    record = {"port": bound, "pid": proc.pid, "renderState": script, "startedAt": now(), "address": live_address(bound)}
+    if holders:
+        record["fallback"] = {"wanted": wanted, "heldBy": [{"pid": pid, "command": command} for pid, command in holders]}
+    replace_file(folder / LIVE_FILE, json.dumps(record, indent=2) + "\n")
+    return record["address"]
+
+
+def start_preview_hosted(c, folder: Path, slug: str) -> str:
+    """The hosted line for a preview: its link once the publisher has one, or why it wasn't published."""
+    try:
+        member = hosted_settings(c)[1]
+    except Stop as error:
+        return f"not published: {error}"
+    if HOSTED_TOKENS.get((member["tokenEnv"], member["origin"], member["repositoryId"])) is None:
+        return f"not published: {member['tokenEnv']} is unset"
+    answer = hosted_call(c, "start", folder, preview_key(slug), archive=False)
+    deadline = time.monotonic() + 15
+    while not answer.get("url") and not answer.get("error") and time.monotonic() < deadline:
+        time.sleep(0.2)
+        answer = hosted_call(c, "status", folder, preview_key(slug), archive=False)
+    if answer.get("url"):
+        return answer["url"]
+    return f"not published: {answer.get('error') or answer.get('code') or answer.get('state') or 'no answer'}"
+
+
+def preview_lines(c, plan: Path) -> list[str]:
+    """Build the plan's preview, serve and publish it, and say where: nothing at all where the repository has no
+    live view and no hosted configuration. After a delivery adopted the review, the handed finish instead."""
+    live_on = preview_live_config(c, Path(".")) is not None
+    if not live_on and not preview_hosted_on(c):
+        return []
+    text, _, _ = plan_at_head(c, plan)
+    slug = needed_review_slug(plan, text)
+    folder = preview_folder(c, slug)
+    _, adopted = preview_store(c, slug)
+    if adopted:
+        if (folder / PREVIEW_HANDED).exists() or not folder.is_dir():
+            return [f"plan preview: the review of {plan} was adopted by delivery {adopted['delivery']}; its plan shows "
+                    "on that delivery's own views"]
+        return [preview_handed_finish(c, folder, plan, adopted)]
+    rebuild_preview(c, plan)
+    links = {}
+    if live_on:
+        links["live"] = start_preview_live(c, folder, slug, preview_live_config(c, folder))
+    hosted = start_preview_hosted(c, folder, slug) if preview_hosted_on(c) else None
+    if hosted and hosted.startswith("https://"):
+        links["hosted"] = hosted
+    kept = load_json(folder / PREVIEW_FILE) or {}
+    if {**kept, **links} != kept:
+        replace_file(folder / PREVIEW_FILE, json.dumps({**kept, **links}, indent=2) + "\n")
+    return [*([f"plan preview: {links['live']}"] if live_on else []),
+            *([f"plan preview (hosted): {hosted}"] if hosted else [])]
+
+
+def preview_handed_finish(c, folder: Path, plan: Path, adopted: dict) -> str:
+    """Once a delivery adopts the review: mark the preview handed and start one detached finisher, which rebuilds it as
+    handed, waits for the hosted page to hold that cut, then stops the preview's processes. Returns at once."""
+    replace_file(folder / PREVIEW_HANDED, json.dumps({"delivery": adopted["delivery"], "at": now()}, indent=2) + "\n")
+    with open(folder / PREVIEW_FINISH_LOG, "a") as out:
+        subprocess.Popen([sys.executable, "-B", str(Path(__file__).resolve()), "plan-view", "--plan", plan.as_posix(),
+                          "--finish-handed"], cwd=c.root, stdin=subprocess.DEVNULL, stdout=out,
+                         stderr=subprocess.STDOUT, start_new_session=True)
+    return f"plan preview: handed to delivery {adopted['delivery']}; its preview stops once the hosted page shows that"
+
+
+def preview_publisher_runs(c, folder: Path) -> bool:
+    """Whether the hosted publisher the preview's folder records runs, as the publisher itself identifies it."""
+    try:
+        module = hosted_module(c.release)
+        return bool(module.process_matches(module.read_json(folder / module.OWNER, optional=True)))
+    except (OSError, ValueError, RuntimeError, ImportError):
+        return False
+
+
+def finish_handed(c, plan: Path) -> None:
+    """The detached finisher: rebuild the preview as handed, wait up to PREVIEW_HANDED_SECONDS for the hosted page to
+    hold a cut published after that rebuild, then stop the hosted publisher and the live view by their recorded pids."""
+    text, _, _ = plan_at_head(c, plan)
+    slug = needed_review_slug(plan, text)
+    folder = preview_folder(c, slug)
+    key = preview_key(slug)
+    hosted = preview_hosted_on(c) and preview_publisher_runs(c, folder)
+    before = hosted_call(c, "status", folder, key, archive=False).get("receipt") if hosted else None
+    try:
+        rebuild_preview(c, plan)
+    finally:
+        if hosted:
+            deadline = time.time() + PREVIEW_HANDED_SECONDS
+            while time.time() < deadline:
+                status = hosted_call(c, "status", folder, key, archive=False)
+                if status.get("state") == "current" and status.get("receipt") and status["receipt"] != before:
+                    break
+                time.sleep(0.5)
+            print(f"{now()} hosted: {json.dumps(hosted_call(c, 'stop', folder, key, archive=False))}", flush=True)
+        print(f"{now()} live: {stop_view(folder) or 'not running'}", flush=True)
+
+
+def stop_preview(c, plan: Path) -> list[str]:
+    """Stop the preview's hosted publisher and live view, each by the pid its folder records, and nothing else."""
+    text, _, _ = plan_at_head(c, plan)
+    folder = preview_folder(c, needed_review_slug(plan, text))
+    if not folder.is_dir():
+        return [f"plan preview: {plan} has no preview"]
+    lines = []
+    if preview_hosted_on(c) and (folder / "hosted-view-config.json").exists():
+        answer = hosted_call(c, "stop", folder, preview_key(folder.name), archive=False)
+        lines.append(f"plan preview (hosted): {answer.get('state') or answer.get('error') or 'no answer'}")
+    lines.append(f"plan preview: {stop_view(folder) or 'not running'}")
+    return lines
+
+
+def preview_quietly(plan: str) -> None:
+    """After a plan-review command: the preview's links, or why it wasn't built; never the command's own outcome."""
     global CFG
-    c = CFG = Config(repo(), need_delivery=False, pick=False)
-    plan = Path(args.plan)
+    try:
+        c = CFG = preview_config(plan)
+        for line in preview_lines(c, Path(plan)):
+            print(line)
+    except (Stop, OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f"plan preview: not built: {error}")
+
+
+def preview_config(given: str):
+    c = Config(repo(), need_delivery=False, pick=False)
+    plan = Path(given)
     if plan.is_absolute():
         try:
             plan = plan.resolve().relative_to(c.root.resolve())
         except ValueError:
-            raise Stop(f"{args.plan} isn't inside this checkout, {c.root}")
-    folder, changed = rebuild_preview(c, plan)
-    print(f"plan preview of {plan}: {'rebuilt ' + changed if changed else 'unchanged'} in {folder}")
+            raise Stop(f"{given} isn't inside this checkout, {c.root}")
+    c.preview_plan = plan
+    return c
+
+
+def plan_view_command(args) -> None:
+    """`plan-view --plan PATH`: build or rebuild the plan's preview from the plan at HEAD and its review store, serve it
+    on its own live view and publish it where the repository configures those, and print its links. Needs no
+    delivery file, record, tracker or forge. `--stop` stops what the preview runs."""
+    global CFG
+    c = CFG = preview_config(args.plan)
+    if args.finish_handed:
+        finish_handed(c, c.preview_plan)
+        return
+    for line in (stop_preview if args.stop else preview_lines)(c, c.preview_plan):
+        print(line)
 
 
 def lead_plan_checkout(c) -> Path:
@@ -11152,6 +11371,31 @@ UNRECORDED_STOP = "stopped without recording why"
 NOT_STARTED = "not started"
 
 
+def spawn_live_view(argv: list[str], log: Path, cwd: Path, port: int) -> tuple[subprocess.Popen, int] | None:
+    """Start a live view, `argv` asking for `port` (0: a free one), in a session of its own with its output appended
+    to `log`, and wait until it says where it serves. None when it couldn't listen on a port it was given, so the
+    caller binds a free one instead."""
+    offset = log.stat().st_size if log.exists() else 0
+    with open(log, "a") as out:
+        proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        for line in log.read_text()[offset:].splitlines():
+            with contextlib.suppress(ValueError):
+                said = json.loads(line)
+                if said.get("live") and said.get("ok"):
+                    return proc, int(str(said["live"]).rsplit(":", 1)[1])
+                if said.get("code") == "live_unavailable" and port:
+                    proc.wait()
+                    return None
+        if proc.poll() is not None:
+            raise Stop(f"the live view stopped as it started: {log.read_text()[offset:][-400:].strip()}")
+        time.sleep(0.1)
+    stop_group(proc)
+    raise Stop(f"the live view didn't start within 60s; its log is {log}")
+
+
 def derived_live_port(top: str, key: str) -> int:
     """The port a delivery's live view asks for when none is recorded: the first eight bytes of the sha256 of
     `<top>\\0<key>`, big-endian, modulo the span, above the base. The same delivery in the same checkout always asks
@@ -14569,26 +14813,7 @@ class Supervisor:
         None when it couldn't listen on a port it was given, so the caller binds a free one instead."""
         c = self.c
         argv = [*self.child_argv("live"), "--port", str(port), "--status-file", str(c.state / SUPERVISOR_FILE)]
-        log = lead_file(c, "supervisor.live.log")
-        offset = log.stat().st_size if log.exists() else 0
-        with open(log, "a") as out:
-            proc = subprocess.Popen(argv, cwd=c.root, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-                                    start_new_session=True)
-        deadline = time.monotonic() + 60
-        while time.monotonic() < deadline:
-            for line in log.read_text()[offset:].splitlines():
-                with contextlib.suppress(ValueError):
-                    said = json.loads(line)
-                    if said.get("live") and said.get("ok"):
-                        return proc, int(str(said["live"]).rsplit(":", 1)[1])
-                    if said.get("code") == "live_unavailable" and port:
-                        proc.wait()
-                        return None
-            if proc.poll() is not None:
-                raise Stop(f"the live view stopped as it started: {log.read_text()[offset:][-400:].strip()}")
-            time.sleep(0.1)
-        stop_group(proc)
-        raise Stop(f"the live view didn't start within 60s; its log is {log}")
+        return spawn_live_view(argv, lead_file(c, "supervisor.live.log"), c.root, port)
 
     def say(self, line: str) -> None:
         """A line on the supervisor's output: held until the address is printed, so that stays its first line."""
@@ -16730,18 +16955,21 @@ def main(argv: list[str] | None = None) -> None:
     q.add_argument("--restart", action="store_true", help="discard the prepared round's results and prepare it again")
     q.add_argument("--plan", help=plan_help)
     q.add_argument("--lenses", help="with --plan: the comma-separated lenses, fixed at round 1 (later rounds keep them)")
-    q.set_defaults(fn=plan_review_prepare)
+    q.set_defaults(fn=with_preview(plan_review_prepare))
     q = command(review_commands, "reduce", help="check the lenses' results and record the round")
-    q.add_argument("--plan", help=plan_help); q.set_defaults(fn=plan_review_reduce)
+    q.add_argument("--plan", help=plan_help); q.set_defaults(fn=with_preview(plan_review_reduce))
     q = command(review_commands, "end", help="end a review that isn't converging, with the operator's reason")
     q.add_argument("--plan", help=plan_help)
-    q.add_argument("--reason", required=True); q.set_defaults(fn=plan_review_end)
+    q.add_argument("--reason", required=True); q.set_defaults(fn=with_preview(plan_review_end))
     q = command(review_commands, "check", help="validate plan-review-evidence/1 records, hand-written or written by a review")
     q.add_argument("records", nargs="+", metavar="RECORD"); q.set_defaults(fn=plan_review_check)
     p = command(sub, "plan-view", help="build or rebuild a plan's preview record from the plan at HEAD and its review "
                 "store, with no delivery")
     p.add_argument("--plan", required=True, help="the plan, by its repository-relative path; its front matter names "
                    "its reviewSlug")
+    p.add_argument("--stop", action="store_true", help="stop the preview's live view and hosted publisher, by the "
+                   "pids its folder records")
+    p.add_argument("--finish-handed", action="store_true", help=argparse.SUPPRESS)
     p.set_defaults(fn=plan_view_command)
     p = command(sub, "gate"); p.add_argument("key")
     p.add_argument("--skip-guards", action="store_true", help="don't run the binding's guards first; needs --why")

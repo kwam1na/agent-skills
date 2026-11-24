@@ -21,6 +21,9 @@ from tests.test_run_delivery import POSIX_ONLY, Fixture, commit, installed_relea
 from tests.test_run_delivery_plan_review import OC, finding, results, slug_store
 
 PREFIX = "Plan preview (agent review only): "
+HOSTED = {"spec": "delivery-views-config/1", "hosted": {"origin": "https://deliveries.example.com",
+                                                        "repositoryId": "repo_A", "tokenEnv": "FIXTURE_PUBLISH_TOKEN"}}
+UNPUBLISHED = "plan preview (hosted): not published: FIXTURE_PUBLISH_TOKEN is unset"
 
 PLAN = """---
 title: Saved addresses
@@ -161,6 +164,10 @@ class PlanPreviewTests(unittest.TestCase):
             setattr(cls, name, value)
         cls.fx = Fixture(cls.generation, cls.receipt)
         cls.addClassCleanup(cls.fx.close)
+        # Hosted publishing configured with no token: the preview is built and says it wasn't published, and nothing
+        # starts. With neither a live view nor hosted publishing, plan-view builds nothing at all.
+        (cls.fx.main / ".agents/delivery-views.json").write_text(json.dumps(HOSTED))
+        commit(cls.fx.main, "hosted publishing, with no token here")
         scripts = str(cls.fx.release / "skills/delivery-views/scripts")
         sys.path.insert(0, scripts)
         cls.addClassCleanup(sys.path.remove, scripts)
@@ -179,6 +186,8 @@ class PlanPreviewTests(unittest.TestCase):
     def view(self, path: str, code: int = 0) -> str:
         done, out = self.fx.flow("plan-view", "--plan", path, cwd=self.fx.main)
         self.assertEqual(done, code, out)
+        if code == 0:
+            self.assertEqual(out, UNPUBLISHED + "\n")
         return out
 
     def start(self, path: str) -> subprocess.Popen:
@@ -236,6 +245,7 @@ class PlanPreviewTests(unittest.TestCase):
         self.assertEqual([kind["id"] for kind in plan["proofKinds"]], ["review", "handed", "merged"])
         self.assertNotIn("planReview", plan)
         self.assertEqual(facts, {"slug": "addresses", "plan": "docs/plans/addresses.md", "commit": head})
+        self.assertFalse((here := folder(self.fx, "addresses") / "live.json").exists(), here)
 
     def test_a_plan_outside_the_delivery_layout_still_previews(self) -> None:
         self.write("docs/plans/other.md", OTHER.format(slug="other"), "other: the plan")
@@ -348,7 +358,14 @@ class PlanPreviewTests(unittest.TestCase):
         store.rename(moved)
         store.mkdir()
         (store / "adopted.json").write_text(json.dumps({"delivery": "FX-9", "store": str(moved), "at": "now"}))
-        self.view(path)
+        done, out = self.fx.flow("plan-view", "--plan", path, cwd=self.fx.main)
+        self.assertEqual((done, out), (0, "plan preview: handed to delivery FX-9; its preview stops once the hosted "
+                                          "page shows that\n"))
+        here = folder(self.fx, slug)
+        deadline = time.monotonic() + 60
+        while "live: " not in ((here / "finish.log").read_text() if (here / "finish.log").exists() else ""):
+            self.assertLess(time.monotonic(), deadline, "the handed finish ends")
+            time.sleep(0.1)
         plan, _, _ = self.built(slug)
         self.assertEqual((plan["preview"]["approval"], plan["preview"]["delivery"]), ("handed", "FX-9"))
         self.assertEqual(plan["planReview"], expected)
