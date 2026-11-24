@@ -132,6 +132,15 @@ a.run-commit { text-decoration: underline; text-decoration-color: color-mix(in s
 .run-closures.is-other > summary:has(.run-closure-sev) { grid-template-columns: minmax(0, 1fr) auto auto 10px; }
 .run-closure-resolution { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--ink, #161a1d); }
 .run-closure-evidence { margin: 2px 0 0; font-size: 12px; color: var(--faint, #868f94); }
+/* Opened, the fix sits on its own sheet beneath the finding: a quiet panel led by how it ended, so the two never run
+   together as one paragraph. */
+.run-closure-fix { margin: 10px 0 8px; padding: 10px 12px 11px; border-radius: 8px;
+  background: color-mix(in srgb, var(--ink, #161a1d) 4%, transparent); border: 1px solid color-mix(in srgb, var(--ink, #161a1d) 7%, transparent); }
+.run-closure-fix .run-closure-evidence { margin: 0; font: 500 11px/16px var(--mono, ui-monospace, monospace); color: var(--soft, #4d545a); letter-spacing: .01em; }
+.run-closure-fix .run-closure-resolution { margin-top: 6px; color: var(--soft, #4d545a); }
+.run-closures.is-fixed .run-closure-fix .run-closure-evidence::before { content: ""; display: inline-block; width: 3.5px; height: 7px; margin: 0 8px 2px 2px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(40deg); vertical-align: middle; }
+.run-closures .run-closure-fix + .run-closure { margin-top: 0; }
 /* A lens whose notes were all fixed is one line, its count faint beside its name; a lens with any other ending folds
    only its fixed notes, beneath a count of their own. Both open with the chevron the notes use. */
 .run-closure-lens > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; }

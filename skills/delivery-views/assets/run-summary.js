@@ -626,9 +626,16 @@ function runSummaryNode(summary, options) {
     preview.appendChild(node("span", "run-fate", endingOf(entry)));
     disclosure.appendChild(preview);
     if (finding) {
-      disclosure.appendChild(node("p", "run-closure-resolution", entry.resolution));
-      if (typeof entry.fixCommit === "string") { disclosure.appendChild(line("run-closure-evidence", ["Fixed in ", [entry.fixCommit]])); }
-      if (typeof entry.deferredIssue === "string" && entry.deferredIssue) { disclosure.appendChild(followUpNode(entry.deferredIssue)); }
+      // What was done about it, set apart from the finding above: a sheet that leads with how it ended and the commit
+      // that shows it, then the resolution in its own words, then any follow-up.
+      var ending = endingOf(entry);
+      var fix = node("div", "run-closure-fix");
+      fix.appendChild(typeof entry.fixCommit === "string"
+        ? line("run-closure-evidence", [ending.charAt(0).toUpperCase() + ending.slice(1) + " in ", [entry.fixCommit]])
+        : node("p", "run-closure-evidence", ending.charAt(0).toUpperCase() + ending.slice(1)));
+      fix.appendChild(node("p", "run-closure-resolution", entry.resolution));
+      if (typeof entry.deferredIssue === "string" && entry.deferredIssue) { fix.appendChild(followUpNode(entry.deferredIssue)); }
+      disclosure.appendChild(fix);
     }
     disclosure.appendChild(node("p", "run-closure", entry.id));
     item.appendChild(runFold(disclosure, { key: "closure:" + (summary.observationKey || summary.runId || "") + ":" + round.round + ":" + entry.id, oneLine: true }));
