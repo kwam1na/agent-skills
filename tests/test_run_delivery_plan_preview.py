@@ -442,6 +442,21 @@ class PlanPreviewTests(unittest.TestCase):
         self.view(path)
         self.assertEqual([entry["kind"] for entry in journal(self.fx, slug)], ["plan.updated", "plan.updated"])
         self.assertNotEqual((here / "plan.json").read_bytes(), before)
+        # On a first build the plan written is removed, so the next build is a first build again.
+        first, slug = "docs/plans/refused-first.md", "refused-first"
+        self.write(first, PLAN.format(slug=slug), "refused-first: the plan")
+        fresh = folder(self.fx, slug)
+        fresh.mkdir(parents=True)
+        (fresh / "journal.jsonl").touch(0o444)
+        self.addCleanup((fresh / "journal.jsonl").chmod, 0o644)
+        refused = self.start(first)
+        out, _ = refused.communicate(timeout=120)
+        self.assertNotEqual(refused.returncode, 0, out)
+        self.assertFalse((fresh / "plan.json").exists())
+        (fresh / "journal.jsonl").chmod(0o644)
+        self.view(first)
+        self.assertEqual([entry["kind"] for entry in journal(self.fx, slug)], ["plan.updated"])
+        self.assertTrue((fresh / "plan.json").exists())
 
 
 if __name__ == "__main__":
