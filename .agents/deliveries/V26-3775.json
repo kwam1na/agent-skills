@@ -198,7 +198,7 @@
       "criteria": [
         {
           "id": "v26-3807-1",
-          "text": "run-delivery's Host behaviour says that where the host offers an in-app browser the agent opens each live view or hosted address a command prints there in the same turn (lead-init, lead-run, doctor/view, status lines, plan-view's links), with printing the address as the fallback; no command calls a host's interface; other skills that hand a live address say the same in one sentence; provenance refreshed and pins green."
+          "text": "run-delivery's Host behaviour says the agent opens each live view or hosted address a command prints (lead-init, lead-run, doctor/view, status lines, plan-view's links) in a browser in the same turn, whatever its host: one the host shows beside the conversation where it has one, else the operator's own; printing the address is the fallback when it can open none. The text names no host, product or host tool; no command calls a host's interface; other skills that hand a live address say the same in one sentence; provenance refreshed and pins green."
         }
       ],
       "after": [
