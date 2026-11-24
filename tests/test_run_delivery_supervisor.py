@@ -6981,5 +6981,88 @@ class LeadEndsAFailedRunTests(unittest.TestCase):
         self.assertEqual(len(kinds(fx, "base.broken")), 1)
 
 
+class LaneChangesBytesTests(unittest.TestCase):
+    """The pass's lane-changes step reads git output that isn't UTF-8 without ending: a claimed binary file at the base,
+    and a branch's file named with bytes that aren't UTF-8, shown with replacement characters."""
+
+    def delivery(self):
+        from tests.test_lane_changes import Delivery
+        folder = Path(tempfile.mkdtemp(prefix="lane-changes-bytes-"))
+        self.addCleanup(subprocess.run, ["rm", "-rf", str(folder)])
+        here = os.getcwd()
+        # Acceptance's whole-file check reads the diff in the working directory, which a pass runs in the lead's.
+        os.chdir(folder)
+        self.addCleanup(os.chdir, here)
+        made = Delivery(folder)
+        os.chdir(made.lead)
+        return made
+
+    @staticmethod
+    def push_named(d, checkout: Path, name: bytes, data: bytes) -> str:
+        """Commits and pushes a file whose name is `name`, through the index, since APFS refuses a name that isn't
+        UTF-8 on disk."""
+        def git_bytes(*argv, stdin: bytes | None = None) -> bytes:
+            return subprocess.run([b"git", b"-c", b"core.hooksPath=/dev/null", *argv], cwd=checkout, input=stdin,
+                                  capture_output=True, check=True).stdout.strip()
+        oid = git_bytes(b"hash-object", b"-w", b"--stdin", stdin=data)
+        git_bytes(b"update-index", b"--add", b"--cacheinfo", b"100644," + oid + b"," + name)
+        git_bytes(b"-c", b"user.name=t", b"-c", b"user.email=t@t", b"commit", b"-q", b"-m", b"odd name")
+        branch = git_bytes(b"rev-parse", b"--abbrev-ref", b"HEAD")
+        git_bytes(b"push", b"-q", b"origin", b"HEAD:refs/heads/" + branch)
+        return git_bytes(b"rev-parse", b"HEAD").decode()
+
+    def test_a_claimed_binary_file_at_the_base_leaves_the_step_complete(self) -> None:
+        d = self.delivery()
+        # The bytes that ended the step in a live delivery: a font a lane held whole, read as text for its line count.
+        font = b"wOF2\x00\x01\x00\x00\x00\x00\x10\x00\x00\x0a\x00\x00\x00\x00\x20\xcc\x41\n\x00\xff"
+        d.land({"docs/note.md": "note\n"})
+        landing = d.folder / "landing"
+        (landing / "docs/font.woff2").write_bytes(font)
+        git_run = lambda *argv: subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *argv], cwd=landing,
+                                               check=True, capture_output=True)
+        git_run("add", "-A")
+        git_run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "font")
+        git_run("push", "-q", "origin", "HEAD:refs/heads/main")
+        d.state["laneRegions"] = [{"lane": "lane-2", "path": "src/shared.py", "baseHead": d.base, "start": 1, "end": 3}]
+        checkout = d.story("S-1", "lane-1")
+        d.push(checkout, {"src/one.py": "def one():\n    return 11\n"})
+        changes, items = d.one_pass()
+        self.assertEqual([(f["path"], f["holds"]) for f in changes["lanes"]["lane-1"]["files"]], [("src/one.py", "file")])
+        font_entry = next(f for f in changes["files"] if f["path"] == "docs/font.woff2")
+        self.assertEqual(font_entry["lanes"], ["lane-1"])
+        self.assertEqual(font_entry["lines"], len(font.decode("utf-8", "replace").splitlines()))
+        # A text file's count is the one the step gave before.
+        guide = next(f for f in changes["files"] if f["path"] == "docs/guide.md")
+        self.assertEqual(guide["lines"], len("# Guide\n\n## Setup\n\nRun it.\n".splitlines()))
+        self.assertEqual(items, [])
+
+    def test_a_branch_file_named_with_bytes_that_arent_utf8_is_shown_with_replacement_characters(self) -> None:
+        for regions in (False, True):
+            with self.subTest(regions=regions):
+                d = self.delivery()
+                if regions:
+                    d.state["laneRegions"] = [{"lane": "lane-2", "path": "src/shared.py", "baseHead": d.base,
+                                               "start": 1, "end": 3}]
+                checkout = d.story("S-1", "lane-1")
+                ordinary = d.story("S-2", "lane-2")
+                d.push(ordinary, {"src/two.js": "function two() {\n  return 22;\n}\n"})
+                self.push_named(d, checkout, b"docs/caf\xe9.md", b"# Caf\n")
+                self.push_named(d, checkout, b"src/caf\xcc.py", b"def cafe():\n    return 1\n")
+                changes, items = d.one_pass()
+                odd = changes["lanes"]["lane-1"]
+                self.assertNotIn("unreadable", odd)
+                self.assertEqual([(f["path"], f["holds"], [c["name"] for c in f["changes"]]) for f in odd["files"]],
+                                 [("docs/caf\ufffd.md", "file", ["Caf"]), ("src/caf\ufffd.py", "none", ["cafe"])])
+                # An ordinary branch reads as it did.
+                self.assertEqual(changes["lanes"]["lane-2"]["files"], [{"path": "src/two.js", "holds": "file", "changes": [
+                    {"old": 2, "removed": 1, "start": 2, "added": 1, "name": "two", "inside": True}]}])
+                self.assertEqual([item["text"] for item in items],
+                                 ["Lane 1 changed `src/caf\ufffd.py`, which it doesn't hold."])
+                # The next pass keeps the read and judges it the same.
+                again, again_items = d.one_pass()
+                self.assertEqual(again["lanes"], changes["lanes"])
+                self.assertEqual(again_items, items)
+
+
 if __name__ == "__main__":
     unittest.main()
