@@ -984,3 +984,49 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
   .plan-grid-head { display: none; }
   .plan-unit { grid-template-columns: 1fr; gap: 10px; }
 }
+
+/* Pages: one chapter at a time. */
+body.paged .chapter + .chapter { border-top: 0; }
+body.paged .chapter { min-height: 100vh; min-height: 100dvh; box-sizing: border-box; display: flex; flex-direction: column; }
+body.paged .chapter > .inner { flex: 1 0 auto; }
+body.paged .chapter[hidden] { display: none; }
+.page-foot { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 980px; width: 100%; margin: 72px auto 0; }
+.page-step { display: grid; gap: 4px; padding: 16px 18px; border: 1px solid var(--hair); border-radius: 12px; text-decoration: none; color: var(--ink); }
+.page-step.is-next { text-align: right; }
+.page-step.is-none { border: 0; }
+.page-step:hover { border-color: var(--edge); background: var(--well); }
+.page-step:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.page-step-word { font-size: 12px; color: var(--faint); }
+.page-step.is-prev .page-step-word::before { content: "\2190  "; }
+.page-step.is-next .page-step-word::after { content: "  \2192"; }
+.page-step-name { font-size: 17px; letter-spacing: -0.01em; }
+.page-where { position: fixed; top: 14px; left: max(24px, env(safe-area-inset-left, 0px)); z-index: 20; max-width: min(46vw, 520px);
+  height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 10px; background: var(--paper, transparent);
+  font-size: 13px; color: var(--faint); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-where:hover { color: var(--ink); }
+.page-where[hidden] { display: none; }
+
+/* The corner's chapter tab, beside the theme switch. */
+.chapter-tab { position: relative; display: flex; align-items: center; border-right: 1px solid var(--hair); padding-right: 3px; margin-right: 1px; }
+.chapter-tab-button { height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 0; border-radius: 7px;
+  background: none; color: var(--faint); font: inherit; font-size: 12.5px; cursor: pointer; }
+.chapter-tab-button:hover, .chapter-tab-button[aria-expanded="true"] { color: var(--ink); }
+.chapter-tab-button[aria-expanded="true"] { background: var(--well); box-shadow: var(--shadow-press); }
+.chapter-tab-button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.chapter-tab-button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.chapter-tab-button .chapter-tab-chevron { width: 12px; height: 12px; }
+.chapter-tab-label { color: var(--ink); white-space: nowrap; }
+.chapter-tab-list { position: absolute; top: calc(100% + 8px); right: -3px; min-width: 220px; margin: 0; padding: 6px; list-style: none;
+  border: 1px solid var(--hair); border-radius: 12px; background: var(--lift); box-shadow: 0 12px 32px rgba(0, 0, 0, .18); }
+.chapter-tab-list[hidden] { display: none; }
+.chapter-tab-list a { display: grid; grid-template-columns: 26px 1fr; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 8px;
+  color: var(--ink); text-decoration: none; font-size: 13.5px; }
+.chapter-tab-list a:hover, .chapter-tab-list a:focus-visible { background: var(--well); outline: none; }
+.chapter-tab-list a[aria-current="page"] { background: var(--well); box-shadow: var(--shadow-press); }
+.chapter-tab-index { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+@media (max-width: 720px) {
+  .chapter-tab-label { max-width: 9ch; overflow: hidden; text-overflow: ellipsis; }
+  .page-where { display: none; }
+  .page-foot { margin-top: 48px; }
+  .page-step-name { font-size: 15px; }
+}

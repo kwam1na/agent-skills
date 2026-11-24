@@ -457,7 +457,7 @@
   if (typeof IntersectionObserver === "function") {
     var watch = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
-        if (!entry.isIntersecting) { return; }
+        if (!entry.isIntersecting || PAGED) { return; }
         Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
           link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + entry.target.id));
         });
@@ -479,6 +479,154 @@
     }, { threshold: 0.2 });
     Array.prototype.forEach.call(app.querySelectorAll(".chapter"), function (section) { arrive.observe(section); });
   }
+
+  // Pages: each chapter is its own page, routed by the address's hash (#now, #line, ...). A hash that names something
+  // inside a chapter opens that chapter's page and brings the thing into view. The rail, the corner's chapter tab and
+  // each page's foot step between pages; [ and ] do too. With no hash the page opens on Now.
+  var PAGED = true;
+  var currentPage = null;
+  var corner = document.querySelector(".corner");
+  var themeSwitch = document.querySelector(".theme-switch");
+  if (!corner && themeSwitch) {
+    // The hosted page has no operator mark, so the switch stands alone; the tab joins it in a corner group.
+    corner = el("div", "corner");
+    themeSwitch.parentNode.insertBefore(corner, themeSwitch);
+    corner.appendChild(themeSwitch);
+  }
+  var tab = el("div", "chapter-tab");
+  var tabButton = el("button", "chapter-tab-button");
+  tabButton.type = "button";
+  tabButton.setAttribute("aria-haspopup", "true");
+  tabButton.setAttribute("aria-expanded", "false");
+  tabButton.setAttribute("aria-controls", "chapter-tab-list");
+  var tabIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  tabIcon.setAttribute("viewBox", "0 0 24 24");
+  tabIcon.setAttribute("aria-hidden", "true");
+  tabIcon.innerHTML = '<path d="M9 6h11M9 12h11M9 18h11M5 6h.01M5 12h.01M5 18h.01"/>';
+  var tabLabel = el("span", "chapter-tab-label", "Now");
+  var tabChevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  tabChevron.setAttribute("viewBox", "0 0 24 24");
+  tabChevron.setAttribute("aria-hidden", "true");
+  tabChevron.setAttribute("class", "chapter-tab-chevron");
+  tabChevron.innerHTML = '<path d="M6 9l6 6l6 -6"/>';
+  add(tabButton, tabIcon, tabLabel, tabChevron);
+  var tabList = el("ol", "chapter-tab-list");
+  tabList.id = "chapter-tab-list";
+  tabList.hidden = true;
+  add(tab, tabButton, tabList);
+  if (corner) { corner.insertBefore(tab, corner.querySelector(".theme-switch")); }
+  // The delivery's name stays in the top-left corner on every page but Now, which opens with it.
+  var where = el("a", "page-where");
+  where.setAttribute("href", "#now");
+  document.body.appendChild(where);
+
+  function chapterIds() { return Array.prototype.map.call(app.querySelectorAll(".chapter"), function (section) { return section.id; }); }
+  function chapterName(id) {
+    var link = rail.querySelector('a[href="#' + id + '"]');
+    return link ? link.getAttribute("aria-label") : id;
+  }
+  function fillTab() {
+    var ids = chapterIds();
+    tabList.replaceChildren();
+    ids.forEach(function (id, index) {
+      var link = el("a");
+      link.setAttribute("href", "#" + id);
+      if (id === currentPage) { link.setAttribute("aria-current", "page"); }
+      add(link, el("span", "chapter-tab-index", String(index + 1).padStart(2, "0")), el("span", null, chapterName(id)));
+      tabList.appendChild(add(el("li"), link));
+    });
+  }
+  function openTab(open) {
+    tabList.hidden = !open;
+    tabButton.setAttribute("aria-expanded", String(open));
+    if (open) {
+      fillTab();
+      var current = tabList.querySelector('[aria-current="page"]') || tabList.querySelector("a");
+      if (current) { current.focus(); }
+    }
+  }
+  tabButton.addEventListener("click", function () { openTab(tabList.hidden); });
+  tabList.addEventListener("click", function (event) { if (event.target.closest && event.target.closest("a")) { openTab(false); } });
+  tabList.addEventListener("keydown", function (event) {
+    var links = Array.prototype.slice.call(tabList.querySelectorAll("a"));
+    var at = links.indexOf(document.activeElement);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      var next = links[(at + (event.key === "ArrowDown" ? 1 : links.length - 1)) % links.length];
+      if (next) { next.focus(); }
+    }
+  });
+  document.addEventListener("click", function (event) { if (!tab.contains(event.target)) { openTab(false); } });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && !tabList.hidden) { openTab(false); tabButton.focus(); return; }
+    var typing = event.target && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
+    if (typing || event.metaKey || event.ctrlKey || event.altKey) { return; }
+    if (event.key === "[" || event.key === "]") {
+      var ids = chapterIds();
+      var to = ids[ids.indexOf(currentPage) + (event.key === "]" ? 1 : -1)];
+      if (to) { location.hash = to; }
+    }
+  });
+
+  /** Each page's foot: the pages before and after it. */
+  function footOf(section) {
+    var foot = section.querySelector(":scope > .page-foot");
+    if (!foot) { foot = el("nav", "page-foot"); foot.setAttribute("aria-label", "Pages"); section.appendChild(foot); }
+    var ids = chapterIds();
+    var at = ids.indexOf(section.id);
+    foot.replaceChildren();
+    [[ids[at - 1], "prev", "Previous"], [ids[at + 1], "next", "Next"]].forEach(function (step) {
+      if (!step[0]) { foot.appendChild(el("span", "page-step is-" + step[1] + " is-none")); return; }
+      var link = el("a", "page-step is-" + step[1]);
+      link.setAttribute("href", "#" + step[0]);
+      add(link, el("span", "page-step-word", step[2]), el("span", "page-step-name", chapterName(step[0])));
+      foot.appendChild(link);
+    });
+  }
+
+  /** Shows one chapter's page; with a target inside it, brings the target into view. */
+  function showPage(id, target) {
+    var ids = chapterIds();
+    if (ids.indexOf(id) < 0) { id = ids[0]; }
+    var changed = id !== currentPage;
+    currentPage = id;
+    document.body.classList.add("paged");
+    Array.prototype.forEach.call(app.querySelectorAll(".chapter"), function (section) {
+      var on = section.id === id;
+      section.hidden = !on;
+      if (on) { footOf(section); }
+    });
+    Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
+      link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + id));
+    });
+    tabLabel.textContent = chapterName(id);
+    tabButton.setAttribute("aria-label", "Chapters: " + chapterName(id));
+    var heading = document.querySelector("h1");
+    where.textContent = heading ? heading.textContent : document.title;
+    where.hidden = id === ids[0];
+    document.title = (heading ? heading.textContent : document.title.split(" · ").pop()).replace(/\s+/g, " ") +
+      (id === ids[0] ? "" : " · " + chapterName(id));
+    if (target && target !== app.querySelector("#" + id) && typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ block: "center" });
+    } else if (changed) {
+      window.scrollTo(0, 0);
+    }
+  }
+  /** The page a node lives on, opened, so a caller can bring the node into view. */
+  function revealPage(node) {
+    var section = node && node.closest ? node.closest(".chapter") : null;
+    if (section && section.id !== currentPage) {
+      if (history.replaceState) { history.replaceState(null, "", "#" + section.id); }
+      showPage(section.id);
+    }
+  }
+  function route() {
+    var hash = decodeURIComponent((location.hash || "").slice(1));
+    var target = hash ? document.getElementById(hash) : null;
+    var section = target && target.closest ? target.closest(".chapter") : null;
+    showPage(section ? section.id : hash, target);
+  }
+  window.addEventListener("hashchange", route);
 
   // One card for the whole page, kept outside the chapters so no redraw removes it.
   var card = el("div", "issue-card");
@@ -3082,6 +3230,7 @@
           if (!stop) { return; }
           stop.click();
           var section = parts.line.closest ? parts.line.closest(".chapter") || parts.line : parts.line;
+          revealPage(section);
           if (typeof section.scrollIntoView === "function") { section.scrollIntoView({ behavior: reduced() ? "auto" : "smooth", block: "start" }); }
           // The stop is pointed out by its ticket's card, as if pointed at, once the page has stopped moving: a scroll
           // hides the card, so it is shown after the last one. It goes with the reader's next scroll.
@@ -3974,6 +4123,7 @@
         row = planRows["all:" + subject];
       }
       if (row) {
+        revealPage(row);
         if (typeof row.scrollIntoView === "function") { row.scrollIntoView({ block: "center" }); }
         row.focus({ preventScroll: true });
       }
@@ -4317,6 +4467,7 @@
       if (!target) { return; }
       event.preventDefault();
       target.focus();
+      revealPage(target);
       if (typeof target.scrollIntoView === "function") { target.scrollIntoView({ block: "nearest" }); }
     });
     return add(el("p", "chapter-setback" + (row.state === "open" ? " is-open" : "")), glyph("stop"), link);
@@ -4542,6 +4693,8 @@
         try { draw(lastGood); } catch (again) { /* the last drawing stays */ }
       }
     }
+    // Every draw keeps the reader on their page; the first one opens the page the address names.
+    if (PAGED) { if (currentPage === null) { route(); } else { showPage(currentPage); } }
   }
 
   safely(embedded);
