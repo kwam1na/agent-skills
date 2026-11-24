@@ -743,6 +743,7 @@
       foot.style.setProperty("--pull-next", String(pull.dir > 0 ? share : 0));
       foot.style.setProperty("--pull-prev", String(pull.dir < 0 ? share : 0));
       foot.classList.toggle("is-pulled", share > 0);
+      if (share > 0) { foot.setAttribute("data-pull", pull.dir > 0 ? "next" : "prev"); } else { foot.removeAttribute("data-pull"); }
     }
   }
   function resetPull() { pull.dir = 0; pull.amount = 0; drawPull(); }

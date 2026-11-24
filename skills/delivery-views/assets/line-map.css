@@ -1163,3 +1163,15 @@ body:not(.paged) .chapter-tab-hint { display: none; }
 
 .ap-how { margin: 2px 0 0; font-size: 13px; color: var(--soft); }
 }
+
+/* The foot stays quiet until the reader leans one way: the end leaned toward (hovered, focused or pulled toward)
+   comes up to full strength, and the line wakes with any lean. */
+.page-foot .foot-end, .page-foot .foot-track { transition: opacity .25s var(--ease); }
+.page-foot .foot-end { opacity: .38; }
+.page-foot .foot-track { opacity: .6; }
+.page-foot .foot-end:hover, .page-foot .foot-end:focus-visible,
+.page-foot[data-pull="next"] .is-next, .page-foot[data-pull="prev"] .is-prev,
+.page-foot[data-lean="next"] .is-next, .page-foot[data-lean="prev"] .is-prev, .page-foot[data-lean="loop"] .is-next { opacity: 1; }
+.page-foot[data-lean] .foot-track, .page-foot[data-pull] .foot-track, .page-foot .foot-track:hover, .page-foot .foot-track:focus-within { opacity: 1; }
+@media (hover: none) { .page-foot .foot-end { opacity: .7; } .page-foot .foot-track { opacity: .85; } }
+@media (prefers-reduced-motion: reduce) { .page-foot .foot-end, .page-foot .foot-track { transition: none; } }
