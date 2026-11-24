@@ -3770,6 +3770,7 @@
     entries.forEach(function (entry) {
       var parts = approvalParts(entry);
       var row = el("details", "ap-row");
+      row.addEventListener("toggle", function () { if (row.classList.contains("is-whole") && row.open) { row.open = false; } });
       var summary = el("summary");
       var id = text(entry.id);
       // An id that only numbers its row (handoff-3) says nothing a reader needs; a named one (PD1, O25) does.
@@ -3777,37 +3778,13 @@
       var who = text(entry.who);
       add(summary, el("span", "ap-id", shownId), el("span", "ap-title", parts.title), el("span", "ap-who", who === parts.title ? "" : who),
         el("span", "ap-caret"));
-      add(row, summary, parts.rest ? el("p", "ap-rest", parts.rest) : null, requestLine(shownId, parts.title));
+      add(row, summary, parts.rest ? el("p", "ap-rest", parts.rest) : null);
+      if (!parts.rest) { row.classList.add("is-whole"); }
       listing.appendChild(add(el("li"), row));
     });
     // What clears the flag. The operator doesn't run anything: they tell the agent leading the work, which records it.
-    var how = el("p", "ap-how", "Tell the agent leading this which you approve, and it records each one in the plan. Open a row for a request you can paste.");
+    var how = el("p", "ap-how", "Tell the agent leading this which you approve; it records each one in the plan.");
     return add(el("div", "ap"), owners.length > 1 ? byOwner : null, listing, how);
-  }
-  /** An approval as a request to the agent leading the work, ready to paste into its conversation. */
-  function requestLine(id, title) {
-    var request = "Approve " + (id ? id + " (" + title + ")" : "“" + title + "”") + ".";
-    var copy = el("button", "ap-copy", "Copy");
-    copy.type = "button";
-    copy.setAttribute("aria-label", "Copy the request: " + request);
-    var said = el("q", "ap-request", request);
-    function selectRequest() {
-      var range = document.createRange();
-      range.selectNodeContents(said);
-      var picked = window.getSelection();
-      picked.removeAllRanges();
-      picked.addRange(range);
-    }
-    copy.addEventListener("click", function (event) {
-      event.preventDefault();
-      var done = function () {
-        copy.textContent = "Copied";
-        copy.classList.add("is-done");
-        setTimeout(function () { copy.textContent = "Copy"; copy.classList.remove("is-done"); }, 1600);
-      };
-      if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(request).then(done, selectRequest); } else { selectRequest(); }
-    });
-    return add(el("div", "ap-act"), el("span", "ap-act-word", "Tell the agent"), said, copy);
   }
   function flagList(flags, closed) {
     var box = el("div", "plan-needs");
