@@ -236,8 +236,9 @@ A review note's reference to a file's lines, `(path:line)`, opens that file on
 the forge at the commit the note was written about, as on the local page, when
 the forge names a `fileUrl`. The cut carries each such link, and the service
 refuses any other. A service deployed before the release that carries file links
-shows the references unlinked: redeploy it from that release before a publisher
-whose forge names a `fileUrl` sends files.
+refuses a cut that carries them, with `invalid_projection`, so its page stops
+following the delivery: redeploy it from that release before a publisher whose
+forge names a `fileUrl` sends files.
 
 A plan's preview, published while the plan is still under agent review, is a cut
 like any other, published under its own key, `plan-<reviewSlug>`. Its plan

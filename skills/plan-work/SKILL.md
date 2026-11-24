@@ -112,8 +112,9 @@ preview and the hosted one, without being asked. Each `plan-review prepare`,
 `reduce` and `end` with `--plan` rebuilds the same preview and prints the same
 links; hand those over too. The preview shows the plan as the line map's plan
 chapter, with every review round, and says the review is agent-only until a
-person approves the plan. Where a command prints no link, the repository has no
-live view or hosted page for it: say nothing about a preview.
+person approves the plan. Where a command prints no preview line at all, the
+repository has no live view or hosted page for it: say nothing about a preview.
+A line saying the preview wasn't built or published is passed on as printed.
 
 ## Plan Extension Pins and Shared Resources
 

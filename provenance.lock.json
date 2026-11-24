@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "0e8155a693e9399396e748e0a910a90b243d4220d96f3a8d1ae6d16d7194eef5"
+          "sha256": "7bed47e5eb41521bcabfdfa095f6569957ba68f277df7d6d44727265d84cc5e8"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -1045,7 +1045,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "b54519f13ea809a42dfbc4db2c57275f3d191720c3b88fdc935dce7254940504"
+          "sha256": "52ebda0602a58cc8c9871555f0c527e2af1aa4d9cb67d3bdb61acacc1dd27ff3"
         }
       ],
       "owner": "agent-skills-corpus",
