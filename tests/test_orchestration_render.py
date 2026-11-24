@@ -2039,7 +2039,7 @@ class LiveRunsTests(DeliveryStateFixture):
             "import json, os, sys\ndoc = json.load(sys.stdin)\nflag = os.environ.get('DELIVERY_LIVE_RUNS')\n"
             "text = doc['journal'][-1]['data']['text'] if 'journal' in doc else doc['spec']\n"
             "sys.stdout.write('<html><head><meta name=\"delivery-state-live\"></head><body>' + text + ' flag=' + str(flag)"
-            " + '</body></html>')\n", self.tools, "record")]}
+            " + ' previews=' + str(os.environ.get('DELIVERY_PLAN_PREVIEWS')) + '</body></html>')\n", self.tools, "record")]}
 
     def config_with_runs(self, mode: str = "ok", home: bool = True, timeout: int = 10) -> str:
         inventory = [*python_argv(INVENTORY, self.tools, "inventory"), str(self.store), str(self.counter("inventory")),
@@ -2374,13 +2374,36 @@ class LiveRunsTests(DeliveryStateFixture):
         while not client.runs and time.monotonic() < deadline:
             time.sleep(0.05)
         self.assertTrue(client.runs, "an open runs page is told the previews moved")
+        # The list goes to the runs renderer alone: another view of the same server is never given it.
+        self.assertIn(b"previews=None", self.eventually(client, "view/record.html", bool))
+        # A preview.json rewritten while its server runs: its row gains the title and hosted link it now names.
+        (folders["b"] / "preview.json").write_text(json.dumps({"title": "Plan B", "hosted": hosted}), encoding="utf-8")
+        rows[1] = {"live": address["b"], "plan": "b", "title": "Plan B", "hosted": hosted}
+        self.eventually(client, "view/runs.html", lambda page: self.previews_on(page) == rows)
+        # A preview server that dies leaving its entry: its row goes.
+        servers["c"][0].kill()
+        servers["c"][0].wait(10)
+        self.assertTrue((self.entries / f"{servers['c'][0].pid}.json").exists())
+        rows.pop()
+        self.eventually(client, "view/runs.html", lambda page: self.previews_on(page) == rows)
         # --stop on one preview's folder stops that server alone, and its row goes.
         stopped = run([sys.executable, "-B", str(WRAPPER), "live", "--dir", str(folders["a"]), "--stop"])
         self.assertEqual(stopped.returncode, 0, stopped.stdout)
         self.assertEqual([entry["pid"] for entry in json.loads(stopped.stdout)["stopped"]], [servers["a"][0].pid])
         self.assertEqual(servers["a"][0].wait(10), 128 + signal.SIGTERM)
-        self.assertTrue(servers["b"][0].poll() is None and servers["c"][0].poll() is None and quiet.poll() is None)
+        self.assertTrue(servers["b"][0].poll() is None and quiet.poll() is None)
         self.eventually(client, "view/runs.html", lambda page: self.previews_on(page) == rows[1:])
+
+    def test_previews_are_listed_in_their_folders_order_and_at_most_the_limit(self) -> None:
+        count = render_state.PREVIEW_LIMIT + 5
+        # Entries in pid order, their folders in the reverse order, and one standing server among them.
+        entries = [{"pid": 1000 + index, "host": "127.0.0.1", "port": 5000 + index, "preview": True,
+                    "stateDirectory": str(self.root / f"p{count - index:02d}")} for index in range(count)]
+        entries.insert(3, {"pid": 999, "host": "127.0.0.1", "port": 4999, "stateDirectory": str(self.root / "p00")})
+        with mock.patch.object(render_state, "verified_entries", return_value=entries):
+            listed = render_state.plan_previews(self.common)
+        self.assertEqual([row["plan"] for row in listed], [f"p{index:02d}" for index in range(1, render_state.PREVIEW_LIMIT + 1)])
+        self.assertEqual(listed[0]["live"], f"127.0.0.1:{5000 + count - 1}")
 
     def test_stop_never_signals_an_entry_that_fails_verification(self) -> None:
         silent, stranger, reused = self.sleeper(), self.sleeper(), self.sleeper()
