@@ -590,20 +590,50 @@
     }
   });
 
-  /** Each page's foot: the pages before and after it. */
+  /** Each page's foot: a short line through every chapter, ink up to this one, with the pages either side at its
+   * ends. Leaning on an end draws the ink on toward that stop; the last page's far end goes back to the first. */
   function footOf(section) {
     var foot = section.querySelector(":scope > .page-foot");
-    if (!foot) { foot = el("nav", "page-foot"); foot.setAttribute("aria-label", "Pages"); section.appendChild(foot); }
+    if (!foot) { foot = el("nav", "page-foot"); foot.setAttribute("aria-label", "Chapters"); section.appendChild(foot); }
     var ids = chapterIds();
     var at = ids.indexOf(section.id);
+    var last = ids.length - 1;
+    var pct = function (index) { return String(last > 0 ? Math.max(0, Math.min(index, last)) / last : 0); };
+    var index2 = function (index) { return String(index + 1).padStart(2, "0"); };
     foot.replaceChildren();
-    [[ids[at - 1], "prev", "Previous"], [ids[at + 1], "next", "Next"]].forEach(function (step) {
-      if (!step[0]) { foot.appendChild(el("span", "page-step is-" + step[1] + " is-none")); return; }
-      var link = el("a", "page-step is-" + step[1]);
-      link.setAttribute("href", "#" + step[0]);
-      add(link, el("span", "page-step-word", step[2]), el("span", "page-step-name", chapterName(step[0])));
-      foot.appendChild(link);
+    foot.style.setProperty("--fill-at", pct(at));
+    foot.style.setProperty("--lean-prev", pct(at - 1));
+    foot.style.setProperty("--lean-next", pct(at + 1));
+    function end(kind, to, word, loop) {
+      if (to === undefined) { return el("span", "foot-end is-" + kind + " is-none"); }
+      var link = el("a", "foot-end is-" + kind + (loop ? " is-loop" : ""));
+      link.setAttribute("href", "#" + to);
+      var meta = el("span", "foot-meta");
+      add(meta, el("span", "foot-index", index2(ids.indexOf(to))), el("span", "foot-word", word));
+      var arrow = el("span", "foot-arrow");
+      arrow.setAttribute("aria-hidden", "true");
+      add(link, meta, add(el("span", "foot-name"), kind === "prev" ? arrow : null, el("span", null, chapterName(to)),
+        kind === "next" ? arrow : null));
+      link.setAttribute("aria-label", word + ": " + chapterName(to));
+      link.addEventListener("pointerenter", function () { foot.setAttribute("data-lean", loop ? "loop" : kind); });
+      link.addEventListener("pointerleave", function () { foot.removeAttribute("data-lean"); });
+      link.addEventListener("focus", function () { foot.setAttribute("data-lean", loop ? "loop" : kind); });
+      link.addEventListener("blur", function () { foot.removeAttribute("data-lean"); });
+      return link;
+    }
+    var track = el("ol", "foot-track");
+    track.setAttribute("aria-label", "Page " + (at + 1) + " of " + ids.length);
+    ids.forEach(function (id, index) {
+      var stop = el("a", "foot-stop " + (index < at ? "is-past" : index === at ? "is-here" : "is-ahead"));
+      stop.setAttribute("href", "#" + id);
+      stop.setAttribute("aria-label", index2(index) + " " + chapterName(id));
+      if (index === at) { stop.setAttribute("aria-current", "page"); }
+      stop.appendChild(el("span", "foot-stop-name", chapterName(id)));
+      track.appendChild(add(el("li"), stop));
     });
+    var onLast = at === last && last > 0;
+    add(foot, end("prev", ids[at - 1], "Previous"), track,
+      onLast ? end("next", ids[0], "Back to the start", true) : end("next", ids[at + 1], "Next"));
   }
 
   /** Shows one chapter's page; with a target inside it, brings the target into view. */
