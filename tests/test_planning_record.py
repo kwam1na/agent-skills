@@ -169,7 +169,9 @@ class PlanOpenTests(PlanningRecordCase):
 
 
 class PlanningSupervisorTests(PlanningRecordCase):
-    """plan-open starts the planning record's supervisor: its live view and the sync loop, and no queue."""
+    """plan-open starts the planning record's supervisor: its live view and the sync loop, and no queue. Hosted
+    publishing is its own owner process, which the supervisor starts as it starts for any record; the pass's publish
+    step, the binding's publishers with the tracker's among them, is left out."""
 
     def test_the_planning_supervisor_runs_the_view_and_the_sync_loop_and_passes_over_the_views_only(self) -> None:
         fx = self.fixture()
