@@ -608,7 +608,7 @@ function runSummaryNode(summary, options) {
     return found;
   }
   // One confirmed note, a fold of its own. It leads with what its lens found and how serious it was, from the round
-  // that raised it; opened, it shows how it was settled, the commit or follow-up that shows it, and the note's id. A
+  // that raised it; opened, it shows how it was settled, and the commit or follow-up that shows it. A
   // note whose finding no round on the page holds leads with its resolution, as before. A tick stands for "fixed",
   // said in words only for a screen reader, and any other ending is named.
   function closureRow(round, entry) {
@@ -636,8 +636,10 @@ function runSummaryNode(summary, options) {
       fix.appendChild(node("p", "run-closure-resolution", entry.resolution));
       if (typeof entry.deferredIssue === "string" && entry.deferredIssue) { fix.appendChild(followUpNode(entry.deferredIssue)); }
       disclosure.appendChild(fix);
+    } else {
+      // With no finding to lead with, the note's id is all the fold has to add.
+      disclosure.appendChild(node("p", "run-closure", entry.id));
     }
-    disclosure.appendChild(node("p", "run-closure", entry.id));
     item.appendChild(runFold(disclosure, { key: "closure:" + (summary.observationKey || summary.runId || "") + ":" + round.round + ":" + entry.id, oneLine: true }));
     return item;
   }

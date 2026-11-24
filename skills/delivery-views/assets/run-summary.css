@@ -127,14 +127,14 @@ a.run-commit { text-decoration: underline; text-decoration-color: color-mix(in s
 .run-closures[open] .run-finding-text { display: block; }
 .run-closures .run-closure { margin: 4px 0 6px; overflow-wrap: anywhere; font: 400 11px/16px var(--mono, ui-monospace, monospace); color: var(--faint, #868f94); }
 /* A confirmed note leads with what was found and how serious it was, its mark the band's own; a note with an ending
-   other than fixed names it after that. Opened, the fix reads beneath, then the commit that shows it, then the id. */
+   other than fixed names it after that. Opened, the fix reads beneath on its own sheet. */
 .run-closure-sev { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font: 400 11px/16px var(--mono, ui-monospace, monospace); color: var(--faint, #868f94); }
 .run-closures.is-other > summary:has(.run-closure-sev) { grid-template-columns: minmax(0, 1fr) auto auto 10px; }
 .run-closure-resolution { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--ink, #161a1d); }
 .run-closure-evidence { margin: 2px 0 0; font-size: 12px; color: var(--faint, #868f94); }
 /* Opened, the fix sits on its own sheet beneath the finding: a quiet panel led by how it ended, so the two never run
    together as one paragraph. */
-.run-closure-fix { margin: 14px 0 10px; padding: 12px 14px 13px; border-radius: 8px;
+.run-closure-fix { margin: 14px 0 12px; padding: 12px 14px 13px; border-radius: 8px;
   background: color-mix(in srgb, var(--ink, #161a1d) 4%, transparent); border: 1px solid color-mix(in srgb, var(--ink, #161a1d) 7%, transparent); }
 /* Opened, the finding reads as the question: a touch more weight above the fix's quieter answer. */
 .run-closures[open] > summary .run-finding-text { font-weight: 500; }
