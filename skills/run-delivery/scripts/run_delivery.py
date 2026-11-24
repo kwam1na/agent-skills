@@ -16469,9 +16469,12 @@ def plan_watch_command(args) -> None:
         raise Stop(f"--until {args.until!r} isn't a regular expression: {error}") from None
     if args.timeout < 0:
         raise Stop(f"--timeout must be zero or more seconds, not {args.timeout:g}")
-    code = plan_sync.watch(c.root, plan.as_posix(), branch, c.remote, _region_ownership(),
-                           poll=settings["pollSeconds"], timeout=args.timeout, until=args.until,
-                           write=lambda line: print(line, flush=True))
+    try:
+        code = plan_sync.watch(c.root, plan.as_posix(), branch, c.remote, _region_ownership(),
+                               poll=settings["pollSeconds"], timeout=args.timeout, until=args.until,
+                               write=lambda line: print(line, flush=True))
+    except plan_sync.Refused as error:
+        raise Stop(str(error)) from None
     if code:
         sys.exit(code)
 

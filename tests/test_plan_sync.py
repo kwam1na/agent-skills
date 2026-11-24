@@ -326,6 +326,33 @@ class PlanSyncTests(unittest.TestCase):
         self.sync(self.ours, path, branch)
         self.assertEqual(git("status", "--porcelain", cwd=self.ours), "")
 
+    def test_another_file_overlap_found_on_a_retry_puts_the_branch_back(self) -> None:
+        slug, branch, path = self.start()
+        notes = f"docs/{slug}-notes.md"
+        self.write(self.ours, notes, "ours notes\n")
+        git("add", notes, cwd=self.ours)
+        git("commit", "-qm", "notes", cwd=self.ours)
+        ours = plan(slug, edited(BASE, "## Alpha", "ours alpha"))
+        self.write(self.ours, path, ours)
+        before = self.surfaces(branch)
+
+        def overlapping(attempt: int) -> None:
+            self.write(self.theirs, notes, "theirs notes\n")
+            git("add", notes, cwd=self.theirs)
+            git("commit", "-qm", "notes", cwd=self.theirs)
+            self.sync(self.theirs, path, branch)
+        with self.assertRaises(PLAN_SYNC.Refused) as caught:
+            self.sync(self.ours, path, branch, before_push=overlapping)
+        self.assertEqual(caught.exception.code, "plan.files_overlap")
+        self.assertEqual(git("rev-parse", "HEAD", cwd=self.ours), before[0])
+        self.assertEqual((self.ours / path).read_text(), ours)
+        # The allowed case beside it: once ours' notes read as theirs, it syncs.
+        self.write(self.ours, notes, "theirs notes\n")
+        git("commit", "-qm", "notes as theirs", "--", notes, cwd=self.ours)
+        self.sync(self.ours, path, branch)
+        self.assertEqual(self.remote_text(branch, path), ours)
+        self.assertEqual(git("status", "--porcelain", cwd=self.ours), "")
+
     def peer_pushes(self, branch: str, path: str, times: int):
         """A before-push hook: on each of A's first `times` attempts, B first pushes one more line ending Delta."""
         def before(attempt: int) -> None:
@@ -432,9 +459,12 @@ class PlanSyncTests(unittest.TestCase):
             self.sync(self.ours, path, branch)
 
         def peer_then_pulled() -> None:
-            # A peer pushes, and a sync here pulls it in before the watch's next tick: still the peer's push.
+            # A peer pushes, and before the watch's next tick a sync here composes its own edit over it and pushes:
+            # what the tick sees brings commits of both, so it is still the peer's push.
             self.peer_edit(branch, path, "## Peer two", "two")()
+            self.write(self.ours, path, (self.ours / path).read_text().replace("delta body\n", "ours delta\n"))
             self.sync(self.ours, path, branch)
+            self.assertEqual(len(git("log", "-1", "--format=%P", cwd=self.ours).split()), 2)
         clock, sleep, state = self.ticking(2, {1: self.peer_edit(branch, path, "## Peer one", "one"), 2: own_sync,
                                                3: peer_then_pulled})
 
@@ -459,11 +489,27 @@ class PlanSyncTests(unittest.TestCase):
 
     def test_a_watch_that_never_reaches_the_remote_ends_refused(self) -> None:
         slug, branch, path = self.start()
+        self.named_remote(f"gone-{slug}", self.folder / "missing.git")
         clock, sleep, state = self.ticking(2, {})
         with self.assertRaises(PLAN_SYNC.Refused) as caught:
-            PLAN_SYNC.watch(self.ours, path, branch, str(self.folder / "missing.git"), MARKDOWN, poll=2, timeout=4,
+            PLAN_SYNC.watch(self.ours, path, branch, f"gone-{slug}", MARKDOWN, poll=2, timeout=4,
                             until=None, write=self.fail, sleep=sleep, clock=clock)
         self.assertEqual(caught.exception.code, "plan.git_failed")
+        self.assertIn("missing.git", str(caught.exception))
+
+    def named_remote(self, name: str, url: Path) -> None:
+        git("remote", "add", name, str(url), cwd=self.ours)
+        self.addCleanup(git, "remote", "remove", name, cwd=self.ours)
+
+    def test_a_watch_whose_later_fetch_reaches_the_remote_exits_at_its_timeout(self) -> None:
+        slug, branch, path = self.start()
+        self.named_remote(f"flaky-{slug}", self.folder / "missing.git")
+        reach = lambda: git("remote", "set-url", f"flaky-{slug}", str(self.remote), cwd=self.ours)
+        clock, sleep, state = self.ticking(2, {1: reach})
+        lines = []
+        code = PLAN_SYNC.watch(self.ours, path, branch, f"flaky-{slug}", MARKDOWN, poll=2, timeout=6, until="never seen",
+                               write=lines.append, sleep=sleep, clock=clock)
+        self.assertEqual((code, lines), (3, []))
 
     def test_until_exits_0_on_the_first_matching_line(self) -> None:
         slug, branch, path = self.start()
@@ -599,6 +645,16 @@ class PlanSyncCommandTests(unittest.TestCase):
         done = self.tool("plan-watch", "--plan", "docs/quiet.md", "--timeout", "1", cwd=self.ours, config=config)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(done.stdout, "")
+        # A watch that never reaches its remote is a refusal like any other: exit 2, with its code.
+        remote = git("remote", "get-url", "origin", cwd=self.ours)
+        git("remote", "set-url", "origin", str(self.folder / "missing.git"), cwd=self.ours)
+        try:
+            done = self.tool("plan-watch", "--plan", "docs/quiet.md", "--timeout", "1", cwd=self.ours, config=config)
+        finally:
+            git("remote", "set-url", "origin", remote, cwd=self.ours)
+        self.assertEqual(done.returncode, 2, done.stderr)
+        self.assertIn("run-delivery: plan.git_failed", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
 
 
 if __name__ == "__main__":
