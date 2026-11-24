@@ -122,6 +122,29 @@ Operator decisions, 2026-11-24:
 - The hosted publisher needs `state.json` and `journal.jsonl`
   (`hosted.py:1033-1047`). Its identity binds the delivery key permanently.
 
+**Work in flight on the same surfaces (checked 2026-11-24)**
+
+- **V26-3775, plan previews** (plan `docs/plans/2026-11-23-plan-preview-views.md`,
+  merged to `main` in #489, its five stories in Backlog):
+  - `run-delivery plan-view --plan` builds a preview record at
+    `<work>/plan-preview/<reviewSlug>/` from a committed plan and its review store
+    (V26-3778), and serves and publishes it, rebuilt in place, from
+    `plan-review prepare`/`reduce`/`end` (V26-3779). Its hosted key is
+    `plan-<reviewSlug>`.
+  - `delivery-plan/1` gains an optional, closed `preview` member (V26-3776):
+    `approval` is `agents-only` or `handed`, with `delivery` present only when
+    handed. `approved` stays required. With `preview`, the plan chapter never
+    says "approved".
+  - Preview live servers are marked `--preview`, and the runs page lists them
+    (V26-3777).
+  - When a delivery adopts the review store, a best-effort "handed finish"
+    rebuilds the preview as `handed` and stops its server and publisher
+    (V26-3779).
+- **#488, chapters as pages** (open draft): it rebuilds the line map as one page
+  per chapter, with a chapters tab, a Go to launcher and a shared `richWords`
+  formatter, and recaptures the line-map goldens. Whether and when it lands is
+  open.
+
 **Knowledge library**
 
 - Not searched: no knowledge tool is configured in this session.
@@ -422,7 +445,20 @@ Out of scope:
     survives approval.
   - **Single engineer:** a shared record with one admitted seat works, as a
     record others can join later. A plan nobody will share follows today's path,
-    without `plan-open`.
+    without `plan-open`, and gets V26-3775's plan preview.
+  - **One plan view, not two.** The planning record's `plan.json` is built by
+    V26-3778's preview builder, shared, not copied.
+    - **Taking over a preview:** `plan-open` on a slug whose preview is running
+      first runs V26-3779's handed finish, with the planning record's key as the
+      delivery it hands to. Then it prints the planning record's live and hosted
+      links once.
+    - **After `plan-open`:** while a planning record exists for the slug, the
+      `plan-review` commands and `plan-view` rebuild the planning record's
+      `plan.json`, never a preview. `plan-view` prints the planning record's
+      links.
+    - **The hosted link changes once,** from the preview's `plan-<reviewSlug>`
+      to the planning record's `KEY`. The preview's hosted page keeps its handed
+      cut, which names `KEY`.
 - **D11. Joint approval.**
   - Each seat journals `plan.endorsed`, `{commit}`, against the plan commit it
     approves.
@@ -508,11 +544,18 @@ Out of scope:
   - Between the two, no machine serves the queue. The line map says
     "queue moving to B".
 - **D14. Hosted pages without a version change.**
-  - `delivery-plan/1` gains an optional `draft` member, `{commit, at}`. It
-    replaces `approved` until the plan is approved. Exactly one of the two is
-    present, and a plan with both or neither is refused by `validate_plan`.
-  - V26-3798 makes this change, because V26-3798 is the first story to write a
-    planning `plan.json`.
+  - A planning record's `plan.json` uses V26-3775's `preview` member, not a
+    member of its own. `approved` stays required, as V26-3775 decided.
+  - V26-3798 adds one value and one field to that closed member:
+    - `preview.approval` gains `endorsed`, set once every admitted approver seat
+      has endorsed the plan commit `preview.commit` names;
+    - `preview.endorsements` lists `{seat, label, commit}` for each endorsement,
+      at most 20, and is present only on a planning record.
+  - `validate_plan` and the schema move together. They refuse `endorsed`
+    without `endorsements`, and `endorsements` outside a planning record.
+  - The line reads "Endorsed by <labels> · N review rounds · <ending>", which
+    keeps V26-3776's rule that a preview chapter says no form of "approve". An
+    endorsement of an older commit is shown as stale.
   - Snapshot v3 already carries `plan` and `document` as generic records, so
     `hosted-delivery-snapshot/3` and `delivery-line-map/3` stay.
   - A planning cut exists only with a publisher and service from this release. The
@@ -659,7 +702,6 @@ Out of scope:
     | `scope.handover_busy` | a `queue` or `delivery` handover past its `--wait`; a lane handover while the lane has a checkout left on the outgoing machine |
     | `plan.endorsement_missing`, `plan.endorsement_stale`, `plan.not_aligned`, `plan.feedback_blocking` | `lead-init`'s joint approval (D11), in that order |
     | `plan.uncommitted`, `plan.no_review_slug` | `plan-open` on a plan not committed at HEAD, or without `reviewSlug` |
-    | `plan.draft_conflict` | `validate_plan` on a plan with both `draft` and `approved`, or neither |
 
     A held peer partition (`collab.generation_differs`) is a state shown in Needs
     you, not a refusal.
@@ -766,6 +808,24 @@ Clear `skills/**/__pycache__` before `scripts/cut-release.py`.
 ## Units and order
 
 Lane 1 is the record layer, lane 2 the command layer and lane 3 the views.
+
+**Coordination with V26-3775.** This delivery runs on the same base as V26-3775
+(plan previews), and they share files.
+- **Waits:**
+  - V26-3798 waits on V26-3779, and so on V26-3776 and V26-3778, because it reuses
+    their builder, member and handed finish.
+  - V26-3801 waits on V26-3776 and V26-3777.
+- **Running alongside:** the other stories run beside V26-3775's.
+- **Shared regions:** `run_delivery.py` (V26-3778, V26-3779) and the
+  run-delivery and orchestrate-work skill pages (V26-3780). Each story here
+  claims only its own regions, and peer deliveries' claims are warned of as
+  today.
+- **Release:** this delivery's candidate comes after V26-3775's release, whose
+  `preview` member it extends.
+
+**Coordination with #488.** If #488 lands before V26-3801 starts, V26-3801 adds
+its views as chapters and pages in that model. Otherwise it adds them to the line
+map as it stands. Either way existing goldens recapture unchanged.
 Two scripts are shared by region:
 
 - **`skills/orchestrate-work/scripts/delivery_state.py`:** lane 1 holds it whole.
@@ -1034,7 +1094,7 @@ Lane 1, tier 2, after V26-3796. Test-first. Files: `skills/orchestrate-work/scri
 
 ### V26-3798. The planning record, the plan scope check and joint approval
 
-Lane 2, tier 2, after V26-3795 and V26-3797. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/plan_sync.py`, `skills/run-delivery/SKILL.md`, `skills/delivery-views/scripts/views_common.py`, `skills/delivery-views/references/delivery-plan.schema.json`, `tests/test_planning_record.py`, `tests/test_run_delivery_plan_review.py` and `tests/test_delivery_views_plan.py`.
+Lane 2, tier 2, after V26-3795, V26-3797 and V26-3779. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/plan_sync.py`, `skills/run-delivery/SKILL.md`, `skills/delivery-views/scripts/views_common.py`, `skills/delivery-views/references/delivery-plan.schema.json`, `tests/test_planning_record.py`, `tests/test_run_delivery_plan_review.py` and `tests/test_delivery_views_plan.py`.
 
 - **`plan-open`** (D10). It starts the supervisor in planning mode: the sync
   loop, the live view and hosted publishing, with no queue and no tracker.
@@ -1047,9 +1107,15 @@ Lane 2, tier 2, after V26-3795 and V26-3797. Test-first. Files: `skills/run-deli
   - `plan-rekey` follows D11.
   - `lead-init`'s joint-approval check follows D11.
 - **Plan file:**
-  - `validate_plan` accepts `draft` exclusive with `approved` (D14).
-  - `build_plan` writes a planning `plan.json` with `draft`. Its stories come from
-    the plan headings through `lead-setup`'s existing parser.
+  - The planning record's `plan.json` is built by V26-3778's preview builder, with
+    `preview.approval` and `preview.endorsements` set as D14 says.
+  - `validate_plan` and the schema gain `endorsed` and `endorsements` (D14).
+- **One plan view:**
+  - `plan-open` takes over a running preview through V26-3779's handed finish.
+  - The `plan-review` commands and `plan-view` rebuild the planning record when
+    one exists for the slug (D10).
+  - `plan-sync` rebuilds whichever exists, preview or planning record, after each
+    push it lands.
 - **Pins:** `PlanReviewWithoutDeliveryTests` stays unchanged. New adoption cases
   sit beside it.
 - **Scenarios, opening and adoption:**
@@ -1082,8 +1148,18 @@ Lane 2, tier 2, after V26-3795 and V26-3797. Test-first. Files: `skills/run-deli
     touched is still checked against held sections;
   - `plan-open` on an uncommitted plan gives `plan.uncommitted`, and one without
     `reviewSlug` gives `plan.no_review_slug`.
-- **Scenarios, the plan schema:** a plan with both `draft` and `approved`, or
-  neither, gives `plan.draft_conflict`.
+- **Scenarios, the plan schema and views:**
+  - `endorsed` without `endorsements`, and `endorsements` on a preview with no
+    planning record, are refused by the schema and by `validate_plan` alike;
+  - every V26-3776 preview fixture validates and renders unchanged.
+- **Scenarios, one plan view:**
+  - `plan-open` on a slug with a running preview leaves the preview's last
+    hosted cut `handed` to `KEY`, with its server and publisher gone, and prints
+    the planning record's links;
+  - a `plan-review reduce` afterwards rebuilds the planning record's `plan.json`,
+    and no preview folder is touched;
+  - `plan-sync` landing a push rebuilds the preview, or the planning record when
+    one exists.
 
 ### V26-3800. Feedback, join and the shared watch stream
 
@@ -1323,11 +1399,12 @@ Lane 2, tier 4, after V26-3800 and V26-3799. Test-first. Files: `skills/run-deli
 
 ### V26-3801. Planning, scopes and feedback in the views
 
-Lane 3, tier 4, after V26-3798 and V26-3800. Characterization-first. Files: `skills/delivery-views/`, `tests/fixtures/delivery-views/`, `tests/delivery_views_page/`, `tests/test_delivery_views_plan.py`, `tests/test_delivery_views_render.py` and `hosted/delivery-viewer/test/`.
+Lane 3, tier 4, after V26-3798, V26-3800, V26-3776 and V26-3777. Characterization-first. Files: `skills/delivery-views/`, `tests/fixtures/delivery-views/`, `tests/delivery_views_page/`, `tests/test_delivery_views_plan.py`, `tests/test_delivery_views_render.py` and `hosted/delivery-viewer/test/`.
 
 - **Line map:**
-  - the plan chapter shows a draft (accepted by V26-3798's `validate_plan`) with
-    its endorsements and whether each is still current;
+  - the plan chapter of a planning record keeps V26-3776's preview wording,
+    shows its endorsements and whether each is still current, and reads
+    "Endorsed by <labels>" once `preview.approval` is `endorsed`;
   - a Scopes section lists who holds what;
   - feedback shows as threads on its anchors;
   - each peer shows its freshness ("b as of 4s", "b held: generation differs",
@@ -1335,12 +1412,16 @@ Lane 3, tier 4, after V26-3798 and V26-3800. Characterization-first. Files: `ski
   - handovers in flight ("queue moving to b").
 - **Rendering placement:** additions go only behind new blocks, so existing
   goldens recapture to identical bytes. A test asserts that.
-- **New corpus cases:** `plan-draft-shared` and `colead`. Goldens are captured
+- **Chapters as pages:** if #488 has landed, the Scopes section, feedback
+  threads and peer freshness are drawn as chapters in its model.
+- **The `/approv/` check:** V26-3776's check runs over the new planning fixtures
+  too, so the plan chapter of a planning record never says "approved".
+- **New corpus cases:** `plan-shared` and `colead`. Goldens are captured
   with `node tests/delivery_views_page/recapture-goldens.mjs` in their own commit.
 - **Hosted:** a hosted viewer test renders a planning cut built by the publisher at
   this commit. The conformance fixtures stay unchanged.
 - **Scenarios:**
-  - a draft with one stale endorsement;
+  - a planning record with one stale endorsement, and one fully endorsed;
   - a section held by `b`;
   - open, blocking and resolved feedback;
   - a held peer and a split peer;
