@@ -1057,16 +1057,10 @@ body:not(.paged) .page-foot { display: none; }
 .page-where-mark .w1 { stroke: var(--l1); } .page-where-mark .w2 { stroke: var(--l2); } .page-where-mark .w3 { stroke: var(--l3); }
 .page-where-mark .w0 { stroke: var(--ink); stroke-width: 2; }
 .page-where-mark .wd { fill: var(--ink); }
-/* Leaning on it, the lanes run in and the line runs on: back to where the line starts. */
-.page-where-mark .w1, .page-where-mark .w2, .page-where-mark .w3 { stroke-dasharray: 16; stroke-dashoffset: 0; transition: stroke-dashoffset .5s var(--ease); }
-.page-where-mark .w0 { stroke-dasharray: 8; stroke-dashoffset: 0; transition: stroke-dashoffset .35s var(--ease) .15s; }
-.page-where:hover .page-where-mark .w1, .page-where:hover .page-where-mark .w2, .page-where:hover .page-where-mark .w3 { animation: where-run .7s var(--ease); }
-@keyframes where-run { from { stroke-dashoffset: 16; } to { stroke-dashoffset: 0; } }
 .page-where-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; letter-spacing: -0.005em; }
 .page-where-note { flex: none; max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 7px; border-radius: 6px;
   background: var(--well); box-shadow: inset 0 0 0 1px var(--hair); font-family: var(--mono); font-size: 10.5px; letter-spacing: -0.01em; color: var(--faint); }
 .page-where-note:empty { display: none; }
-@media (prefers-reduced-motion: reduce) { .page-where-mark path { transition: none; animation: none !important; } }
 @media (max-width: 1100px) { .page-where-note { display: none; } }
 .page-where[hidden] { display: none; }
 
