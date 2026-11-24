@@ -1,0 +1,450 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3794",
+  "headline": "V26-3794",
+  "baseBranch": "integrate/shared-delivery-collaboration",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-24-shared-delivery-collaboration.md",
+  "laneBrief": "docs/plans/2026-11-24-shared-delivery-collaboration.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-24-shared-delivery-collaboration.lane-notes.md"
+  },
+  "context": {
+    "sections": []
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "skills/orchestrate-work/scripts/collab.py",
+        "skills/orchestrate-work/references/*",
+        "skills/orchestrate-work/SKILL.md",
+        "tests/test_collab_partitions.py",
+        "tests/test_orchestration_state.py",
+        "tests/test_journal_kinds.py",
+        "tests/fixtures/journal-kinds/*",
+        "tests/collab_remotes.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/run-delivery/scripts/run_delivery.py",
+        "skills/run-delivery/scripts/plan_sync.py",
+        "skills/run-delivery/SKILL.md",
+        "skills/run-delivery/references/*",
+        "tests/test_plan_sync.py",
+        "tests/test_run_delivery.py"
+      ]
+    },
+    "lane-3": {
+      "owns": [
+        "skills/delivery-views/*",
+        "tests/fixtures/delivery-views/*",
+        "tests/delivery_views_page/*",
+        "tests/test_delivery_views_plan.py",
+        "tests/test_delivery_views_render.py",
+        "hosted/delivery-viewer/test/*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3795": {
+      "title": "Sync and watch a co-authored plan",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3795-1",
+          "text": "Disjoint edits by two clones compose, asserted as exact text, for every add, edit and delete combination in the plan, including front matter and an addition whose predecessor the other side deleted."
+        },
+        {
+          "id": "v26-3795-2",
+          "text": "A section changed on both sides, a delete against an edit, or both sides editing front matter give plan.sections_overlap, naming the section, with the local branch unchanged."
+        },
+        {
+          "id": "v26-3795-3",
+          "text": "Five rejected pushes then a success land; a sixth rejection gives plan.push_exhausted and leaves the remote and the local branch at its last composed commit."
+        },
+        {
+          "id": "v26-3795-4",
+          "text": "Nothing is force-pushed: the shared bare-remote helper finds only fast-forwards on plan/, and a planted forced push fails the helper."
+        },
+        {
+          "id": "v26-3795-5",
+          "text": "plan-watch meets D9's output and exit rules, and a collab.pollSeconds of 1 is refused by the settings schema."
+        },
+        {
+          "id": "v26-3795-6",
+          "text": "remote.origin.fetch is unchanged, and git ls-remote --heads --tags shows only plan/ as new."
+        }
+      ]
+    },
+    "V26-3796": {
+      "title": "Seats, partitions and causal journal ingest",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3796-1",
+          "text": "Two records exchange partitions and reach the same origin set and state, ignoring only D6's local rows; concurrent appends with different subjects both survive."
+        },
+        {
+          "id": "v26-3796-2",
+          "text": "Causal ingest and link translation hold with three seats, and regionsSettled and closing marks name the same origin on both machines."
+        },
+        {
+          "id": "v26-3796-3",
+          "text": "The integer walk returns exactly D4's fourteen paths, and a planted unlisted integer reached through a $ref turns it red."
+        },
+        {
+          "id": "v26-3796-4",
+          "text": "Removals apply, a removal beats a concurrent field write, and re-creation follows D3's rule."
+        },
+        {
+          "id": "v26-3796-5",
+          "text": "A differing archiveSha256 with the same releaseId is held, named, and ingested after the local writer upgrade."
+        },
+        {
+          "id": "v26-3796-6",
+          "text": "Seat splits resolve in both orders as D3 states; collab.seat_missing, collab.seat_not_admitted and collab.sync_writer_reserved refuse with the D20 surfaces unchanged; no environment variable changes the seat; remote.origin.fetch is unchanged."
+        },
+        {
+          "id": "v26-3796-7",
+          "text": "Unshared-record tests for journal validation, linking, wait and the writer pin are unchanged."
+        }
+      ]
+    },
+    "V26-3797": {
+      "title": "Authority scopes, admission and the scope filter",
+      "lane": "lane-1",
+      "after": [
+        "V26-3796"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3797-1",
+          "text": "A non-holder's write to a delivery field, a non-holder's transfer and a non-holder's admission each give scope.not_held, naming the holder; the holder's are applied."
+        },
+        {
+          "id": "v26-3797-2",
+          "text": "Auto-grant grants a requested unclaimed section only when collab.autoGrant is true, never a held section or queue."
+        },
+        {
+          "id": "v26-3797-3",
+          "text": "The sync filter ignores a value whose writer lacked a permitted scope at its origin, and applies one written before a later transfer."
+        },
+        {
+          "id": "v26-3797-4",
+          "text": "Two-scope fields resolve the same on both machines, concurrently by seat id and causally by the later write."
+        },
+        {
+          "id": "v26-3797-5",
+          "text": "Labels change nothing but display, both swapped and identical."
+        },
+        {
+          "id": "v26-3797-6",
+          "text": "A schema property without a field-map row turns the completeness test red at every level."
+        },
+        {
+          "id": "v26-3797-7",
+          "text": "Unshared records ignore scopes; their field-ownership tests are unchanged."
+        }
+      ]
+    },
+    "V26-3798": {
+      "title": "The planning record, the plan scope check and joint approval",
+      "lane": "lane-2",
+      "after": [
+        "V26-3795",
+        "V26-3797"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3798-1",
+          "text": "plan-open gives plan.uncommitted, plan.no_review_slug or collab.record_exists when its preconditions fail, leaving any existing record unchanged."
+        },
+        {
+          "id": "v26-3798-2",
+          "text": "Adoption keeps the journal, partitions and hosted-identity.json; lead-init's entries continue the same journal; meta.phase moves to delivery once."
+        },
+        {
+          "id": "v26-3798-3",
+          "text": "A plan edit outside held sections gives plan.section_not_held before any commit or push; an edit inside one lands; plan-rekey re-keys a section another seat holds; an ordinary commit touching that section is still checked."
+        },
+        {
+          "id": "v26-3798-4",
+          "text": "With review aligned on X and plan-rekey at Y, both seats endorsing Y lets lead-init pass; each D11 failure gives its own code, earlier codes winning pairwise; a --no-approver seat does not hold it."
+        },
+        {
+          "id": "v26-3798-5",
+          "text": "endorsed without endorsements, and endorsements without a planning record, are refused by the schema and validate_plan; every V26-3776 preview fixture validates and renders unchanged."
+        },
+        {
+          "id": "v26-3798-6",
+          "text": "plan-open on a slug with a running preview leaves its last hosted cut handed to the key with its server and publisher gone; later rebuilds touch only the planning record."
+        },
+        {
+          "id": "v26-3798-7",
+          "text": "PlanReviewWithoutDeliveryTests stays unchanged."
+        }
+      ]
+    },
+    "V26-3800": {
+      "title": "Feedback, join and the shared watch stream",
+      "lane": "lane-2",
+      "after": [
+        "V26-3798"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3800-1",
+          "text": "On a fresh clone, the joining seat's entry 1 is the first seat's record.started with its at, and the tracker publisher's init id is equal on both machines."
+        },
+        {
+          "id": "v26-3800-2",
+          "text": "A join and a new feedback each wake the other seat's lead-wait."
+        },
+        {
+          "id": "v26-3800-3",
+          "text": "A resolution by a non-holder of the anchor's scope gives scope.not_held; blocking feedback shows in Needs you and releases once resolved."
+        },
+        {
+          "id": "v26-3800-4",
+          "text": "join run again prints only what is new; a relabel reaches the peer's derived seats."
+        },
+        {
+          "id": "v26-3800-5",
+          "text": "collab watch prints one flushed line per ingested peer entry within two ticks and nothing else; exit 0 at timeout, 0 on the first --until match, 3 when it never matches."
+        },
+        {
+          "id": "v26-3800-6",
+          "text": "Narrator story goldens for unshared records are unchanged."
+        }
+      ]
+    },
+    "V26-3799": {
+      "title": "Lane and queue scopes in the record and the queue",
+      "lane": "lane-1",
+      "after": [
+        "V26-3797"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3799-1",
+          "text": "Each lead writes its own lane's rows and queue elements and gets scope.not_held on the other's; a runner write off the queue holder's machine is refused, and the holder's is applied."
+        },
+        {
+          "id": "v26-3799-2",
+          "text": "A lane holder's acceptance creates the element at stage: queued on the queue holder's record, without the planned item; a re-hand-off resets it to QUEUE_START; a lane write of a non-start value is ignored; a reconcile adoption on the non-queue machine reaches the queue holder."
+        },
+        {
+          "id": "v26-3799-3",
+          "text": "A reuse grant recorded on one seat is named through because by the other seat's check.reused after a queue handover."
+        },
+        {
+          "id": "v26-3799-4",
+          "text": "A handover with a check running or a merge in progress gives scope.handover_busy; the journal shows the child stopped before scope.transferred; after it the old serve exits and the new one starts."
+        },
+        {
+          "id": "v26-3799-5",
+          "text": "serve on a non-holder gives queue.not_held."
+        },
+        {
+          "id": "v26-3799-6",
+          "text": "Every existing merge-queue test passes unchanged."
+        }
+      ]
+    },
+    "V26-3802": {
+      "title": "The co-lead runtime in run-delivery",
+      "lane": "lane-2",
+      "after": [
+        "V26-3800",
+        "V26-3799"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3802-1",
+          "text": "The step-table and input-table tests fail on a planted unlisted step or name through each reader path."
+        },
+        {
+          "id": "v26-3802-2",
+          "text": "Each handover keeps the public link and posts nothing twice, with the allow side shown before and after the move; scope.handover_busy covers pending publication, tracker posts in flight and checkouts left."
+        },
+        {
+          "id": "v26-3802-3",
+          "text": "The close waits for peer cleanup and the queue holder's full-health result, journals one delivery.closed, and peers count it closed only after the archive; reopened and resumed closes behave as the plan states."
+        },
+        {
+          "id": "v26-3802-4",
+          "text": "Full health runs once per head across machines, including a rerun asked for off the queue holder and a delivery that merged nothing; posture notes dedupe by the latest note."
+        },
+        {
+          "id": "v26-3802-5",
+          "text": "Evidence follows D22, including recording a peer lane's story from the carried log, lane-tenure ordering, a lane that returns, lane clips never counting, and each lead-evidence refusal leaving every listed surface unchanged."
+        },
+        {
+          "id": "v26-3802-6",
+          "text": "Writes reach the peer within two poll ticks plus one push, with no explicit sync command; clock skew of an hour changes no outcome."
+        },
+        {
+          "id": "v26-3802-7",
+          "text": "Tracker publisher tests on unshared records are unchanged."
+        }
+      ]
+    },
+    "V26-3801": {
+      "title": "Planning, scopes and feedback in the views",
+      "lane": "lane-3",
+      "after": [
+        "V26-3798",
+        "V26-3800"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3801-1",
+          "text": "Every existing line-map, history and runs golden recaptures to identical bytes, asserted by a test."
+        },
+        {
+          "id": "v26-3801-2",
+          "text": "The two new cases render a planning record with one stale endorsement and one fully endorsed, a section held by b, open, blocking and resolved feedback, a held and a split peer, and a queue moving between seats."
+        },
+        {
+          "id": "v26-3801-3",
+          "text": "Hostile text in feedback and labels renders as text."
+        },
+        {
+          "id": "v26-3801-4",
+          "text": "The hosted viewer renders the planning cut; the conformance suite and its fixtures are unchanged."
+        },
+        {
+          "id": "v26-3801-5",
+          "text": "A planning record's plan chapter says no form of \"approve\", by V26-3776's check."
+        }
+      ]
+    },
+    "V26-3803": {
+      "title": "Two machines end to end, and the adopter guide",
+      "lane": "lane-2",
+      "after": [
+        "V26-3801",
+        "V26-3802"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3803-1",
+          "text": "The end-to-end class passes. At every step both records compose to the same state and origin set, and every write reaches the other machine within 10 seconds with collab.pollSeconds 2, never calling collab-push, collab-fetch or collab-ingest."
+        },
+        {
+          "id": "v26-3803-2",
+          "text": "regionsSettled and meta.closing.*.entry name entries of the same origin on both machines."
+        },
+        {
+          "id": "v26-3803-3",
+          "text": "The docs' corpus pins in tests/test_declared_mechanics_corpus.py pass where they read these files."
+        },
+        {
+          "id": "v26-3803-4",
+          "text": "The full local suite passes on macOS with Python 3.11 inside tests/suite-budget.json."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "V26-3795, V26-3796, V26-3797, V26-3798, V26-3800, V26-3799, V26-3802, V26-3801 and V26-3803 land on integrate/shared-delivery-collaboration through its merge queue",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration head, with --workers 4 --budget tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide's integration review says, and merged into main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-24"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "Seats with generated ids, admitted by the `delivery` holder, with no person entity (D2): waiting.",
+      "state": "done",
+      "who": "Kwamina"
+    },
+    {
+      "id": "approval-2",
+      "text": "Identity stays trust-based, with no authentication (D19): waiting.",
+      "state": "done",
+      "who": "Kwamina"
+    },
+    {
+      "id": "approval-3",
+      "text": "Pushing `refs/agent-skills/<key>/<seat>` to the base remote (D3): waiting.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-4",
+      "text": "No hosted snapshot or renderer version change (D14): waiting.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-5",
+      "text": "Ships as a release candidate before the final (D17): waiting.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-6",
+      "text": "Delivery base: integrate/shared-delivery-collaboration, reviewed into main at close-out. Lanes are granted push and draft pull requests, and the lead marks drafts ready at acceptance.",
+      "state": "done",
+      "who": "Kwamina"
+    },
+    {
+      "id": "approval-7",
+      "text": "V26-3779, with V26-3776 and V26-3778 (plan previews), has reached integrate/shared-delivery-collaboration before V26-3798 starts.",
+      "state": "waiting",
+      "blocking": true
+    },
+    {
+      "id": "approval-8",
+      "text": "V26-3776 and V26-3777 (plan previews) have reached integrate/shared-delivery-collaboration before V26-3801 starts.",
+      "state": "waiting",
+      "blocking": true
+    }
+  ],
+  "outOfScope": [
+    "A hosted doorbell or any hosted write route.",
+    "Browser-written feedback.",
+    "Binding seats to people with signed partitions (D19).",
+    "Merge assistance for overlapping section edits.",
+    "Windows validation."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}
