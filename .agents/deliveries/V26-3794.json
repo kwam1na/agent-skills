@@ -403,7 +403,8 @@
     {
       "id": "approval-3",
       "text": "Pushing `refs/agent-skills/<key>/<seat>` to the base remote (D3): waiting.",
-      "state": "waiting"
+      "state": "done",
+      "who": "Kwamina"
     },
     {
       "id": "approval-4",
