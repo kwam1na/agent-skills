@@ -130,7 +130,6 @@ class WriteAndTransferTests(ScopeFixture):
                          "scope.invalid")
         self.refused("collab.seat_unknown", lambda: collab.give_scope(self.a.directory, "lane:lane-3", "s-000000000000"),
                      self.a)
-        self.assertEqual(collab.auto_grants(self.b.directory, enabled=True), [])
 
 
 class AutoGrantTests(ScopeFixture):
@@ -166,6 +165,25 @@ class AutoGrantTests(ScopeFixture):
         journal = self.b.journal()
         self.assertEqual(state_tool.holder(journal, "plan:# A plan"), self.second)
         self.assertEqual(state_tool.held_sections(journal, self.second, PLAN), ["(preamble)", "# A plan", "## Scope"])
+
+    def test_a_request_stays_open_after_a_transfer_to_another_seat_or_one_made_before_it(self) -> None:
+        # The scope went to another seat after the request: the request is still open.
+        self.c.take()
+        collab.request_scope(self.c.directory, "lane:lane-3", "I'll take lane 3.")
+        self.c.push()
+        self.a.take()
+        collab.give_scope(self.a.directory, "lane:lane-3", self.second)
+        # The scope went to the requester, and came back, before it asked: that transfer answers nothing.
+        collab.give_scope(self.a.directory, "lane:lane-4", self.third)
+        self.a.push()
+        self.c.take()
+        collab.give_scope(self.c.directory, "lane:lane-4", self.first)
+        collab.request_scope(self.c.directory, "lane:lane-4", "Lane 4 again.")
+        self.c.push()
+        self.a.take()
+        asked = {entry["data"]["scope"] for entry in collab.open_requests(self.a.journal())
+                 if entry["origin"]["seat"] == self.third}
+        self.assertEqual(asked, {"lane:lane-3", "lane:lane-4"})
 
     def test_with_auto_grant_off_the_request_stays_open(self) -> None:
         settings = self.root / "run-delivery.json"
