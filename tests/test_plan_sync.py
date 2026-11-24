@@ -11,12 +11,14 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.collab_remotes import assert_fast_forwards_only, bare_remote
 from tests.quiet_git import quiet_clone, quieten
@@ -67,6 +69,20 @@ def added(sections: list[tuple[str, str]], after: str, heading: str, body: str) 
     return [*sections[:at], (heading, body), *sections[at:]]
 
 
+# What the merge queue passes every git a check starts: its own identity, and configuration through the environment.
+QUEUE_GIT = re.compile(r"^GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL|DATE)$|^GIT_CONFIG_(COUNT|PARAMETERS|KEY_\d+|VALUE_\d+)$")
+
+
+def own_git_environment(cls) -> None:
+    """For the class: every git it starts, in process or not, reads only its fixture's own identity and configuration,
+    as in the lane, whatever the queue's environment sets. A case that wants the queue's sets it on purpose."""
+    patcher = mock.patch.dict(os.environ)
+    patcher.start()
+    cls.addClassCleanup(patcher.stop)
+    for name in [name for name in os.environ if QUEUE_GIT.match(name)]:
+        del os.environ[name]
+
+
 def git(*args: str, cwd: Path, check: bool = True) -> str:
     return sh("git", *args, cwd=cwd, check=check).stdout.strip()
 
@@ -84,6 +100,7 @@ class PlanSyncTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        own_git_environment(cls)
         cls.folder = Path(tempfile.mkdtemp(prefix="plan-sync-"))
         cls.remote = bare_remote(cls.folder / "remote.git")
         seed = seeded(cls.folder / "seed")
@@ -511,6 +528,27 @@ class PlanSyncTests(unittest.TestCase):
                                write=lines.append, sleep=sleep, clock=clock)
         self.assertEqual((code, lines), (3, []))
 
+    def test_two_clones_under_one_git_identity_are_still_each_others_peers(self) -> None:
+        """Seats, not people: under the queue's own identity every commit of both clones reads as one person's, and the
+        watch still tells this clone's pushes from the other's."""
+        slug, branch, path = self.start()
+        lines = []
+
+        def own_sync() -> None:
+            self.write(self.ours, path, (self.ours / path).read_text().replace("gamma body\n", "ours gamma\n"))
+            self.sync(self.ours, path, branch)
+        clock, sleep, state = self.ticking(2, {1: self.peer_edit(branch, path, "## Peer one", "one"), 2: own_sync})
+        same = {f"GIT_{who}_{what}": value for who in ("AUTHOR", "COMMITTER")
+                for what, value in (("NAME", "merge-queue"), ("EMAIL", "queue@example.com"))}
+        with mock.patch.dict(os.environ, same):
+            code = PLAN_SYNC.watch(self.ours, path, branch, "origin", MARKDOWN, poll=2, timeout=6, until=None,
+                                   write=lines.append, sleep=sleep, clock=clock)
+            authors = set(git("log", "--format=%an %ae", f"origin/{branch}", "-2", cwd=self.ours).split("\n"))
+        self.assertEqual(authors, {"merge-queue queue@example.com"})
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("## Peer one", lines[0])
+
     def test_until_exits_0_on_the_first_matching_line(self) -> None:
         slug, branch, path = self.start()
         lines = []
@@ -543,6 +581,7 @@ class PlanSyncCommandTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        own_git_environment(cls)
         cls.folder = Path(tempfile.mkdtemp(prefix="plan-sync-command-"))
         cls.remote = bare_remote(cls.folder / "remote.git")
         cls.ours, cls.theirs = cls.folder / "a", cls.folder / "b"

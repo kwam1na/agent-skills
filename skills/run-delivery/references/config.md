@@ -317,9 +317,10 @@ changes: the branch comes down by an explicit refspec into its remote-tracking r
   left it: sync again.
 - **Watching.** `plan-watch [--timeout S] [--until RE]` fetches the branch once every `collab.pollSeconds` and prints
   one flushed line per peer push, with its head, author, subject and the sections it changed, and nothing else, so a
-  host monitor or a terminal can follow it. A push is a peer's unless every commit it brings was committed under this
-  checkout's own `user.email`, so a sync from here shows nothing, and a peer's push still shows when a sync here pulled
-  it in first. With no `--until` it exits 0 at its timeout (default 1800 seconds); with `--until` it exits 0 after the
+  host monitor or a terminal can follow it. A push is a peer's unless every commit it brings is one this clone's own
+  `plan-sync` pushed, which the clone records under its git common directory: seats, not people, so two clones under
+  one git identity are still each other's peers. A sync from here shows nothing, and a peer's push still shows when a
+  sync here composed over it first. With no `--until` it exits 0 at its timeout (default 1800 seconds); with `--until` it exits 0 after the
   first matching line, and 3 at the timeout if none matched. A watch none of whose fetches reached the remote ends with
   `plan.git_failed` instead. It never pushes.
 - **Settings.** `collab.pollSeconds` is a number of seconds, at least 2, default 5; `collab.autoGrant` is true or false,

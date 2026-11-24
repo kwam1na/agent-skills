@@ -157,6 +157,18 @@ def push(root: Path, remote: str, branch: str) -> str | None:
     raise Refused("plan.git_failed", f"pushing {branch} to {remote} failed: {said.strip()[-600:]}")
 
 
+def pushed_record(root: Path, branch: str) -> Path:
+    """Where this clone keeps every commit its own plan-sync pushed to the branch, one id a line, under the git common
+    directory, so the clone's worktrees, one seat, share it."""
+    common = Path(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    return common / "run-delivery" / "plan-sync" / (branch.replace("/", "%2F") + ".pushed")
+
+
+def pushed_here(root: Path, branch: str) -> set[str]:
+    record = pushed_record(root, branch)
+    return set(record.read_text(encoding="utf-8").split()) if record.is_file() else set()
+
+
 def merged_tree(root: Path, ours: str, theirs: str, path: str, text: str) -> str:
     """Both commits' trees merged, with the plan at `path` replaced by its composed text. Any other file both sides
     changed apart is refused: plan-sync composes the plan, and nothing else."""
@@ -252,7 +264,13 @@ def pushed(root: Path, path: str, branch: str, remote: str, markdown, theirs: st
             return said
         if before_push:
             before_push(rejected + 1)
+        # The commits this push brings, which no ref of the remote held when it was fetched: this clone's own.
+        brought = git(root, "rev-list", "HEAD", "--not", f"--remotes={remote}").split()
         if push(root, remote, branch) is None:
+            record = pushed_record(root, branch)
+            record.parent.mkdir(parents=True, exist_ok=True)
+            with record.open("a", encoding="utf-8") as kept:
+                kept.write("".join(f"{commit}\n" for commit in brought))
             git(root, "update-ref", tracking(remote, branch), "HEAD")
             said.append(f"pushed {branch} to {remote} at {resolved(root, 'HEAD')[:12]}"
                         + (f", after {rejected} rejected push{'' if rejected == 1 else 'es'}" if rejected else ""))
@@ -286,12 +304,12 @@ def watch(root: Path, path: str, branch: str, remote: str, markdown, *, poll: fl
     the first line matching it and 3 at the timeout. Each tick fetches the branch once; it never pushes. A watch none
     of whose fetches reached the remote ends with the last fetch's refusal instead.
 
-    A push is a peer's unless every commit it brings was committed under this checkout's own `user.email`, so a sync
-    from here shows nothing, and a peer's push shows even when a sync here pulled it in before the next tick. What this
-    checkout last fetched is where the watch starts, so a push just before it starts is still shown."""
+    A push is a peer's unless every commit it brings is one this clone's own plan-sync pushed (`pushed_record`): seats,
+    not people, so two clones under one git identity are still each other's peers. A sync from here shows nothing, and
+    a peer's push shows even when a sync here composed over it before the next tick. What this checkout last fetched
+    is where the watch starts, so a push just before it starts is still shown."""
     pattern = re.compile(until) if until is not None else None
     seen = resolved(root, tracking(remote, branch))
-    me = git(root, "config", "user.email", check=False)
     deadline = clock() + timeout
     reached, failed = False, None
     while True:
@@ -301,8 +319,8 @@ def watch(root: Path, path: str, branch: str, remote: str, markdown, *, poll: fl
         except Refused as error:
             head, failed = seen, error  # an unreachable remote is tried again on the next tick
         if head and head != seen:
-            brought = git(root, "log", "--format=%ce", *([f"{seen}..{head}"] if seen else ["-1", head]))
-            if not me or any(email != me for email in brought.split()):
+            brought = git(root, "rev-list", *([f"{seen}..{head}"] if seen else ["-1", head])).split()
+            if not set(brought) <= pushed_here(root, branch):
                 line = push_line(root, path, branch, markdown, seen, head)
                 write(line)
                 if pattern and pattern.search(line):
