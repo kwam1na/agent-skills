@@ -1,0 +1,332 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-24-shared-delivery-collaboration.md",
+  "planSha256": "d5fab3d3155d0e5ceac753d35bbfc40eed236fc777283b58c1ca3697b59f6606",
+  "planCommit": "e310f50f04d543c0ce77b01a258f88813a6028a1",
+  "outcome": "ended-without-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "4d6279a4384c2889fa4dcac0ce1205cc7702d0db",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T05:25:14.221786Z",
+      "finishedAt": "2026-11-24T05:31:43.276494Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "outcome-correctness-r1-5",
+        "outcome-correctness-r1-6",
+        "outcome-correctness-r1-7",
+        "outcome-correctness-r1-8",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6",
+        "adversarial-testing-r1-7",
+        "adversarial-testing-r1-8",
+        "adversarial-testing-r1-9",
+        "adversarial-testing-r1-10",
+        "adversarial-testing-r1-11"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "9f58a3b179e4d30a4d04ca922bf29f7d7ccf69a9",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T05:35:59.564553Z",
+      "finishedAt": "2026-11-24T05:41:46.311355Z",
+      "open": [
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-7",
+        "outcome-correctness-r2-1",
+        "outcome-correctness-r2-2",
+        "outcome-correctness-r2-3",
+        "outcome-correctness-r2-4",
+        "outcome-correctness-r2-5",
+        "adversarial-testing-r2-1",
+        "adversarial-testing-r2-2",
+        "adversarial-testing-r2-3",
+        "adversarial-testing-r2-4"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "85c43da7074b282323d3d2d38ae9e5f7e60be127",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T05:42:37.726854Z",
+      "finishedAt": "2026-11-24T05:47:22.220303Z",
+      "open": [
+        "outcome-correctness-r3-1",
+        "outcome-correctness-r3-2",
+        "adversarial-testing-r3-1",
+        "adversarial-testing-r3-2",
+        "adversarial-testing-r3-3",
+        "adversarial-testing-r3-4"
+      ]
+    },
+    {
+      "round": 4,
+      "candidate": "767f5fca5a53a937e2f43aa5bfaecb11efcb6506",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T05:48:09.754494Z",
+      "finishedAt": "2026-11-24T05:53:14.095181Z",
+      "open": [
+        "outcome-correctness-r4-1",
+        "outcome-correctness-r4-2",
+        "outcome-correctness-r4-3",
+        "outcome-correctness-r4-4",
+        "adversarial-testing-r4-1",
+        "adversarial-testing-r4-2"
+      ]
+    },
+    {
+      "round": 5,
+      "candidate": "ac474e62414c7bb83c2f1e3e2f1ba04dafbc82db",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T05:54:20.120656Z",
+      "finishedAt": "2026-11-24T05:58:17.588395Z",
+      "open": [
+        "outcome-correctness-r5-1",
+        "outcome-correctness-r5-2",
+        "adversarial-testing-r5-1",
+        "adversarial-testing-r5-2",
+        "adversarial-testing-r5-3",
+        "adversarial-testing-r5-4",
+        "adversarial-testing-r5-5"
+      ]
+    },
+    {
+      "round": 6,
+      "candidate": "cd0f1334fc98971285df95de6cfb8bbf4ecbe229",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T05:59:00.232153Z",
+      "finishedAt": "2026-11-24T06:02:49.074488Z",
+      "open": [
+        "outcome-correctness-r6-1",
+        "adversarial-testing-r6-1",
+        "adversarial-testing-r6-2",
+        "adversarial-testing-r6-3"
+      ]
+    },
+    {
+      "round": 7,
+      "candidate": "ccd7bb52231fe621c5498fa0a378e6722bc8cd69",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T06:03:18.912467Z",
+      "finishedAt": "2026-11-24T06:08:06.858847Z",
+      "open": [
+        "outcome-correctness-r7-1",
+        "adversarial-testing-r7-1",
+        "adversarial-testing-r7-2",
+        "adversarial-testing-r7-3"
+      ]
+    },
+    {
+      "round": 8,
+      "candidate": "4465a5c2721da60d57ba535ae9e02c173c3f5337",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T06:08:37.660180Z",
+      "finishedAt": "2026-11-24T06:11:58.233424Z",
+      "open": [
+        "outcome-correctness-r8-1",
+        "adversarial-testing-r8-1",
+        "adversarial-testing-r8-2"
+      ]
+    },
+    {
+      "round": 9,
+      "candidate": "a581b3268fe1c19f94d3598a9551918babd9e587",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T06:12:21.549164Z",
+      "finishedAt": "2026-11-24T06:15:03.358930Z",
+      "open": [
+        "outcome-correctness-r9-1",
+        "adversarial-testing-r9-1"
+      ]
+    },
+    {
+      "round": 10,
+      "candidate": "d255e737ad976b005235eb110728c9836cd7916d",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T06:15:13.734134Z",
+      "finishedAt": "2026-11-24T06:18:21.696379Z",
+      "open": [
+        "outcome-correctness-r10-1",
+        "adversarial-testing-r10-1",
+        "adversarial-testing-r10-2"
+      ]
+    },
+    {
+      "round": 11,
+      "candidate": "3bb1f5c8e1a14de687649e9518356e0a6a067980",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T06:26:19.140877Z",
+      "finishedAt": "2026-11-24T06:30:43.919158Z",
+      "open": [
+        "outcome-correctness-r11-1",
+        "adversarial-testing-r11-1",
+        "adversarial-testing-r11-2"
+      ]
+    },
+    {
+      "round": 12,
+      "candidate": "72727472a0b655df37493cd3c58a7eaf5f3bff7c",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T06:30:54.374107Z",
+      "finishedAt": "2026-11-24T06:34:33.821401Z",
+      "open": [
+        "outcome-correctness-r12-1",
+        "adversarial-testing-r12-1"
+      ]
+    },
+    {
+      "round": 13,
+      "candidate": "bf502321f4430a02c243bc56b70e1be392d0c5d7",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T06:34:44.780888Z",
+      "finishedAt": "2026-11-24T06:37:52.853657Z",
+      "open": [
+        "outcome-correctness-r13-1",
+        "adversarial-testing-r13-1"
+      ]
+    },
+    {
+      "round": 14,
+      "candidate": "e310f50f04d543c0ce77b01a258f88813a6028a1",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T06:38:03.542803Z",
+      "finishedAt": "2026-11-24T06:41:21.200094Z",
+      "open": [
+        "outcome-correctness-r14-1",
+        "adversarial-testing-r14-1"
+      ]
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 14,
+      "findings": [
+        {
+          "id": "outcome-correctness-r14-1",
+          "severity": "P1",
+          "summary": "D22's revised 'the one chosen' rule orders entries across seats by 'the seat that held `lane:<L>` later in the record's lane transfers'. That ranks seats, not holding periods. When a lane returns to a seat that held it before (a, then b, then a again, as the finish line's 'every scope handed back to `a`' does), the rule picks the returning seat's last entry. That entry comes from its first holding period, so it is older than every entry the middle holder wrote. The holder then records a stale spec, which is the r13-1 failure again by another route.",
+          "location": "docs/plans/2026-11-24-shared-delivery-collaboration.md:616",
+          "failureScenario": "a holds `delivery` and, at first, lane L. For story Y in L, a runs a passing hold with spec S1 at head H1. a transfers L to b. Y conflicts, b rebases to H2, the old page path is gone, and b runs a passing hold with corrected spec S2. Y merges. Following the finish line, b hands every scope back to a, so L returns to a. a runs `lead-evidence record` on the merged base. Both S1 (origin seat a) and S2 (origin seat b) are eligible. Under the rule as written, 'across seats, the entry from the seat that held `lane:<L>` later in the record's lane transfers' is a's entry, because a holds L last, and 'within one origin seat' a's last eligible entry is S1. So `record` records with S1, `app_video` loads a path that is not on the merged base, prints 'Y hold: not recorded', and `evidence_status` reports 'Y: no clip'. The close is held. a cannot repair it in the lane, because D22's 'Lanes' bullet says lane clips never count for the close. The new COLLAB-8 scenarios cover only one move, b to a, where seat order and holding-period order agree, so a test written to them passes against this fault.",
+          "proposedChange": "In D22's 'the one chosen' bullet, replace 'Across seats, it is the entry from the seat that held `lane:<L>` later in the record's lane transfers' with 'Across seats, entries are ordered by the causal order of their origins (D3). Only the lane's holder writes them (D7), and the lane passes only by `scope.transferred`, so these origins are totally ordered, and an entry a seat writes after getting the lane back follows every entry written while the lane was away'. In COLLAB-8, add: '`a` holds `lane:x` and runs a passing hold S1 for a story, transfers `lane:x` to `b`, `b` runs a passing hold S2, and `lane:x` returns to `a` with no further check. `a`'s `lead-evidence record` records the hold with S2'."
+        }
+      ],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "shared-delivery-collaboration.plan",
+        "candidateRef": "e310f50f04d543c0ce77b01a258f88813a6028a1",
+        "round": 14,
+        "outcome": "changes-requested",
+        "findings": [
+          {
+            "id": "outcome-correctness-r14-1",
+            "severity": "P1",
+            "summary": "D22's revised 'the one chosen' rule orders entries across seats by 'the seat that held `lane:<L>` later in the record's lane transfers'. That ranks seats, not holding periods. When a lane returns to a seat that held it before (a, then b, then a again, as the finish line's 'every scope handed back to `a`' does), the rule picks the returning seat's last entry. That entry comes from its first holding period, so it is older than every entry the middle holder wrote. The holder then records a stale spec, which is the r13-1 failure again by another route.",
+            "location": "docs/plans/2026-11-24-shared-delivery-collaboration.md:616",
+            "failureScenario": "a holds `delivery` and, at first, lane L. For story Y in L, a runs a passing hold with spec S1 at head H1. a transfers L to b. Y conflicts, b rebases to H2, the old page path is gone, and b runs a passing hold with corrected spec S2. Y merges. Following the finish line, b hands every scope back to a, so L returns to a. a runs `lead-evidence record` on the merged base. Both S1 (origin seat a) and S2 (origin seat b) are eligible. Under the rule as written, 'across seats, the entry from the seat that held `lane:<L>` later in the record's lane transfers' is a's entry, because a holds L last, and 'within one origin seat' a's last eligible entry is S1. So `record` records with S1, `app_video` loads a path that is not on the merged base, prints 'Y hold: not recorded', and `evidence_status` reports 'Y: no clip'. The close is held. a cannot repair it in the lane, because D22's 'Lanes' bullet says lane clips never count for the close. The new COLLAB-8 scenarios cover only one move, b to a, where seat order and holding-period order agree, so a test written to them passes against this fault.",
+            "proposedChange": "In D22's 'the one chosen' bullet, replace 'Across seats, it is the entry from the seat that held `lane:<L>` later in the record's lane transfers' with 'Across seats, entries are ordered by the causal order of their origins (D3). Only the lane's holder writes them (D7), and the lane passes only by `scope.transferred`, so these origins are totally ordered, and an entry a seat writes after getting the lane back follows every entry written while the lane was away'. In COLLAB-8, add: '`a` holds `lane:x` and runs a passing hold S1 for a story, transfers `lane:x` to `b`, `b` runs a passing hold S2, and `lane:x` returns to `a` with no further check. `a`'s `lead-evidence record` records the hold with S2'."
+          }
+        ],
+        "resolvedFindings": [
+          {
+            "id": "outcome-correctness-r13-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. D22's 'the one chosen' bullet (:616-620) now uses the carried log's order, needs no git object and never compares `at`, so rebased, squash-merged and missing heads no longer break the ranking. COLLAB-8 (:1233-1242) adds the S4 non-passthrough-after-S1 case, the rebase to H2 with H1 absent from a's clone and a clock behind, and the cross-seat case after `lane:x` moves from b to a. A test written to these scenarios catches the failure I named. The cross-seat wording I proposed in r13 ranks seats rather than holding periods. That leaves a residual case, a lane returning to an earlier holder, which this round files as outcome-correctness-r14-1 against the new lines."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA e68ec74261e749c38f6dd9871395b7df833f248d. Start check: `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty in the private checkout. End check: both repeated with the same results. Nothing was modified other than writing this result file.",
+          "Delta derived with `git diff bf502321f4430a02c243bc56b70e1be392d0c5d7..e310f50f04d543c0ce77b01a258f88813a6028a1`. It touches one file, docs/plans/2026-11-24-shared-delivery-collaboration.md: D22's 'the one chosen' bullet and the D22 recording scenarios in COLLAB-8.",
+          "Re-check of carried outcome-correctness-r13-1: fixed, adopted verbatim from my approval condition. The scenario additions go beyond it: the S4 bullet distinguishes 'last' from 'first', the S5 bullet covers both a rebase and clock skew, and the lane-move bullet covers ordering across seats.",
+          "The ordering rule is implementable without clocks. Every slice value carries a `{seat, seq}` origin (D3, :213), D7's filter (:353-356) already checks the writer's scope at that origin against the journal, and `scope.transferred` is journalled. So a causal ordering of app-checks entries is available, which is what r14-1's proposed change relies on.",
+          "D21 row 565 (`app-checks` carried by `lane:<L>`'s holder, every entry kept in origin-seat order) plus the sync-filter scenario at :1011-1013 (a value written while its seat held `lane:x` is still applied after a later transfer) confirm that b's earlier entries survive the move to a. The cross-seat comparison in the new scenario therefore has both seats' entries to compare. No failure found there.",
+          "The finish line (:686-691) includes 'every scope handed back to `a`', so the lane round trip in r14-1 is part of the granted flow, not an edge case.",
+          "No checks run: the brief lists no scoped sensors or test files for a plan review. No mutation or fault injection was done.",
+          "Model class: Opus-class (claude-opus-5-5). Realization basis: host-convention. Host: a native subagent; no progress or permission signals were exposed to this lens. Run ID: none; activityId review-shared-delivery-collaboration.plan, attemptId 1, roundId shared-delivery-collaboration.plan-r14.",
+          "No late findings: r14-1 is against lines new in this round's delta. The flaw sits in wording I proposed in r13. My r13 approval condition missed it, and that miss is dissent about this lens, not about the candidate.",
+          "Approval condition, outcome-correctness-r14-1: adopted as written, the proposed change resolves it. Causal origin order follows holding periods rather than seat identity, needs no git object or clock, and the added scenario fails against an implementation that picks the returning seat's stale entry."
+        ]
+      },
+      "resultSha256": "4eece9d1335eea41e76b453907ab60037848f3aacc132764260edcc0222e0eb8"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 14,
+      "findings": [
+        {
+          "id": "adversarial-testing-r14-1",
+          "severity": "P1",
+          "summary": "D22's new cross-seat branch picks the entry from the seat that held lane:<L> later in the record's lane transfers. It has one row, and that row cannot fail under three wrong selectors. In the row, lane:x moves from b to a and a's entry wins. But a is also the seat with the lower seat id, the current lane holder, and the delivery holder that runs record. So 'lowest seat id wins', 'the current lane holder's entry wins' and 'the recording seat's own entry wins' all pick a's entry, and the row stays green. Every other entry in the recording rows (S1 to S5) is on b, so no other row crosses seats. The rule is also ambiguous when a seat holds the lane twice. With a to b to a, 'the seat that held lane:<L> later' is a, but if a ran its hold only in its first tenure, the causal last entry is b's. The text says both 'causal order' and 'the seat that held later', and these disagree there, so no row could check that case.",
+          "location": "docs/plans/2026-11-24-shared-delivery-collaboration.md:616",
+          "failureScenario": "Mutation 1: across seats, order by seat id ascending. Mutation 2: across seats, take the current holder of lane:<L>. Mutation 3: prefer the recording seat's own entries. In the one cross-seat row, a is the later lane holder, the lower seat id, the current lane holder and the recorder, so all three mutations record a's spec and the row stays green. In use: a holds lane:x and runs a passing hold Sa for story Z, then hands lane:x to b. b changes the spec and runs a passing hold Sb, then hands lane:x back to a, which records without re-running. Mutation 2, and a literal reading of 'the seat that held lane:<L> later', both record Sa. The page then shows a clip of behaviour the story no longer has.",
+          "proposedChange": "In D22, state the cross-seat order as the lane tenure each entry was written in: an entry written during a later holding of lane:<L> comes after one written during an earlier holding, and a seat that holds the lane twice has two tenures. Add one COLLAB-8 row. a holds lane:x and runs a passing hold Sa for a story, then lane:x moves to b, and b runs a passing hold Sb on a clock set behind Sa's. Then lane:x moves back to a, which runs no app-check. a, holding delivery, runs lead-evidence record, and the hold recording uses Sb. This kills all three mutations: a sorts first by seat id, holds the lane now, and is the recorder, but b's entry is the answer."
+        }
+      ],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "shared-delivery-collaboration.plan",
+        "candidateRef": "e310f50f04d543c0ce77b01a258f88813a6028a1",
+        "round": 14,
+        "outcome": "changes-requested",
+        "findings": [
+          {
+            "id": "adversarial-testing-r14-1",
+            "severity": "P1",
+            "summary": "D22's new cross-seat branch picks the entry from the seat that held lane:<L> later in the record's lane transfers. It has one row, and that row cannot fail under three wrong selectors. In the row, lane:x moves from b to a and a's entry wins. But a is also the seat with the lower seat id, the current lane holder, and the delivery holder that runs record. So 'lowest seat id wins', 'the current lane holder's entry wins' and 'the recording seat's own entry wins' all pick a's entry, and the row stays green. Every other entry in the recording rows (S1 to S5) is on b, so no other row crosses seats. The rule is also ambiguous when a seat holds the lane twice. With a to b to a, 'the seat that held lane:<L> later' is a, but if a ran its hold only in its first tenure, the causal last entry is b's. The text says both 'causal order' and 'the seat that held later', and these disagree there, so no row could check that case.",
+            "location": "docs/plans/2026-11-24-shared-delivery-collaboration.md:616",
+            "failureScenario": "Mutation 1: across seats, order by seat id ascending. Mutation 2: across seats, take the current holder of lane:<L>. Mutation 3: prefer the recording seat's own entries. In the one cross-seat row, a is the later lane holder, the lower seat id, the current lane holder and the recorder, so all three mutations record a's spec and the row stays green. In use: a holds lane:x and runs a passing hold Sa for story Z, then hands lane:x to b. b changes the spec and runs a passing hold Sb, then hands lane:x back to a, which records without re-running. Mutation 2, and a literal reading of 'the seat that held lane:<L> later', both record Sa. The page then shows a clip of behaviour the story no longer has.",
+            "proposedChange": "In D22, state the cross-seat order as the lane tenure each entry was written in: an entry written during a later holding of lane:<L> comes after one written during an earlier holding, and a seat that holds the lane twice has two tenures. Add one COLLAB-8 row. a holds lane:x and runs a passing hold Sa for a story, then lane:x moves to b, and b runs a passing hold Sb on a clock set behind Sa's. Then lane:x moves back to a, which runs no app-check. a, holding delivery, runs lead-evidence record, and the hold recording uses Sb. This kills all three mutations: a sorts first by seat id, holds the lane now, and is the recorder, but b's entry is the answer."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree e68ec74261e749c38f6dd9871395b7df833f248d at candidateRef e310f50f04d543c0ce77b01a258f88813a6028a1, in the private checkout /Users/kwamina/agent-skills/.orchestration/plan-review/shared-delivery-collaboration/checkouts/lens.adversarial-testing. Start identity check: git rev-parse HEAD^{tree} matched and git status --porcelain was empty. End identity check: both matched again, with the checkout clean. No probes or mutants were planted.",
+          "Delta read: git diff bf502321f4430a02c243bc56b70e1be392d0c5d7..e310f50f04d543c0ce77b01a258f88813a6028a1, which changes only docs/plans/2026-11-24-shared-delivery-collaboration.md (+15/-5). D22's selection rule changes from 'the latest head by ancestry, then log order, ties by seat id' to 'the last eligible entry in causal order': log order within a seat, and lane-transfer order across seats, with no git object and no at. The COLLAB-8 recording row now states that all four entries are at H1. Three rows are added: S4 at H1, S5 after a rebase to H2 on a clock behind, and a cross-seat row after lane:x moves from b to a. I read the delta with D21's app-checks row, the full D22 text and the COLLAB-8 evidence rows.",
+          "Model class: Claude Opus (claude-opus-5-5), running as a native subagent. No progress or permission signals are exposed to it, which limits what it can report. Realization basis: host-convention. Run ID: none (activityId review-shared-delivery-collaboration.plan, attemptId 1, roundId shared-delivery-collaboration.plan-r14).",
+          "Scope: this is a plan review. The brief names no sensors and no test files, and none were run. Mutations are stated only against D22's changed selection text and the record code it extends, and no mutant was planted, so every mutant kept to that scope.",
+          "Re-check adversarial-testing-r13-1: adopted differently from its approval condition. The seat-id tie-break was replaced by lane-transfer order, and ancestry was replaced by causal log order, so it was re-checked like a carried finding. Each round-13 mutation was checked. Mutation 1 (today's first eligible entry) now turns red: the S4 row expects S4, not S1. Mutation 2 (latest at) turns red: S5 is written on a clock behind S4's, and in the cross-seat row a's clock is behind b's. Mutation 3 (earliest head) turns red: S5 is at H2. Mutation 5 (collapse per subject and head) turns red: all four entries are now stated at H1, so collapsing to S3 leaves no eligible hold for S1. An ancestry-based selector also turns red, because H1 is absent from a's clone. Mutation 4 (the cross-seat tie-break) now falls under the new transfer-order text, and its one row does not distinguish that rule from seat-id or holder preference. That gap is filed as adversarial-testing-r14-1, against this delta's new sentence. So r13-1 is fixed for what it asked, in the same way r12-1 was closed into r13-1.",
+          "P2 (carried, unchanged): whether a post-archive reopen is possible on a shared record, and which of closed.json's two writers the cleanup-and-close row exercises, are still unstated. The hosted-terminal.json carry on an incoming holder still has no row.",
+          "P3 (carried): D6's two-scope tie-break ('ties broken by seat id') still names no direction. Its row asserts only agreement between machines, which a consistent choice in either direction satisfies.",
+          "Late findings: none. adversarial-testing-r14-1 is against D22's cross-seat sentence and the cross-seat row, both new in this delta.",
+          "Declined: whether recording should prefer a lane's earlier or later spec at all. That is design, for another lens. r14-1 asks only that the stated order be unambiguous and have a row that can fail.",
+          "Approval conditions. adversarial-testing-r14-1: resolved if adopted as written. D22 then states tenure order, and the a-to-b-to-a row with b's entry expected turns red under all three named mutations."
+        ],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r13-1",
+            "state": "fixed",
+            "resolution": "D22 now selects the last eligible entry in causal order, never by at or by git ancestry. The recording row states that all four entries are at H1, and the S4 and S5 rows kill the first-eligible, latest-at, earliest-head, ancestry and collapse mutations. The cross-seat branch that replaced the seat-id tie-break is filed as adversarial-testing-r14-1, because its one row cannot tell transfer order from seat-id or holder preference."
+          }
+        ]
+      },
+      "resultSha256": "a98525f83c9e9071225b25597aa3f91741cc1789533a177eb93c6082d8e8444e"
+    }
+  ],
+  "residualRisks": [
+    "14 review rounds; findings open after each round: 19, 11, 6, 6, 7, 4, 4, 3, 2, 3, 3, 2, 2, 2.",
+    "Ended without alignment after round 14: Ended by the operator after 14 rounds. The design has been unchallenged since round 3; rounds 9-14 narrowed to evidence recording across seats, each finding smaller than the last. Round 14's two findings named one fix, lane-tenure ordering of carried app-checks entries, adopted as both lenses' approval conditions state in 95d36cc3 but not re-reviewed. Remaining edge cases go to story-level review against the code.",
+    "Open P1 outcome-correctness-r14-1 (lens.outcome-correctness): D22's revised 'the one chosen' rule orders entries across seats by 'the seat that held `lane:<L>` later in the record's lane transfers'. That ranks seats, not holding periods. When a lane returns to a seat that held it before (a, then b, then a again, as the finish line's 'every scope handed back to `a`' does), the rule picks the returning seat's last entry. That entry comes from its first holding period, so it is older than every entry the middle holder wrote. The holder then records a stale spec, which is the r13-1 failure again by another route.",
+    "Open P1 adversarial-testing-r14-1 (lens.adversarial-testing): D22's new cross-seat branch picks the entry from the seat that held lane:<L> later in the record's lane transfers. It has one row, and that row cannot fail under three wrong selectors. In the row, lane:x moves from b to a and a's entry wins. But a is also the seat with the lower seat id, the current lane holder, and the delivery holder that runs record. So 'lowest seat id wins', 'the current lane holder's entry wins' and 'the recording seat's own entry wins' all pick a's entry, and the row stays green. Every other entry in the recording rows (S1 to S5) is on b, so no other row crosses seats. The rule is also ambiguous when a seat holds the lane twice. With a to b to a, 'the seat that held lane:<L> later' is a, but if a ran its hold only in its first tenure, the causal last entry is b's. The text says both 'causal order' and 'the seat that held later', and these disagree there, so no row could check that case.",
+    "The plan's current text differs from round 14's candidate e310f50f04d5; this record covers the reviewed text."
+  ],
+  "ended": {
+    "round": 14,
+    "reason": "Ended by the operator after 14 rounds. The design has been unchallenged since round 3; rounds 9-14 narrowed to evidence recording across seats, each finding smaller than the last. Round 14's two findings named one fix, lane-tenure ordering of carried app-checks entries, adopted as both lenses' approval conditions state in 95d36cc3 but not re-reviewed. Remaining edge cases go to story-level review against the code.",
+    "at": "2026-11-24T06:49:20.209359Z"
+  }
+}
