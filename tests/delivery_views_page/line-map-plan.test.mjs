@@ -1360,6 +1360,10 @@ test("the Left and Right arrows turn the chapter pages, and nothing else does or
     press("ArrowRight", { on: scroller, label: "scroller" }), { wait: 20 }, page("sideways scroller"),
     press("ArrowLeft", { on: (window) => { const box = window.document.querySelector(".lines"); delete box.scrollWidth; delete box.clientWidth; return box; }, label: "fitting line" }),
     { wait: 20 }, page("fitting line"),
+    press("ArrowRight", { label: "before malformed" }), { wait: 20 }, page("before malformed"),
+    // An address whose hash holds a malformed escape opens the first page instead of stopping the router.
+    { run: (window) => { window.location.hash = "%"; } },
+    { wait: 20 }, page("malformed hash"),
     { run: (window) => { seen.push(["hint", window.document.querySelector(".chapter-tab-hint").textContent]); } },
     press("k", { init: { metaKey: true, ctrlKey: true } }), { wait: 20 },
     { run: (window) => { seen.push(["launcher", window.document.documentElement.classList.contains("launcher-open")]); } },
@@ -1374,6 +1378,8 @@ test("the Left and Right arrows turn the chapter pages, and nothing else does or
   }
   // A line that fits its width owns no arrows: Left turns back from line to now.
   expect(seen.find((entry) => entry[0] === "fitting line")[2]).toBe("now");
+  expect(seen.find((entry) => entry[0] === "before malformed")[2]).toBe("line");
+  expect(seen.find((entry) => entry[0] === "malformed hash")[2]).toBe("now");
   // A turning arrow is the page's alone, so the browser doesn't scroll as well; a guarded one is left to the browser.
   expect(prevented.filter(([label]) => ["right", "right again", "shift", "scroller", "fitting line"].includes(label))).toEqual(
     [["right", true], ["right again", true], ["shift", false], ["scroller", false], ["fitting line", true]]);

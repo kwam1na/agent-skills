@@ -679,7 +679,10 @@
     }
   }
   function route() {
-    var hash = decodeURIComponent((location.hash || "").slice(1));
+    var raw = (location.hash || "").slice(1);
+    var hash;
+    // A malformed escape (a link cut short, a typed `#%`) is read as written, so an unknown id opens the first page.
+    try { hash = decodeURIComponent(raw); } catch (error) { hash = raw; }
     var target = hash ? document.getElementById(hash) : null;
     var section = target && target.closest ? target.closest(".chapter") : null;
     showPage(section ? section.id : hash, target);
