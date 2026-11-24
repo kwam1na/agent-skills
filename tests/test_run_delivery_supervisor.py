@@ -3491,14 +3491,19 @@ class SupervisorPassTests(unittest.TestCase):
         hand_off(fx, "FX-3", "lane-2")
         code, out = fx.flow("lead-accept", "FX-3", cwd=fx.main)
         self.assertEqual(code, 0, out)
+        # Held at a stage the requeue would write differently, so a requeue that resets every item is seen.
+        state_tool(fx, "patch", "--writer", "runner", "--version", str(record(fx)["state"]["version"]), "--element",
+                   "queue[subject=FX-3]", "--set", json.dumps({"/stage": "checking"}))
         other = next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-3")
-        self.assertEqual(other["stage"], "queued", other)
+        self.assertEqual(other["stage"], "checking", other)
         forge = json.loads((fx.tmp / "forge.json").read_text())
         forge["https://forge.test/pr/1"]["draft"] = False  # the lead marks it ready by hand
         (fx.tmp / "forge.json").write_text(json.dumps(forge))
         code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertEqual(next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-3"), other)
+        state_tool(fx, "patch", "--writer", "runner", "--version", str(record(fx)["state"]["version"]), "--element",
+                   "queue[subject=FX-3]", "--set", json.dumps({"/stage": "queued"}))
         row = next(lane for lane in record(fx)["state"]["lanes"] if lane["id"] == "lane-1")
         self.assertFalse(row.get("focus", "").startswith("FX-2 stopped:"), row)
         self.assertNotEqual(row.get("waitingOn"), "lead", row)
