@@ -196,14 +196,33 @@ def request_seat(directory: Path, *, label: str | None = None) -> dict:
         local.requesting = None
 
 
+def _own_seat(directory: Path) -> str:
+    seat = _state_tool().local_seat(directory, _key_of(directory))
+    if seat is None:
+        raise _refuse("collab.seat_missing", "this checkout has no seat for the shared record")
+    return seat
+
+
+def _require_holder(directory: Path, journal: list[dict], scope: str, what: str) -> str:
+    """This checkout's seat, which must hold ``scope`` to do ``what``."""
+    tool = _state_tool()
+    seat = _own_seat(directory)
+    if not tool.holds(journal, seat, scope):
+        raise _refuse("scope.not_held", f"only the holder of {scope}, seat {tool.holder(journal, scope)}, {what}; "
+                      f"scope request --scope {scope} asks for it")
+    return seat
+
+
 def admit_seat(directory: Path, seat: str, *, approver: bool = True) -> dict:
-    """Admit a requested seat, answering its request; admitted already, the admission it has is returned."""
+    """The delivery holder admits a requested seat, answering its request. Admitted already with the same approver,
+    the admission it has is returned; admitting it again with another approver changes it."""
     tool = _state_tool()
     journal = tool.read_journal(directory)
-    admitted = next((entry for entry in reversed(journal)
-                     if entry["kind"] == "seat.admitted" and entry["data"]["seat"] == seat), None)
-    if admitted is not None:
-        return admitted
+    _require_holder(directory, journal, "delivery", "admits a seat")
+    if (tool.derived_seats(journal).get(seat) or {}).get("admitted") and \
+            tool.derived_seats(journal)[seat]["approver"] == approver:
+        return next(entry for entry in reversed(journal) if entry["kind"] == "seat.admitted"
+                    and entry["data"]["seat"] == seat and entry["data"]["approver"] == approver)
     request = next((entry for entry in reversed(journal)
                     if entry["kind"] == "seat.requested" and entry["data"]["seat"] == seat), None)
     if request is None:
@@ -211,6 +230,90 @@ def admit_seat(directory: Path, seat: str, *, approver: bool = True) -> dict:
     label = tool.derived_seats(journal)[seat]["label"]
     return tool.append_journal(directory, kind="seat.admitted", data={"seat": seat, "label": label, "approver": approver},
                                answers=[request["id"]])
+
+
+def give_scope(directory: Path, scope: str, to: str) -> dict:
+    """Pass ``scope`` from this seat, its holder, to the admitted seat ``to``."""
+    tool = _state_tool()
+    _check_scope(scope)
+    journal = tool.read_journal(directory)
+    seat = _require_holder(directory, journal, scope, "passes it on")
+    if not (tool.derived_seats(journal).get(to) or {}).get("admitted"):
+        raise _refuse("collab.seat_unknown", f"seat {to} is not an admitted seat of this record")
+    if to == seat:
+        raise _refuse("scope.held", f"seat {seat} holds {scope} already")
+    return tool.append_journal(directory, kind="scope.transferred", data={"scope": scope, "from": seat, "to": to})
+
+
+def request_scope(directory: Path, scope: str, reason: str) -> dict:
+    """Ask the holder of ``scope`` to pass it to this seat, saying why."""
+    tool = _state_tool()
+    _check_scope(scope)
+    seat = _own_seat(directory)
+    if tool.holds(tool.read_journal(directory), seat, scope):
+        raise _refuse("scope.held", f"seat {seat} holds {scope} already")
+    return tool.append_journal(directory, kind="scope.requested", data={"scope": scope, "reason": reason})
+
+
+def decline_request(directory: Path, request: int) -> dict:
+    """The holder of a requested scope keeps it, answering the request by its local id."""
+    tool = _state_tool()
+    journal = tool.read_journal(directory)
+    asked = next((entry for entry in journal if entry["id"] == request and entry["kind"] == "scope.requested"), None)
+    if asked is None:
+        raise _refuse("scope.request_unknown", f"journal entry {request} is not a scope.requested")
+    _require_holder(directory, journal, asked["data"]["scope"], "declines a request for it")
+    return tool.append_journal(directory, kind="scope.declined", data={"scope": asked["data"]["scope"]},
+                               answers=[request])
+
+
+def open_requests(journal: list[dict]) -> list[dict]:
+    """Every scope.requested not yet answered: no decline names it, no transfer after it gave the scope to its seat,
+    and its seat does not hold the scope now."""
+    tool = _state_tool()
+    declined = {target for entry in journal if entry["kind"] == "scope.declined" for target in entry.get("answers", [])}
+    found = []
+    for at, entry in enumerate(journal):
+        if entry["kind"] != "scope.requested" or entry["id"] in declined:
+            continue
+        seat, scope = entry["origin"]["seat"], entry["data"]["scope"]
+        given = any(later["kind"] == "scope.transferred" and later["data"]["scope"] == scope
+                    and later["data"]["to"] == seat for later in journal[at + 1:])
+        if not given and not tool.holds(journal, seat, scope):
+            found.append(entry)
+    return found
+
+
+def auto_grants(directory: Path, *, enabled: bool) -> list[dict]:
+    """With ``collab.autoGrant`` on, the delivery holder passes each requested plan section nobody holds to the seat
+    that asked; never a held section and never another scope. Returns the transfers it journalled."""
+    tool = _state_tool()
+    journal = tool.read_journal(directory)
+    seat = tool.local_seat(directory, _key_of(directory))
+    if not enabled or not tool.holds(journal, seat, "delivery"):
+        return []
+    given = []
+    for request in open_requests(journal):
+        scope = request["data"]["scope"]
+        _, held = tool.scope_register(journal)
+        if scope.startswith("plan:") and scope not in held:
+            given.append(give_scope(directory, scope, request["origin"]["seat"]))
+            journal = tool.read_journal(directory)
+    return given
+
+
+def auto_grant_setting(settings: Path) -> bool:
+    """``collab.autoGrant`` from the repository's run-delivery settings, false when absent."""
+    try:
+        return json.loads(settings.read_text(encoding="utf-8")).get("collab", {}).get("autoGrant") is True
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def _check_scope(scope: str) -> str:
+    if not isinstance(scope, str) or not _state_tool().SCOPE.match(scope):
+        raise _refuse("scope.invalid", f"a scope is delivery, queue, lane:<lane> or plan:<section>: {scope!r}")
+    return scope
 
 
 def label_seat(directory: Path, label: str) -> dict:
@@ -272,11 +375,12 @@ def build_partition(directory: Path) -> tuple[dict, str]:
         origin = origins.get(path)
         if origin is not None and origin["seat"] == seat and not origin.get("removed"):
             held.append({"path": path, "value": tool.carried_value(path, value, origins_of),
-                         "origin": {"seat": seat, "seq": origin["seq"]},
+                         "origin": {"seat": seat, "seq": origin["seq"], **({"seen": origin["seen"]} if "seen" in origin else {})},
                          **({"replaces": origin["replaces"]} if "replaces" in origin else {})})
     for path, origin in sorted(origins.items()):
         if origin["seat"] == seat and origin.get("removed"):
-            held.append({"path": path, "removed": True, "origin": {"seat": seat, "seq": origin["seq"]},
+            held.append({"path": path, "removed": True,
+                         "origin": {"seat": seat, "seq": origin["seq"], **({"seen": origin["seen"]} if "seen" in origin else {})},
                          **({"replaces": origin["replaces"]} if "replaces" in origin else {})})
     partition = {"schemaVersion": PARTITION, "seat": seat, "generation": state["meta"].get("writerGeneration"),
                  "through": len(lines), "slice": held}
@@ -438,9 +542,10 @@ def supersedes(incoming: dict, incoming_digest: str, local: dict, local_digest: 
 
 
 def permitted(journal: list[dict], seat: str) -> bool:
-    """Whether ``seat`` may write the record's values: the seat that started it, or one admitted. Scopes narrow this."""
-    return any((entry["kind"] == "record.started" and entry["origin"]["seat"] == seat)
-               or (entry["kind"] == "seat.admitted" and entry["data"]["seat"] == seat) for entry in journal)
+    """Whether ``seat`` may write the record's values at all: the seat that started it, or one the delivery holder
+    admitted. Each value is then checked against the scopes that may write it."""
+    return (any(entry["kind"] == "record.started" and entry["origin"]["seat"] == seat for entry in journal)
+            or (_state_tool().derived_seats(journal).get(seat) or {}).get("admitted", False))
 
 
 def _find(state: dict, array: str, key: str, value: str) -> dict | None:
@@ -470,17 +575,41 @@ def _apply_slice(state: dict, origins: dict, journal: list[dict], seat: str, par
 
     entries = [item for item in partition["slice"]
                if item["origin"]["seat"] == seat and item["origin"]["seq"] <= through]
+    # The lane each element in the slice names, for an element this record does not hold yet.
+    lanes = {item["path"][:-len("/lane")]: item.get("value") for item in entries if item["path"].endswith("/lane")}
+    # The seq of the write that made each element this slice makes.
+    created = {item["path"]: item["origin"]["seq"] for item in entries
+               if item["path"].endswith("]") and not item.get("removed")}
     # Elements before their fields, so a field finds its element.
     entries.sort(key=lambda item: 0 if item["path"].endswith("]") else 1)
     changed = False
     for item in entries:
         path, origin = item["path"], {"seat": seat, "seq": item["origin"]["seq"]}
+        written = {**origin, **({"seen": item["origin"]["seen"]} if "seen" in item["origin"] else {})}
         removed = item.get("removed", False)
         incoming = {**origin, **({"replaces": item["replaces"]} if "replaces" in item else {})}
         digest = removed_digest if removed else tool.value_digest(item["value"])
         local = origins.get(path)
         if local is not None and (local["seat"], local["seq"]) == (seat, origin["seq"]) and held_digest(path) == digest:
             continue  # applied already
+        # D7: the value counts only if its seat held a scope that may write it when it wrote it.
+        selector = (path.split("]/", 1)[0] + "]" if "]/" in path else path) if PATH.match(path) else None
+        element = None
+        if selector is not None:
+            held_element = _find(state, *PATH.match(selector).group("array", "key", "value"))
+            if held_element is None or "lane" not in held_element:
+                # An element this record lacks, or makes from this slice, names its lane in the slice.
+                element = {**(held_element or {}), "lane": lanes.get(selector)}
+        scopes = tool.path_scopes(state, path, element)
+        field = path.split("]/", 1)[1] if "]/" in path else None
+        runner = selector is not None and selector.startswith("queue[") and tool.FIELD_MAP["queue"].get(field) == ("queue",)
+        if field is not None and created.get(selector) == origin["seq"] and (
+                not runner or field == "order" or field in tool.QUEUE_START and item.get("value") == tool.QUEUE_START[field]):
+            # The write that makes an element sets its starting fields, as whoever may make it: a queue element's
+            # runner fields only at their starting values.
+            scopes = tool.path_scopes(state, selector, element)
+        if isinstance(scopes, str) or not any(tool.holds(journal, seat, scope, at=written) for scope in scopes):
+            continue
         value = None
         if not removed:
             ready, value = _localized(path, item["value"], local_ids)

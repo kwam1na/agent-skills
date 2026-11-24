@@ -934,9 +934,10 @@ class FixtureAdopterLiveViewTests(unittest.TestCase):
 # hooks by command-line flag. Only quoted string forms and full ref names are
 # matched, so ordinary words and identifiers such as __main__ never are.
 ADOPTER_DEFAULTS = (
-    # A remote named in a string, not a shared record's `origin` field: a subscript, a .get, a membership test, an
-    # object key or the last entry of a JSON list are that field.
-    ("remote name", re.compile(r"""(?<!\[)(?<!\.get\()(["'])origin\1(?!\s*:)(?!\s+(?:not\s+)?in\b)(?!\n\s*\])""")),
+    # A remote named in a string, not a shared record's `origin` field: a subscript (a bracket after a name or a
+    # closing bracket), a .get, a membership test or an object key are that field. In a JSON source, so is the last
+    # entry of a list: `json_fields` takes those out first.
+    ("remote name", re.compile(r"""(?<![\w\])]\[)(?<!\.get\()(["'])origin\1(?!\s*:)(?!\s+(?:not\s+)?in\b)""")),
     ("branch name", re.compile(r"""(["'])(?:main|master)\1""")),
     ("branch ref", re.compile(r"refs/heads/(?:main|master)\b")),
     ("remote-tracking ref", re.compile(r"""["'](?:origin|upstream)/(?:main|master)\b""")),
@@ -972,6 +973,11 @@ class BindingBasesSchemaTests(unittest.TestCase):
 
 
 class AdopterNeutralityTests(unittest.TestCase):
+    @staticmethod
+    def json_fields(path: Path, contents: str) -> str:
+        """A JSON source without the `origin` field's name where it ends a list, as a schema's required list does."""
+        return re.sub(r""""origin"(?=\n\s*\])""", '"field"', contents) if path.suffix == ".json" else contents
+
     def tool_sources(self) -> list[Path]:
         return [*sorted(SCRIPTS.glob("*.py")), ROOT / "skills/orchestrate-work/references/journal-kinds.json",
                 ROOT / "skills/orchestrate-work/references/schemas.json"]
@@ -984,13 +990,14 @@ class AdopterNeutralityTests(unittest.TestCase):
                          ["collab.py", "delivery_state.py", "journal_words.py", "machine.py", "merge_queue.py", "narrator.py",
                           "region_ownership.py", "render_state.py", "journal-kinds.json", "schemas.json"])
         for path in self.tool_sources():
-            contents = path.read_text(encoding="utf-8")
+            contents = self.json_fields(path, path.read_text(encoding="utf-8"))
             for name, pattern in ADOPTER_DEFAULTS:
                 with self.subTest(path=path.name, literal=name):
                     self.assertIsNone(pattern.search(contents))
 
     def test_the_scan_finds_each_default_it_looks_for(self) -> None:
-        for planted in ('remote = "origin"', 'default="origin"', '["git", "push", "origin"]', "branch = 'main'", "refs/heads/main", '["npx", "x"]',
+        for planted in ('remote = "origin"', 'default="origin"', '["git", "push", "origin"]', 'remotes = ["origin"]',
+                        '[\n    "git", "push",\n    "origin"\n]', "branch = 'main'", "refs/heads/main", '["npx", "x"]',
                         "git push --no-verify", 'run(["gh", "pr"])', 'base = "origin/main"',
                         '["git", "commit", "-n", "-m", "x"]', "git commit -q -n -m x", 'command = "gh pr merge"'):
             with self.subTest(planted=planted):
@@ -998,9 +1005,13 @@ class AdopterNeutralityTests(unittest.TestCase):
         for innocent in ('if __name__ == "__main__":', "the main checkout", "origin_url = remote",
                          "core.hooksPath", "highlight", '"-n"', 'git log -n 1', '"ghost"',
                          'entry["origin"]', '{"origin": 1}', '"origin" in entry', '"origin" not in entry',
-                         'entry.get("origin")', '"required": [\n  "path",\n  "origin"\n]'):
+                         'entry.get("origin")', 'item["origin"]["seat"]', 'f(x)["origin"]'):
             with self.subTest(innocent=innocent):
                 self.assertFalse(any(pattern.search(innocent) for _, pattern in ADOPTER_DEFAULTS))
+        # A list a JSON source ends with the field's name is the field; the same list in Python source is a remote.
+        ended = '"required": [\n  "path",\n  "origin"\n]'
+        self.assertFalse(any(pattern.search(self.json_fields(Path("schemas.json"), ended)) for _, pattern in ADOPTER_DEFAULTS))
+        self.assertTrue(any(pattern.search(self.json_fields(Path("tool.py"), ended)) for _, pattern in ADOPTER_DEFAULTS))
 
     def test_the_fixture_names_no_first_adopter_and_no_adopter_default(self) -> None:
         files = self.fixture_files()

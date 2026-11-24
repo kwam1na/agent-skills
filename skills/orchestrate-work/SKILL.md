@@ -947,3 +947,36 @@ python3 -B scripts/delivery_state.py --dir STATE collab-push --remote REMOTE
 python3 -B scripts/delivery_state.py --dir STATE collab-fetch --remote REMOTE [--key KEY]
 python3 -B scripts/delivery_state.py --dir STATE collab-ingest [--key KEY]
 ```
+
+### Authority scopes
+
+A shared record's authority is split into scopes: `delivery`, `queue`,
+`lane:<lane>` and `plan:<section>`. Each has exactly one holder, derived from
+the journal and never stored. The seat that opened the record holds every scope
+until its holder passes one on with `scope.transferred`. A transfer counts only
+when the scope's holder made it, and a plan section nobody holds is the
+`delivery` holder's. The state tool's `holder`, `holds` and `held_sections`
+read them.
+
+- **Who writes what.** Every `delivery-state/1` field has one row in the state
+  tool's field map: the scopes that may write it, or `local`, `tool` or
+  `derived`. A lead write on a shared record that changes a field only the
+  `delivery` holder writes is refused with `scope.not_held`, naming the holder.
+  The sync writer applies a peer's value only if that seat held a scope that
+  may write it when it wrote it. A field two scopes may write, such as a lane
+  row's focus, goes to the write that replaced the other, and between
+  concurrent writes to the higher seat id.
+- **Admission.** Only the `delivery` holder admits a seat, and only its
+  `seat.admitted` counts. Admitting a seat again with another `--no-approver`
+  setting changes whether it approves the plan.
+- **Requests.** Any seat may ask for a scope with `scope.requested`. Its
+  holder passes it on, or keeps it with `scope.declined`. With
+  `collab.autoGrant` on, the `delivery` holder passes a requested plan section
+  nobody holds to the seat that asked, and never any other scope.
+
+```bash
+python3 -B scripts/delivery_state.py --dir STATE scope give --scope SCOPE --to SEAT
+python3 -B scripts/delivery_state.py --dir STATE scope request --scope SCOPE --reason "<why>"
+python3 -B scripts/delivery_state.py --dir STATE scope decline --request ID
+python3 -B scripts/delivery_state.py --dir STATE seat admit --seat SEAT [--no-approver]
+```
