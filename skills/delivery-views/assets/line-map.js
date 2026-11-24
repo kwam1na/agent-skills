@@ -537,7 +537,26 @@
   // The delivery's name stays in the top-left corner on every page but Now, which opens with it.
   var where = el("a", "page-where");
   where.setAttribute("href", "#now");
+  // The line map in small: three lanes running into one line, the page's own mark for going back to the start.
+  var mark = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  mark.setAttribute("viewBox", "0 0 22 14");
+  mark.setAttribute("aria-hidden", "true");
+  mark.setAttribute("class", "page-where-mark");
+  mark.innerHTML = '<path class="w1" d="M1 2.5h5c3 0 4 4.5 7 4.5"/><path class="w2" d="M1 7h12"/><path class="w3" d="M1 11.5h5c3 0 4 -4.5 7 -4.5"/>' +
+    '<path class="w0" d="M13 7h8"/><circle class="wd" cx="13" cy="7" r="1.6"/>';
+  var whereTitle = el("span", "page-where-title");
+  var whereNote = el("span", "page-where-note");
+  add(where, mark, whereTitle, whereNote);
   document.body.appendChild(where);
+  /** The delivery's name in the corner: its title, and a closing parenthetical (its status) set apart. */
+  function fillWhere(name) {
+    var words = name.replace(/\s+/g, " ").trim();
+    var note = /^(.*\S)\s*\(([^()]{1,80})\)$/.exec(words);
+    whereTitle.textContent = note ? note[1] : words;
+    whereNote.textContent = note ? note[2] : "";
+    where.setAttribute("aria-label", (note ? note[1] : words) + ", back to the start");
+    where.title = words;
+  }
 
   function chapterIds() { return Array.prototype.map.call(app.querySelectorAll(".chapter"), function (section) { return section.id; }); }
   function chapterName(id) {
@@ -666,7 +685,7 @@
     tabLabel.textContent = chapterName(id);
     tabButton.setAttribute("aria-label", "Chapters: " + chapterName(id));
     var heading = document.querySelector("h1");
-    where.textContent = heading ? heading.textContent : document.title;
+    fillWhere(heading ? heading.textContent : document.title);
     where.hidden = id === ids[0];
     document.title = (heading ? heading.textContent : document.title.split(" · ").pop()).replace(/\s+/g, " ") +
       (id === ids[0] ? "" : " · " + chapterName(id));
