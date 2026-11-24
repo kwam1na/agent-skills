@@ -38,6 +38,10 @@ measured to now. ``references/story.schema.json`` describes the document.
   ``story`` and ``everything``. A kind's altitude comes from the registry; a
   thread's entries show from the story altitude down, where the thread's own
   beat stands for them at the headline.
+- **Seats.** On a shared record, an entry's words name the seats they mention,
+  and "A seat", by each seat's latest label, and an entry's writer is named when
+  its words don't name it. A seat's own seat entry already names it. An
+  unshared record's entries carry no seat, and its story names none.
 
 Reads the record document a renderer is given, ``{"state", "journal"}`` and
 optionally ``"plan"``, on stdin, and prints its story as JSON.
@@ -72,6 +76,9 @@ PIECE_KINDS = (ASSIGN_KIND, "story.added", HANDOFF_KIND, MERGE_KIND, STOP_KIND)
 # Work that, journaled after the close, means the delivery has reopened.
 WORK_KINDS = (ASSIGN_KIND, HANDOFF_KIND, BATCH_KIND)
 INSTANT = re.compile(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(\.[0-9]+)?Z$")
+# The kinds that name a seat with the label it shows, and a seat as words name it.
+SEAT_KINDS = ("seat.requested", "seat.admitted", "seat.labeled")
+SEAT_ID = re.compile(r"\b(?:seat )?(s-[0-9a-f]{12})\b")
 NUMBERS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve")
 
 
@@ -131,6 +138,13 @@ def narrate(journal: list, state: dict | None = None, plan: dict | None = None, 
                 next(thread for thread in threads if thread["id"] == beat["thread"])["beat"] = beat["id"]
             beats.append(beat)
         chapter["beats"] = [beat["id"] for beat in made]
+
+    labels = _labels(entries, state)
+    for beat in beats:
+        if beat["form"] == "entry":
+            beat["words"] = _attributed(beat["words"], by_id[beat["entries"][0]], labels)
+        for item in beat["items"]:
+            item["words"] = _attributed(item["words"], by_id[item["entry"]], labels)
 
     landed = list(dict.fromkeys(entry["subject"] for entry in entries if entry["kind"] == MERGE_KIND and entry["subject"]))
     ledger = _ledger(threads, by_id, chapters, chapter_of, state, registry)
@@ -497,6 +511,45 @@ def _entry_beats(ids: list[int], by_id: dict, member_of: dict, registry: dict, f
         group = "bookkeeping" if kind["altitude"] == "bookkeeping" else ("batch", tuple(batch)) if batch else met
         beats.append({"group": group, "thread": thread, "held": [entry]})
     return [_beat(beat, registry, finishes) for beat in beats]
+
+
+# A shared record's seats
+
+
+def _labels(entries: list[dict], state: dict | None) -> dict | None:
+    """Each seat's latest label on a shared record, from its seat entries over the record's own list; None on an
+    unshared record, whose story names no seat."""
+    collab = ((state or {}).get("meta") or {}).get("collab") if isinstance(state, dict) else None
+    if not isinstance(collab, dict) and not any(entry.get("origin") for entry in entries):
+        return None
+    labels = {seat: held["label"] for seat, held in ((collab or {}).get("seats") or {}).items()
+              if isinstance(held, dict) and isinstance(held.get("label"), str)}
+    for entry in entries:
+        if entry["kind"] in SEAT_KINDS and isinstance(entry["data"].get("label"), str):
+            labels[entry["data"]["seat"]] = entry["data"]["label"]
+    return labels
+
+
+def _attributed(words: dict, entry: dict, labels: dict | None) -> dict:
+    """An entry's words on a shared record: the seats they name by their labels, "A seat" as its writer, and its writer
+    named when the words don't name it. A seat entry names its seat by the label it gives, and only another seat
+    writing it is named."""
+    seat = (entry.get("origin") or {}).get("seat")
+    if labels is None or not isinstance(seat, str):
+        return words
+    name = labels.get(seat, seat)
+    head, line = words["head"], words["line"]
+    if entry["kind"] in SEAT_KINDS:
+        if entry["data"].get("seat") == seat:
+            return words
+    else:
+        named = lambda text: SEAT_ID.sub(lambda found: labels.get(found.group(1), found.group(1)), text)
+        head, line = named(head), named(line)
+        if head.startswith("A seat "):
+            head = name + head[len("A seat"):]
+    if name not in head and name not in line:
+        line = f"By {name}. {line}" if line else f"By {name}"
+    return {**words, "head": head, "line": line}
 
 
 def _finish_label(entry: dict, finishes: dict) -> str:

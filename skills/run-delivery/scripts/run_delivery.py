@@ -12317,6 +12317,16 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           **({"subject": entry["subject"]} if entry.get("subject") else {}),
                           **({"lane": entry["lane"]} if entry.get("lane") else {}),
                           "fields": {"entry": entry["id"], "detail": holding_words(entry)[:300]}})
+    if (doc["state"].get("meta") or {}).get("collab"):
+        # On a shared record, feedback that stops approval holds until the holder of its section settles it.
+        for entry in plan_sync.blocking_feedback(doc["journal"]):
+            anchor, said = entry["data"]["anchor"], entry["data"]["text"][:300]
+            settle = (f"{flow_command()} collab feedback resolve --id {entry['id']} --outcome accepted|declined|answered "
+                      "--reason TEXT")
+            items.append({"holding": True, "source": f"journal entry {entry['id']} (feedback.raised)",
+                          "text": f"Feedback {entry['id']} on {anchor} stops approval: {said}. The holder of its section "
+                          f"settles it with {settle}", "clears": settle, "kind": "feedback", "who": "lead",
+                          "since": entry.get("at"), "fields": {"entry": entry["id"], "anchor": anchor, "detail": said}})
     needed = listener_needed(doc["state"])
     if needed and lead_listener(c.state) is None:
         listening = listening_words(c, doc["state"])
@@ -14550,6 +14560,8 @@ class Supervisor:
         closed = False
         try:
             if planning:
+                # Nothing to close, and its list is what the pass found: blocking feedback holds approval, not a close.
+                entry["needsYou"] = derived.get("needs", [])
                 raise Planning
             doc = derived.get("doc") or load_state()
             needs = derived["needs"] if "needs" in derived else needs_you(c, doc, self.flapping())
@@ -16805,6 +16817,304 @@ def planning_record(c) -> dict | None:
     return record if collab.get("key") == c.delivery and meta.get("phase") == "planning" else None
 
 
+# -- joining, feedback and the shared watch stream ------------------------------------------------------------------
+
+# Where a seat keeps what its last join showed: the last journal entry and the plan commit, in its clone's own config.
+JOIN_MARK = "agent-skills.joined.{key}"
+FEEDBACK_OUTCOMES = ("accepted", "declined", "answered")
+
+
+def collab_folder(c, key: str) -> Path:
+    """Where this checkout keeps the shared record of `key`: where its delivery's record is, once there is one, and
+    otherwise apart under the work directory, where plan-open opens a planning record and a seat that joins builds it."""
+    d = next((d for d in c.delivery_files().values() if d.get("delivery") == key), None)
+    if d is not None:
+        found = c.state_of(key, d)
+        if os.environ.get("DELIVERY_STATE") or d.get("stateDirectory") or (found / "state.json").is_file():
+            return found
+    return c.record_apart(key)
+
+
+def collab_record(c, key: str | None) -> tuple[str, Path]:
+    """The shared record a collab command acts on: `key`'s, or the one shared record this checkout keeps."""
+    if key is None:
+        keys = sorted({k for k, _, _ in planning_records(c)}
+                      | {d["delivery"] for d in c.delivery_files().values() if isinstance(d.get("delivery"), str)
+                         and (json_object(collab_folder(c, d["delivery"]) / "state.json").get("meta") or {}).get("collab")})
+        if len(keys) != 1:
+            raise Stop(f"collab.key_needed: this checkout keeps {len(keys)} shared records"
+                       + (f" ({', '.join(keys)})" if keys else "") + "; name one with --key")
+        key = keys[0]
+    folder = collab_folder(c, key)
+    if not (folder / "state.json").is_file():
+        raise Stop(f"collab.not_joined: this checkout keeps no record of {key}; {flow_command()} collab join --key "
+                   f"{key} builds it from the seats' partitions")
+    if not (json_object(folder / "state.json").get("meta") or {}).get("collab"):
+        raise Stop(f"collab.not_shared: the record of {key} at {folder} is not shared")
+    return key, folder
+
+
+def collab_config(args) -> tuple[object, str, Path]:
+    global CFG
+    c = CFG = Config(repo(), need_delivery=False, pick=False)
+    return (c, *collab_record(c, args.key))
+
+
+def record_plan(c, key: str, folder: Path) -> Path | None:
+    """The plan a shared record is about: its delivery file's, else the one its planning record names."""
+    d = next((d for d in c.delivery_files().values() if d.get("delivery") == key), None)
+    named = d.get("plan") if d else None
+    named = named if isinstance(named, str) else (json_object(folder / "state.json").get("meta") or {}).get("planFile")
+    return Path(named) if isinstance(named, str) and named else None
+
+
+def plan_anchors(c, plan: Path) -> list[str]:
+    """The plan's sections, by name as the scope check names them: (preamble), then each heading."""
+    lines = (c.root / plan).read_text(encoding="utf-8").splitlines() if (c.root / plan).is_file() else []
+    return list(dict.fromkeys(["(preamble)", *(lines[line - 1].strip()
+                                               for line in sorted(_region_ownership().markdown_headings(lines)))]))
+
+
+def seat_labels(journal: list[dict]) -> dict[str, str]:
+    return {seat: held["label"] for seat, held in _validator().derived_seats(journal).items()}
+
+
+def collab_join(args) -> None:
+    """D2's join: build this checkout's record from the admitted seats' partitions, start its supervisor, then give
+    it a seat that asks to be admitted. Every join prints what is new since this seat's last: the story, the plan's
+    change, open feedback, and the scopes it holds."""
+    global CFG
+    c = CFG = Config(repo(), need_delivery=False, pick=False)
+    key = args.key
+    if not re.fullmatch(PLAN_KEY, key):
+        raise Stop(f"collab.key_invalid: {key!r} isn't a delivery key such as WORK-123")
+    folder = collab_folder(c, key)
+    tool = _validator()
+    link = tool._collab()
+    try:
+        link.fetch(folder, remote=c.remote, key=key)
+        link.ingest(folder, key=None if (folder / "state.json").is_file() else key)
+    except tool.StateError as error:
+        raise Stop(f"{error.code}: {error}") from None
+    if not (json_object(folder / "state.json").get("meta") or {}).get("collab"):
+        raise Stop(f"collab.not_shared: the record of {key} at {folder} is not shared")
+    # The supervisor's sync loop carries what this checkout writes from here on, its request among it.
+    c = CFG = Config(repo(), key)
+    held, running = read_lock(supervisor_lock_path(c))
+    if held:
+        print(f"supervisor: running (pid {running.get('pid')})")
+    elif supervisor_off():
+        register_delivery(c, None)
+        print(f"supervisor: not started; start it with {flow_command()} --delivery {key} lead-run --resume")
+    else:
+        require_node(c.release, "collab join")
+        print(f"supervisor: running; live view {start_supervisor(c)}{live_fallback(c.state)}")
+    journal = tool.read_journal(folder)
+    seat = tool.local_seat(folder, key)
+    if not (tool.derived_seats(journal).get(seat or "") or {}).get("admitted"):
+        try:
+            link.request_seat(folder, label=args.label)
+        except tool.StateError as error:
+            raise Stop(f"{error.code}: {error}") from None
+        seat = tool.local_seat(folder, key)
+        journal = tool.read_journal(folder)
+        print(f"joined {key} as seat {seat} ({seat_labels(journal).get(seat, seat)}): it waits to be admitted; the "
+              f"delivery holder, seat {tool.holder(journal, 'delivery')}, admits it with {flow_command()} collab admit "
+              f"--seat {seat} --key {key}")
+    else:
+        print(f"joined {key} as seat {seat} ({seat_labels(journal).get(seat, seat)}), admitted")
+    mark = git("config", "--local", "--get", JOIN_MARK.format(key=key), cwd=c.root, check=False).split()
+    after = int(mark[0]) if mark and mark[0].isdigit() else 0
+    for line in catch_up(c, key, folder, journal, seat, after, mark[1] if len(mark) > 1 else None):
+        print(line)
+    journal = tool.read_journal(folder)
+    plan = record_plan(c, key, folder)
+    current = shared_plan_commit(c, key, plan) if plan else None
+    if current and (tool.derived_seats(journal).get(seat) or {}).get("admitted") and current != last_seen(journal, seat):
+        state_tool_at(c, folder, "journal", "--kind", "plan.seen", "--data", json.dumps({"commit": current}))
+        journal = tool.read_journal(folder)
+    git("config", "--local", JOIN_MARK.format(key=key), f"{journal[-1]['id'] if journal else 0} {current or '-'}",
+        cwd=c.root)
+
+
+def last_seen(journal: list[dict], seat: str | None) -> str | None:
+    """The plan commit this seat last journalled reading."""
+    return next((entry["data"]["commit"] for entry in reversed(journal) if entry["kind"] == "plan.seen"
+                 and (entry.get("origin") or {}).get("seat") == seat), None)
+
+
+def shared_plan_commit(c, key: str, plan: Path) -> str | None:
+    """The plan's current commit on its shared branch, fetched, or on HEAD where the remote has no such branch."""
+    try:
+        branch = plan_branch(c, plan)
+    except Stop:
+        return None
+    if run(["git", "fetch", "-q", c.remote, branch], cwd=c.root, check=False).returncode == 0:
+        found = git("rev-list", "-1", "FETCH_HEAD", "--", plan.as_posix(), cwd=c.root, check=False)
+        if found:
+            return found
+    return git("rev-list", "-1", "HEAD", "--", plan.as_posix(), cwd=c.root, check=False) or None
+
+
+def catch_up(c, key: str, folder: Path, journal: list[dict], seat: str | None, after: int,
+             marked: str | None) -> list[str]:
+    """What a join prints, in this order: the story since entry `after`, the plan's change since this seat last read
+    it, the feedback still open that was raised since, and the scopes this seat holds."""
+    tool = _validator()
+    import narrator
+    labels = seat_labels(journal)
+    story = narrator.narrate(journal, tool.read_state(folder))
+    lines = []
+    for beat in story["beats"]:
+        # Each entry once, in its own beat's words or, in a run of bookkeeping, its item's; a thread's beat retells.
+        if beat["form"] == "thread":
+            continue
+        told = [(item["entry"], item["words"]) for item in beat["items"]] or [(beat["entries"][0], beat["words"])]
+        lines += [f"  #{entry} {narrator._sentence(words['head'])}" + (f" {narrator._sentence(words['line'])}"
+                                                                        if words["line"] else "")
+                  for entry, words in told if entry > after]
+    said = ["story:" + ("" if lines else " nothing new"), *lines]
+    plan = record_plan(c, key, folder)
+    if plan is None:
+        said.append("plan: none named yet")
+    else:
+        current = shared_plan_commit(c, key, plan)
+        base = last_seen(journal, seat) or (marked if marked and marked != "-" else None)
+        if current is None:
+            said.append(f"plan: {plan} has no commit here yet")
+        elif base is None:
+            text = git("show", f"{current}:{plan.as_posix()}", cwd=c.root, check=False)
+            said.append(f"plan: {plan} at {current[:12]}, new to this seat ({len(text.splitlines())} lines)")
+        elif base == current:
+            said.append(f"plan: {plan} unchanged since {base[:12]}")
+        else:
+            diff = git("diff", base, current, "--", plan.as_posix(), cwd=c.root, check=False)
+            said += [f"plan: {plan} changed since {base[:12]}, now at {current[:12]}:",
+                     *(f"  {line}" for line in diff.splitlines())]
+    still = plan_sync.open_feedback(journal)
+    fresh = [entry for entry in still if entry["id"] > after]
+    said.append("open feedback:" + ("" if fresh else " none" if not still else f" none new ({len(still)} still open)"))
+    for entry in fresh:
+        writer = labels.get((entry.get("origin") or {}).get("seat"), "a seat")
+        said.append(f"  #{entry['id']} on {entry['data']['anchor']}"
+                    + (", stopping approval" if entry["data"].get("blocking") else "")
+                    + f", by {writer}: {entry['data']['text']}")
+    said.append(f"scopes held: {held_scopes(journal, seat)}")
+    return said
+
+
+def held_scopes(journal: list[dict], seat: str | None) -> str:
+    """The scopes `seat` holds, in words."""
+    tool = _validator()
+    _, passed = tool.scope_register(journal)
+    names = [name for name in ("delivery", "queue") if tool.holds(journal, seat, name)]
+    names += sorted(name for name, holder in passed.items() if holder == seat and name not in names)
+    if not names:
+        return "none"
+    return ", ".join(names) + (", and every plan section not passed on" if "delivery" in names else "")
+
+
+def collab_feedback(args) -> None:
+    """Feedback on the plan, a fact every seat sees: raised on one of its sections, and settled only by the holder of
+    that section."""
+    c, key, folder = collab_config(args)
+    tool, journal, seat = record_seat(c, key, folder)
+    if args.feedback_action == "add":
+        plan = record_plan(c, key, folder)
+        sections = plan_anchors(c, plan) if plan else []
+        if args.anchor not in sections:
+            raise Stop(f"feedback.anchor_unknown: {args.anchor!r} isn't a section of {plan or 'the plan'}; feedback is "
+                       f"on one of: {', '.join(sections) or 'none'}")
+        entry = state_tool_at(c, folder, "journal", "--kind", "feedback.raised", "--data",
+                              json.dumps({"anchor": args.anchor, "text": args.text, "blocking": args.blocking}))
+        print(f"feedback {entry['id']} on {args.anchor}" + (", stopping approval" if args.blocking else ""))
+        return
+    raised = next((entry for entry in journal if entry["id"] == args.id and entry["kind"] == "feedback.raised"), None)
+    if raised is None:
+        raise Stop(f"feedback.unknown: journal entry {args.id} is not a feedback.raised")
+    settled = next((entry for entry in journal if entry["kind"] == "feedback.resolved"
+                    and args.id in entry.get("answers", [])), None)
+    if settled is not None:
+        raise Stop(f"feedback.settled: feedback {args.id} was settled by entry {settled['id']} "
+                   f"({settled['data']['outcome']})")
+    scope = f"plan:{raised['data']['anchor']}"
+    if not tool.holds(journal, seat, scope):
+        holder = tool.holder(journal, scope)
+        raise Stop(f"scope.not_held: only the holder of {scope}, seat {holder} ({seat_labels(journal).get(holder, holder)}), "
+                   f"settles feedback on it; {flow_command()} collab request --scope {shlex.quote(scope)} --reason TEXT "
+                   "asks for it")
+    entry = state_tool_at(c, folder, "journal", "--kind", "feedback.resolved", "--answers", str(args.id), "--data",
+                          json.dumps({"outcome": args.outcome, "reason": args.reason}))
+    print(f"feedback {args.id} settled ({args.outcome}) by entry {entry['id']}")
+
+
+def collab_scope(args) -> None:
+    """The state tool's scope and seat commands, on this checkout's shared record."""
+    c, key, folder = collab_config(args)
+    if args.collab_action == "give":
+        argv = ["scope", "give", "--scope", args.scope, "--to", args.to, "--wait", str(args.wait)]
+    elif args.collab_action == "request":
+        argv = ["scope", "request", "--scope", args.scope, "--reason", args.reason]
+    else:
+        argv = ["seat", "admit", "--seat", args.seat, *(["--no-approver"] if args.no_approver else [])]
+    entry = state_tool_at(c, folder, *argv)
+    print(f"{entry['kind']} (entry {entry['id']}): {json.dumps(entry['data'], sort_keys=True)}")
+
+
+def collab_label(args) -> None:
+    """Change the label this checkout's seat shows; display only."""
+    c, key, folder = collab_config(args)
+    tool = _validator()
+    try:
+        entry = tool._collab().label_seat(folder, args.label)
+    except tool.StateError as error:
+        raise Stop(f"{error.code}: {error}") from None
+    print(f"seat {entry['data']['seat']} is now shown as {entry['data']['label']} (entry {entry['id']})")
+
+
+def collab_watch(args) -> None:
+    """D9 over the shared record: one flushed line per peer entry the sync loop ingests, and nothing else. It reads
+    the local record and writes nothing."""
+    c, key, folder = collab_config(args)
+    settings = collab_settings(c)
+    try:
+        until = re.compile(args.until) if args.until is not None else None
+    except re.error as error:
+        raise Stop(f"--until {args.until!r} isn't a regular expression: {error}") from None
+    if args.timeout < 0:
+        raise Stop(f"--timeout must be zero or more seconds, not {args.timeout:g}")
+    tool = _validator()
+    import journal_words
+    registry = journal_words.load_registry()
+    seat = tool.local_seat(folder, key)
+    journal = tool.read_journal(folder)
+    through = journal[-1]["id"] if journal else 0
+    deadline = time.monotonic() + args.timeout
+    while True:
+        journal = tool.read_journal(folder)
+        labels = seat_labels(journal)
+        for entry in journal:
+            if entry["id"] <= through:
+                continue
+            through = entry["id"]
+            writer = (entry.get("origin") or {}).get("seat")
+            if writer is None or writer == seat:
+                continue
+            words = journal_words.words(entry, registry)
+            head = words["head"].rstrip()
+            line = (f"#{entry['id']} {entry['kind']} by {labels.get(writer, writer)}: "
+                    f"{head if head[-1:] in '.!?' else head + '.'}" + (f" {words['line']}" if words["line"] else ""))
+            print(line, flush=True)
+            if until is not None and until.search(line):
+                return
+        left = deadline - time.monotonic()
+        if left <= 0:
+            if until is not None:
+                sys.exit(3)
+            return
+        time.sleep(min(settings["pollSeconds"], left))
+
+
 def doctor(args) -> None:
     """Check this repository's setup for a delivery: every missing prerequisite, and how to fix it."""
     global OFFLINE
@@ -17209,6 +17519,53 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--timeout", type=float, default=1800, help="exit after this many seconds (default 1800)")
     p.add_argument("--until", help="exit 0 after the first line matching this regular expression, or 3 at the timeout")
     p.set_defaults(fn=plan_watch_command)
+    p = command(sub, "collab", help="on a shared record: join it, give feedback on its plan, pass scopes on, and watch it")
+    collab_commands = p.add_subparsers(dest="collab_action", required=True)
+    shared_key = "the shared record's key (default: the one shared record this checkout keeps)"
+    q = command(collab_commands, "join", help="build this checkout's record from the seats' partitions and ask to be "
+                "admitted; again, print what is new")
+    q.add_argument("--key", required=True, help="the shared delivery's key")
+    q.add_argument("--label", help="this seat's label (default: git's user.name)")
+    q.set_defaults(fn=collab_join)
+    q = command(collab_commands, "feedback", help="raise feedback on a section of the plan, or settle it")
+    feedback_commands = q.add_subparsers(dest="feedback_action", required=True)
+    r = command(feedback_commands, "add", help="raise feedback on one of the plan's sections")
+    r.add_argument("--key", help=shared_key)
+    r.add_argument("--anchor", required=True, help="the section, by its heading line, such as '## Decisions'")
+    r.add_argument("--text", required=True, help="the feedback, in the person's words")
+    r.add_argument("--blocking", action="store_true", help="it stops the plan's approval until it is settled")
+    r.set_defaults(fn=collab_feedback)
+    r = command(feedback_commands, "resolve", help="the holder of its section settles feedback")
+    r.add_argument("--key", help=shared_key)
+    r.add_argument("--id", type=int, required=True, help="the feedback.raised entry's id")
+    r.add_argument("--outcome", required=True, choices=FEEDBACK_OUTCOMES)
+    r.add_argument("--reason", required=True, help="why, in the person's words")
+    r.set_defaults(fn=collab_feedback)
+    q = command(collab_commands, "give", help="the holder passes a scope to an admitted seat")
+    q.add_argument("--key", help=shared_key)
+    q.add_argument("--scope", required=True, help="delivery, queue, lane:<lane> or plan:<section>")
+    q.add_argument("--to", required=True, help="the seat that takes it")
+    q.add_argument("--wait", type=float, default=60.0, help="for the queue: seconds to wait for it to be idle")
+    q.set_defaults(fn=collab_scope)
+    q = command(collab_commands, "request", help="ask the holder of a scope for it")
+    q.add_argument("--key", help=shared_key)
+    q.add_argument("--scope", required=True, help="delivery, queue, lane:<lane> or plan:<section>")
+    q.add_argument("--reason", required=True, help="why, in the person's words")
+    q.set_defaults(fn=collab_scope)
+    q = command(collab_commands, "admit", help="the delivery holder admits a seat that asked to join")
+    q.add_argument("--key", help=shared_key)
+    q.add_argument("--seat", required=True)
+    q.add_argument("--no-approver", action="store_true", help="the seat writes but does not approve the plan")
+    q.set_defaults(fn=collab_scope)
+    q = command(collab_commands, "label", help="change the label this seat shows; display only")
+    q.add_argument("--key", help=shared_key)
+    q.add_argument("--label", required=True)
+    q.set_defaults(fn=collab_label)
+    q = command(collab_commands, "watch", help="print one line per peer entry the sync loop ingests, and nothing else")
+    q.add_argument("--key", help=shared_key)
+    q.add_argument("--timeout", type=float, default=1800, help="exit after this many seconds (default 1800)")
+    q.add_argument("--until", help="exit 0 after the first line matching this regular expression, or 3 at the timeout")
+    q.set_defaults(fn=collab_watch)
     p = sub.add_parser("doctor", help="check this repository's setup: every missing prerequisite and its fix")
     p.add_argument("--delivery", dest="doctor_delivery", help="also check this delivery's file")
     p.add_argument("--offline", action="store_true", help="don't fetch the base or ask the forge; read local refs")
