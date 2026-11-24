@@ -3679,7 +3679,10 @@
     if (baseBroken(doc)) { flags.push({ title: "The base is broken", why: toldLine(doc, events[events.length - 1]) || "No reason recorded.", fix: "Repair the base; nothing lands until it is." }); }
     // Only an approval the lead marked blocking needs the engineer; one that is merely ahead stays in its fold.
     var blocking = list(plan.approvals).filter(function (entry) { return isObject(entry) && entry.blocking === true && entry.state === "waiting"; });
-    if (blocking.length) { flags.push({ title: "Approvals are blocking work", why: blocking.map(function (entry) { return text(entry.text); }).join("; "), fix: blocking.length === 1 ? "Give or refuse this approval." : "Give or refuse each approval." }); }
+    if (blocking.length) {
+      flags.push({ title: blocking.length === 1 ? "An approval is blocking work" : blocking.length + " approvals are blocking work",
+        approvals: blocking, fix: blocking.length === 1 ? "Give or refuse this approval." : "Give or refuse each approval." });
+    }
     var known = Object.create(null);
     planUnits(plan.units).forEach(function (unit) { known[text(unit.subject)] = true; });
     var stray = [];
@@ -3728,6 +3731,58 @@
     if (waivedOpen.length) { flags.push({ title: "A waived proof on a unit not yet proven", why: waivedOpen.map(unitName).join(", "), fix: "Finish the unit's other proofs, or check the waiver was meant." }); }
     return flags;
   }
+  /**
+   * An approval's short title and the rest of its text. The title is what comes before the text's first colon, or else
+   * its first sentence, without a leading copy of the approval's own id; a text with neither is cut short.
+   */
+  function approvalParts(entry) {
+    var words = text(entry.text).replace(/\s+/g, " ").trim();
+    var id = text(entry.id);
+    if (id && words.indexOf(id) === 0) { words = words.slice(id.length).replace(/^[.:\s-]+/, ""); }
+    var colon = words.indexOf(": ");
+    if (colon > 0 && colon <= 90) { return { title: words.slice(0, colon), rest: words.slice(colon + 2) }; }
+    var stop = words.search(/\.\s/);
+    if (stop > 0 && stop <= 120) { return { title: words.slice(0, stop), rest: words.slice(stop + 2) }; }
+    if (words.length <= 120) { return { title: words.replace(/\.$/, ""), rest: "" }; }
+    var cut = words.lastIndexOf(" ", 96);
+    return { title: words.slice(0, cut > 40 ? cut : 96) + "…", rest: words };
+  }
+  /** The blocking approvals: who holds how many, then one folded row per approval, opened to read the whole of it. */
+  function approvalList(entries) {
+    var owners = [];
+    var held = Object.create(null);
+    // An approval held by several ("Product, Engineering") counts for each of them.
+    entries.forEach(function (entry) {
+      (text(entry.who) || "Unassigned").split(/\s*,\s*|\s+and\s+/).filter(Boolean).forEach(function (who) {
+        if (!held[who]) { held[who] = 0; owners.push(who); }
+        held[who] += 1;
+      });
+    });
+    owners.sort(function (a, b) { return held[b] - held[a]; });
+    var SHOWN = 4;
+    var byOwner = el("p", "ap-owners");
+    owners.slice(0, SHOWN).forEach(function (who, index) {
+      if (index) { byOwner.appendChild(document.createTextNode(" · ")); }
+      add(byOwner, el("span", "ap-owner-name", who), el("span", "ap-owner-count", String(held[who])));
+    });
+    if (owners.length > SHOWN) { byOwner.appendChild(el("span", "ap-owner-more", " · +" + (owners.length - SHOWN) + " more")); }
+    var listing = el("ol", "ap-list");
+    entries.forEach(function (entry) {
+      var parts = approvalParts(entry);
+      var row = el("details", "ap-row");
+      var summary = el("summary");
+      var id = text(entry.id);
+      // An id that only numbers its row (handoff-3) says nothing a reader needs; a named one (PD1, O25) does.
+      var shownId = id && !/^[a-z]+-\d+$/i.test(id) ? id : "";
+      var who = text(entry.who);
+      add(summary, el("span", "ap-id", shownId), el("span", "ap-title", parts.title), el("span", "ap-who", who === parts.title ? "" : who),
+        el("span", "ap-caret"));
+      add(row, summary, parts.rest ? el("p", "ap-rest", parts.rest) : null);
+      if (!parts.rest) { row.classList.add("is-whole"); }
+      listing.appendChild(add(el("li"), row));
+    });
+    return add(el("div", "ap"), owners.length > 1 ? byOwner : null, listing);
+  }
   function flagList(flags, closed) {
     var box = el("div", "plan-needs");
     if (!flags.length) { return closed ? null : add(box, el("p", "plan-calm", "Nothing in the plan needs attention right now.")); }
@@ -3736,7 +3791,7 @@
       // What is wrong, what it names, then what settles it. Nobody asked the reader for these: the page found the plan and
       // the record out of step, so the heading says so rather than "Needs you", which is the supervisor's request.
       ul.appendChild(add(el("li"), glyph("stop"), add(el("div"), el("div", "a1", flag.title), flag.why ? el("div", "a2", flag.why) : null,
-        flag.fix && !closed ? el("div", "a3", flag.fix) : null)));
+        flag.approvals ? approvalList(flag.approvals) : null, flag.fix && !closed ? el("div", "a3", flag.fix) : null)));
     });
     return add(box, el("div", "ah", closed ? "Left open at close" : "The plan needs attention"), ul);
   }
