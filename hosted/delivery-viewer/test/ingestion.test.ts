@@ -220,6 +220,32 @@ describe('independent transport contract guards', () => {
     expect((await upload(publicId,2,value)).status).toBe(400);
     expect((await current(publicId)).status).toBe(200);
   });
+  it('takes a file link that opens a file in the reviewed tree at a line, and no other', async () => {
+    const publicId=id();await session(publicId);
+    const sha='a'.repeat(40), blob=`https://github.com/example/app/blob/${sha}`;
+    const value=fixture() as {links:Record<string,Record<string,unknown>>};
+    value.links.files={[`${sha} src/app/main.py:4-6`]:`${blob}/src/app/main.py#L4`,[`${sha} ./docs/plan.md:2`]:`${blob}/docs/plan.md#L2`};
+    expect((await upload(publicId,1,value)).status).toBe(200);
+    const refused:[string,string][]=[
+      [`${sha} src/app/main.py:4`,`http://github.com/example/app/blob/${sha}/src/app/main.py#L4`],
+      [`${sha} src/app/main.py:4`,'javascript:alert(1)'],
+      [`${sha} src/app/main.py:4`,`https://user:pass@github.com/example/app/blob/${sha}/src/app/main.py#L4`],
+      [`${sha} src/app/main.py:4`,`${blob}/src/app/main.py?plain=1#L4`],
+      [`${sha} ../secrets.env:1`,`${blob}/secrets.env#L1`],
+      [`${sha} src/../../etc/passwd:1`,`${blob}/etc/passwd#L1`],
+      [`${sha} /etc/passwd:1`,`${blob}/etc/passwd#L1`],
+    ];
+    let sequence=2;
+    for(const [key,href] of refused){
+      value.links.files={[key]:href};
+      expect((await upload(publicId,sequence++,value)).status,`${key} -> ${href}`).toBe(400);
+    }
+    // The fragment a file link keeps never carries over to an issue link.
+    value.links.files={};
+    value.links.issues={'APP-1':'https://example.com/issue/APP-1#x'};
+    expect((await upload(publicId,sequence++,value)).status).toBe(400);
+    expect(await (await current(publicId)).json()).toMatchObject({sequence:1});
+  });
   it('enforces exactly sixteen MiB on finite chunked input without a length hint', async () => {
     const publicId=id(); await session(publicId);
     const limit=16*1024*1024;expect(MAX_BYTES).toBe(limit);
