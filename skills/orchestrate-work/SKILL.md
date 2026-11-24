@@ -727,6 +727,8 @@ it.
   that lists every kind of entry: its facts, typed or prose, its links, its
   altitude and tone, its words and its tracker update. The guide's "Journal
   entries" section says how an entry is shaped and how a kind is added.
+- `delivery-partition/1` describes one seat's partition of a shared record,
+  which "Shared records" below explains.
 
 Write both only through the state tool, `scripts/delivery_state.py`. Run it
 with `python3 -B` so no bytecode is written beside the skill:
@@ -889,3 +891,59 @@ writer and state locks it reconciles `meta.baseHead`, `meta.baseMove` and `meta.
 The `base.moved` journal event is idempotent, including retry after the state write succeeds and the journal
 append is interrupted. Ordinary patches cannot replace `meta.baseMove`. Use `run-delivery lead-sync --merge`
 to coordinate merge, publication, the writer transition and supervisor recovery.
+
+## Shared records
+
+A record is shared only when `run-delivery plan-open` creates it, with
+`meta.collab`. Every other record is unshared and behaves exactly as before:
+nothing below applies to it, and an existing record never becomes shared.
+
+- **Seats.** A seat is one writer of a shared record: a checkout, whose id
+  (`s-` and 12 hex characters) is made the first time and kept in its local git
+  configuration as `agent-skills.seat.<key>`. A checkout's worktrees share it,
+  and no environment variable sets or overrides it. Its label, from
+  `user.name`, is only shown. `meta.collab.seats` is derived from the
+  `seat.requested`, `seat.admitted` and `seat.labeled` entries and never
+  written directly.
+- **Refusals.** On a shared record a write from a checkout with no seat is
+  refused with `collab.seat_missing`, and one from a seat not yet admitted
+  with `collab.seat_not_admitted`, apart from that seat's own request. The
+  `sync` writer is the tool's own: `patch --writer sync` is refused with
+  `collab.sync_writer_reserved`.
+- **Origins.** Every entry of a shared record carries `origin`: its seat, its
+  seq, dense from 1 for each seat, and `seen`, the last seq of each other seat
+  it had ingested. Local ids keep their rule, dense from 1 in this machine's
+  order, so every reader of ids works unchanged. Machines hold the same set of
+  origins in an order that respects `seen`; their local ids may differ.
+- **Partitions.** `scripts/collab.py` keeps each seat's partition as a commit
+  chain at `refs/agent-skills/<key>/<seat>` on the base remote, holding its
+  `delivery-partition/1` document and the seat's own entries, their links by
+  origin. It is
+  pushed fast-forward only. Peers' chains are fetched by explicit refspec into
+  `refs/agent-skills-peers/<key>/<seat>`, so no branch, tag or configured
+  refspec changes. Each value's origin is kept beside the record, on this
+  machine only.
+- **Ingest.** The sync writer ingests a peer's entry once every entry its
+  `seen` names is here, translating its links to local ids, and an unadmitted
+  seat's only as far as its request. A value is applied when its writer may
+  write it and it follows the local one; between concurrent values, the higher
+  seat id wins on every machine. A removal wins over every write that does not
+  follow it. `regionsSettled` and a reuse grant's decision are carried by
+  origin; `meta.closing` is derived on each machine from its own
+  `delivery.closed`.
+- **Holds and splits.** A partition from another writer generation is held,
+  journalled as `partition.held`, and ingested once both machines run the same
+  one. A checkout whose push finds its seat's remote chain diverged, a copied
+  checkout, is split: the chain that reached the remote first is the seat's, the
+  other is kept at `refs/agent-skills-split/<key>/<seat>`, and every later write
+  from that checkout is refused with `collab.seat_split`.
+
+`collab.py serve` is the sync loop a supervisor runs: each poll it pushes this
+seat's partition when the record changed and fetches and ingests its peers'.
+The state tool runs each step alone, for tests and recovery:
+
+```bash
+python3 -B scripts/delivery_state.py --dir STATE collab-push [--remote origin]
+python3 -B scripts/delivery_state.py --dir STATE collab-fetch [--remote origin] [--key KEY]
+python3 -B scripts/delivery_state.py --dir STATE collab-ingest [--key KEY]
+```

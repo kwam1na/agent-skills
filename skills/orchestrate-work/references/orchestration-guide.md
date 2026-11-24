@@ -166,10 +166,20 @@ instant is its `occurredAt` when it has one, and its `at` otherwise.
   | `blocker.resolved` | `deferral.breached` |
   | `lease.released` | `lease.granted` |
   | `story.unheld` | `story.held` |
+  | `seat.admitted` | `seat.requested` |
+  | `partition.resumed` | `partition.held` |
 
   `candidate.stopped`, `base.broken` and `blocker.recorded` open a thread, a
   stop only when it leaves the piece stopped, and the first entry answering the
   opening closes it.
+- **A shared record's entries carry their origin.** On a record `plan-open`
+  made shared, every entry also has `origin`, `{seat, seq, seen}`: the seat that
+  wrote it, that seat's own seq, dense from 1, and the last seq of each other
+  seat it had ingested. Ids stay local and dense from 1, and links still name
+  local ids: a seat's partition carries them by origin, and the sync writer
+  translates them as it ingests a peer's entry, once every entry its `seen`
+  names is here. The skill page's "Shared records" says how seats, partitions
+  and the sync loop work.
 - **A person's decision says why.** `decision.recorded` needs `data.text` and
   `data.why`, and `blocker.recorded` needs `data.text`; none may be empty or
   only spaces. Give them with `--text` and `--why`.
