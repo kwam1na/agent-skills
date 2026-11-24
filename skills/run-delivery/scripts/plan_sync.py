@@ -201,14 +201,17 @@ def checked_out(root: Path, branch: str) -> None:
 
 
 def sync(root: Path, path: str, branch: str, remote: str, markdown, *, message: str | None = None,
-         before_push: Callable[[int], None] | None = None) -> list[str]:
+         before_push: Callable[[int], None] | None = None, scope: "Held | None" = None) -> list[str]:
     """Compose the plan with the remote branch and push it; returns what it did, a line each.
 
     The working copy's plan text is ours, committed or not. A refusal before the first commit leaves the branch, the
     working copy and the remote as they were. A push rejected for being behind recomposes and retries, up to
     RECONCILE_ATTEMPTS times; the next rejection stops with `plan.push_exhausted`, leaving the branch at its last
     composed commit and the remote as the peer left it. An overlap found on a retry, after the plan edit was committed,
-    puts the branch and the working copy back as they were. `before_push(attempt)` runs before each push."""
+    puts the branch and the working copy back as they were. `before_push(attempt)` runs before each push.
+
+    With `scope`, the plan is shared: a change this clone makes to a section its seat doesn't hold, in the working copy
+    or a commit the remote hasn't got, is refused with `plan.section_not_held` before anything is written."""
     checked_out(root, branch)
     file = root / path
     if not file.is_file():
@@ -217,6 +220,8 @@ def sync(root: Path, path: str, branch: str, remote: str, markdown, *, message: 
     said: list[str] = []
     theirs = fetch(root, remote, branch)
     head = resolved(root, "HEAD")
+    if scope is not None:
+        scope.check(root, path, remote, ours_text, markdown)
     if theirs and not ancestor(root, theirs, head):
         base = git(root, "merge-base", head, theirs, check=False)
         compose(shown(root, base, path) or "" if base else "", ours_text, shown(root, theirs, path) or "", markdown)
@@ -265,12 +270,14 @@ def pushed(root: Path, path: str, branch: str, remote: str, markdown, theirs: st
         if before_push:
             before_push(rejected + 1)
         # The commits this push brings, which no ref of the remote held when it was fetched: this clone's own.
+        # Kept before the push, so a watch in this clone never reads its own push as a peer's while it lands; a push
+        # that is rejected only leaves this clone's own commits listed, which they are.
         brought = git(root, "rev-list", "HEAD", "--not", f"--remotes={remote}").split()
+        record = pushed_record(root, branch)
+        record.parent.mkdir(parents=True, exist_ok=True)
+        with record.open("a", encoding="utf-8") as kept:
+            kept.write("".join(f"{commit}\n" for commit in brought))
         if push(root, remote, branch) is None:
-            record = pushed_record(root, branch)
-            record.parent.mkdir(parents=True, exist_ok=True)
-            with record.open("a", encoding="utf-8") as kept:
-                kept.write("".join(f"{commit}\n" for commit in brought))
             git(root, "update-ref", tracking(remote, branch), "HEAD")
             said.append(f"pushed {branch} to {remote} at {resolved(root, 'HEAD')[:12]}"
                         + (f", after {rejected} rejected push{'' if rejected == 1 else 'es'}" if rejected else ""))
@@ -282,6 +289,131 @@ def pushed(root: Path, path: str, branch: str, remote: str, markdown, theirs: st
                           f"first; {branch} stays at its last composed commit, {resolved(root, 'HEAD')[:12]}. "
                           "Sync again")
         theirs = fetch(root, remote, branch)
+
+
+# -- shared plans ---------------------------------------------------------------------------------------------------
+
+KEY_CHARACTERS = r"[A-Za-z0-9_]"
+
+
+def rekeyed(text: str, mapping: dict[str, str]) -> str:
+    """The plan with each placeholder story key replaced by its tracker key, all at once, as whole keys only: `COLLAB-4`
+    becomes `WORK-12` in `COLLAB-4:` and `COLLAB-4-1`, never in `COLLAB-40` or `XCOLLAB-4`."""
+    if not mapping:
+        return text
+    keys = sorted(mapping, key=len, reverse=True)
+    pattern = re.compile(rf"(?<!{KEY_CHARACTERS})(?:{'|'.join(map(re.escape, keys))})(?!{KEY_CHARACTERS})")
+    return pattern.sub(lambda found: mapping[found.group(0)], text)
+
+
+class Held:
+    """What one seat may change in a shared plan: `held(text)` names the sections of a plan text it holds, as the
+    state tool's `held_sections` does; `rekeys` are the record's `plan.rekeyed` data; `ask(names)` is the command that
+    asks for sections."""
+
+    def __init__(self, held: Callable[[str], list[str]], rekeys: list[dict], ask: Callable[[list[str]], str]):
+        self.held, self.rekeys, self.ask = held, rekeys, ask
+
+    def exempt(self, root: Path, path: str, commit: str, before: str | None, after: str | None) -> bool:
+        """A re-keying commit: one a `plan.rekeyed` entry names, whose plan is its parent's with that map applied. The
+        exemption is the commit's, never a section's, so a later commit to the same sections is checked as any is."""
+        return any(entry.get("to") == commit and before is not None
+                   and after == rekeyed(before, entry.get("map") or {}) for entry in self.rekeys)
+
+    def changes(self, root: Path, path: str, remote: str, text: str) -> list[tuple[str, str | None, str]]:
+        """What this clone changed in the plan that the remote hasn't got: each commit of its own that changed it, a
+        composing merge and a re-keying left out, as `(commit, before, after)`, then the working copy's edit as
+        `("the working copy", before, after)`."""
+        found = []
+        own = git(root, "rev-list", "--reverse", "--no-merges", "HEAD", "--not", f"--remotes={remote}", "--", path)
+        for commit in own.split():
+            before, after = shown(root, f"{commit}^", path), shown(root, commit, path) or ""
+            if before != after and not self.exempt(root, path, commit, before, after):
+                found.append((commit, before, after))
+        head = shown(root, "HEAD", path)
+        if head != text:
+            found.append(("the working copy", head, text))
+        return found
+
+    def check(self, root: Path, path: str, remote: str, text: str, markdown) -> None:
+        outside = {}
+        for where, before, after in self.changes(root, path, remote, text):
+            held = {*self.held(before or ""), *self.held(after)}
+            for name in changed_sections(before, after, markdown):
+                if name not in held:
+                    outside.setdefault(name, []).append(where if where == "the working copy" else where[:12])
+        if outside:
+            listed = "; ".join(f"{name} (in {', '.join(where)})" for name, where in outside.items())
+            raise Refused("plan.section_not_held",
+                          f"this seat changed {len(outside)} section{'' if len(outside) == 1 else 's'} it doesn't "
+                          f"hold: {listed}. Nothing was committed or pushed. Ask for "
+                          f"{'it' if len(outside) == 1 else 'them'} with {self.ask(list(outside))}, or put the "
+                          "change back")
+
+
+def endorsements(journal: list[dict]) -> dict[str, list[str]]:
+    """Each seat's endorsed plan commits, in the order it endorsed them."""
+    found: dict[str, list[str]] = {}
+    for entry in journal:
+        if entry["kind"] == "plan.endorsed" and entry.get("origin"):
+            found.setdefault(entry["origin"]["seat"], []).append(entry["data"]["commit"])
+    return found
+
+
+def blocking_feedback(journal: list[dict]) -> list[dict]:
+    """Every `feedback.raised` that stops approval and no `feedback.resolved` answers."""
+    answered = {target for entry in journal if entry["kind"] == "feedback.resolved"
+                for target in entry.get("answers", [])}
+    return [entry for entry in journal if entry["kind"] == "feedback.raised" and entry["data"].get("blocking") is True
+            and entry["id"] not in answered]
+
+
+def aligned_to(aligned: str | None, current: str, journal: list[dict], text_at: Callable[[str], str | None]) -> bool:
+    """Whether the plan at `current` reads as it did at the commit plan review aligned on, or as that text with each
+    `plan.rekeyed` map applied in turn, each re-keying starting from the text the one before it left."""
+    if aligned is None:
+        return False
+    text, target = text_at(aligned), text_at(current)
+    if text is None or target is None:
+        return False
+    for entry in journal:
+        if text == target:
+            return True
+        if entry["kind"] == "plan.rekeyed" and text_at(entry["data"]["from"]) == text \
+                and text_at(entry["data"]["to"]) == rekeyed(text, entry["data"]["map"]):
+            text = text_at(entry["data"]["to"])
+    return text == target
+
+
+def approval_refusal(journal: list[dict], seats: dict, current: str, aligned: str | None,
+                     text_at: Callable[[str], str | None]) -> Refused | None:
+    """Why a shared plan isn't jointly approved at `current`, by the first of D11's four rules it fails; None when every
+    admitted approver seat endorsed it, it reads as plan review aligned it, and no blocking feedback is open."""
+    approvers = [seat for seat, about in seats.items() if about.get("admitted") and about.get("approver")]
+    given = endorsements(journal)
+    label = lambda seat: f"{seats[seat].get('label') or seat} ({seat})"
+    missing = [seat for seat in approvers if not given.get(seat)]
+    if missing:
+        return Refused("plan.endorsement_missing",
+                       f"{', '.join(map(label, missing))} {'has' if len(missing) == 1 else 'have'} not endorsed the "
+                       f"plan; each approver seat runs lead-plan endorse at {current[:12]}")
+    stale = [seat for seat in approvers if current not in given[seat]]
+    if stale:
+        return Refused("plan.endorsement_stale",
+                       "; ".join(f"{label(seat)} endorsed {given[seat][-1][:12]}" for seat in stale)
+                       + f", not the plan's current commit {current[:12]}; each runs lead-plan endorse again")
+    if not aligned_to(aligned, current, journal, text_at):
+        said = "no plan review round aligned on it" if aligned is None else \
+            f"plan review aligned on {aligned[:12]}, and {current[:12]} reads otherwise beyond its recorded re-keyings"
+        return Refused("plan.not_aligned", f"the endorsed plan isn't the one plan review aligned on: {said}; review "
+                       "the change in another round, then endorse again")
+    open_feedback = blocking_feedback(journal)
+    if open_feedback:
+        return Refused("plan.feedback_blocking",
+                       f"{len(open_feedback)} piece{'' if len(open_feedback) == 1 else 's'} of feedback that stop "
+                       f"approval {'is' if len(open_feedback) == 1 else 'are'} open: "
+                       + "; ".join(f"entry {entry['id']} on {entry['data']['anchor']}" for entry in open_feedback))
+    return None
 
 
 # -- watching -------------------------------------------------------------------------------------------------------

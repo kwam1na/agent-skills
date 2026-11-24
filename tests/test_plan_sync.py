@@ -549,6 +549,101 @@ class PlanSyncTests(unittest.TestCase):
         self.assertEqual(len(lines), 1, lines)
         self.assertIn("## Peer one", lines[0])
 
+    def test_a_shared_plans_change_outside_the_held_sections_is_refused_and_a_rekeying_commit_is_exempt(self) -> None:
+        slug, branch, path = self.start()
+        mapping = {"alpha": "ALPHA"}
+        held = lambda text: [name for name in ("## Beta", "### Beta detail") if name in text]
+        scope = lambda rekeys: PLAN_SYNC.Held(held, rekeys, lambda names: f"ask for {', '.join(names)}")
+        # A committed change to a section the seat doesn't hold is refused before the push, the branch kept.
+        self.write(self.ours, path, plan(slug, edited(BASE, "## Gamma", "ours gamma")))
+        git("commit", "-qam", "gamma", cwd=self.ours)
+        head, remote = git("rev-parse", "HEAD", cwd=self.ours), git("rev-parse", f"refs/heads/{branch}", cwd=self.remote)
+        with self.assertRaises(PLAN_SYNC.Refused) as caught:
+            self.sync(self.ours, path, branch, scope=scope([]))
+        self.assertEqual(caught.exception.code, "plan.section_not_held")
+        self.assertIn("## Gamma (in " + head[:12], str(caught.exception))
+        self.assertIn("ask for ## Gamma", str(caught.exception))
+        self.assertEqual((git("rev-parse", "HEAD", cwd=self.ours), git("rev-parse", f"refs/heads/{branch}",
+                                                                          cwd=self.remote)), (head, remote))
+        git("reset", "-q", "--hard", "HEAD^", cwd=self.ours)
+        # A re-keying commit the record names lands, whatever sections it changes; the same entry naming a commit
+        # whose text isn't the map applied exempts nothing.
+        text = (self.ours / path).read_text()
+        self.write(self.ours, path, PLAN_SYNC.rekeyed(text, mapping) + "and one more line\n")
+        git("commit", "-qam", "not only a re-keying", cwd=self.ours)
+        named = git("rev-parse", "HEAD", cwd=self.ours)
+        with self.assertRaises(PLAN_SYNC.Refused):
+            self.sync(self.ours, path, branch, scope=scope([{"from": remote, "to": named, "map": mapping}]))
+        git("reset", "-q", "--hard", "HEAD^", cwd=self.ours)
+        self.write(self.ours, path, PLAN_SYNC.rekeyed(text, mapping))
+        git("commit", "-qam", "a re-keying", cwd=self.ours)
+        named = git("rev-parse", "HEAD", cwd=self.ours)
+        # The map applied, but by a commit no entry names: checked as any commit is.
+        with self.assertRaises(PLAN_SYNC.Refused) as caught:
+            self.sync(self.ours, path, branch, scope=scope([{"from": remote, "to": remote, "map": mapping}]))
+        self.assertEqual(caught.exception.code, "plan.section_not_held")
+        self.sync(self.ours, path, branch, scope=scope([{"from": remote, "to": named, "map": mapping}]))
+        self.assertEqual(git("rev-parse", f"refs/heads/{branch}", cwd=self.remote), named)
+        # An edit inside a held section lands.
+        self.write(self.ours, path, (self.ours / path).read_text().replace("beta body", "ours beta"))
+        self.sync(self.ours, path, branch, scope=scope([]))
+        self.assertIn("ours beta", self.remote_text(branch, path))
+
+    def test_an_unpushed_composing_merge_is_not_this_clones_change(self) -> None:
+        """A merge that brings a peer's change to sections this seat doesn't hold, left unpushed, still syncs."""
+        slug, branch, path = self.start()
+        self.write(self.theirs, path, plan(slug, edited(BASE, "## Gamma", "theirs gamma")))
+        self.sync(self.theirs, path, branch)
+        # This clone's own unpushed edit to a section it holds, so the merge's plan differs from both its parents.
+        self.write(self.ours, path, plan(slug, edited(BASE, "## Beta", "ours beta")))
+        git("commit", "-qam", "beta", cwd=self.ours)
+        git("fetch", "-q", "origin", cwd=self.ours)
+        git("-c", "user.name=Ann", "-c", "user.email=ann@example.com", "merge", "-q", "--no-ff", "-m", "compose",
+            f"origin/{branch}", cwd=self.ours)
+        self.assertEqual(len(git("log", "-1", "--format=%P", cwd=self.ours).split()), 2)
+        held = lambda text: [name for name in ("## Beta",) if name in text]
+        said = self.sync(self.ours, path, branch, scope=PLAN_SYNC.Held(held, [], lambda names: "ask"))
+        self.assertTrue(any("pushed" in line for line in said), said)
+        self.assertEqual(git("rev-parse", f"refs/heads/{branch}", cwd=self.remote), git("rev-parse", "HEAD", cwd=self.ours))
+
+    def test_a_sync_lists_what_it_pushes_before_the_push_lands(self) -> None:
+        """So a watch in this clone, ticking while the push lands, never reads it as a peer's."""
+        slug, branch, path = self.start()
+        self.write(self.ours, path, plan(slug, edited(BASE, "## Alpha", "ours alpha")))
+        listed, real = [], PLAN_SYNC.push
+
+        def push(root: Path, remote: str, pushed: str) -> str | None:
+            listed.append((git("rev-parse", "HEAD", cwd=root), PLAN_SYNC.pushed_here(root, pushed)))
+            return real(root, remote, pushed)
+        with mock.patch.object(PLAN_SYNC, "push", push):
+            self.sync(self.ours, path, branch)
+        self.assertEqual(len(listed), 1)
+        head, already = listed[0]
+        self.assertIn(head, already)
+        self.assertEqual(git("rev-parse", f"refs/heads/{branch}", cwd=self.remote), head)
+
+    def test_a_linked_worktree_of_the_clone_shares_its_pushed_record(self) -> None:
+        """One clone is one seat: a push from its linked worktree is its own in the main checkout, and shows nothing."""
+        slug, branch, path = self.start()
+        worktree = self.folder / f"worktree-{slug}"
+        git("switch", "-q", "main", cwd=self.ours)
+        git("worktree", "add", "-q", str(worktree), branch, cwd=self.ours)
+        self.addCleanup(git, "worktree", "remove", "--force", str(worktree), cwd=self.ours)
+        self.addCleanup(git, "switch", "-q", branch, cwd=self.ours, check=False)
+        self.assertEqual(PLAN_SYNC.pushed_record(worktree, branch), PLAN_SYNC.pushed_record(self.ours, branch))
+        lines = []
+
+        def from_the_worktree() -> None:
+            self.write(worktree, path, (worktree / path).read_text().replace("gamma body\n", "worktree gamma\n"))
+            self.sync(worktree, path, branch)
+        clock, sleep, state = self.ticking(2, {1: from_the_worktree, 2: self.peer_edit(branch, path, "## Peer", "p")})
+        code = PLAN_SYNC.watch(self.ours, path, branch, "origin", MARKDOWN, poll=2, timeout=6, until=None,
+                               write=lines.append, sleep=sleep, clock=clock)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("## Peer", lines[0])
+        self.assertIn(git("rev-parse", "HEAD", cwd=worktree), PLAN_SYNC.pushed_here(self.ours, branch))
+
     def test_until_exits_0_on_the_first_matching_line(self) -> None:
         slug, branch, path = self.start()
         lines = []

@@ -1047,7 +1047,7 @@ class Config:
         self.test_files = (self.in_app or {}).get("testFilePattern", DEFAULT_TEST_FILES)
         if self.conflicts:
             raise Stop("the repository's configs disagree:\n  " + "\n  ".join(self.conflicts))
-        self.delivery = None
+        self.delivery, self.planning = None, False
         key = delivery or setting("RUN_DELIVERY_DELIVERY") or (self.pick_delivery(need_delivery) if pick else None)
         if key:
             self.load_delivery(key)
@@ -1210,16 +1210,36 @@ class Config:
                      else "; no delivery here is open")
         return said
 
+    def planning_delivery(self, key: str) -> dict | None:
+        """The planning record plan-open opened for `key`, read as a delivery with no stories yet, until lead-setup
+        writes its delivery file: its plan, its headline, no lanes. None when there is no such record."""
+        folder = self.record_apart(key)
+        meta = json_object(folder / "state.json").get("meta") or {}
+        if (meta.get("collab") or {}).get("key") != key or meta.get("phase") != "planning" \
+                or not isinstance(meta.get("planFile"), str):
+            return None
+        # Its base is the one its record started on, as plan-open named it.
+        with contextlib.suppress(OSError, ValueError, IndexError, KeyError, TypeError):
+            started = json.loads((folder / "journal.jsonl").read_text(encoding="utf-8").splitlines()[0])
+            base = started["data"]["base"]["ref"].removeprefix(f"{self.remote}/")
+        return {"schemaVersion": "delivery-flow-delivery/1", "delivery": key, "headline": meta.get("headline") or key,
+                "plan": meta["planFile"], "lanes": {}, "stories": {},
+                **({"baseBranch": base} if "base" in locals() else {})}
+
     def load_delivery(self, key: str) -> None:
         path = self.deliveries / f"{key}.json"
         d = self.shelf.json(f"{self.deliveries_rel}/{key}.json")
+        planned = self.planning_delivery(key) if d is None else None
+        self.planning = planned is not None
+        d = d if planned is None else planned
         if d is None:
             raise Stop(f"{self.shelf.where(f'{self.deliveries_rel}/{key}.json')} is missing (lead-setup writes it)"
                        f"{self.missing_delivery(key)}{self.base_hint()}")
         if d.get("schemaVersion") != "delivery-flow-delivery/1":
             raise Stop(f"{path}: schemaVersion must be delivery-flow-delivery/1")
         self.raw, self.delivery_path = d, path
-        self.delivery_where = self.shelf.where(f"{self.deliveries_rel}/{key}.json")
+        self.delivery_where = (f"the planning record {self.record_apart(key)}" if self.planning
+                               else self.shelf.where(f"{self.deliveries_rel}/{key}.json"))
         self.delivery = d["delivery"]
         base = d.get("baseBranch")
         if base and self.binding_base and not serves(self.binding, base):
@@ -7611,6 +7631,10 @@ def draft_delivery(c, args, integration_target: str | None = None) -> None:
     grant = lanes_grant(args, existing)
     plan = c.root / args.plan
     text = plan.read_text()
+    planning = planning_record_of(c, Path(args.plan))
+    if planning and planning[0] != key:
+        raise Stop(f"collab.key_differs: {args.plan} has the planning record {planning[0]} at {planning[1]}, which "
+                   f"keeps its key through approval; draft the delivery as {planning[0]}")
     pattern = re.compile(args.pattern or STORY_HEADING, re.M)
     if "key" not in pattern.groupindex or "title" not in pattern.groupindex:
         raise Stop("the pattern must name groups `key` and `title` (and may name `label` and `pinned`)")
@@ -7759,6 +7783,9 @@ def draft_delivery(c, args, integration_target: str | None = None) -> None:
                      f"already made reads as made: {', '.join(loose)}")
     if adoptable:
         print(adopt_plan_review(c, adoptable, key))
+    if planning:
+        print(f"adopting the planning record of {key} at {planning[1]} in place: lead-init takes it over once "
+              f"every approver seat has endorsed the plan, and the plan now syncs on lead/{key}")
     print("next: check each story's lane, criteria and order and the lanes' owns against the approved plan, fill in "
           "what the notes below name, set inApp requirements, the finish lines and the brief notes, then lead-init and "
           "lead-brief")
@@ -8023,6 +8050,18 @@ def lead_init(args) -> None:
     if c.ship and not c.ship.get("toolingCommit"):
         raise Stop(f"{c.delivery_where}: ship.toolingCommit isn't set")
     adoptable = adoptable_plan_review(c, c.plan)
+    # A planning record plan-open made for this delivery is taken over in place, once its plan is jointly approved.
+    planning = planning_record(c)
+    if planning is not None:
+        if args.replace:
+            raise Stop(f"collab.record_shared: {c.state} is {c.delivery}'s planning record, shared with its seats; "
+                       "lead-init takes it over in place, so run it without --replace")
+        tool, journal, seat = record_seat(c, c.delivery, c.state)
+        if not tool.holds(journal, seat, "delivery"):
+            # Before anything stops: this seat's planning supervisor keeps syncing.
+            raise Stop(f"scope.not_held: only the holder of delivery, seat {tool.holder(journal, 'delivery')}, takes "
+                       "the planning record over; scope request --scope delivery asks for it")
+        joint_approval(c, adoptable)
     if adoptable:
         print(adopt_plan_review(c, adoptable, c.delivery))
     if plan_declared(c):
@@ -8035,7 +8074,7 @@ def lead_init(args) -> None:
         # Refused before the record starts, so a criterion the view can't read is corrected before anything is kept.
         check_plan(build_plan(c, [snapshot_entry(c, late=False)]), c)
     problems = setup_problems(c)
-    stale = None if args.replace else stale_record(c)
+    stale = None if args.replace or planning is not None else stale_record(c)
     if stale:
         problems.insert(0, stale)
     if problems:
@@ -8056,9 +8095,17 @@ def lead_init(args) -> None:
             "finish": finish, "laneOwnership": ownership, "regionsSettled": 0}
     for line in replace_record(c) if args.replace else []:
         print(line)
-    state_tool("init", "--headline", c.raw.get("headline", c.delivery), "--seed", json.dumps(seed))
-    state_tool("journal", "--kind", "record.started",
-               "--data", json.dumps({"base": {"ref": c.base_ref, "head": git("rev-parse", c.base_ref)}}))
+    if planning is not None:
+        # Its journal, partitions and hosted identity carry on: the delivery's entries follow the planning ones.
+        # The planning record's supervisor gives way to the delivery's, which lead-init starts below.
+        if (said := ask_supervisor_to_stop(c, why="held")):
+            print(said)
+        state_tool("patch", "--writer", "lead", "--version", str(json_object(c.state / "state.json")["version"]),
+                   "--patch", json.dumps({**seed, "meta": {**seed["meta"], "phase": "delivery"}}))
+    else:
+        state_tool("init", "--headline", c.raw.get("headline", c.delivery), "--seed", json.dumps(seed))
+        state_tool("journal", "--kind", "record.started",
+                   "--data", json.dumps({"base": {"ref": c.base_ref, "head": git("rev-parse", c.base_ref)}}))
     for item in planned:  # in plan order: the plan's approval refines each story, when the tracker refines
         if (approved := story_approved(c, item["subject"])) is not None:
             state_tool("journal", "--kind", "story.approved", "--subject", item["subject"], "--data", json.dumps(approved))
@@ -14216,6 +14263,10 @@ class Supervisor:
 
     def child_argv(self, name: str) -> list[str] | None:
         c = self.c
+        if name == "collab":
+            # The sync loop of a shared record: pushes this seat's partition and ingests its peers'.
+            return [sys.executable, "-B", str(c.release / "skills/orchestrate-work/scripts/collab.py"), "serve",
+                    "--dir", str(c.state), "--remote", c.remote, "--poll", str(collab_settings(c)["pollSeconds"])]
         scripts = c.release / "skills/orchestrate-work/scripts"
         config = binding_state(c)
         if name == "live":
@@ -14475,6 +14526,7 @@ class Supervisor:
             entry["laneWords"] = lane_words(doc, remembered)
             return cleanup_merged(c, doc, entry["laneWords"])
 
+        planning = planning_phase(c)
         steps = (("reconcile", reconcile_once), ("regions", lambda: settle_landings(c)), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
                  ("peers", lambda: self.peer_merges(entry)),
                  ("lenses", lambda: journal_lens_returns(c)),
@@ -14484,6 +14536,9 @@ class Supervisor:
                  ("publish", lambda: render_views(c, only="publishers")),
                  ("blockers", self.blockers), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
+        if planning:
+            # While the plan is drafted: the views and the record's copy only; no queue, tracker or full health.
+            steps = tuple((name, step) for name, step in steps if name in PLANNING_STEPS)
         for name, step in steps:
             self.honour_signal()
             if self.lose():
@@ -14494,6 +14549,8 @@ class Supervisor:
                 entry[name] = f"failed: {error}"
         closed = False
         try:
+            if planning:
+                raise Planning
             doc = derived.get("doc") or load_state()
             needs = derived["needs"] if "needs" in derived else needs_you(c, doc, self.flapping())
             holds = close_holds(c, doc, needs)
@@ -14514,6 +14571,8 @@ class Supervisor:
             if not holds:
                 entry["closeOut"], closed = close_out(c, self.flapping(), self.once)
                 render_views(c)
+        except Planning:
+            entry["close"] = "planning: nothing to close"
         except (Stop, ValueError, OSError, subprocess.SubprocessError) as error:
             entry["close"] = f"failed: {error}"
         if self.lose():
@@ -14658,7 +14717,8 @@ class Supervisor:
                 with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
                     for line in clear_suite_checkouts(c)[0]:
                         self.say(line)
-                self.start("serve")
+                # A planning record has no queue yet: its one child beside the view is the sync loop.
+                self.start("collab" if planning_phase(c) else "serve")
                 print(self.address, flush=True)  # the first line: where the delivery is watched
                 lines, self.held_lines = self.held_lines or [], None
                 for line in lines:
@@ -14732,6 +14792,19 @@ class Supervisor:
                         print(f"{now()} supervisor: {said}", flush=True)
             fcntl.flock(self.handle, fcntl.LOCK_UN)
             self.handle.close()
+
+
+class Planning(Exception):
+    """A pass over a planning record, which has nothing to close."""
+
+
+# The pass steps a planning record runs.
+PLANNING_STEPS = ("needs", "render", "latest")
+
+
+def planning_phase(c) -> bool:
+    """Whether the delivery's record is a planning record: shared, not yet taken over by lead-init."""
+    return (c.record_state().get("meta") or {}).get("phase") == "planning"
 
 
 def lead_run(args) -> None:
@@ -16463,8 +16536,10 @@ def plan_collab_config(args):
 
 def plan_sync_command(args) -> None:
     c, plan, branch, _ = plan_collab_config(args)
+    scope = plan_scope_of(c, plan)
     try:
-        for line in plan_sync.sync(c.root, plan.as_posix(), branch, c.remote, _region_ownership(), message=args.message):
+        for line in plan_sync.sync(c.root, plan.as_posix(), branch, c.remote, _region_ownership(), message=args.message,
+                                   scope=scope):
             print(line)
     except plan_sync.Refused as error:
         raise Stop(str(error)) from None
@@ -16486,6 +16561,245 @@ def plan_watch_command(args) -> None:
         raise Stop(str(error)) from None
     if code:
         sys.exit(code)
+
+
+# -- the planning record --------------------------------------------------------------------------------------------
+
+def planning_records(c) -> list[tuple[str, Path, dict]]:
+    """Every shared record kept under the work directory's deliveries/, where plan-open opens one and a seat that
+    joins ingests it: each as its key, folder and state."""
+    found = []
+    for state in sorted((c.main / c.work / "deliveries").glob(f"*/{c.state_rel}/state.json")):
+        record = json_object(state)
+        collab = (record.get("meta") or {}).get("collab") or {}
+        if isinstance(collab.get("key"), str):
+            found.append((collab["key"], state.parent, record))
+    return found
+
+
+def planning_record_of(c, plan: Path) -> tuple[str, Path] | None:
+    """The shared record plan-open opened for `plan`, by the plan file its record names."""
+    named = os.path.normpath(plan)
+    return next(((key, folder) for key, folder, record in planning_records(c)
+                 if os.path.normpath(str(record["meta"].get("planFile") or "")) == named), None)
+
+
+def shared_record(c, plan: Path) -> tuple[str, Path] | None:
+    """The key and folder of the shared record a plan is edited and approved under: that of the delivery whose file
+    names the plan, else the planning record opened for it; None when neither is shared."""
+    named = os.path.normpath(plan)
+    found = [(d["delivery"], d) for d in c.delivery_files().values()
+             if isinstance(d.get("plan"), str) and os.path.normpath(d["plan"]) == named and d.get("delivery")]
+    if not found:
+        return planning_record_of(c, plan)
+    key, d = found[0]
+    folder = c.state_of(key, d)
+    return (key, folder) if (json_object(folder / "state.json").get("meta") or {}).get("collab") else None
+
+
+def record_seat(c, key: str, folder: Path) -> tuple[object, list[dict], str]:
+    """The state tool, the shared record's journal, and this checkout's seat on it, refused without one."""
+    tool = _validator()
+    seat = tool.local_seat(folder, key)
+    if seat is None:
+        raise Stop(f"collab.seat_missing: this checkout has no seat for the shared record {key}; collab join gives it one")
+    return tool, tool.read_journal(folder), seat
+
+
+def plan_scope(c, key: str, folder: Path) -> plan_sync.Held:
+    """What this checkout's seat may change in the plan of the shared record `key`: the sections it holds."""
+    tool, journal, seat = record_seat(c, key, folder)
+    script = shlex.join([sys.executable, "-B", str(c.release / STATE_TOOL), "--dir", str(folder)])
+    ask = lambda names: " and ".join(f"{script} scope request --scope {shlex.quote('plan:' + name)} --reason TEXT"
+                                     for name in names)
+    rekeys = [entry["data"] for entry in journal if entry["kind"] == "plan.rekeyed"]
+    return plan_sync.Held(lambda text: tool.held_sections(journal, seat, text), rekeys, ask)
+
+
+def plan_scope_of(c, plan: Path) -> plan_sync.Held | None:
+    shared = shared_record(c, plan)
+    return plan_scope(c, *shared) if shared else None
+
+
+def committed_plan(c, plan: Path) -> None:
+    """Refuse a plan that isn't committed as it stands: missing, untracked, or edited since its last commit."""
+    path = c.root / plan
+    tracked = run(["git", "ls-files", "--error-unmatch", "--", plan.as_posix()], cwd=c.root, check=False).returncode == 0
+    if not path.is_file() or not tracked or git("status", "--porcelain", "--", plan.as_posix(), cwd=c.root):
+        raise Stop(f"plan.uncommitted: {plan} isn't committed as it stands; commit it (plan-sync commits and pushes "
+                   "an edit), then run this again")
+
+
+def plan_commit(c, plan: Path) -> str:
+    """The plan's current commit: the last commit on HEAD that changed it."""
+    commit = git("rev-list", "-1", "HEAD", "--", plan.as_posix(), cwd=c.root)
+    if not commit:
+        raise Stop(f"plan.uncommitted: no commit on HEAD holds {plan}")
+    return commit
+
+
+def plan_open(args) -> None:
+    """Open a planning record: the shared record of a delivery from its plan's first draft, whose first seat, this
+    checkout's, holds every scope. lead-setup and lead-init take it over in place."""
+    global CFG
+    c = CFG = Config(repo(), need_delivery=False, pick=False)
+    plan = Path(args.plan)
+    committed_plan(c, plan)
+    slug = review_slug(plan, (c.root / plan).read_text(encoding="utf-8"))
+    if slug is None:
+        raise Stop(f"plan.no_review_slug: {plan} has no reviewSlug in its front matter, which names its planning "
+                   "record's plan branch, plan/<reviewSlug>; add one, commit it, then run this again")
+    if not re.fullmatch(PLAN_KEY, args.key):
+        raise Stop(f"collab.key_invalid: {args.key!r} isn't a delivery key such as WORK-123")
+    existing = [folder for folder in (c.lane_checkout(args.key) / c.state_rel, c.record_apart(args.key))
+                if (folder / "state.json").exists()]
+    if existing:
+        raise Stop(f"collab.record_exists: {args.key} already has a record at {existing[0]}; it is left as it is")
+    opened = planning_record_of(c, plan)
+    if opened:
+        raise Stop(f"collab.record_exists: {plan} already has the planning record {opened[0]} at {opened[1]}")
+    folder = c.record_apart(args.key)
+    tool = _validator()
+    collab = tool._collab()
+    ref = f"{c.remote}/{c.binding_base}" if c.binding_base else git("rev-parse", "--abbrev-ref", "HEAD", cwd=c.root)
+    head = git("rev-parse", ref, cwd=c.root)
+    try:
+        collab.open_record(folder, key=args.key, headline=args.headline or args.key, base={"ref": ref, "head": head},
+                           label=args.label)
+        state = tool.read_state(folder)
+        tool.patch(folder, writer="lead", version=state["version"], changes={"meta": {"planFile": plan.as_posix()}})
+    except tool.StateError as error:
+        raise Stop(f"{error.code}: {error}") from None
+    seat = tool.local_seat(folder, args.key)
+    label = tool.read_state(folder)["meta"]["collab"]["seats"][seat]["label"]
+    print(f"opened the planning record of {args.key} at {folder}: seat {seat} ({label}) holds every scope; the plan "
+          f"syncs on plan/{slug} with {flow_command()} plan-sync --plan {shlex.quote(plan.as_posix())}")
+    # The planning record's supervisor: its live view, the sync loop and hosted publishing, under the record's key.
+    c = CFG = Config(repo(), args.key)
+    start_hosted(c)
+    if (line := hosted_line(c)):
+        print(line)
+    if supervisor_off():
+        register_delivery(c, None)
+        print(f"supervisor: not started; start it with {flow_command()} --delivery {args.key} lead-run --resume")
+    else:
+        require_node(c.release, "plan-open")
+        print(f"supervisor: running; live view {start_supervisor(c)}{live_fallback(c.state)}")
+
+
+def lead_plan_endorse(args) -> None:
+    """This checkout's seat endorses the plan at its current commit: plan.endorsed, which lead-init's joint approval
+    counts from every admitted approver seat."""
+    global CFG
+    c = CFG = Config(repo(), need_delivery=False, pick=False) if args.plan else cfg()
+    plan = Path(args.plan) if args.plan else c.plan
+    shared = shared_record(c, plan)
+    if shared is None:
+        raise Stop(f"plan.not_shared: {plan} has no shared record; plan-open opens one, and an unshared plan is "
+                   "approved as before")
+    committed_plan(c, plan)
+    record_seat(c, *shared)
+    commit = plan_commit(c, plan)
+    entry = state_tool_at(c, shared[1], "journal", "--kind", "plan.endorsed", "--data", json.dumps({"commit": commit}))
+    print(f"endorsed {plan} at {commit[:12]} (entry {entry['id']})")
+
+
+def state_tool_at(c, folder: Path, *args: str) -> dict:
+    """Run the state tool on the record in `folder`; its refusal is this command's, by its code."""
+    done = run([sys.executable, "-B", str(c.release / STATE_TOOL), "--dir", str(folder), *args], cwd=c.root,
+               check=False)
+    said = json.loads(done.stdout) if done.stdout.strip().startswith("{") else {}
+    if done.returncode:
+        raise Stop(f"{said.get('code', 'state.refused')}: {said.get('error') or done.stderr.strip()[-400:]}")
+    return said.get("entry") or said
+
+
+def key_map(text: str) -> dict[str, str]:
+    mapping = {}
+    for pair in text.split(","):
+        old, equals, new = (part.strip() for part in pair.partition("="))
+        if not equals or not old or not new or old in mapping:
+            raise Stop(f"plan.map_invalid: --map is OLD=NEW[,OLD=NEW...], each placeholder key once: {text!r}")
+        mapping[old] = new
+    return mapping
+
+
+def plan_rekey(args) -> None:
+    """The delivery holder replaces the plan's placeholder story keys with tracker keys in one commit, journals
+    plan.rekeyed, and syncs it. The re-keying commit may change sections other seats hold; nothing else may."""
+    global CFG
+    c = CFG = Config(repo(), need_delivery=False, pick=False)
+    plan, mapping = Path(args.plan), key_map(args.map)
+    shared = shared_record(c, plan)
+    if shared is None:
+        raise Stop(f"plan.not_shared: {plan} has no shared record; edit an unshared plan's keys as any edit")
+    key, folder = shared
+    tool, journal, seat = record_seat(c, key, folder)
+    if not tool.holds(journal, seat, "delivery"):
+        raise Stop(f"scope.not_held: only the holder of delivery, seat {tool.holder(journal, 'delivery')}, re-keys the "
+                   f"plan; scope request --scope delivery asks for it")
+    committed_plan(c, plan)
+    branch = plan_branch(c, plan)
+    markdown = _region_ownership()
+    try:
+        # From the remote's plan, so the re-keying starts from the text peers and plan review have.
+        for line in plan_sync.sync(c.root, plan.as_posix(), branch, c.remote, markdown, scope=plan_scope(c, key, folder)):
+            print(line)
+    except plan_sync.Refused as error:
+        raise Stop(str(error)) from None
+    before = git("rev-parse", "HEAD", cwd=c.root)
+    text = (c.root / plan).read_text(encoding="utf-8")
+    changed = plan_sync.rekeyed(text, mapping)
+    if changed == text:
+        raise Stop(f"plan.rekey_unchanged: {plan} names none of {', '.join(mapping)}")
+    (c.root / plan).write_text(changed, encoding="utf-8")
+    git("commit", "-q", "-m", "Re-key the plan's stories: " + ", ".join(f"{old} to {new}" for old, new in mapping.items()),
+        "--", plan.as_posix(), cwd=c.root)
+    after = git("rev-parse", "HEAD", cwd=c.root)
+    rekeying = {"from": before, "to": after, "map": mapping}
+    scope = plan_scope(c, key, folder)
+    scope.rekeys.append(rekeying)
+    try:
+        said = plan_sync.sync(c.root, plan.as_posix(), branch, c.remote, markdown, scope=scope)
+    except plan_sync.Refused as error:
+        # Nothing landed: the branch goes back to where the re-keying started, and nothing is journalled.
+        git("reset", "-q", "--keep", before, cwd=c.root)
+        raise Stop(f"{error}; the re-keying was undone, so run plan-rekey again") from None
+    # Journalled once its commit has landed, so every entry names a re-keying peers have.
+    entry = state_tool_at(c, folder, "journal", "--kind", "plan.rekeyed", "--data", json.dumps(rekeying))
+    for line in said:
+        print(line)
+    print(f"re-keyed {plan} at {after[:12]} (entry {entry['id']})")
+
+
+def joint_approval(c, adoptable: Path | None) -> None:
+    """lead-init on a shared record: refused, before anything is written, by the first of D11's rules the plan fails."""
+    shared = shared_record(c, c.plan)
+    if shared is None:
+        return
+    tool = _validator()
+    journal = tool.read_journal(shared[1])
+    rounds = [json.loads(path.read_text()) for path in round_files(adoptable or plan_review_dir(c))] \
+        if (adoptable or plan_review_dir(c)).is_dir() else []
+    aligned = rounds[-1]["candidate"] if rounds and rounds[-1]["outcome"] == "aligned" else None
+    refusal = plan_sync.approval_refusal(journal, tool.derived_seats(journal), plan_commit(c, c.plan), aligned,
+                                         lambda commit: plan_sync.shown(c.root, commit, c.plan.as_posix()))
+    if refusal is not None:
+        raise Stop(str(refusal))
+
+
+def planning_record(c) -> dict | None:
+    """The planning record lead-init adopts in place: this delivery's record, shared, still planning. One opened for
+    its plan somewhere the delivery's record isn't is refused: a stateDirectory set elsewhere would start another."""
+    opened = planning_record_of(c, c.plan)
+    if opened and opened[0] == c.delivery and opened[1].resolve() != c.state.resolve():
+        raise Stop(f"collab.record_elsewhere: {c.delivery}'s planning record is at {opened[1]}, but {c.delivery_where} "
+                   f"keeps its record at {c.state}; remove its stateDirectory, so lead-init takes the planning record "
+                   "over in place")
+    record = json_object(c.state / "state.json")
+    meta = record.get("meta") or {}
+    collab = meta.get("collab") or {}
+    return record if collab.get("key") == c.delivery and meta.get("phase") == "planning" else None
 
 
 def doctor(args) -> None:
@@ -16845,6 +17159,9 @@ def main(argv: list[str] | None = None) -> None:
     q.set_defaults(fn=lead_plan)
     q = command(plan_commands, "why", help="give a recorded change its reason")
     q.add_argument("change"); q.add_argument("--why", required=True); q.set_defaults(fn=lead_plan)
+    q = command(plan_commands, "endorse", help="on a shared record: this seat endorses the plan at its current commit")
+    q.add_argument("--plan", help="the shared plan, before a delivery file names it (default: the delivery's)")
+    q.set_defaults(fn=lead_plan_endorse)
     p = command(sub, "lead-compound", help="record the compound-learning decision the close waits on")
     decided = p.add_mutually_exclusive_group(required=True)
     decided.add_argument("--required", action="store_true", help="a learning was preserved: give --ref")
@@ -16874,6 +17191,16 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--plan", required=True, help="the plan file, which names its branch by its reviewSlug")
     p.add_argument("--message", help="the commit message for an uncommitted plan edit")
     p.set_defaults(fn=plan_sync_command)
+    p = command(sub, "plan-open", help="open a planning record: a delivery's shared record from its plan's first draft")
+    p.add_argument("--plan", required=True, help="the committed plan file, with a reviewSlug in its front matter")
+    p.add_argument("--key", required=True, help="the delivery key the record keeps through approval, such as WORK-123")
+    p.add_argument("--headline", help="the record's headline (default: the key)")
+    p.add_argument("--label", help="this seat's label (default: git's user.name)")
+    p.set_defaults(fn=plan_open)
+    p = command(sub, "plan-rekey", help="the delivery holder replaces the plan's placeholder story keys, in one commit")
+    p.add_argument("--plan", required=True, help="the shared plan file")
+    p.add_argument("--map", required=True, help="OLD=NEW[,OLD=NEW...]: each placeholder key and its tracker key")
+    p.set_defaults(fn=plan_rekey)
     p = command(sub, "plan-watch", help="print one line per peer push of the plan's shared branch, and nothing else")
     p.add_argument("--plan", required=True, help="the plan file, which names its branch by its reviewSlug")
     p.add_argument("--timeout", type=float, default=1800, help="exit after this many seconds (default 1800)")
@@ -16924,7 +17251,9 @@ def main(argv: list[str] | None = None) -> None:
         with contextlib.suppress(Stop, ValueError, OSError):
             for line in listener_lines(cfg()):
                 print(line)
-    if args.command.startswith("lead-") and args.command not in ("lead-setup", "lead-init", "lead-run", "lead-wait"):
+    # A lead command run for a plan before any delivery names it, as lead-plan endorse --plan, has no supervisor.
+    if args.command.startswith("lead-") and args.command not in ("lead-setup", "lead-init", "lead-run", "lead-wait") \
+            and (CFG is None or hasattr(CFG, "state")):
         with contextlib.suppress(Stop, ValueError, OSError):
             line = supervisor_line(cfg())
             if line:

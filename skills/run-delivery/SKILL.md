@@ -416,9 +416,15 @@ A local base merge into a story branch needs the separate authorization recorded
 Two engineers can write one plan together, each in their own clone, with no delivery record. The plan's branch is
 `plan/<reviewSlug>` until a delivery file names the plan, then `lead/<key>`, pushed to the base remote and never forced.
 Run `run_delivery.py plan-sync --plan P` after an edit, and follow a peer's edits with `run_delivery.py plan-watch
---plan P` under the host's monitor. `references/config.md` has the rules and the `collab` settings.
+--plan P` under the host's monitor. `run_delivery.py plan-open --plan P --key KEY` gives a plan a planning record, a
+delivery's shared record from the first draft: each seat then changes only the plan sections it holds, every approver
+seat endorses one plan commit, and `lead-setup` and `lead-init` take the record over in place. `references/config.md`
+has the rules and the `collab` settings.
 
 | Who | Command | What it does |
 | --- | --- | --- |
 | Lead | `plan-sync --plan P [--message M]` | From a checkout on the plan's branch: composes the working copy's plan with the remote branch section by section, commits and pushes it. A section changed on both sides is refused with `plan.sections_overlap`, naming it with both diffs, before anything is written. A push rejected because a peer pushed first composes again, up to 5 times; the sixth rejection is `plan.push_exhausted`. |
 | Lead | `plan-watch --plan P [--timeout S] [--until RE]` | Prints one flushed line per peer push of the plan's branch, and nothing else, fetching it every `collab.pollSeconds` (default 5, at least 2). Exits 0 at the timeout (default 1800), or with `--until`, 0 after the first matching line and 3 at the timeout. Never pushes. |
+| Lead | `plan-open --plan P --key KEY [--headline H] [--label L]` | Opens KEY's planning record under the work directory's `deliveries/KEY/`: `meta.phase: "planning"`, `record.started` as entry 1, no planned work, and this checkout's seat, admitted and an approver, holding every scope. It starts the record's supervisor in planning mode: the live view, the sync loop (`collab.py serve`) and hosted publishing, with no queue or tracker, hosted publishing running as its own owner process as for any record, and each pass drawing the views and copying the record only; `lead-init` stops it and starts the delivery's. Refused with `plan.uncommitted` for a plan not committed as it stands, `plan.no_review_slug` for one without a `reviewSlug`, and `collab.record_exists` when the key or the plan has a record already, which is left as it was. |
+| Lead | `lead-plan endorse [--plan P]` | On a shared record: this seat endorses the plan at its current commit, the last commit on HEAD that changed it (`plan.endorsed`). Sync first, so the commit is the one peers have. |
+| Lead | `plan-rekey --plan P --map OLD=NEW[,OLD=NEW...]` | The `delivery` holder replaces placeholder story keys with tracker keys, whole keys only, in one commit, journals `plan.rekeyed` and syncs it. That commit may change sections other seats hold; any later commit to them is checked as any is. Another seat is refused with `scope.not_held`. |

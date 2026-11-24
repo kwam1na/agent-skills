@@ -1205,6 +1205,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_planning_record",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_planning_record.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_planning_record.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_product_descriptors",
         "argv": [
           ".venv/bin/python",

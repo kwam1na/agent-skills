@@ -323,6 +323,21 @@ changes: the branch comes down by an explicit refspec into its remote-tracking r
   sync here composed over it first. With no `--until` it exits 0 at its timeout (default 1800 seconds); with `--until` it exits 0 after the
   first matching line, and 3 at the timeout if none matched. A watch none of whose fetches reached the remote ends with
   `plan.git_failed` instead. It never pushes.
+- **Sections a seat holds.** Once a plan has a shared record, the planning record `plan-open` opens or the delivery
+  record it becomes, `plan-sync` checks every change this clone makes, each of its commits the remote hasn't got and
+  the working copy's edit, against the sections its seat holds (`plan:<heading>` scopes, and every section nobody holds
+  is the `delivery` holder's). A change to any other section is refused with `plan.section_not_held` before anything is
+  committed or pushed, naming each section and the `scope request` command that asks for it. A composing merge is not
+  this clone's change. A commit a `plan.rekeyed` entry names, whose plan is its parent's with that map applied, is
+  exempt: the exemption is the commit's, so a later commit to the same sections is checked as any is.
+- **Joint approval.** On a shared record `lead-init` refuses, before anything is written, with the first of these the
+  plan fails: an admitted approver seat that hasn't endorsed it (`plan.endorsement_missing`); one whose endorsement is
+  of an older commit (`plan.endorsement_stale`); a current plan commit whose text is neither the one plan review aligned
+  on nor that text with each recorded re-keying applied in turn (`plan.not_aligned`); and open feedback that stops
+  approval (`plan.feedback_blocking`). A seat admitted with `--no-approver` holds nothing up. `lead-setup` then
+  `lead-init` take the planning record over in place: its journal, partitions and `hosted-identity.json` carry on,
+  `lead-init`'s entries follow the planning ones, and `meta.phase` becomes `delivery`, once. A delivery file whose
+  `stateDirectory` points elsewhere is refused with `collab.record_elsewhere`.
 - **Settings.** `collab.pollSeconds` is a number of seconds, at least 2, default 5; `collab.autoGrant` is true or false,
   default false: when true, on a shared record the `delivery` holder's supervisor grants a requested plan section
   nobody holds on its next pass. Any other value is refused by both commands, naming the setting.
