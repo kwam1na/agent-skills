@@ -352,6 +352,20 @@
       "after": [
         "V26-3798"
       ]
+    },
+    "V26-3847": {
+      "title": "Close, full health and evidence on a shared record, from carried inputs",
+      "lane": "lane-1",
+      "why": "Lead split of V26-3802 (decision 374): V26-3847 takes the carried inputs, the close-out, full health across machines and D22 evidence.",
+      "criteria": [
+        {
+          "id": "v26-3847-1",
+          "text": "The close waits for peer cleanup and the queue holder's full-health result, journals one delivery.closed, and peers count it closed only after the archive; reopened and resumed closes behave as the plan states."
+        }
+      ],
+      "after": [
+        "V26-3802"
+      ]
     }
   },
   "finish": [
