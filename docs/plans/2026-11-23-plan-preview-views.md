@@ -135,8 +135,11 @@ In scope:
 Out of scope:
 
 - Comments, reactions or any write from the page. The views stay read-only.
-- Any change to the delivery record, the producer, `lead-setup` or `lead-init`
-  once a delivery starts. Adopting the review store stays as it is.
+- Any change to the delivery record or the producer once a delivery starts.
+  Adopting the review store stays as it is: what it moves and records, its
+  output and its exit code. The one addition is the best-effort handed finish it
+  calls after its move, which touches only the preview's own folder and
+  processes.
 - A git hook or file watcher. A plan commit the workflow does not reach (a commit
   made by hand outside `plan-work` and `plan-review`) shows on the next rebuild.
 - A new renderer version, protocol change or hosted service change.
@@ -164,30 +167,46 @@ Out of scope:
   preview's own units and finish lines, `changes` to `[]` and `evidence` to `{}`,
   and leaves out `approved.review`. The member that says what `approved` means is
   `preview.approval`.
-- **The approval line for a preview.** With `preview` present, the line map never
-  prints "Approved". It prints:
-  - with no review round: "Agent review only · not reviewed yet · not approved by
-    a person";
-  - with rounds: "Agent review only · N review rounds · <ending> · not approved by
-    a person", the ending words as today;
-  - once handed: "Handed to delivery <key> · N review rounds · <ending>".
+- **A preview's plan chapter never reads as approved.** With `preview` present:
+  - the approval line never prints "Approved". It prints, with no review round,
+    "Agent review only · not reviewed yet · not approved by a person"; with
+    rounds, "Agent review only · N review rounds · <ending> · not approved by a
+    person", the ending words as today; once handed, "Handed to delivery <key> · N
+    review rounds · <ending>";
+  - the plan switcher ("As amended" / "As approved") is not drawn;
+  - the "Changes since approval" fold, its scope sentence ("The scope is as
+    approved: …") and its scope chart are not drawn;
+  - the plan-review fold speaks without "Approved": `reviewFold` passes a
+    `preview` option through `runSummaryNode`, and `run-summary.js` then says
+    "Lenses aligned on round N" where it says "Approved on round N", and "Aligned"
+    where its round pill says "Approved". Without the option, run summaries read
+    exactly as today;
+  - a "Decisions" fold shows `preview.decisions`, and for `layout: other` one line
+    says the plan is not in the delivery layout and so shows no stories.
 
-  The plan switcher ("As amended" / "As approved") is not drawn for a preview, and
-  the plan chapter shows a "Decisions" fold from `preview.decisions` and, for
-  `layout: other`, one line saying the plan is not in the delivery layout and so
-  shows no stories.
+  The test of this is case-insensitive: the preview chapter's text matches no
+  `/approv/`, except inside the approvals fold's title node and the plan's own
+  approval-handoff item nodes, which are excluded by node, not by wording. Two
+  fixtures (no round; three rounds open) also pin the chapter's full text, so
+  wording nobody thought of is caught.
 - **An origin built before this change.** Its line map ignores `preview` and would
   print "Approved". So a preview's `outcome.summary` always begins "Plan preview
-  (agent review only):", which every line map shows as the page's headline, and
+  (agent review only): ", which every line map shows as the page's headline, and
   `docs/hosted-deliveries.md` says to redeploy the viewer from the release that
   carries previews. No capability negotiation is added.
 - **What the builder reads, and from where.** It reads the plan as committed at
   `HEAD` of the checkout it runs in (`git show HEAD:<path>`), never the working
-  tree, and refuses an uncommitted or untracked plan as `plan-review prepare`
-  does. From the plan:
+  tree. It refuses only a plan `HEAD` does not hold (untracked or never
+  committed); uncommitted edits to a committed plan are ignored, so a round
+  reduced while the author is already revising still reaches the preview.
+  The preview names the commit it read. From the plan:
   - the title: front matter `title`, else the first `# ` heading;
-  - `outcome`: `summary` is the preview prefix plus the title, `text` the first
-    paragraph of `## Goal` (clipped to 2000 characters), else the title;
+  - `outcome`: `summary` is the prefix plus the title, the title clipped so the
+    whole stays within 600 characters with the prefix intact; `text` the first
+    paragraph of `## Goal` (clipped to 2000 characters), else the title. The
+    record's headline equals `outcome.summary`;
+  - `requiredLenses`: `[]`; `proofKinds`: the three record kinds, as a delivery's
+    plan lists them;
   - lanes, tiers and order: `## Units and order` through `units_rows`, and each
     story's lane sentence through `story_plan`;
   - `units`: one per `### KEY. Title` under `## Stories` (`STORY_HEADING`), in plan
@@ -197,16 +216,25 @@ Out of scope:
     `plan_list_items` clips, ids `<key-lowercase>-<n>`; a story with neither has no
     criteria and is shown as such;
   - `finish`: the top-level items of `## Finish line`, ids `finish-<n>`, label
-    `Finish <n>`, `covers: {}` (a line only a person checks);
+    `Finish <n>`, `at` the plan commit's committer time (as `approved.at`), and
+    `covers: {"criteria": [], "proofs": []}` (a line only a person checks), the
+    shape `validate_plan` accepts;
   - `approvals`: the top-level items of `## Approval handoffs`, each `waiting`;
   - `outOfScope`: the items of a heading named `Out of scope`, else of the list
     after an `Out of scope:` line inside `## Scope`;
   - `preview.decisions`: the top-level items of the first `##` heading starting
     `Decisions`;
-  - `planReview`: `plan_review_of` over the plan's store, unchanged.
+  - `planReview`: `plan_review_of` over the plan's store, unchanged. When the
+    store holds `adopted.json`, the builder points the store path at its `store`
+    (the delivery's review folder) before calling `plan_review_of`, so a handed
+    preview keeps every round. `plan-view` resolves the store itself and never
+    goes through `plan_review_config`, which refuses an adopted store.
 
-  A missing section yields an empty member, never a refusal. The parsing helpers
-  are the ones `lead-setup` uses, shared, not copied.
+  A missing section yields an empty member, never a refusal. Lists are cut to the
+  contract's caps (200 units, 30 finish lines, 100 approvals, out-of-scope items
+  and decisions), keeping the first items, and `outcome.text` then ends with one
+  sentence naming each cut member and how many items it dropped. The parsing helpers are the ones
+  `lead-setup` uses, shared, not copied.
 - **A plan outside the delivery layout.** A plan with no `### KEY. Title` heading
   under `## Stories` is still previewed: `layout: other`, no units, and the
   record's `planned` list empty. Its outcome, finish line, decisions, approvals,
@@ -227,8 +255,10 @@ Out of scope:
 
   The folder is created once and never removed or replaced by a rebuild. A rebuild
   that changes nothing apart from `updated` writes nothing, as `rebuild_plan`
-  does. Rebuilds hold a lock file in the folder, so two commands rebuilding one
-  preview run one after the other.
+  does. Rebuilds hold an exclusive lock on `preview.lock` in the folder for their
+  whole read-build-write, so two commands rebuilding one preview run one after the
+  other and both succeed; without it, the second's pinned `patch` would be
+  refused.
 - **The hosted publisher's sidecars stay in the preview's folder.** `hosted_files`
   and `hosted_call` take the record folder and key as arguments instead of reading
   `c.state` and `c.delivery`; the delivery path passes exactly what it passes
@@ -247,31 +277,54 @@ Out of scope:
 - **Preview servers are not the standing server.** `render_state.py live` gains a
   `--preview` flag, recorded in the server's entry and `/health`. `live
   --if-absent` never returns a preview entry, so this repository's standing-server
-  command keeps its meaning. The standing server's runs page lists the
-  repository's verified preview entries in a "Plans in review" section: each
-  preview's title, plan path, its local link and, from its `preview.json`, its
-  hosted link. With no preview the section is absent and every existing golden is
-  unchanged.
+  command keeps its meaning.
+- **The runs page lists the previews.** The runs page is drawn by delivery-views'
+  `render.py runs`, which `render_state.py` runs as the `liveRuns` renderer. The
+  data reaches it the way `DELIVERY_LIVE_RUNS` does: `render_state.py` sets
+  `DELIVERY_PLAN_PREVIEWS` in that renderer's environment to a JSON list of at
+  most 20 verified preview entries, each `{title, plan, live, hosted?}`, read
+  from each entry's `preview.json` defensively (an unreadable or oversized
+  `preview.json` drops that preview's title and hosted link, never the entry or
+  the page). The standing server re-renders the runs page when that list changes,
+  checked on its existing refresh. `render.py runs` embeds the list in the page's
+  view as `previews`, and `assets/runs.js`, which builds the page in the browser,
+  draws a "Plans in review" section from it. With the variable unset or empty,
+  `previews` is left out of the view, the section is absent and the page is byte
+  for byte as today.
 - **When it is silent.** The live preview is skipped, saying nothing, when the
   binding has no `state.liveHome` naming an argv renderer, or when there is no
   binding. The hosted preview is skipped, saying nothing, when
-  `.agents/delivery-views.json` has no `hosted`. With `hosted` configured but no
-  token in its `tokenEnv`, the command prints one line saying the preview was not
-  published and why. A preview that cannot be built (an invalid plan contract)
-  prints the reason and exits non-zero from `plan-view`, but never fails the
-  `plan-review` command that triggered it.
+  `.agents/delivery-views.json` has no `hosted`. With neither, no record is built
+  either and nothing is printed. With `hosted` configured but no token in its
+  `tokenEnv`, the command prints one line saying the preview was not published
+  and why. A preview that cannot be built (an invalid plan contract) prints the
+  reason and exits non-zero from `plan-view`, but never changes the exit code of
+  the `plan-review` command (`prepare`, `reduce` or `end`) that triggered it.
 - **When it is rebuilt.** At the end of `plan-review prepare --plan`, `reduce
   --plan` and `end --plan`, and whenever `plan-view --plan` runs. `plan-work`'s
   skill says to run `plan-view` after each plan commit where run-delivery is
   installed, and to hand the operator both links it prints, unasked. Each command
   prints the links as `plan preview: <local>` and `plan preview (hosted):
   <link>`, once per command.
-- **After adoption.** `plan-view --plan` on a store a delivery adopted rebuilds once
-  with `approval: handed` and the delivery key, stops the preview's live server
-  by its recorded pid, and leaves the hosted publisher to publish that last cut
-  and stop. Later calls print where the delivery's own views are and change
-  nothing. `plan-view --plan <path> --stop` stops both at any time. Nothing in
-  `lead-setup` or `lead-init` changes.
+- **After adoption: the handed transition.** Adoption fires it. `adopt_plan_review`
+  (which `lead-setup` and `lead-init` both call) makes one best-effort call after
+  its move, when a preview folder exists for the slug: the preview's handed
+  finish. It never changes the adoption, its output or its exit code, and it is
+  silent where no preview folder exists. That call is the only change on the
+  adoption path; what adoption moves and records stays as it is. The handed
+  finish:
+  - rebuilds the preview once with `approval: handed`, the delivery key and the
+    rounds read from the adopted store;
+  - starts one detached finisher and returns at once, so `lead-setup` never waits
+    on the network. The finisher waits until the hosted status shows a receipt
+    for the handed cut, at most 120 seconds, then stops the hosted publisher with
+    `hosted_call(..., 'stop')` and the preview's live server by its recorded pid,
+    and exits. With no hosted publisher it stops the live server at once.
+
+  The hosted page then keeps the handed cut. `plan-view --plan` on an adopted store
+  runs the same handed finish if it has not run, and otherwise prints where the
+  delivery's own views are and changes nothing. `plan-view --plan <path> --stop`
+  stops both processes at any time, by their recorded pids.
 - **Release shape.** `delivery-plan/1` gains an optional member, so this ships first
   as a candidate under AGENTS.md, is applied in this repository, and is then
   promoted. It is a minor version.
@@ -291,16 +344,26 @@ All of the following hold at one main-push commit:
    shows the stories by lane with their criteria, the finish line, decisions,
    approvals and out-of-scope, and the line "Agent review only · not reviewed yet
    · not approved by a person". The test origin holds a cut whose plan carries
-   the same `preview` member.
+   the same `preview` member and whose `outcome.summary` starts "Plan preview
+   (agent review only): ".
 3. After `plan-review prepare` and `reduce` on that plan, the same local page and
    hosted cut show the round, with no restart of either process: the live
    server's pid and the hosted watcher's pid are unchanged, and the preview
    folder's inode is unchanged.
-4. The word "Approved" appears nowhere in a preview's plan chapter, and every
-   delivery-written plan fixture renders byte for byte as before.
-5. In a fixture repository with neither a `liveHome` nor `hosted`, `plan-work`'s
-   commands print no preview line and start no process.
-6. Docs, the skill sentences, catalog, profiles and provenance have landed. The full
+4. A preview's plan chapter text matches no `/approv/`, case-insensitively, outside
+   the approvals fold's title and the plan's own approval items, for every preview
+   fixture including the aligned one. Every delivery-written plan fixture renders
+   byte for byte as before.
+5. In a fixture repository with neither a `liveHome` nor `hosted`, the
+   `plan-review` commands and `plan-view` print no preview line, build no record
+   and start no process.
+6. After `lead-setup` adopts the reviewed store of a running preview, the last
+   hosted cut carries `approval: handed` with the store's rounds, and the preview's
+   live server and hosted watcher pids are gone, while `lead-setup`'s output and
+   exit code are as without a preview.
+7. The standing server's runs page lists the running preview with its local and
+   hosted links.
+8. Docs, the skill sentences, catalog, profiles and provenance have landed. The full
    local suite passes on macOS with Python 3.11 inside its budget.
 
 Applying the candidate in this repository, and watching one real plan's preview
@@ -311,8 +374,8 @@ delivery does not claim it.
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | PPV-1 | `skills/delivery-views/references/delivery-plan.schema.json`, `skills/delivery-views/scripts/views_common.py`, `skills/delivery-views/assets/line-map.js`, `skills/delivery-views/assets/line-map.css`, `tests/test_delivery_views_plan.py`, `tests/test_delivery_views_plan_fixtures.py`, `tests/delivery_views_page/` |
-| 1 | 3 | PPV-3 | `skills/orchestrate-work/scripts/render_state.py`, `tests/test_orchestration_render.py` |
+| 1 | 1 | PPV-1 | `skills/delivery-views/references/delivery-plan.schema.json`, `skills/delivery-views/scripts/views_common.py`, `skills/delivery-views/assets/line-map.js`, `skills/delivery-views/assets/line-map.css`, `skills/delivery-views/assets/run-summary.js`, `tests/test_delivery_views_plan.py`, `tests/test_delivery_views_plan_fixtures.py`, `tests/delivery_views_page/line-map-plan.test.mjs`, `tests/delivery_views_page/line-map-plan-review.test.mjs`, `tests/delivery_views_page/line-map-plan-changes.test.mjs`, `tests/delivery_views_page/plan-fixtures.mjs` |
+| 1 | 3 | PPV-3 | `skills/orchestrate-work/scripts/render_state.py`, `skills/delivery-views/scripts/render.py`, `skills/delivery-views/assets/runs.js`, `skills/delivery-views/assets/runs.css`, `tests/test_orchestration_render.py`, `tests/test_delivery_views_render.py`, `tests/delivery_views_page/runs.test.mjs` |
 | 2 | 2 | PPV-2 | `skills/run-delivery/scripts/run_delivery.py`, `tests/test_run_delivery_plan_preview.py` |
 | 3 | 2 | PPV-4 | `tests/test_run_delivery_plan_review.py`, `tests/test_run_delivery_hosted.py` |
 | 4 | 1 | PPV-5 | `skills/plan-work/SKILL.md`, `skills/run-delivery/SKILL.md`, `skills/delivery-views/SKILL.md`, `skills/orchestrate-work/SKILL.md`, `docs/hosted-deliveries.md`, `docs/own-deliveries.md` |
@@ -332,19 +395,24 @@ Lane 1, tier 1, not blocked. Test-first. Files:
 `skills/delivery-views/references/delivery-plan.schema.json`,
 `skills/delivery-views/scripts/views_common.py`,
 `skills/delivery-views/assets/line-map.js`,
-`skills/delivery-views/assets/line-map.css`, `tests/test_delivery_views_plan.py`,
-`tests/test_delivery_views_plan_fixtures.py` and `tests/delivery_views_page/`.
+`skills/delivery-views/assets/line-map.css`,
+`skills/delivery-views/assets/run-summary.js`, `tests/test_delivery_views_plan.py`,
+`tests/test_delivery_views_plan_fixtures.py`, and in `tests/delivery_views_page/`
+the files `line-map-plan.test.mjs`, `line-map-plan-review.test.mjs`,
+`line-map-plan-changes.test.mjs` and `plan-fixtures.mjs`.
 
 - Add the optional, closed `preview` member to the schema and to
   `validate_plan`, with the bounds the decisions state.
-- In the line map: the preview approval line, no plan switcher, the "Decisions"
-  fold, and the `layout: other` line. Nothing changes for a plan without
-  `preview`.
+- In the line map: the preview approval line, no plan switcher, no "Changes since
+  approval" fold, the "Decisions" fold, and the `layout: other` line. In
+  `run-summary.js`, the `preview` option's wording for the plan-review fold.
+  Nothing changes for a plan without `preview`, or for a run summary without the
+  option.
 - Add preview fixtures to the plan fixture set: no round, three rounds open,
   aligned, ended, handed, and `layout: other`.
 - Before editing, search the hosted service's build hooks
   (`hosted/delivery-viewer/scripts/build-assets.mjs`) for exact text it patches in
-  `line-map.js`, and keep every hooked line byte for byte.
+  `line-map.js` and `run-summary.js`, and keep every hooked line byte for byte.
 - Scenarios:
   - a plan with `preview` and no rounds validates and renders "Agent review only ·
     not reviewed yet · not approved by a person";
@@ -352,33 +420,49 @@ Lane 1, tier 1, not blocked. Test-first. Files:
     open · not approved by a person";
   - aligned and ended render their endings the same way;
   - handed renders "Handed to delivery <key>" and never "not approved by a person";
-  - no preview fixture's plan chapter contains "Approved" or the switcher;
+  - for every preview fixture, the aligned one included, the plan chapter's text
+    matches no `/approv/` case-insensitively outside the approvals fold's title
+    node and the approval item nodes, and the chapter has no switcher and no
+    "Changes since approval" fold;
+  - the no-round and three-rounds-open fixtures' chapter text equals its expected
+    full string;
+  - the aligned preview's review fold says "Lenses aligned on round N", while the
+    existing plan-review row pinning "Approved on round 3" for a delivery plan
+    stays green;
   - the "Decisions" fold lists every decision, and `layout: other` shows its line
     and no units;
   - `preview` with an unknown field, `delivery` without `handed`, `handed` without
-    `delivery`, a short `commit`, or 101 decisions is refused by `validate_plan`;
+    `delivery`, a short `commit`, `approval: "approved"`, `layout: "x"`, a
+    601-character decision or `plan`, or 101 decisions is refused, by the schema
+    and by `validate_plan` alike;
   - every existing delivery plan fixture validates and renders unchanged.
 
 ### PPV-3. Mark preview servers and list them on the runs page
 
 Lane 3, tier 1, not blocked. Test-first. Files:
-`skills/orchestrate-work/scripts/render_state.py` and
-`tests/test_orchestration_render.py`.
+`skills/orchestrate-work/scripts/render_state.py`,
+`skills/delivery-views/scripts/render.py`, `skills/delivery-views/assets/runs.js`,
+`skills/delivery-views/assets/runs.css`, `tests/test_orchestration_render.py`,
+`tests/test_delivery_views_render.py` and `tests/delivery_views_page/runs.test.mjs`.
 
 - `live --preview` records `"preview": true` in the server's entry and `/health`.
 - `live --if-absent` skips preview entries, whichever order they were written in.
-- The runs page, served by the standing server, gains the "Plans in review"
-  section from verified preview entries and each one's `preview.json`, read
-  defensively: an unreadable or oversized `preview.json` drops that preview's
-  hosted link, never the page.
+- `render_state.py` passes `DELIVERY_PLAN_PREVIEWS` to the `liveRuns` renderer and
+  re-renders the runs page when the list changes; `render.py runs` embeds it as
+  `previews`; `runs.js` draws "Plans in review", as the decisions state.
 - Scenarios:
   - with only a preview server running, `live --if-absent` starts a standing server
     instead of returning the preview's address;
   - with both running, it returns the standing server's;
   - the runs page lists one row per verified preview, with its local link and,
     when `preview.json` names one, its hosted link;
+  - an unreadable or oversized `preview.json` drops only that row's title and
+    hosted link;
   - a preview entry whose pid no longer serves is not listed;
-  - with no preview, the runs page and every golden are byte for byte unchanged;
+  - a preview started after the standing server appears on its runs page without
+    a restart;
+  - with no preview, the runs page and every golden (`tests.test_delivery_views_render`
+    and the page lane's runs rows) are byte for byte unchanged;
   - `live --stop` on a preview folder stops only that folder's server.
 
 ### PPV-2. Build a plan preview from a plan file and its review store
@@ -392,23 +476,33 @@ Lane 2, tier 2, after PPV-1. Test-first. Files:
 - Share `lead-setup`'s plan parsing; add the scenarios and finish-line readers.
 - Make the preview record as the decisions state: the folder, `init --seed`, then
   `patch` pinned to its version, `plan.json` by `os.replace`, `plan.updated`
-  journaled, `preview.json`, and the rebuild lock.
+  journaled, `preview.json`, and the rebuild lock on `preview.lock`.
 - Validate through `check_plan`'s validator and size limit before writing.
 - Scenarios:
   - a delivery-layout plan gives one unit per story with its lane, `after` keys,
     and the scenarios and done-when items as criteria;
-  - finish lines, approvals, out-of-scope (both forms) and decisions are read;
+  - finish lines, approvals, out-of-scope (both forms) and decisions are read; a
+    plan with a finish line builds and passes `validate_plan`, each line with
+    `covers: {"criteria": [], "proofs": []}` and `at` equal to `approved.at`, the
+    plan commit's committer time;
+  - `outcome.summary` equals "Plan preview (agent review only): " plus the title,
+    and the record's headline equals it; a 700-character title still gives a
+    summary of at most 600 characters starting with the full prefix;
+  - a plan with 31 finish lines builds with 30 and says so in `outcome.text`;
   - a plan with no `## Stories` gives `layout: other`, no units and an empty
     `planned`, and still validates;
-  - a plan changed only in the working tree is refused; the preview reflects
-    `HEAD` and names its commit;
+  - an untracked plan is refused; uncommitted edits to a committed plan are
+    ignored, and the preview reflects `HEAD` and names its commit;
   - with a store holding two rounds, `planReview` equals what `plan_review_of`
     gives for that store;
   - a second build with nothing changed writes nothing and journals nothing; a
     build after a new commit replaces `plan.json` and `state.json` and journals one
     `plan.updated`, with the folder's inode unchanged;
   - a story removed from the plan leaves `planned` and `units` without it;
-  - two builds started together leave one consistent record (the lock);
+  - while the test holds `preview.lock` itself, a `plan-view` started after a new
+    commit leaves `plan.json` and `state.json` unchanged; once it is released,
+    `plan-view` exits 0 and journals one `plan.updated`;
+  - two builds started together both exit 0;
   - a plan with no `reviewSlug` is refused with the same front-matter advice
     `plan-review` gives;
   - nothing is written outside the preview folder.
@@ -421,7 +515,8 @@ Lane 2, tier 3, after PPV-2 and PPV-3. Test-first. Files:
 `tests/test_run_delivery_plan_review.py` and `tests/test_run_delivery_hosted.py`.
 
 Lane 2 already owns `run_delivery.py` and `tests/test_run_delivery_plan_preview.py`
-from its tier-2 row.
+from its tier-2 row. Finish line 7's runs-page row runs here too, end to end, over
+PPV-3's code.
 
 - `plan-view` starts or reuses the preview's live server (`--preview`, derived
   state configuration, derived port, `live.json`) and the hosted publisher
@@ -430,10 +525,15 @@ from its tier-2 row.
 - `plan-review prepare`, `reduce` and `end` with `--plan` rebuild the preview at
   their end and print its links; a preview failure is printed and never changes
   their exit code.
-- `plan-view --stop`, and the adopted-store path, as the decisions state.
+- `plan-view --stop`, and the handed finish: the best-effort call in
+  `adopt_plan_review`, the handed rebuild from the adopted store, and the detached
+  finisher, as the decisions state.
 - Scenarios:
-  - finish lines 2, 3 and 5, end to end in fixture repositories, with the hosted
+  - finish lines 2, 3, 5 and 6, end to end in fixture repositories, with the hosted
     fake origin `tests/test_run_delivery_hosted.py` already uses;
+  - with `hosted` and no `liveHome`: only the hosted line is printed and no
+    `render_state.py` process starts; with `liveHome` and no `hosted`: only the
+    local line; a `liveHome` naming a builtin renderer counts as no live view;
   - the derived state configuration holds only `directory`, the `liveHome`
     renderer and `liveHome`, so the binding's tracker publisher never runs (a
     publisher that writes a marker file leaves none);
@@ -443,10 +543,19 @@ from its tier-2 row.
     re-derived only where the call's signature moves);
   - with `hosted` configured and no token, one line says the preview was not
     published, and the live link is still printed;
-  - a broken plan contract makes `plan-view` exit non-zero and `plan-review reduce`
-    still record its round and exit 0;
-  - after adoption, `plan-view` rebuilds once with `handed`, stops the live server
-    by its recorded pid, and a later call changes nothing;
+  - a broken plan contract makes `plan-view` exit non-zero, and `plan-review
+    prepare`, `reduce` and `end` each still do their work and exit as without a
+    preview;
+  - after `adopt_plan_review` on a store with two rounds, the handed `plan.json`
+    carries those two rounds, the fake origin's last cut carries `approval:
+    handed`, and both recorded pids exit; with the origin never answering, both
+    are stopped after the 120-second wait (on an injected clock);
+  - adoption with no preview folder writes nothing and prints nothing new; a
+    failing handed finish leaves adoption's output and exit code unchanged;
+  - a later `plan-view` on the adopted store changes nothing;
+  - a preview server from another generation's `render_state.py` is stopped and
+    started again; one from the same generation is reused; the derived port is
+    the one `derived_live_port` gives for `plan-<reviewSlug>`;
   - `plan-view --stop` stops only processes the preview recorded.
 
 ### PPV-5. Make the preview the default posture in the workflows' docs
@@ -478,7 +587,8 @@ Lane 1, tier 4, after PPV-4. Sensor-only. Files: `skills/plan-work/SKILL.md`,
   already refreshed.
 - **`run_delivery.py`.** Only lane 2 edits it; PPV-4 follows PPV-2 in the same lane.
 - **Ports.** Live servers in tests bind port 0 or set `RUN_DELIVERY_LIVE_PORT=0`,
-  never a derived port. The hosted fake origin takes a free loopback port.
+  never a derived port; the derived-port row checks the port asked for without
+  binding it. The hosted fake origin takes a free loopback port.
 - **Processes.** Every server a test starts is stopped by its recorded pid, never by
   pattern. A class that starts real live servers or the hosted watcher is marked
   `run_quietly`, not `run_serially`, unless it needs a fixed path outside its
@@ -497,8 +607,10 @@ Lane 1, tier 4, after PPV-4. Sensor-only. Files: `skills/plan-work/SKILL.md`,
 - **Page lane:** `tests.test_delivery_views_page` (Node 24, jsdom).
 - **Hosted service:** `hosted.build` and `hosted.browser`, which read
   `skills/delivery-views/assets/**`, to prove the line map's build hooks hold.
-- **No-regression:** `tests.test_run_delivery`, `tests.test_lead_plan_changes`,
-  `tests.test_delivery_views_render`, unchanged.
+- **Also changed:** `tests.test_delivery_views_render`, whose runs-page goldens
+  stay byte for byte with no preview.
+- **No-regression:** `tests.test_run_delivery` and `tests.test_lead_plan_changes`,
+  unchanged.
 - **Before any tag:** the full local suite on macOS with Python 3.11, with
   `--budget tests/suite-budget.json`.
 
@@ -522,5 +634,5 @@ Lane 1, tier 4, after PPV-4. Sensor-only. Files: `skills/plan-work/SKILL.md`,
 - **Hook drift.** `build-assets.mjs` patches `line-map.js` by exact text; PPV-1
   keeps the hooked lines, and `hosted.build` refuses drift.
 - **Process count.** Each plan in review runs one live server and one hosted
-  watcher. They stop after adoption or on `--stop`; a preview abandoned without
-  either keeps running until the machine restarts.
+  watcher. The handed finish stops them after adoption, and `--stop` at any time;
+  a plan abandoned without either keeps them running until the machine restarts.
