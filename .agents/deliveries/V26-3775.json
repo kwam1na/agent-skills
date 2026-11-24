@@ -263,6 +263,17 @@
           "text": "test_adoption_hands_the_preview_over_and_its_processes_stop passes in 20 consecutive runs alone and in 3 full runs of tests.test_run_delivery_plan_preview under load."
         }
       ]
+    },
+    "V26-3811": {
+      "title": "Show the integration suite while it runs on the line's rejoin step",
+      "lane": "lane-1",
+      "why": "Operator chose direction A (Rejoin Step Studies) on 2026-11-24: the rejoin step looked stale for the whole integration suite run",
+      "criteria": [
+        {
+          "id": "v26-3811-1",
+          "text": "lead-suite, on a record with an integration step, journals the run's start under the delivery's key before the suite starts (commit, start time, expected seconds from the last finished run at the same budget, else none); the finish answers it, and a later start or finish supersedes an unfinished one, so no step stays running across a new run."
+        }
+      ]
     }
   },
   "finish": [
