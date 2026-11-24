@@ -67,7 +67,7 @@
       "criteria": [
         {
           "id": "v26-3776-1",
-          "text": "A preview with no round renders \"Agent review only · not reviewed yet · not approved by a person\"; with three open rounds, \"Agent review only · 3 review rounds · still open · not approved by a person\"; aligned and ended use their endings; handed renders \"Handed to delivery \" and never \"not approved by a person\"."
+          "text": "A preview with no round renders \"Agent review only \u00b7 not reviewed yet \u00b7 not approved by a person\"; with three open rounds, \"Agent review only \u00b7 3 review rounds \u00b7 still open \u00b7 not approved by a person\"; aligned and ended use their endings; handed renders \"Handed to delivery \" and never \"not approved by a person\"."
         },
         {
           "id": "v26-3776-2",
@@ -152,7 +152,7 @@
       "criteria": [
         {
           "id": "v26-3779-1",
-          "text": "With liveHome and hosted pointed at the test origin, plan-view --plan on a committed plan with no round prints both links; the local page shows stories by lane with criteria, the finish line, decisions, approvals, out-of-scope and \"Agent review only · not reviewed yet · not approved by a person\"; the origin holds a cut with the same preview member and an outcome.summary starting \"Plan preview (agent review only): \"."
+          "text": "With liveHome and hosted pointed at the test origin, plan-view --plan on a committed plan with no round prints both links; the local page shows stories by lane with criteria, the finish line, decisions, approvals, out-of-scope and \"Agent review only \u00b7 not reviewed yet \u00b7 not approved by a person\"; the origin holds a cut with the same preview member and an outcome.summary starting \"Plan preview (agent review only): \"."
         },
         {
           "id": "v26-3779-2",
@@ -209,6 +209,10 @@
         {
           "id": "v26-3807-2",
           "text": "The text names no host, product or host tool; no command calls a host's interface; each other skill that hands a live address says the same in one sentence; catalog, profiles and provenance are refreshed and the corpus pins stay green."
+        },
+        {
+          "id": "v26-3807-3",
+          "text": "run-delivery's Running lanes says the lead starts one session for every lane of the delivery file in the same turn that starts the delivery, including lanes whose first story is blocked; a blocked lane stays idle until the lead messages its story, and later stories reach a lane by message, never by a new session. It says why in host-agnostic words: some hosts let the lead start a session only on the operator's own turn, so a lane started later can wait on the operator."
         }
       ],
       "after": [
