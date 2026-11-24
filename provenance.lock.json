@@ -226,11 +226,11 @@
         },
         {
           "path": "skills/delivery-views/assets/runs.css",
-          "sha256": "a6a6a27a6aabaa5bc237633cb643fa2b1e56627ef9bb3d0f09202ca7eec4282b"
+          "sha256": "e39075e8ba2a872a266201683664caefb94b66c74cb9e63553bbd30cf25f7f9d"
         },
         {
           "path": "skills/delivery-views/assets/runs.js",
-          "sha256": "16ba57788ba654280fef93d9b659d31a0df50922c2eab9c40b016b2943c879a4"
+          "sha256": "933306621d3fd437d27563d32a104e7e23cd8b3019432f301d597fb3918b2626"
         },
         {
           "path": "skills/delivery-views/references/delivery-plan.schema.json",
@@ -250,7 +250,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "cea0d238a95bb18bd3fa6159b5af54d215d38e7237ccd2d40af1f3d031726b8b"
+          "sha256": "7021eae8216e444abb9b4f3b50de9fe655ce4b49850f925c413a82307c32826d"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
@@ -566,7 +566,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "811ee9affbbfec90ee4705d3fa1e20bde92195b344c54e726a282882c8aa78cd"
+          "sha256": "89a2025f4791833d95a4eec2abb70c26967e63e2ffbc0a8e28e88567853d9d60"
         }
       ],
       "owner": "delivery-agent/user-delegated",
