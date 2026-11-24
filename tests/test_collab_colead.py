@@ -7,9 +7,13 @@ are. The shared cases use the partitions tests' fixture, and, for the queue's ow
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import subprocess
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -146,6 +150,42 @@ class LaneAndRunnerTests(LaneScopeFixture):
         self.a.take()
         self.assertEqual(self.element(self.a, "queue", "subject", "APP-1")["stage"], "queued")
 
+    def test_a_hand_off_acceptance_or_rejection_of_another_lanes_story_is_refused_and_ones_own_is_applied(self) -> None:
+        self.a.patch({"meta": {"handoffsNeedAcceptance": True}})
+        self.a.push()
+        self.b.take()
+        self.refused(lambda: state_tool.handoff(self.b.directory, lane="lane-2", subject="APP-2", head=HEAD,
+                                                change_request="cr-2"), self.b)
+        state_tool.handoff(self.a.directory, lane="lane-2", subject="APP-2", head=HEAD, change_request="cr-2")
+        self.a.push()
+        self.b.take()
+        self.refused(lambda: state_tool.accept_handoff(self.b.directory, "APP-2"), self.b)
+        self.refused(lambda: state_tool.reject_handoff(self.b.directory, "APP-2", "Not b's."), self.b)
+        state_tool.handoff(self.b.directory, lane="lane-1", subject="APP-1", head=HEAD, change_request="cr-1")
+        self.assertEqual(state_tool.accept_handoff(self.b.directory, "APP-1")["stage"], "queued")
+        # Once b passes lane-1 on, its lane session's later hand-off is refused on b before anything is written.
+        collab.give_scope(self.b.directory, "lane:lane-1", self.first)
+        self.refused(lambda: state_tool.handoff(self.b.directory, lane="lane-1", subject="APP-1", head=OTHER,
+                                                change_request="cr-1"), self.b)
+
+    def test_a_lanes_start_value_on_an_element_the_queue_has_moved_on_is_ignored(self) -> None:
+        state_tool.handoff(self.b.directory, lane="lane-1", subject="APP-1", head=HEAD, change_request="cr-1")
+        self.b.push()
+        self.a.take()
+        own = max(entry["origin"]["seq"] for entry in self.b.journal() if entry["origin"]["seat"] == self.second)
+        seen = {seat: count for seat, count in state_tool.seat_counts(self.b.journal()).items() if seat != self.second}
+        for stage in ("merging", "merged"):
+            with self.subTest(stage=stage):
+                state_tool.patch(self.a.directory, writer="runner", version=self.a.state()["version"],
+                                 selector="queue[subject=APP-1]", changes={"stage": stage})
+                # It names a's value as the one it replaces, so only the stage rule can keep a's.
+                held = json.loads((self.a.directory / state_tool.FIELD_ORIGINS_FILE).read_text())["queue[subject=APP-1]/stage"]
+                replaces = {"seat": held["seat"], "seq": held["seq"], "digest": state_tool.value_digest(stage)}
+                self.plant(self.second, [{"path": "queue[subject=APP-1]/stage", "value": "queued", "replaces": replaces,
+                                          "origin": {"seat": self.second, "seq": own, "seen": seen}}])
+                self.a.take()
+                self.assertEqual(self.element(self.a, "queue", "subject", "APP-1")["stage"], stage)
+
     def test_the_delivery_holders_adoption_of_a_missed_hand_off_reaches_the_queue_holder_at_its_start(self) -> None:
         collab.give_scope(self.a.directory, "delivery", self.second)
         self.a.push()
@@ -230,6 +270,43 @@ class HandoverTests(LaneScopeFixture):
         with state_tool.file_lock(self.a.directory / state_tool.QUEUE_LOCK):
             said = self.refused(self.hand_over, self.a, "scope.handover_busy")
         self.assertIn("a turn of the queue is running", str(said))
+
+    def test_a_queue_that_turns_idle_within_the_wait_is_handed_over(self) -> None:
+        running = {"subject": "APP-2", "title": "Story APP-2", "startedAt": "2026-11-24T00:00:00Z", "steps": []}
+        self.runner(meta={"checking": {"now": running, "next": []}})
+        slept = []
+
+        def finish(_: float) -> None:
+            if not slept:
+                state_tool.patch(self.a.directory, writer="runner", version=self.a.state()["version"],
+                                 assignments={"/meta/checking/now": None})
+            slept.append(True)
+
+        moved = collab.give_scope(self.a.directory, "queue", self.second, wait=5, poll=0.01, sleep=finish)
+        self.assertEqual((moved["kind"], len(slept) >= 1), ("scope.transferred", True))
+        self.assertEqual([entry["kind"] for entry in self.a.journal()[-2:]], ["queue.stopped", "scope.transferred"])
+
+    def test_scope_give_takes_its_wait(self) -> None:
+        running = {"subject": "APP-2", "title": "Story APP-2", "startedAt": "2026-11-24T00:00:00Z", "steps": []}
+        self.runner(meta={"checking": {"now": running, "next": []}})
+        ran = subprocess.run([sys.executable, "-B", str(partitions.TOOL), "--dir", str(self.a.directory), "scope", "give",
+                              "--scope", "queue", "--to", self.second, "--wait", "0.1"],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual((ran.returncode, json.loads(ran.stdout)["code"]), (1, "scope.handover_busy"))
+
+    def test_the_supervisor_starts_no_serve_where_the_seat_does_not_hold_the_queue(self) -> None:
+        spec = importlib.util.spec_from_file_location("run_delivery_for_colead",
+                                                      partitions.PRODUCT_ROOT / "skills/run-delivery/scripts/run_delivery.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        def argv(machine) -> list[str] | None:
+            c = types.SimpleNamespace(release=partitions.PRODUCT_ROOT, state=machine.directory, root=machine.repo,
+                                      remote="origin", base_branch="main", flow_raw={},
+                                      shelf=types.SimpleNamespace(json=lambda name: {"state": {}}))
+            return module.Supervisor(c, once=True).child_argv("serve")
+        self.assertIsNone(argv(self.b))
+        self.assertIn("serve", argv(self.a))
 
     def test_an_idle_handover_journals_the_queue_stopped_before_the_transfer(self) -> None:
         moved = self.hand_over()
@@ -353,6 +430,16 @@ class QueueAcrossSeatsTests(mq.MergeQueueTestCase):
         self.assertEqual((results, self.adopter.queued("feature")), ([], None))
         self.assertEqual(self.item(self.a)["stage"], "queued")
         self.assertEqual([entry["kind"] for entry in self.a.journal()[before:]], ["queue.stopped", "scope.transferred"])
+
+    def test_serve_on_the_command_line_refuses_with_one_json_line(self) -> None:
+        for extra in ([], ["--until-idle"]):
+            with self.subTest(extra=extra):
+                ran = subprocess.run([sys.executable, "-B", str(partitions.SCRIPTS / "merge_queue.py"), "--repo",
+                                      str(self.b.repo), "--state", str(self.b.directory), "--remote", "origin",
+                                      "--base", "main", "serve", "--poll", "0", *extra],
+                                     capture_output=True, text=True, timeout=120)
+                self.assertEqual(ran.returncode, 1, ran.stderr)
+                self.assertEqual(json.loads(ran.stdout.strip().splitlines()[-1])["code"], "queue.not_held")
 
     def test_serve_refuses_where_the_seat_does_not_hold_the_queue(self) -> None:
         with self.assertRaises(mq.queue.delivery_state.StateError) as refused:

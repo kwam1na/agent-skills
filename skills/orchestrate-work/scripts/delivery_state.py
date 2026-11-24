@@ -1110,8 +1110,8 @@ SCOPE = re.compile(r"^(delivery|queue|lane:\S.*|plan:\S.*)$")
 # A row's placeholder for the lane its element names, and for any lane at all.
 LANE, ANY_LANE = "lane", "lane:*"
 # D6: who may write each field of a shared record, by a tuple of the scopes permitted, or as "local" (this machine's
-# own, never carried), "tool" or "derived". Every delivery-state/1 property has a row. Until the lane and queue checks
-# land, a local write is checked only against the rows the delivery holder alone writes; the sync filter checks all.
+# own, never carried), "tool" or "derived". Every delivery-state/1 property has a row. A local write is checked
+# against every row; the sync filter checks a peer's writes the same way.
 FIELD_MAP = {
     "": {"schemaVersion": "tool", "version": "local", "meta": "meta", "siblings": ("delivery",), "lanes": "lanes",
          "queue": "queue", "liveFlakes": ("queue",), "laneOwnership": ("delivery",), "laneRegions": ("delivery",),
@@ -1257,7 +1257,9 @@ def scope_violations(directory: Path, before: dict, after: dict, writer: str = "
             continue  # the element's own removal stands for its fields
         runner = element is not None and element.startswith("queue[") and FIELD_MAP["queue"].get(field) == ("queue",)
         at_start = field in QUEUE_START and new.get(path, ...) == QUEUE_START[field]
-        if element in made and (not runner or field == "order" or at_start) or runner and at_start:
+        # A re-hand-off is legal only for a stopped or queued element.
+        reset = runner and at_start and (before_element(before, element) or {}).get("stage") in ("stopped", "queued")
+        if element in made and (not runner or field == "order" or at_start) or reset:
             # Set by the write that makes the element, or put back to its starting value by a re-hand-off: judged as
             # the element.
             path, field = element, None
@@ -1268,6 +1270,32 @@ def scope_violations(directory: Path, before: dict, after: dict, writer: str = "
                             for scope in scopes)
         said.append(f"{path} is written only by the holder of {holders}")
     return said
+
+
+def before_element(state: dict, selector: str | None) -> dict | None:
+    """The keyed element ``selector`` names in ``state``, or None."""
+    matched = re.match(r"^(?P<array>[a-z]+)\[(?P<key>[A-Za-z]+)=(?P<value>[^\]]+)\]$", selector or "")
+    if not matched:
+        return None
+    return next((item for item in state.get(matched.group("array"), []) if isinstance(item, dict)
+                 and str(item.get(matched.group("key"))) == matched.group("value")), None)
+
+
+def require_lane(directory: Path, state: dict, subject: str, lane: str | None = None) -> None:
+    """On a shared record, refuse a lane's hand-off of a story, or its acceptance or rejection, from a seat that does
+    not hold that story's lane, before anything is written: its peers would never see the write."""
+    collab = collab_of(state)
+    if collab is None:
+        return
+    if lane is None:
+        item = next((entry for entry in [*state["queue"], *state.get("planned", [])] if entry["subject"] == subject), {})
+        lane = item.get("assignedLane") or item.get("lane")
+    if lane is None:
+        return
+    journal = _raw_journal(directory)
+    if not holds(journal, local_seat(directory, collab["key"]), f"lane:{lane}"):
+        raise StateError("scope.not_held", f"{subject} is lane {lane}'s, whose holder, seat "
+                         f"{holder(journal, f'lane:{lane}')}, hands it off and accepts or rejects its hand-off")
 
 
 def partition_paths(state: dict) -> dict[str, object]:
@@ -2121,6 +2149,7 @@ def handoff(
     superseding = False
 
     def change(state: dict) -> dict:
+        require_lane(directory, state, subject, lane)
         nonlocal carried, stopped, superseding
         if lane not in [entry["id"] for entry in state["lanes"]]:
             raise StateError("writer_not_owned", f"there is no lane {lane}")
@@ -2357,6 +2386,7 @@ def _take_handed(directory: Path, subject: str, *, by: int | None = None, author
     """
 
     def change(state: dict, journal: list[dict]) -> tuple[dict, list[dict]]:
+        require_lane(directory, state, subject)
         if by is None:
             item = _pending(state, subject)
             view = handed_item(state, journal, subject)
@@ -2429,6 +2459,7 @@ def no_change_handoff(directory: Path, *, lane: str, subject: str, base_head: st
         raise StateError("handoff_invalid", "--base-head is the full commit the evidence ran at")
 
     def change(state: dict) -> dict:
+        require_lane(directory, state, subject, lane)
         if lane not in [entry["id"] for entry in state["lanes"]]:
             raise StateError("writer_not_owned", f"there is no lane {lane}")
         planned = next((entry for entry in state.get("planned", []) if entry["subject"] == subject), None)
@@ -2517,6 +2548,7 @@ def accept_handoff(directory: Path, subject: str, authorization: dict | None = N
     """The lead accepts a waiting hand-off; the runner may now take it."""
 
     def change(state: dict) -> dict:
+        require_lane(directory, state, subject)
         waiting = _pending_no_change(state, subject)
         if waiting is not None:
             # Settled, not removed: it stays in the record, counted as done, and never enters the queue.
@@ -2563,6 +2595,7 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
     """The lead rejects a waiting hand-off; the work goes back to its lane as planned."""
 
     def change(state: dict) -> dict:
+        require_lane(directory, state, subject)
         waiting = _pending_no_change(state, subject)
         if waiting is not None:
             # Back to its lane, building, without the evidence the lead didn't accept.

@@ -645,7 +645,9 @@ def _apply_slice(state: dict, origins: dict, journal: list[dict], seat: str, par
         at_start = field in tool.QUEUE_START and item.get("value") == tool.QUEUE_START[field]
         # The write that makes an element sets its starting fields, as whoever may make it; a lane's re-hand-off puts
         # its queue element's runner fields back to their starting values, as the lane.
-        if field is not None and (runner and at_start or created.get(selector) == origin["seq"] and (
+        # A re-hand-off is legal only for a stopped or queued element.
+        reset = runner and at_start and (held_element or {}).get("stage") in ("stopped", "queued")
+        if field is not None and (reset or created.get(selector) == origin["seq"] and (
                 not runner or field == "order" or at_start)):
             scopes = tool.path_scopes(state, selector, element)
         if isinstance(scopes, str) or not any(tool.holds(journal, seat, scope, at=written) for scope in scopes):
