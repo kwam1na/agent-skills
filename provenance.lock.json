@@ -518,7 +518,7 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "296822bb5eb923f8f1c89c074afe8b4da8174a8a4ee80444497d4ab724fcc566"
+          "sha256": "c85f8f417277e56ffb60a0b5effdfcceeb29eba6656c941302723013314e8018"
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
@@ -542,11 +542,11 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/collab.py",
-          "sha256": "6033020cf01df0cab8073e757ea9ce0ce8642be882e0e1ce67c0a0e65d6b306d"
+          "sha256": "fab887b34d5b6457df554a69162756388306210171b258c2ee74c1a22139c275"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "8a688a396695f248a6a0a5e1a2cf546c19212b3c894d6099e4507b7057c5af7a"
+          "sha256": "04f708eef4fde3fb5dcae6298195d28b8978fced35aaa295234d313bb06ea02b"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",

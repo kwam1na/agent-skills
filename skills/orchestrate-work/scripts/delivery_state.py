@@ -7087,7 +7087,7 @@ def main(argv: list[str] | None = None) -> int:
                        ("collab-ingest", "ingest the fetched partitions into the record, as the sync writer")):
         step = commands.add_parser(name, help=f"{said}; the sync loop runs it, and this is for tests and recovery")
         if name != "collab-ingest":
-            step.add_argument("--remote", default="origin", help="the base remote the partitions live on")
+            step.add_argument("--remote", required=True, help="the binding's base remote, where the partitions live")
         if name != "collab-push":
             step.add_argument("--key", help="the shared record's key, for a checkout with no record yet")
     moved = commands.add_parser("base-move", help="reconcile a published merge and its applied writer")

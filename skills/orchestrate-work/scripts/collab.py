@@ -92,7 +92,7 @@ def _as_sync():
 
 def _git(repo: Path, *arguments: str, data: str | None = None, check: bool = True,
          environment: dict | None = None) -> subprocess.CompletedProcess:
-    result = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *arguments], cwd=repo, input=data, text=True,
+    result = subprocess.run(["git", *arguments], cwd=repo, input=data, text=True,
                             capture_output=True, timeout=GIT_TIMEOUT_SECONDS, check=False,
                             env={**os.environ, **(environment or {})})
     if check and result.returncode != 0:
@@ -339,7 +339,7 @@ def _mark_split(directory: Path) -> None:
         tool._with_state(directory, current, split)
 
 
-def push(directory: Path, *, remote: str = "origin") -> dict:
+def push(directory: Path, *, remote: str) -> dict:
     """Push this seat's partition to ``remote``, fast-forward only, never forced. A rejected push reads the remote's
     chain again: behind it, the push is tried again; diverged from it, this checkout is split from its seat."""
     tool = _state_tool()
@@ -352,7 +352,7 @@ def push(directory: Path, *, remote: str = "origin") -> dict:
         # The remote's chain as last read, from the fetch or from this seat's own last push.
         if _git(directory, "for-each-ref", "--format=%(objectname)", mirror).stdout.strip() == tip:
             return {"ok": True, "seat": seat, "head": tip, "committed": committed, "pushed": False}
-        pushed = _git(directory, "push", "--porcelain", "--quiet", "--no-verify", remote, f"{ref}:{ref}", check=False)
+        pushed = _git(directory, "push", "--porcelain", "--quiet", remote, f"{ref}:{ref}", check=False)
         if pushed.returncode == 0:
             _git(directory, "update-ref", mirror, tip)
             return {"ok": True, "seat": seat, "head": tip, "committed": committed, "pushed": True}
@@ -370,7 +370,7 @@ def push(directory: Path, *, remote: str = "origin") -> dict:
     raise _refuse("collab.push_failed", f"git push to {remote} was rejected {tool.RECONCILE_ATTEMPTS + 1} times")
 
 
-def fetch(directory: Path, *, remote: str = "origin", key: str | None = None) -> list[str]:
+def fetch(directory: Path, *, remote: str, key: str | None = None) -> list[str]:
     """Fetch every seat's partition of ``key`` from ``remote`` by explicit refspec, into the peer namespace, and return
     the seats it holds. No branch or tag namespace and no configured refspec is touched."""
     key = _check_key(key or _key_of(directory))
@@ -694,7 +694,7 @@ def ingest(directory: Path, *, key: str | None = None) -> dict:
             "held": dict(sorted(held.items())), "state": tool.read_state(directory)}
 
 
-def sync_once(directory: Path, *, remote: str = "origin") -> dict:
+def sync_once(directory: Path, *, remote: str) -> dict:
     """One pass of the sync loop: push this seat's partition, then fetch and ingest its peers'."""
     tool = _state_tool()
     collab = tool.collab_of(tool.read_state(directory))
@@ -723,7 +723,7 @@ def _changes_mark(directory: Path) -> tuple[int, int] | None:
     return None
 
 
-def serve(directory: Path, *, remote: str = "origin", poll: float = POLL_SECONDS, stop: Path | None = None,
+def serve(directory: Path, *, remote: str, poll: float = POLL_SECONDS, stop: Path | None = None,
           passes: int | None = None, sleep=time.sleep) -> int:
     """The sync loop: each poll, push this seat's partition if the record changed since the last push, and fetch and
     ingest its peers. A split seat stops it. ``passes`` bounds it, for a test; ``stop`` ends it once it exists."""
@@ -757,7 +757,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     loop = commands.add_parser("serve", help="push this seat's partition and ingest its peers', every poll")
     loop.add_argument("--dir", type=Path, required=True, help="the shared record's state directory")
-    loop.add_argument("--remote", default="origin", help="the base remote the partitions live on")
+    loop.add_argument("--remote", required=True, help="the binding's base remote, where the partitions live")
     loop.add_argument("--poll", type=float, default=POLL_SECONDS, help=f"seconds between passes, at least {MIN_POLL_SECONDS:g}")
     loop.add_argument("--stop", type=Path, help="end once this file exists")
     loop.add_argument("--passes", type=int, help="end after this many passes")

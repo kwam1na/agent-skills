@@ -78,6 +78,8 @@ state_tool = _load("delivery_state")
 collab = _load("collab")
 collab.state_tool = state_tool
 KEY = "V26-1"
+# Each clone's base remote, as the binding would name it.
+REMOTE = "origin"
 HEAD = "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
 # The fields D6 marks local, which differ between machines by design.
 LOCAL = ("version",)
@@ -201,10 +203,10 @@ class Machine:
         return state_tool.local_seat(self.repo, KEY)
 
     def push(self) -> dict:
-        return collab.push(self.directory)
+        return collab.push(self.directory, remote=REMOTE)
 
     def take(self) -> dict:
-        collab.fetch(self.directory, key=KEY)
+        collab.fetch(self.directory, remote=REMOTE, key=KEY)
         return collab.ingest(self.directory, key=KEY)
 
     def sync(self) -> dict:
@@ -376,7 +378,7 @@ class ExchangeTests(SharedFixture):
         answer = self.c.decide("c answers it.", because=[self.c.local_id(second, told["origin"]["seq"])])
         self.assertEqual(answer["origin"]["seen"][second], told["origin"]["seq"])
         self.c.push()
-        collab.fetch(self.a.directory)
+        collab.fetch(self.a.directory, remote=REMOTE)
         git(self.a.repo, "update-ref", "-d", f"refs/agent-skills-peers/{KEY}/{second}")
         waited = collab.ingest(self.a.directory)
         self.assertEqual(waited["ingested"], [])
@@ -497,7 +499,7 @@ class ExchangeTests(SharedFixture):
         heads = git(self.b.repo, "ls-remote", "--heads", "--tags", "origin")
         self.a.decide("Something for b to fetch.")
         self.a.push()
-        loop = subprocess.run([sys.executable, "-B", str(SCRIPTS / "collab.py"), "serve", "--dir", str(self.b.directory),
+        loop = subprocess.run([sys.executable, "-B", str(SCRIPTS / "collab.py"), "serve", "--dir", str(self.b.directory), "--remote", REMOTE,
                                "--passes", "1"], capture_output=True, text=True, timeout=120)
         self.assertEqual(loop.returncode, 0, loop.stderr)
         self.assertIn(self.b.local_id(first, 4), [entry["id"] for entry in self.b.journal()])
@@ -747,9 +749,9 @@ class RefusalTests(SharedFixture):
     def test_the_state_tools_collab_steps_push_fetch_and_ingest_and_a_record_is_opened_once(self) -> None:
         self.open()
         state_tool.append_journal(self.a.directory, kind="decision.recorded", data={"text": "Pushed.", "why": "A fixture."})
-        code, pushed = self.cli(self.a.directory, dict(os.environ), "collab-push")
+        code, pushed = self.cli(self.a.directory, dict(os.environ), "collab-push", "--remote", REMOTE)
         self.assertEqual((code, pushed["pushed"]), (0, True), pushed)
-        code, fetched = self.cli(self.b.directory, dict(os.environ), "collab-fetch", "--key", KEY)
+        code, fetched = self.cli(self.b.directory, dict(os.environ), "collab-fetch", "--remote", REMOTE, "--key", KEY)
         self.assertEqual((code, fetched["seats"]), (0, [self.a.seat()]), fetched)
         code, ingested = self.cli(self.b.directory, dict(os.environ), "collab-ingest", "--key", KEY)
         self.assertEqual((code, len(ingested["ingested"])), (0, 3), ingested)
@@ -812,7 +814,7 @@ class RecoveryTests(SharedFixture):
         self.a.push()
         self.b.decide("b's own, which the remote refuses.")
         with self.assertRaises(state_tool.StateError) as refused:
-            collab.sync_once(self.b.directory)
+            collab.sync_once(self.b.directory, remote=REMOTE)
         self.assertEqual(refused.exception.code, "collab.push_failed")
         self.assertIn(told["origin"], [entry["origin"] for entry in self.b.journal()])
 
@@ -942,7 +944,7 @@ class ShapeAndHoldTests(SharedFixture):
         self.open()
         self.join(self.b)
         told = self.b.decide("Written before the loop runs.")
-        loop = subprocess.run([sys.executable, "-B", str(SCRIPTS / "collab.py"), "serve", "--dir", str(self.b.directory),
+        loop = subprocess.run([sys.executable, "-B", str(SCRIPTS / "collab.py"), "serve", "--dir", str(self.b.directory), "--remote", REMOTE,
                                "--passes", "1"], capture_output=True, text=True, timeout=120)
         self.assertEqual(loop.returncode, 0, loop.stderr)
         self.a.take()

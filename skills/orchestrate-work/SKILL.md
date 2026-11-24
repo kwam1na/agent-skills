@@ -940,10 +940,10 @@ nothing below applies to it, and an existing record never becomes shared.
 
 `collab.py serve` is the sync loop a supervisor runs: each poll it pushes this
 seat's partition when the record changed and fetches and ingests its peers'.
-The state tool runs each step alone, for tests and recovery:
+The state tool runs each step alone, for tests and recovery; `REMOTE` is the binding's base remote:
 
 ```bash
-python3 -B scripts/delivery_state.py --dir STATE collab-push [--remote origin]
-python3 -B scripts/delivery_state.py --dir STATE collab-fetch [--remote origin] [--key KEY]
+python3 -B scripts/delivery_state.py --dir STATE collab-push --remote REMOTE
+python3 -B scripts/delivery_state.py --dir STATE collab-fetch --remote REMOTE [--key KEY]
 python3 -B scripts/delivery_state.py --dir STATE collab-ingest [--key KEY]
 ```
