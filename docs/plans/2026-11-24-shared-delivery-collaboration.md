@@ -567,9 +567,10 @@ Out of scope:
   | flow log `full-health` `result` entries, keyed by head | carried by `queue`'s holder |
   | flow log `full-health` `rerun` entries | replaced: a `fullhealth.rerun` journal entry, from any seat, names the `at` of the failed result it asks to rerun, copied from the carried result. The queue holder's `full_health_results` counts it while its latest result at that head is still that one |
   | `note_posture`'s dedupe through the `full-health` log | replaced, whatever the entry's origin. A `posture.changed` is skipped when the record's latest `posture.changed` has the same `from`, `to` and `source`. A `fullhealth.skipped` is skipped when the record holds one at the same head. So it may run on whichever seat calls it, including `record_focused` at close |
-  | lead files `closed.json` | replaced on a shared record: `closed_here` is true when the record holds `delivery.closed`, so every seat treats the delivery as closed and its supervisor stops |
+  | lead files `closed.json` | the `delivery` holder still writes it after its archive, as today, and it stays the closer's local resume marker. Once written, that holder's partition carries `closedEntry`, the origin of the closing `delivery.closed`. On a seat not holding `delivery`, `closed_here` is true when the record's `latest_close` has that origin. So a supervisor stops only once the close has archived, and a delivery reopened before then stays open on every seat |
+  | `evidence-page.json` and `evidence-notes.json` beside the record | carried by the seat that writes them, keyed by story. On a shared record the `delivery` holder's `evidence_status` reads a peer lane's clips from the carried `videos` records and their digests, and the published page from the carried `evidence-page.json`, never from story folders |
   | lead files `friction.md` | carried by `delivery`'s holder (the friction stub) |
-  | lead files `full-health.lock`, `full-health.log`, `supervisor.blockers.json`, `supervisor.jsonl`, `supervisor.live.log`, `supervisor.log`, `supervisor.stop`, `wait.json` | local |
+  | lead files `full-health.lock`, `full-health.log`, `supervisor.blockers.json`, `supervisor.jsonl`, `supervisor.live.log`, `supervisor.log`, `supervisor.{name}.log`, `supervisor.stop`, `wait.json` | local |
   | flow log `resolutions` | carried by the resolving seat, keyed by the resolved entry's origin and translated on ingest |
   | flow log `finish` | replaced: a line counts as marked when the record holds its `finish.met` |
   | flow log `peers` | replaced: `peer_merges` skips a merge when the record already holds a `peer.merged` with the same `subject`, `peer` and `head`, whatever its origin |
@@ -583,11 +584,14 @@ Out of scope:
   - names passed to `read_log`, `append_log`, `flow_log`, `plan_flow_log`,
     `read_flow`, `append_flow` and `lead_file`;
   - module-level constants passed to any of them;
-  - inline paths built from `c.flow_log` or `c.state` with a literal or f-string
-    name.
+  - inline paths built from `c.flow_log`, `c.state` or `c.state.parent` with a
+    literal or f-string name;
+  - names given as another module's attributes, such as `hosted.py`'s sidecar
+    constants, resolved to their values.
 
-  It fails on a name missing from this table. A planted name read through each of
-  those paths turns it red.
+  An f-string name is matched as a pattern, such as `supervisor.{name}.log`. The
+  test fails on a name missing from this table. A planted name read through each
+  of those paths turns it red, including one through `c.state.parent`.
 - **No reader compares clocks across machines.** On a shared record, no reader
   orders entries by comparing `at` values written on different machines.
   - A carried `lane-starts` entry records the origin of the `lane.assigned` it
@@ -1168,8 +1172,19 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
     `b` holding a lane whose story has merged, the close waits until `b`'s cleanup
     journals `cleanup.done` and its `checkoutsLeft` empties. Then exactly one
     `delivery.closed` is journalled, by `a`, and it reaches both records; `b`'s
-    pass runs no close-out step. After it, `b` treats the delivery as closed
-    (`closed_here` is true there) and `b`'s supervisor stops;
+    pass runs no close-out step. After `a`'s archive, `b` treats the delivery as
+    closed (`closed_here` is true there) and `b`'s supervisor stops;
+  - **a close in progress:** between `a`'s `delivery.closed` and its archive, for
+    example while it waits on the tracker, both supervisors keep running, the
+    close proceeds on `a`, and `closed_here` is false on both machines;
+  - **a reopened close:** a `lane.assigned` journalled after `delivery.closed` and
+    before the archive leaves the delivery open, and both supervisors running, on
+    both machines;
+  - **a resumed close:** a close-out on `a` interrupted after archiving and resumed
+    archives once;
+  - **peer evidence at close:** a story of `b`'s lane that needs video is
+    recorded and published on `b`, and `a`'s `lead-close` reports the evidence
+    page current;
   - handing that lane to `a` while the story's checkout is on `b` gives
     `scope.handover_busy`, and succeeds after `b`'s cleanup;
   - **full health:** `b`, holding `queue`, runs fullHealth at H. After the scopes
@@ -1185,8 +1200,9 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
   - with nothing merged and one finish line not yet met, several passes of the
     `queue` holder launch no fullHealth run. Then the last `finish.met` is
     journalled, and exactly one run starts at the base head;
-  - the posture changes and is noted once across both machines, then changes
-    again; the second change is journalled once and reaches both records;
+  - the posture goes gate to focused, focused to gate, then gate to focused again
+    with the same source. Each change is noted once across both machines, and the
+    third is journalled once and reaches both records;
   - **clocks:** with `b`'s clock set an hour behind `a`'s, `b`'s lane start is
     posted once by `a`'s publisher, and a second `lane-start` on `b` does not reset
     its focus. With `a`'s clock an hour behind `b`'s, a rerun asked for by `a` is
