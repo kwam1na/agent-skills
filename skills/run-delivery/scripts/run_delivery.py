@@ -2610,6 +2610,16 @@ def review_slug(plan: Path, text: str) -> str | None:
     return slug
 
 
+def needed_review_slug(plan: Path, text: str) -> str:
+    """The plan's `reviewSlug`, refused with the front matter to add when it has none."""
+    slug = review_slug(plan, text)
+    if slug is None:
+        suggested = re.sub(r"[^a-z0-9]+", "-", plan.stem.lower()).strip("-")[:64] or "plan"
+        raise Stop(f"{plan} has no review slug, which keeps its review when the plan is renamed. Add this front matter "
+                   f"at its top and commit it before round 1:\n---\nreviewSlug: {suggested}\n---")
+    return slug
+
+
 def plan_review_config(args):
     """The config a plan-review command runs under: the delivery's, or with --plan the plan's own store, which needs no
     delivery file, binding or record."""
@@ -2621,11 +2631,7 @@ def plan_review_config(args):
     path = c.root / plan
     if not path.is_file():
         raise Stop(f"no plan at {path}")
-    slug = review_slug(plan, path.read_text())
-    if slug is None:
-        suggested = re.sub(r"[^a-z0-9]+", "-", plan.stem.lower()).strip("-")[:64] or "plan"
-        raise Stop(f"{plan} has no review slug, which keeps its review when the plan is renamed. Add this front matter "
-                   f"at its top and commit it before round 1:\n---\nreviewSlug: {suggested}\n---")
+    slug = needed_review_slug(plan, path.read_text())
     c.plan, c.plan_store = plan, c.main / c.work / "plan-review" / slug
     adopted = load_json(c.plan_store / "adopted.json")
     if adopted:
@@ -6424,16 +6430,16 @@ def plan_validator(c):
     return views_common
 
 
-def check_plan(plan: dict, c) -> None:
+def check_plan(plan: dict, c, what: str = "the plan this delivery file makes") -> None:
     views = plan_validator(c)
     try:
         views.validate_plan(json.loads(json.dumps(plan)))
     except views.ConfigError as error:
-        raise Stop(f"the plan this delivery file makes isn't a valid delivery-plan/1: {error}")
+        raise Stop(f"{what} isn't a valid delivery-plan/1: {error}")
     # Measured as rebuild_plan writes it, so the view never meets a file it refuses unread.
     size = len((json.dumps(plan, indent=2) + "\n").encode("utf-8"))
     if size > views.PLAN_LIMIT_BYTES:
-        raise Stop(f"the plan this delivery file makes holds {size} bytes, over the 1 MiB a plan may hold")
+        raise Stop(f"{what} holds {size} bytes, over the 1 MiB a plan may hold")
 
 
 def rebuild_plan(c) -> str | None:
@@ -6477,6 +6483,258 @@ def rebuild_plan_quietly(c) -> str:
     except (Stop, ValueError) as error:  # a refusal, or a delivery file saved mid-edit that isn't JSON
         return f"plan: not rebuilt: {error}"
     return f"plan: {moved}" if moved else "plan: unchanged"
+
+
+# -- plan preview -------------------------------------------------------------------------------
+# A plan under agent review, shown on the line map before any delivery exists: `plan-view --plan` reads the plan as
+# committed at HEAD and its plan-review store, and keeps a record of its own per reviewSlug, beside the review store,
+# at <main>/<work>/plan-preview/<slug>/. The folder is made once and never replaced: a rebuild replaces only its files,
+# so whatever follows the folder keeps following it.
+
+PREVIEW_PREFIX = "Plan preview (agent review only): "
+PREVIEW_FOLDER = "plan-preview"
+PREVIEW_LOCK = "preview.lock"
+PREVIEW_FILE = "preview.json"
+# The contract's caps a preview cuts its lists to, keeping the first items, and the words it names each by.
+PREVIEW_CAPS = {"units": (200, "story", "stories"), "finish": (30, "finish line", "finish lines"),
+                "approvals": (100, "approval", "approvals"), "outOfScope": (100, "out-of-scope item", "out-of-scope items"),
+                "decisions": (100, "decision", "decisions")}
+PREVIEW_CRITERIA = 1000  # every unit's criteria together
+PREVIEW_OUTCOME_TEXT = 2000
+
+
+def preview_folder(c, slug: str) -> Path:
+    return c.main / c.work / PREVIEW_FOLDER / slug
+
+
+def plan_labelled_list(section: str, label: str) -> list[str]:
+    """The items of the list a story section opens with `label` (`Scenarios:`, `Done when`), each with its deeper lines
+    joined to one line as plan_list_items joins them: the items nested under a bullet that opens with the label, or the
+    list right after a paragraph line that does. A `Done when` bullet with nothing nested under it is its own one item.
+    Only the first such list counts; none gives no items."""
+    lines = section.splitlines()
+    opening = re.compile(rf"^(?P<indent>[ \t]*)(?P<bullet>(?:[-*+]|\d+[.)])[ \t]+)?{re.escape(label)}(?P<rest>.*)$")
+    marker = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+(?P<text>.*)$")
+    width = lambda line: len(line) - len(line.lstrip(" \t"))
+    for at, line in enumerate(lines):
+        found = opening.match(line)
+        if not found:
+            continue
+        indent, bulleted = len(found.group("indent")), bool(found.group("bullet"))
+        own, items, level = label + found.group("rest"), [], None
+        for below in lines[at + 1:]:
+            if not below.strip():
+                continue
+            here, item = width(below), marker.match(below)
+            if below.lstrip().startswith("#") or (here <= indent if bulleted else here < indent):
+                break
+            if item and level is None:
+                level = here
+            if level is None:
+                own += " " + below.strip()  # the opening line's own continuation
+            elif item and here == level:
+                items.append(item.group("text"))
+            elif here > level and items:
+                items[-1] += " " + below.strip()
+            else:
+                break
+        if not items and bulleted and label == "Done when" and found.group("rest").strip(" :"):
+            items = [own]
+        return [plan_line(text) for text in items if text.strip()]
+    return []
+
+
+def preview_out_of_scope(sections: list[tuple[int, str, str]]) -> list[str]:
+    """The items of a heading named `Out of scope`, else of the list after an `Out of scope:` line inside `## Scope`."""
+    own = next((body for _, title, body in sections if title.strip().rstrip(":") == "Out of scope"), None)
+    if own is not None:
+        return plan_list_all(own)
+    scope = next((body for level, title, body in sections if level == 2 and title == "Scope"), None)
+    found = re.search(r"^Out of scope:[ \t]*$", scope or "", re.M)
+    if found is None:
+        return []
+    items: list[str] = []
+    for line in ("\n" + scope[found.end():]).splitlines()[1:]:
+        if line.strip() and not re.match(r"^(?:[-*+]|\d+[.)])\s", line) and line[:1] not in (" ", "\t"):
+            break  # the list ends at the next paragraph
+        items.append(line)
+    return plan_list_all("\n" + "\n".join(items))
+
+
+def plan_at_head(c, plan: Path) -> tuple[str, str, str]:
+    """The plan's text as committed at HEAD, the last commit at HEAD that changed it, and that commit's committer time
+    in UTC: never the working tree, so edits not yet committed wait for their commit."""
+    shown = run(["git", "show", f"HEAD:{plan.as_posix()}"], cwd=c.root, check=False)
+    if shown.returncode != 0:
+        raise Stop(f"{plan} isn't committed at HEAD here; commit it, then run {flow_command()} plan-view --plan "
+                   f"{shlex.quote(str(plan))}")
+    commit, stamp = git("log", "-1", "--format=%H %ct", "HEAD", "--", plan.as_posix(), cwd=c.root).split()
+    at = datetime.datetime.fromtimestamp(int(stamp), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return shown.stdout, commit, at
+
+
+def preview_store(c, slug: str) -> tuple[Path, dict | None]:
+    """The plan's review store and, once a delivery adopted it, the adoption: then the store is the delivery's, which
+    holds every round. Never through plan_review_config, which refuses an adopted store."""
+    own = c.main / c.work / "plan-review" / slug
+    adopted = load_json(own / "adopted.json")
+    return (Path(adopted["store"]) if adopted and adopted.get("store") else own), adopted
+
+
+def build_preview(c, plan: Path, text: str, commit: str, at: str, store: Path, adopted: dict | None) -> tuple[dict, dict]:
+    """The preview's delivery-plan/1 and the record's seed (headline, planned, finish), from the plan's text."""
+    sections = plan_sections(text)
+    meta = front_matter(text)
+    heading = re.search(r"^# (.+)$", text, re.M)
+    title = " ".join((meta.get("title") or (heading.group(1) if heading else "") or plan.stem).split())
+    room = 600 - len(PREVIEW_PREFIX)
+    summary = PREVIEW_PREFIX + (title if len(title) <= room else title[:room - 1] + "…")
+    goal = next((body for level, name, body in sections if level == 2 and name == "Goal"), None)
+    paragraph = next((" ".join(part.split()) for part in re.split(r"\n\s*\n", goal.split("\n", 1)[1] if goal and "\n" in goal
+                      else "") if part.strip() and not part.lstrip().startswith("#")), None)
+    stories = next((body for level, name, body in sections if level == 2 and name == "Stories"), None)
+    table, _ = units_table(text)
+    lane_of = {key: row["lane"] for row in table or [] for key in row["items"]}
+    units, planned, seen = [], [], set()
+    for level, name, body in plan_sections(stories or ""):
+        found = re.match(STORY_HEADING, f"### {name}") if level == 3 else None
+        if found is None or found.group("key") in seen:
+            continue
+        key = found.group("key")
+        seen.add(key)
+        criteria = [*plan_labelled_list(body, "Scenarios:"), *plan_labelled_list(body, "Done when")]
+        unit_title = plan_line(found.group("title"))
+        units.append({"subject": key, "title": unit_title,
+                      "criteria": [{"id": f"{key.lower()}-{n}", "text": item} for n, item in enumerate(criteria, 1)],
+                      "proofs": [kind["id"] for kind in PLAN_RECORD_KINDS]})
+        order = story_plan(body) or {}
+        files = section_files(body)
+        planned.append({"subject": key, "title": unit_title, "lane": order.get("lane") or lane_of.get(key),
+                        "stage": "planned", **({"after": order["after"]} if order.get("after") else {}),
+                        **({"files": files} if files else {})})
+    finish_body = next((body for level, name, body in sections if level == 2 and name == "Finish line"), "")
+    approvals_body = next((body for level, name, body in sections if level == 2 and name == "Approval handoffs"), "")
+    decisions_body = next((body for level, name, body in sections if level == 2 and name.startswith("Decisions")), "")
+    lists = {"units": units, "finish": plan_list_all(finish_body), "approvals": plan_list_all(approvals_body),
+             "outOfScope": preview_out_of_scope(sections), "decisions": plan_list_all(decisions_body)}
+    dropped = []
+    for member, (cap, one, many) in PREVIEW_CAPS.items():
+        over = len(lists[member]) - cap
+        if over > 0:
+            lists[member] = lists[member][:cap]
+            dropped.append(f"{over} {one if over == 1 else many}")
+    planned = planned[:len(lists["units"])]
+    left = PREVIEW_CRITERIA
+    for unit in lists["units"]:
+        kept = unit["criteria"][:max(left, 0)]
+        left -= len(unit["criteria"])
+        unit["criteria"] = kept
+    if left < 0:
+        dropped.append(f"{-left} criteri{'on' if left == -1 else 'a'}")
+    said = (f" This preview leaves out what is over the plan's caps: {', '.join(dropped)}." if dropped else "")
+    body_text = paragraph or title
+    keep = PREVIEW_OUTCOME_TEXT - len(said)
+    body_text = (body_text if len(body_text) <= keep else body_text[:keep - 1] + "…") + said
+    finish = [{"id": f"finish-{n}", "label": f"Finish {n}", "text": line, "at": at,
+               "covers": {"criteria": [], "proofs": []}} for n, line in enumerate(lists["finish"], 1)]
+    preview = {"plan": plan.as_posix()[:600], "commit": commit,
+               "approval": "handed" if adopted else "agents-only",
+               **({"delivery": adopted["delivery"]} if adopted else {}),
+               "layout": "delivery" if units else "other", "decisions": lists["decisions"]}
+    built = {
+        "schemaVersion": "delivery-plan/1", "updated": now(), "outcome": {"summary": summary, "text": body_text},
+        "requiredLenses": [], "proofKinds": PLAN_RECORD_KINDS, "units": lists["units"], "finish": finish,
+        "approved": {"at": at, "snapshot": {"units": lists["units"], "finish": finish}},
+        "changes": [], "evidence": {},
+        **({"approvals": [{"text": item, "state": "waiting"} for item in lists["approvals"]]} if lists["approvals"] else {}),
+        **({"outOfScope": lists["outOfScope"]} if lists["outOfScope"] else {}),
+        "preview": preview,
+    }
+    c.plan_store = store
+    review = plan_review_of(c)
+    if review:
+        built["planReview"] = review
+    seed = {"headline": summary, "planned": planned,
+            "finish": [{"id": line["id"], "text": line["text"], "met": False} for line in finish]}
+    return built, seed
+
+
+def replace_file(path: Path, text: str) -> None:
+    """Write a file by replacing it with a temporary file in its own folder."""
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(text)
+    os.replace(temporary, path)
+
+
+def rebuild_preview(c, plan: Path) -> tuple[Path, str | None]:
+    """Build the plan's preview and write what changed, under the folder's lock. Returns the folder and what changed,
+    None when nothing did."""
+    text, commit, at = plan_at_head(c, plan)
+    slug = needed_review_slug(plan, text)
+    folder = preview_folder(c, slug)
+    folder.mkdir(parents=True, exist_ok=True)
+    c.state = folder
+    with open(folder / PREVIEW_LOCK, "a+") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        store, adopted = preview_store(c, slug)
+        built, seed = build_preview(c, plan, text, commit, at, store, adopted)
+        check_plan(built, c, f"the preview of {plan}")
+        said = []
+        if not (folder / "state.json").exists():
+            state_tool("init", "--headline", seed["headline"], "--seed",
+                       json.dumps({"planned": seed["planned"], "finish": seed["finish"]}))
+            said.append("record")
+        else:
+            def compute(doc):
+                state = doc["state"]
+                body = {**({"meta": {"headline": seed["headline"]}} if state["meta"].get("headline") != seed["headline"]
+                           else {}),
+                        **{key: seed[key] for key in ("planned", "finish") if state.get(key, []) != seed[key]}}
+                return body or None
+            if patch_from(compute, f"the preview record of {plan}"):
+                said.append("record")
+        path = folder / PLAN_FILE
+        old = load_json(path)
+        same = lambda a, b: {k: v for k, v in a.items() if k != "updated"} == {k: v for k, v in b.items() if k != "updated"}
+        if old is None or not same(old, built):
+            changed = [] if old is None else [
+                key for key in sorted({*built, *old}) if key != "updated" and old.get(key) != built.get(key)]
+            before = path.read_bytes() if old is not None else None
+            replace_file(path, json.dumps(built, indent=2) + "\n")
+            try:
+                state_tool("journal", "--kind", "plan.updated",
+                           "--data", json.dumps({"updated": built["updated"], "changed": changed}))
+            except Stop:
+                # Put the plan back, so the next build finds the change again and journals it, rather than finding
+                # nothing to do and the journal never saying the plan moved.
+                if before is None:
+                    path.unlink()
+                else:
+                    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+                    temporary.write_bytes(before)
+                    os.replace(temporary, path)
+                raise
+            said.append("plan " + ("(" + ", ".join(changed) + ")" if changed else "(first build)"))
+        kept = load_json(folder / PREVIEW_FILE) or {}
+        facts = {**kept, "slug": slug, "plan": plan.as_posix(), "commit": commit}
+        if facts != kept:
+            replace_file(folder / PREVIEW_FILE, json.dumps(facts, indent=2) + "\n")
+    return folder, ", ".join(said) or None
+
+
+def plan_view_command(args) -> None:
+    """`plan-view --plan PATH`: build or rebuild the plan's preview record from the plan at HEAD and its review store.
+    Needs no delivery file, binding, record, tracker or forge."""
+    global CFG
+    c = CFG = Config(repo(), need_delivery=False, pick=False)
+    plan = Path(args.plan)
+    if plan.is_absolute():
+        try:
+            plan = plan.resolve().relative_to(c.root.resolve())
+        except ValueError:
+            raise Stop(f"{args.plan} isn't inside this checkout, {c.root}")
+    folder, changed = rebuild_preview(c, plan)
+    print(f"plan preview of {plan}: {'rebuilt ' + changed if changed else 'unchanged'} in {folder}")
 
 
 def lead_plan_checkout(c) -> Path:
@@ -7912,6 +8170,13 @@ def story_plan(section: str) -> dict | None:
 
 def units_rows(text: str) -> tuple[list[tuple[int, str, list[str]]] | None, str | None]:
     """The plan's `Units and order` table as (tier, lane, owns) rows, or None with what's missing."""
+    rows, missing = units_table(text)
+    return (None if rows is None else [(row["tier"], row["lane"], row["owns"]) for row in rows]), missing
+
+
+def units_table(text: str) -> tuple[list[dict] | None, str | None]:
+    """The plan's `Units and order` table as rows of tier, lane, the story keys its items cell names in order, and
+    owns; or None with what's missing."""
     body = next((b for level, title, b in plan_sections(text) if level == 2 and title == UNITS_SECTION), None)
     if body is None:
         return None, f"the plan has no '{UNITS_SECTION}' section"
@@ -7926,7 +8191,8 @@ def units_rows(text: str) -> tuple[list[tuple[int, str, list[str]]] | None, str 
             continue
         tier, lane = re.fullmatch(r"[0-9]+", row[at["Tier"]]), re.fullmatch(r"(?:Lane )?([0-9]+)", row[at["Lane"]])
         if tier is not None and lane is not None:
-            found.append((int(tier.group()), f"lane-{int(lane.group(1))}", plan_paths(row[at["Owns"]])))
+            found.append({"tier": int(tier.group()), "lane": f"lane-{int(lane.group(1))}",
+                          "items": re.findall(PLAN_KEY, row[at["Items, in order"]]), "owns": plan_paths(row[at["Owns"]])})
     return found, None
 
 
@@ -7963,7 +8229,12 @@ def plan_with_story(text: str, key: str, title: str, lane: str, after: list[str]
 
 def plan_list_items(body: str) -> list[str]:
     """Each top-level list item of a plan section, before its first subheading, as one line of at most 600
-    characters; an item's indented continuation lines join it."""
+    characters; an item's indented continuation lines join it. At most the first 100."""
+    return plan_list_all(body)[:100]
+
+
+def plan_list_all(body: str) -> list[str]:
+    """plan_list_items without its cap on the count, so a reader that cuts the list can say how many it dropped."""
     items: list[str] = []
     for line in body.splitlines()[1:]:
         if line.startswith("#"):
@@ -7973,8 +8244,13 @@ def plan_list_items(body: str) -> list[str]:
             items.append(item.group(1).strip())
         elif items and line[:1] in (" ", "\t") and line.strip():
             items[-1] += " " + line.strip()
-    items = [re.sub(r"\s+", " ", text) for text in items if text][:100]
-    return [text if len(text) <= 600 else text[:599] + "\u2026" for text in items]
+    return [plan_line(text) for text in items if text.strip()]
+
+
+def plan_line(text: str) -> str:
+    """A plan list item as one line, its whitespace folded, of at most 600 characters."""
+    text = re.sub(r"\s+", " ", text).strip()
+    return text if len(text) <= 600 else text[:599] + "\u2026"
 
 
 def lead_carry_review(args) -> None:
@@ -16462,6 +16738,11 @@ def main(argv: list[str] | None = None) -> None:
     q.add_argument("--reason", required=True); q.set_defaults(fn=plan_review_end)
     q = command(review_commands, "check", help="validate plan-review-evidence/1 records, hand-written or written by a review")
     q.add_argument("records", nargs="+", metavar="RECORD"); q.set_defaults(fn=plan_review_check)
+    p = command(sub, "plan-view", help="build or rebuild a plan's preview record from the plan at HEAD and its review "
+                "store, with no delivery")
+    p.add_argument("--plan", required=True, help="the plan, by its repository-relative path; its front matter names "
+                   "its reviewSlug")
+    p.set_defaults(fn=plan_view_command)
     p = command(sub, "gate"); p.add_argument("key")
     p.add_argument("--skip-guards", action="store_true", help="don't run the binding's guards first; needs --why")
     p.add_argument("--now", action="store_true", help="run the guards and named gates at once, whatever the machine "
