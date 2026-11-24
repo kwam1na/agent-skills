@@ -208,6 +208,20 @@
       "after": [
         "V26-3780"
       ]
+    },
+    "V26-3808": {
+      "title": "Finish the chapter-pages live view for shipping: hosted file links and a steady siblings test",
+      "lane": "lane-3",
+      "why": "Operator asked 2026-11-24 to finish #488's unshipped pieces in this delivery",
+      "criteria": [
+        {
+          "id": "v26-3808-1",
+          "text": "A hosted cut of a delivery whose review notes cite (path:line) with a forge fileUrl configured carries those file links, validates against the hosted snapshot schema, and the hosted page links them as the local page does."
+        }
+      ],
+      "after": [
+        "V26-3777"
+      ]
     }
   },
   "finish": [
