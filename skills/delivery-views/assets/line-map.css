@@ -1127,7 +1127,8 @@ body:not(.paged) .chapter-tab-hint { display: none; }
 .ap-title { font-size: 14.5px; color: var(--ink); line-height: 1.4; }
 .ap-who { justify-self: end; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 1px 8px; border-radius: 999px; background: var(--well); box-shadow: inset 0 0 0 1px var(--hair); font-size: 12px; color: var(--soft); }
-.ap-who:empty { display: none; }
+/* An empty owner keeps its column, so the caret stays in line with every other row's. */
+.ap-who:empty { visibility: hidden; padding: 0; box-shadow: none; }
 .ap-caret { width: 7px; height: 7px; justify-self: center; align-self: center; border-right: 1.5px solid var(--faint); border-bottom: 1.5px solid var(--faint);
   transform: rotate(45deg) translate(-2px, -2px); transition: transform .2s var(--ease); }
 .ap-row[open] .ap-caret { transform: rotate(225deg) translate(-2px, -2px); }
@@ -1136,7 +1137,7 @@ body:not(.paged) .chapter-tab-hint { display: none; }
 @media (max-width: 720px) {
   .ap-row > summary { grid-template-columns: minmax(0, 1fr) 14px; grid-template-areas: "id caret" "title caret" "who caret"; gap: 4px 10px; }
   .ap-id { grid-area: id; } .ap-title { grid-area: title; } .ap-who { grid-area: who; justify-self: start; } .ap-caret { grid-area: caret; }
-  .ap-id:empty { display: none; }
+  .ap-id:empty, .ap-who:empty { display: none; }
   .ap-rest { margin-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) { .ap-caret { transition: none; } }
