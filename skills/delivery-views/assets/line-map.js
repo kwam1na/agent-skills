@@ -212,11 +212,11 @@
   var VIEW = {};
   try { VIEW = JSON.parse(document.getElementById("delivery-view").textContent); } catch (error) { VIEW = {}; }
   if (!isObject(VIEW)) { VIEW = {}; }
-  var LINKS = { issues: {}, changes: {}, commits: {} };
+  var LINKS = { issues: {}, changes: {}, commits: {}, files: {} };
   function readLinks(value) {
     if (!isObject(value)) { return; }
     LINKS = { issues: table(isObject(value.issues) ? value.issues : {}), changes: table(isObject(value.changes) ? value.changes : {}),
-      commits: table(isObject(value.commits) ? value.commits : {}) };
+      commits: table(isObject(value.commits) ? value.commits : {}), files: table(isObject(value.files) ? value.files : {}) };
   }
   try { readLinks(JSON.parse(document.getElementById("delivery-links").textContent)); } catch (error) { /* nothing is linked */ }
   function issueHref(id) { return typeof LINKS.issues[id] === "string" ? LINKS.issues[id] : null; }
@@ -3195,7 +3195,7 @@
         var box = el("div", "d-run");
         if (note) { box.appendChild(el("div", "d-run-none", note)); }
         var shown = isObject(finished) ? finished : { observational: true, observationKey: item.subject, open: false, roundDetail: [] };
-        box.appendChild(runSummaryNode(Object.assign({}, shown, { running: inFlight }), { commitHref: commitHref, issueHref: issueHref, followUpOf: followUpOf(doc, item.subject), lenses: VIEW.lenses, subject: item.subject }));
+        box.appendChild(runSummaryNode(Object.assign({}, shown, { running: inFlight }), { commitHref: commitHref, issueHref: issueHref, fileHref: fileHref, tickets: Object.keys(LINKS.issues || {}), ticket: function (id) { return issue(id); }, followUpOf: followUpOf(doc, item.subject), lenses: VIEW.lenses, subject: item.subject }));
         return box;
       };
       if (inFlight && !native && !events.length) { return underWay(null); }
@@ -3222,7 +3222,7 @@
       if (inFlight) { return underWay(native); }
       var nativeBox = el("div", "d-run");
       if (carried) { nativeBox.appendChild(el("div", "d-run-carried", "Carried by the lead. " + text(carried.note))); }
-      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, issueHref: issueHref, followUpOf: followUpOf(doc, item.subject), lenses: VIEW.lenses, subject: item.subject }));
+      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, issueHref: issueHref, fileHref: fileHref, tickets: Object.keys(LINKS.issues || {}), ticket: function (id) { return issue(id); }, followUpOf: followUpOf(doc, item.subject), lenses: VIEW.lenses, subject: item.subject }));
       return nativeBox;
     }
     if (VIEW.runs !== true) { return null; }
@@ -3252,7 +3252,7 @@
       return Object.assign({}, round, { verdicts: verdicts, outcome: outcome });
     });
     var box = el("div", "d-run");
-    box.appendChild(runSummaryNode(Object.assign({}, summary, { roundDetail: rounds }), { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses }));
+    box.appendChild(runSummaryNode(Object.assign({}, summary, { roundDetail: rounds }), { commitHref: commitHref, issueHref: issueHref, fileHref: fileHref, tickets: Object.keys(LINKS.issues || {}), ticket: function (id) { return issue(id); }, lenses: VIEW.lenses }));
     return box;
   }
 
@@ -4308,7 +4308,7 @@
     var summary = { observational: true, observationKey: "plan-review", open: false, roundDetail: list(review.rounds).filter(isObject),
       planReview: { state: text(review.state), endedReason: text(review.endedReason) } };
     var box = el("div", "plan-review");
-    box.appendChild(runSummaryNode(summary, { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses }));
+    box.appendChild(runSummaryNode(summary, { commitHref: commitHref, issueHref: issueHref, fileHref: fileHref, tickets: Object.keys(LINKS.issues || {}), ticket: function (id) { return issue(id); }, lenses: VIEW.lenses }));
     return fold("review", "Plan review (" + count + (count === 1 ? " round)" : " rounds)"), null, box);
   }
 
@@ -4654,38 +4654,26 @@
     return commit;
   }
   /**
-   * The story's words, made readable without changing what they say: each ticket id they name links to its ticket, so
-   * a reader can open it or see its card as anywhere else on the page; a full commit id is cut short and opens on the
-   * forge; and a change request's address shows as its number. The ids are the record's own, the ones the renderer gave
-   * addresses for.
+   * The story's words, made readable without changing what they say, through the page's one formatter (richWords, with
+   * the run summary): each ticket id they name links to its ticket, so a reader can open it or see its card as anywhere
+   * else on the page; a commit opens on the forge, cut short to read; a change request's address shows as its number; a
+   * `quoted` name reads as code. The ids are the record's own, the ones the renderer gave addresses for.
    */
   function linked(words) {
-    var said = text(words);
-    var ids = Object.keys(LINKS.issues || {}).filter(function (id) { return id && said.indexOf(id) >= 0; })
-      .sort(function (a, b) { return b.length - a.length; });
-    var tickets = ids.length ? "|(?:^|[^\\w-])(" + ids.map(function (id) { return id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }).join("|") + ")(?![\\w-])" : "";
-    // A commit is named in full or cut short; a short one links only when it begins exactly one commit the page knows.
-    var pattern = new RegExp("(\\b[0-9a-f]{7,40}\\b)|(https?:\\/\\/[^\\s)]+)" + tickets, "g");
-    var nodes = [], last = 0, found;
-    while ((found = pattern.exec(said))) {
-      var match = found[1] || found[2] || found[3];
-      var at = found.index + found[0].indexOf(match);
-      if (at > last) { nodes.push(said.slice(last, at)); }
-      if (found[1]) {
-        var named = found[1].length === 40 ? [found[1]] : Object.keys(LINKS.commits || {}).filter(function (sha) { return sha.indexOf(found[1]) === 0; });
-        nodes.push(named.length === 1 ? commitRef(named[0]) : found[1]);
-      } else if (found[2]) {
-        // Punctuation that ends the sentence is not part of the address.
-        var address = found[2].replace(/[.,;:]+$/, "");
-        nodes.push(changeTarget(address) ? changeLink(address) : address);
-        if (address.length < found[2].length) { nodes.push(found[2].slice(address.length)); }
-      } else {
-        nodes.push(issue(found[3]));
-      }
-      last = at + match.length;
-    }
-    if (last < said.length) { nodes.push(said.slice(last)); }
-    return nodes;
+    return richWords(text(words), {
+      tickets: Object.keys(LINKS.issues || {}),
+      ticket: function (id) { return issue(id); },
+      // A commit is named in full or cut short; a short one links only when it begins exactly one commit the page knows.
+      commit: function (sha) {
+        var named = sha.length === 40 ? [sha] : Object.keys(LINKS.commits || {}).filter(function (known) { return known.indexOf(sha) === 0; });
+        return named.length === 1 ? commitRef(named[0]) : null;
+      },
+      change: function (address) { return changeTarget(address) ? changeLink(address) : null; },
+    });
+  }
+  /** A reference to a file's lines, as the renderer linked it at the commit the words were written about, or null. */
+  function fileHref(sha, ref) {
+    return typeof LINKS.files[sha + " " + ref] === "string" ? LINKS.files[sha + " " + ref] : null;
   }
   function timeOf(instant) {
     var parts = clockParts(instant);

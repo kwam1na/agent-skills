@@ -90,6 +90,72 @@ function runDrawParts(svg, parts) {
     svg.appendChild(shape);
   });
 }
+/**
+ * Words made readable without changing what they say: the one formatter every view's prose goes through, the run
+ * summary's findings and fixes and the story's beats alike. It reads only what the words mark themselves, never a guess
+ * from a word's shape:
+ * - a `quoted` name reads as code;
+ * - a parenthesised reference to a file's lines, "(path:12)" or "(path:12-18, other:3)", steps back to a faint aside,
+ *   linked to the file at the reviewed commit when the page was given that link;
+ * - a commit id, a change request's address and a ticket id the page knows open where they live.
+ * `hooks` says what the host can link, each optional: `tickets` (the ids it knows) with `ticket(id)` making the node,
+ * `commit(sha)` and `change(address)` each a node or null, and `file(ref)` an href or null. It returns the nodes in order.
+ */
+var RICH_REF = "[\\w./-]+:\\d+(?:-\\d+)?";
+function richWords(words, hooks) {
+  var said = words === undefined || words === null ? "" : String(words);
+  hooks = hooks || {};
+  var ids = (Array.isArray(hooks.tickets) ? hooks.tickets : []).filter(function (id) { return typeof id === "string" && id && said.indexOf(id) >= 0; })
+    .sort(function (a, b) { return b.length - a.length; });
+  var tickets = ids.length && typeof hooks.ticket === "function"
+    ? "|(?:^|[^\\w-])(" + ids.map(function (id) { return id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }).join("|") + ")(?![\\w-])" : "";
+  var pattern = new RegExp("`([^`\\n]+)`|\\((" + RICH_REF + "(?:,\\s*" + RICH_REF + ")*)\\)|(\\b[0-9a-f]{7,40}\\b)|(https?:\\/\\/[^\\s)]+)" + tickets, "g");
+  var nodes = [], last = 0, found;
+  function made(tag, className, value) {
+    var element = document.createElement(tag);
+    element.className = className;
+    element.textContent = value;
+    return element;
+  }
+  while ((found = pattern.exec(said))) {
+    var match = found[1] !== undefined ? found[0] : found[2] !== undefined ? found[0] : found[3] || found[4] || found[5];
+    var at = found.index + found[0].indexOf(match);
+    if (at > last) { nodes.push(document.createTextNode(said.slice(last, at))); }
+    if (found[1] !== undefined) {
+      nodes.push(made("code", "prose-code", found[1]));
+    } else if (found[2] !== undefined) {
+      // Each reference in the parentheses on its own, so each can open its own file.
+      var aside = made("span", "prose-refs", "");
+      found[2].split(/,\s*/).forEach(function (ref, index) {
+        if (index) { aside.appendChild(document.createTextNode(", ")); }
+        var href = typeof hooks.file === "function" ? hooks.file(ref) : null;
+        var node = made(typeof href === "string" && /^https:\/\//.test(href) ? "a" : "span", "prose-ref", ref);
+        if (node.tagName === "A") {
+          node.setAttribute("href", href);
+          node.setAttribute("target", "_blank");
+          node.setAttribute("rel", "noopener noreferrer");
+          node.addEventListener("click", function (event) { event.stopPropagation(); });
+        }
+        aside.appendChild(node);
+      });
+      nodes.push(aside);
+    } else if (found[3]) {
+      var commit = typeof hooks.commit === "function" ? hooks.commit(found[3]) : null;
+      nodes.push(commit || document.createTextNode(found[3]));
+    } else if (found[4]) {
+      // Punctuation that ends the sentence is not part of the address.
+      var address = found[4].replace(/[.,;:]+$/, "");
+      var change = typeof hooks.change === "function" ? hooks.change(address) : null;
+      nodes.push(change || document.createTextNode(address));
+      if (address.length < found[4].length) { nodes.push(document.createTextNode(found[4].slice(address.length))); }
+    } else {
+      nodes.push(hooks.ticket(found[5]));
+    }
+    last = at + match.length;
+  }
+  if (last < said.length) { nodes.push(document.createTextNode(said.slice(last))); }
+  return nodes;
+}
 function runSummaryNode(summary, options) {
   var SEVERITIES = ["P0", "P1", "P2", "P3"];
   var WORDS = { P0: "critical", P1: "serious", P2: "moderate", P3: "minor" };
@@ -100,30 +166,15 @@ function runSummaryNode(summary, options) {
     if (value !== undefined && value !== null) { made.textContent = String(value); }
     return made;
   }
-  /**
-   * A finding's or a fix's words, made easier to read without changing them: a `quoted` name reads as code, a name in
-   * the code (a method like Service.create, a camelCase field) in the code's face, and a reference to a file's lines
-   * steps back to a faint aside, so the eye can run along the sentence and stop on a name only when it wants to.
-   */
-  var PROSE = /`([^`]+)`|\(((?:[\w./-]+\.\w+:\d+(?:-\d+)?(?:,\s*)?)+)\)|\b((?:[A-Za-z_]\w*\.[A-Za-z_]\w*(?:\(\))?)|(?:[a-z]+[A-Z]\w*)|(?:[A-Z][a-z]+[A-Z]\w*))\b/g;
-  function prose(className, words) {
+  // A finding's or a fix's words through the shared formatter, its file references read at `sha`, the commit the
+  // words were written about.
+  function prose(className, words, sha) {
     var made = node("span", className);
-    var said = String(words), last = 0, found;
-    PROSE.lastIndex = 0;
-    while ((found = PROSE.exec(said))) {
-      if (found.index > last) { made.appendChild(document.createTextNode(said.slice(last, found.index))); }
-      if (found[1] !== undefined) { made.appendChild(node("code", "prose-code", found[1])); }
-      else if (found[2] !== undefined) {
-        // A reference into a document (the plan, a note) keeps only its lines; one into code keeps its file too. The
-        // whole reference stays on hover.
-        var ref = node("span", "prose-ref", found[2].replace(/[\w./-]+\.(?:md|txt|rst):/g, "").replace(/(\d)-(\d)/g, "$1\u2013$2"));
-        ref.title = found[2];
-        made.appendChild(ref);
-      }
-      else { made.appendChild(node("span", "prose-name", found[3])); }
-      last = found.index + found[0].length;
-    }
-    if (last < said.length) { made.appendChild(document.createTextNode(said.slice(last))); }
+    richWords(words, {
+      file: function (ref) { return sha && options && typeof options.fileHref === "function" ? options.fileHref(sha, ref) : null; },
+      tickets: options && Array.isArray(options.tickets) ? options.tickets : null,
+      ticket: options && typeof options.ticket === "function" ? options.ticket : null,
+    }).forEach(function (part) { made.appendChild(part); });
     return made;
   }
   function counted(findings) {
@@ -570,7 +621,7 @@ function runSummaryNode(summary, options) {
     toggle.type = "button";
     toggle.setAttribute("aria-expanded", String(open));
     var said = node("span", "run-finding-line");
-    said.appendChild(prose("run-finding-text", sentenceOf(entry.summary)));
+    said.appendChild(prose("run-finding-text", sentenceOf(entry.summary), round.candidateRef));
     toggle.appendChild(said);
     item.appendChild(toggle);
     var meta = node("p", "run-deferral-said");
@@ -629,7 +680,7 @@ function runSummaryNode(summary, options) {
   function raisedBefore(round, id) {
     var found = null;
     rounds.slice(0, Math.max(0, rounds.indexOf(round))).forEach(function (earlier) {
-      (Array.isArray(earlier.raised) ? earlier.raised : []).forEach(function (entry) { if (isNote(entry) && entry.id === id) { found = entry; } });
+      (Array.isArray(earlier.raised) ? earlier.raised : []).forEach(function (entry) { if (isNote(entry) && entry.id === id) { found = { entry: entry, round: earlier }; } });
     });
     return found;
   }
@@ -639,12 +690,13 @@ function runSummaryNode(summary, options) {
   // said in words only for a screen reader, and any other ending is named.
   function closureRow(round, entry) {
     var item = node("li", "");
-    var finding = raisedBefore(round, entry.id);
+    var raised = raisedBefore(round, entry.id);
+    var finding = raised ? raised.entry : null;
     var disclosure = node("details", "run-closures is-" + (entry.state === "fixed" ? "fixed" : "other"));
     var preview = node("summary", "run-finding");
     if (finding) {
       var severity = SEVERITIES.indexOf(finding.severity) < 0 ? "P3" : finding.severity;
-      preview.appendChild(prose("run-finding-text", sentenceOf(finding.summary)));
+      preview.appendChild(prose("run-finding-text", sentenceOf(finding.summary), raised.round.candidateRef));
       preview.appendChild(node("span", "run-closure-sev is-" + severity.toLowerCase(), WORDS[severity]));
     } else {
       preview.appendChild(node("span", "run-finding-text", entry.resolution));
@@ -668,7 +720,7 @@ function runSummaryNode(summary, options) {
       }
       fix.appendChild(head);
       var body = node("p", "run-closure-resolution");
-      body.appendChild(prose("", resolution));
+      body.appendChild(prose("", resolution, entry.fixCommit));
       fix.appendChild(body);
       if (typeof entry.deferredIssue === "string" && entry.deferredIssue) { fix.appendChild(followUpNode(entry.deferredIssue)); }
       disclosure.appendChild(fix);
@@ -874,7 +926,7 @@ function runSummaryNode(summary, options) {
             var item = node("li", "run-finding is-" + severity.toLowerCase());
             // Summaries are sentences; one stored without its full stop gets one here.
             var said = node("span", "run-finding-line");
-            said.appendChild(prose("run-finding-text", sentenceOf(entry.summary)));
+            said.appendChild(prose("run-finding-text", sentenceOf(entry.summary), round.candidateRef));
             if (!uniform && fate.band !== shared) {
               said.appendChild(document.createTextNode(" "));
               said.appendChild(node("span", "run-fate is-" + fate.kind, fate.words));

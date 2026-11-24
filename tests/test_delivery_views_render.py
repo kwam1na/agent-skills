@@ -590,6 +590,59 @@ class LinkTests(unittest.TestCase):
         untold = render.line_map_data(document, {}, self.EXAMPLE, theme_key="local", history=None, story=False)
         self.assertNotIn("story", untold["document"])
 
+    FILES = config(forges=[{"name": "Bitbucket", "repository": "example/app",
+                            "pullUrl": "https://bitbucket.org/{repository}/pull-requests/{number}",
+                            "commitUrl": "https://bitbucket.org/{repository}/commits/{sha}",
+                            "fileUrl": "https://bitbucket.org/{repository}/src/{sha}/{path}#lines-{line}"}])
+
+    def repository_with(self, folder: Path, files: dict[str, str]) -> tuple[Path, str]:
+        """A repository whose one commit holds ``files``; returns it and the commit."""
+        subprocess.run(["git", "init", "-q", str(folder)], check=True)
+        quieten(folder)
+        for name, body in files.items():
+            (folder / name).parent.mkdir(parents=True, exist_ok=True)
+            (folder / name).write_text(body)
+        subprocess.run(["git", "-C", str(folder), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(folder), "-c", "user.name=Lens", "-c", "user.email=lens@example.invalid",
+                        "commit", "-q", "-m", "plan"], check=True)
+        head = subprocess.run(["git", "-C", str(folder), "rev-parse", "HEAD"], check=True, capture_output=True,
+                              text=True).stdout.strip()
+        return folder, head
+
+    def test_a_review_notes_line_reference_opens_the_file_at_the_commit_its_words_were_written_about(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository, head = self.repository_with(Path(temporary), {
+                "docs/plans/phase-1.md": "plan\n", "src/a/index.ts": "a\n", "src/b/index.ts": "b\n"})
+            runs = {"run-1": {"roundDetail": [
+                {"candidateRef": head, "raised": [{"summary": "Read (docs/plans/phase-1.md:84-89) and (phase-1.md:3)."}],
+                 "settled": [{"fixCommit": head, "resolution": "Fixed (index.ts:4, src/a/index.ts:7, gone.md:1)."}]},
+                {"candidateRef": "javascript", "raised": [{"summary": "(docs/plans/phase-1.md:1)"}]}]}}
+            links = render.page_links({}, runs, self.FILES, repository=repository)
+        base = f"https://bitbucket.org/example/app/src/{head}"
+        # By its path from the root, or by a path only one file ends with; one several files end with, or none, stays words.
+        self.assertEqual(links["files"], {
+            f"{head} docs/plans/phase-1.md:84-89": f"{base}/docs/plans/phase-1.md#lines-84",
+            f"{head} phase-1.md:3": f"{base}/docs/plans/phase-1.md#lines-3",
+            f"{head} src/a/index.ts:7": f"{base}/src/a/index.ts#lines-7"})
+
+    def test_no_file_links_without_a_file_url_or_a_repository_and_the_hosted_cut_carries_none(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository, head = self.repository_with(Path(temporary), {"plan.md": "plan\n"})
+            plan = {"plan": {"planReview": {"rounds": [{"candidateRef": head, "raised": [{"summary": "(plan.md:2)"}]}]}}}
+            self.assertEqual(render.page_links({}, {}, self.FILES, plan=plan, repository=repository)["files"],
+                             {f"{head} plan.md:2": f"https://bitbucket.org/example/app/src/{head}/plan.md#lines-2"})
+            self.assertNotIn("files", render.page_links({}, {}, self.EXAMPLE, plan=plan, repository=repository))
+            self.assertNotIn("files", render.page_links({}, {}, self.FILES, plan=plan))
+
+    def test_a_file_url_takes_only_its_placeholders_and_a_path_keeps_its_slashes_but_never_climbs(self) -> None:
+        forge = self.FILES["forges"][0]
+        self.assertEqual(views_common.file_link("a" * 7, "docs/a b.md", "12", forge),
+                         "https://bitbucket.org/example/app/src/aaaaaaa/docs/a%20b.md#lines-12")
+        self.assertIsNone(views_common.file_link("a" * 7, "docs/../secret", "1", forge))
+        self.assertIsNone(views_common.file_link("a" * 7, "/etc/passwd", "1", forge))
+        self.assertIsNone(views_common.file_link("not-a-sha", "a.md", "1", forge))
+        self.assertIsNone(views_common.file_link("a" * 7, "a.md", "1", self.EXAMPLE["forges"][0]))
+
     def test_a_commit_a_facts_words_name_cut_short_is_linked_and_a_plain_word_or_number_is_not(self) -> None:
         commits, changes = [], []
         render._facts_named({"text": "Reverted 1a2b3c4 and deadbeef7, not 1234567, decafbad or 1a2b3c",
