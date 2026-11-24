@@ -521,6 +521,14 @@ says so: in the line it prints and at the top of that page.
   PID of each verified entry the given state directory started, waits for its
   entry to go, and says which it stopped; an entry that fails verification is
   left alone, its PID never signalled.
+- `live --preview` serves a plan's preview, a record kept for a plan under
+  agent review before any delivery exists. Its entry and `/health` say so, and
+  `live --if-absent` never returns a preview's entry, so the standing server
+  stays the one it names. The standing server's runs page lists every verified
+  preview entry, at most 20, under "Plans in review", each with its plan's
+  title, its live address and, where the preview is published, its hosted
+  page, and draws it again when a preview starts, stops or is rebuilt. With no
+  preview running, the section is absent.
 - It serves the built-in static page in its live mode, with a quiet live or
   disconnected indicator, and any HTML view whose head carries
   `<meta name="delivery-state-live">`, at `/view/<output>`, the output's
