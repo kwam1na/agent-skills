@@ -113,9 +113,9 @@ the same shape at any delivery size:
   above it, and a caret marks the story the queue lands next. Over the ticks a
   count line says how many have landed and how many are stopped.
 - **The rejoin.** A delivery rejoining its target draws one bar of its four
-  steps (main in, suite, review, change request) past the ticks, labelled with
-  the step it is on, that step's status sentence under it, and the line bends
-  into the target at the finish post, so the target is drawn once. A delivery
+  steps (main in, suite, review, change request) past the ticks. The active step
+  label and status sentence sit below the bar. The line bends into the target
+  at the finish post, so the target is drawn once. A delivery
   straight to its base ends at the post, with no bar.
 - **A suite running.** From `lead-suite`'s start entry until its finish or a
   later start, the suite's step is drawn wider with a moving stripe, still
