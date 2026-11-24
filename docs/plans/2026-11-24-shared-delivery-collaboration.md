@@ -195,7 +195,7 @@ Out of scope:
       and takes each seat's latest label.
   - **Refusals:**
     - on a shared record, any write from a checkout with no seat is refused with
-      `collab.seat_missing`;
+      `collab.seat_missing`, except the `sync` writer's ingest;
     - any write from a seat not yet admitted, other than its own `seat.requested`
       and the `sync` writer's ingest, is refused with `collab.seat_not_admitted`.
   - **Environment:** no environment variable sets or overrides the seat.
@@ -211,7 +211,9 @@ Out of scope:
         elements by the keyed selector the patch layer already uses
         (`ELEMENT_KEYS`, for example `queue[subject=K]/stage` or
         `lanes[id=L]/focus`), never by index. `origin` is the `{seat, seq}` of the
-        write that set the value;
+        write that set the value. An entry may carry `removed: true` in place of
+        `value` for a keyed element its writer deleted. D7 filters it like any
+        value, and ingest deletes the element;
       - `hosted`, only while the seat holds `delivery`: the hosted identity's
         `publicId`, `ownerId`, `epoch`, `sequence`, `receipt` and `pending`, never
         the token (D12);
@@ -230,9 +232,9 @@ Out of scope:
         later write from that checkout is refused with `collab.seat_split`;
       - Needs you names the split. `collab join --new-seat` gives that checkout a
         fresh seat, which needs admission.
-  - **Remote settings.** The plan requires nothing of the remote. Tests set
-    `receive.denyNonFastForwards` and `core.logAllRefUpdates=always` on their bare
-    remotes so a forced update would be visible (D18).
+  - **Remote settings.** The plan requires nothing of the remote. Test remotes
+    allow forced updates, as forges do, and set `core.logAllRefUpdates=always`, so a
+    forced update the product made would land and be recorded (D18).
   - **Admitted seats only:** a peer ref whose seat has no `seat.admitted` entry is
     fetched but ingested only for its `seat.requested` entry.
   - **Fetch:** peers' refs come down by explicit refspec into
@@ -253,15 +255,27 @@ Out of scope:
     machines' journals hold the same set of origins in an order consistent with
     causality. Local ids may differ between machines, and nothing compares them
     across machines.
-  - **State fields that hold journal ids.** `delivery-state/1` has exactly two:
+  - **State fields that hold journal ids.** `delivery-state/1` has exactly three:
     - `regionsSettled` is carried in slices as the origin of the merge it names,
       and translated to the local id on ingest;
+    - `queue[subject=K].leadSelection.reuse.decision`, the `decision.recorded`
+      entry that journals a reuse grant, which `merge_queue.py` links as
+      `because`, is carried and translated the same way;
     - `meta.closing.started.entry` and `meta.closing.finished.entry` are
       machine-local. Each machine derives them from its own local id of the
       `delivery.closed` entry, by the rule `_with_closing` applies on append.
+  - **Every integer field is listed.** A COLLAB-2 test walks every integer field
+    in `delivery-state/1` and checks it against an explicit list marking each as a
+    journal id or not. The fields that are not journal ids:
+    - `version`;
+    - `queue[].order` and `queue[].reportedRounds`;
+    - `laneRegions[].start` and `laneRegions[].end`;
+    - `meta.checkHistory.runs[]`, `meta.checkHistory.checks[].seconds[]` and
+      `meta.checkHistory.checks[].flakes`;
+    - `meta.checking.now.steps[].expectedSeconds`;
+    - `queue[].leadSelection.checks[].timeoutSeconds`.
 
-    A COLLAB-2 test walks the schema for integer fields documented as journal ids
-    and fails on one not listed here.
+    An integer field on neither list turns the test red.
   - **Schema:** `delivery-journal/2` gains `origin` as an optional member, so its
     version does not change. D5 keeps every writer on one generation.
 - **D5. One generation per shared record.** A peer partition whose
@@ -307,9 +321,18 @@ Out of scope:
     | `queue[subject=K]` `stage`, `checks`, `syncedHead`, `checkSelection`, `repair`, `order` | `queue` |
     | `queue[subject=K]` every other field | `lane:<its lane>` |
 
+  - **Creating a queue element.** The writer that creates a `queue[subject=K]`
+    element may set the starting values `QUEUE_START` names, plus `order`:
+    - a `lane:<its lane>` acceptance;
+    - or the `delivery` holder's reconcile adopting a missed hand-off.
+
+    A re-hand-off may reset `stage`, `checks` and `syncedHead` to those values. The
+    same acceptance removes `planned[subject=K]` (D3's `removed`). Every later write
+    of those fields stays `queue`'s.
   - **Fields with two permitted scopes.** Only the rows that already have two
-    writers today (lane rows, shared by a lane and the runner, and planned items)
-    permit two scopes. Ingest applies such a value when its origin is causally
+    writers today permit two scopes: lane rows, shared by a lane and the runner;
+    planned items; and `followups`, which `delivery` and a lane's acceptance both
+    add. Ingest applies such a value when its origin is causally
     after the local value's, ties broken by seat id. Each machine keeps the origin
     of every local value in `field-origins.json` beside the record, machine-local
     and outside `state.json`. Every other row has exactly one scope, so it never
@@ -334,9 +357,14 @@ Out of scope:
       section, `(preamble)`;
     - a section is changed on a side when it was edited, added or deleted there;
     - if no section was changed on both sides, the result applies both sides'
-      changes: every section ours added is inserted after the section that
-      precedes it in ours, every section ours deleted is removed, every section ours
-      edited replaces theirs, and every change of theirs stays;
+      changes:
+      - every section ours deleted is removed;
+      - every section ours edited replaces theirs;
+      - every change of theirs stays;
+      - every section ours added is inserted after its nearest preceding section in
+        ours that still exists in theirs, or directly after `(preamble)` if none
+        does. So an addition whose predecessor theirs deleted lands after the
+        surviving section before it;
     - otherwise it refuses with `plan.sections_overlap`, naming each section and
       both diffs. A delete on one side and an edit on the other counts as changed
       on both.
@@ -344,6 +372,8 @@ Out of scope:
     change outside the sections the seat holds is refused before any commit or
     push, with `plan.section_not_held` and the
     `scope.requested` command that asks for it.
+  - **Re-keying is exempt.** A `plan-rekey` commit is exempt from the scope
+    check, because D11's map-equality rule already constrains its text.
   - **Retries:** a push rejected for being behind recomposes and retries, up to 5
     times, the bound `RECONCILE_ATTEMPTS` already uses. The sixth rejection stops
     with `plan.push_exhausted`, leaving the local branch at its last composed
@@ -410,6 +440,15 @@ Out of scope:
   - Only the `queue` holder's supervisor starts `merge_queue.py serve` and runs
     `fullHealth`.
   - Only the `delivery` holder's supervisor runs the hosted and tracker publishers.
+    It alone also runs these pass steps, each of which writes `delivery` fields or
+    journals once per delivery:
+    - `reconcile`;
+    - `regions` (`settle_landings`);
+    - `finish`;
+    - `lenses`;
+    - `deferrals`.
+
+    Every other seat's pass skips them.
   - On a shared record the tracker marker uses `<seat>.<seq>` in place of the
     local id. Its ledger keys by origin, so moving `delivery` never posts twice.
   - **Handing over `delivery`** is a parked transition, like D13:
@@ -458,11 +497,16 @@ Out of scope:
   - The two-machine fixture builds one bare remote and two clones once per class.
   - It is marked `run_quietly`, because it waits on real `git` and supervisor
     processes.
-  - Every bare remote a test builds sets `receive.denyNonFastForwards=true` and
-    `core.logAllRefUpdates=always`. A shared helper asserts that the remote's
-    reflog is non-empty and that every recorded update to `plan/<slug>`,
-    `lead/<key>` and each `refs/agent-skills` ref is a fast-forward. One planted
-    forced push shows the helper catches it.
+  - **Bare remotes in tests:**
+    - every bare remote a test builds sets `core.logAllRefUpdates=always` and
+      leaves `receive.denyNonFastForwards` off, so a forced update lands and is
+      recorded;
+    - a shared helper asserts that the remote's reflog is non-empty, and that every
+      recorded update to `plan/<slug>`, `lead/<key>` and each `refs/agent-skills`
+      ref is a fast-forward;
+    - one planted `git push --force` against such a remote shows the helper fails.
+  - **Observing a peer.** Tests observe a peer by reading its `state.json` and
+    `journal.jsonl` directly. They never run a command there that could ingest.
   - `tests/suite-budget.json` is not raised.
 - **D19. Identity is trust-based.**
   - Anyone who can push to the base remote can write any `refs/agent-skills/...`
@@ -488,7 +532,9 @@ Out of scope:
     | `scope.not_held` | a write, transfer, admission, re-key or feedback resolution by a non-holder; a runner write on a machine not holding `queue` |
     | `queue.not_held` | `merge_queue.py serve` started where the seat does not hold `queue` |
     | `scope.handover_busy` | a `queue` or `delivery` handover past its `--wait` |
-    | `plan.endorsement_missing`, `plan.endorsement_stale`, `plan.not_aligned`, `plan.feedback_blocking` | `lead-init`'s joint approval (D11) |
+    | `plan.endorsement_missing`, `plan.endorsement_stale`, `plan.not_aligned`, `plan.feedback_blocking` | `lead-init`'s joint approval (D11), in that order |
+    | `plan.uncommitted`, `plan.no_review_slug` | `plan-open` on a plan not committed at HEAD, or without `reviewSlug` |
+    | `plan.draft_conflict` | `validate_plan` on a plan with both `draft` and `approved`, or neither |
 
     A held peer partition (`collab.generation_differs`) is a state shown in Needs
     you, not a refusal.
@@ -658,14 +704,16 @@ This story relieves the pain on its own and needs no record.
   - `tests/test_run_delivery.py::RunDeliveryAdoptionGuideTests.test_every_command_the_guide_names_exists`:
     both commands appear in `--help` choices.
   - `test_every_shipped_file_is_listed_and_clean`: `plan_sync.py` is listed.
-- **Scenarios, composing.** Each disjoint case ends with both sides' changes
-  present:
+- **Scenarios, composing.** Each disjoint case asserts the exact composed text,
+  with any added section placed mid-document, never last:
   - ours edits one section, theirs edits another;
   - ours adds a section, theirs edits another;
   - theirs adds a section, ours edits another;
   - ours deletes a section, theirs edits another;
   - theirs deletes a section ours left unchanged;
   - only one side edits the front matter;
+  - ours adds a section after S while theirs deletes S; the addition lands after
+    the section before S;
   - an edit at the end of one section and an edit to the next section's heading,
     the case git's three-way merge would conflict on.
 - **Scenarios, refusals:**
@@ -745,7 +793,12 @@ Lane 1, tier 1, not blocked. Characterization-first. Files: `skills/orchestrate-
     naming the merge of the same origin;
   - a close journalled on one seat leaves both records with closing marks naming
     their own local ids of the same origin;
-  - the schema walk finds no journal-id field beyond the two D4 lists.
+  - the integer walk finds every integer field on one of D4's two lists;
+  - an element removed on one machine is absent on both after exchange, and a
+    removal by a seat without a permitted scope is ignored;
+  - a checkout with no seat ingests every admitted partition into a new record,
+    while a `lead` write from that checkout gives `collab.seat_missing`;
+  - after the sync loop's peer fetch, `remote.origin.fetch` is unchanged.
 - **Scenarios, holds and splits:**
   - a partition whose `archiveSha256` differs, with the same `releaseId`, is held,
     named, and ingested after the local writer upgrade;
@@ -829,7 +882,11 @@ Lane 1, tier 2, after COLLAB-2. Test-first. Files: `skills/orchestrate-work/scri
   - a value written after that transfer is ignored.
 - **Scenarios, two-scope fields:**
   - two concurrent writes to one lane row's `focus` resolve the same way on both
-    machines, by causal order, then seat id.
+    machines, by seat id;
+  - the seat that loses that tie-break writes `focus` again after ingesting the
+    other's write, and both machines end with its later value;
+  - concurrent follow-ups with distinct ids from `delivery` and a lane both
+    survive on both machines.
 - **Scenarios, labels:** in a record where `a` and `b` hold distinct scopes
   including a lane, `holder`, `holds`, `scope.not_held` and lane ownership are
   unchanged:
@@ -837,7 +894,8 @@ Lane 1, tier 2, after COLLAB-2. Test-first. Files: `skills/orchestrate-work/scri
   - with both seats carrying the same label.
 - **Scenarios, completeness and compatibility:**
   - a schema property added without a field-map row turns the completeness test
-    red;
+    red, at the top level, in `meta`, and in `lanes`, `queue` and `planned`
+    elements;
   - an unshared record ignores scopes entirely, so its field-ownership tests are
     unchanged.
 
@@ -872,7 +930,9 @@ Lane 2, tier 2, after COLLAB-1 and COLLAB-3. Test-first. Files: `skills/run-deli
 - **Scenarios, plan edits:**
   - a plan edit outside held sections gives `plan.section_not_held` before any
     commit or push, naming the request command, with the D20 surfaces unchanged;
-  - an edit inside a held section lands.
+  - an edit inside a held section lands;
+  - `b` holds a section naming a placeholder key, `a` runs `plan-rekey`, and the
+    commit lands with `b`'s section re-keyed.
 - **Scenarios, joint approval:**
   - with plan review aligned on X, `plan-rekey` at Y, and both seats endorsing Y,
     `lead-init` passes;
@@ -881,9 +941,13 @@ Lane 2, tier 2, after COLLAB-1 and COLLAB-3. Test-first. Files: `skills/run-deli
   - an endorsement of X after Y gives `plan.endorsement_stale`;
   - open blocking feedback gives `plan.feedback_blocking`;
   - a `--no-approver` seat's missing endorsement does not hold `lead-init`;
-  - `plan-rekey` by a non-holder gives `scope.not_held`.
+  - `plan-rekey` by a non-holder gives `scope.not_held`;
+  - with both an endorsement missing and blocking feedback open,
+    `plan.endorsement_missing` is the code returned;
+  - `plan-open` on an uncommitted plan gives `plan.uncommitted`, and one without
+    `reviewSlug` gives `plan.no_review_slug`.
 - **Scenarios, the plan schema:** a plan with both `draft` and `approved`, or
-  neither, is refused by `validate_plan`.
+  neither, gives `plan.draft_conflict`.
 
 ### COLLAB-5. Feedback, join and the shared watch stream
 
@@ -941,6 +1005,11 @@ Lane 1, tier 3, after COLLAB-3. Characterization-first. Files: `skills/orchestra
     `scope.not_held` on the other's;
   - a runner write on a non-holder machine gives `scope.not_held`, while the
     holder's runner write is applied;
+  - `b` accepts its lane's hand-off while `a` holds `queue`; `a`'s record holds
+    the element at `stage: queued`, without the planned item, and `a`'s queue
+    merges it;
+  - a reuse grant recorded on `a`, then the queue handed to `b`: `b`'s
+    `check.reused` names, through `because`, the entry of the grant's origin;
   - the COLLAB-3 label scenarios, repeated with lanes and queue elements held by
     each seat.
 - **Scenarios, handover:**
@@ -980,8 +1049,11 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
     and posts nothing for X;
   - the hosted publisher follows the same pair, with the public link unchanged
     after the move;
-  - a delivery handover with a hosted publication pending gives
-    `scope.handover_busy`;
+  - a delivery handover with a hosted publication pending, or a tracker post in
+    flight, gives `scope.handover_busy`;
+  - the non-holder's supervisor pass skips reconcile, regions, finish, lenses and
+    deferrals and writes nothing, and a finish line met once yields one
+    `finish.met` on both machines;
   - a supervisor restart keeps its roles;
   - a write on one machine reaches the peer's record within two
     `collab.pollSeconds` ticks plus one push, with no explicit sync command.
