@@ -565,8 +565,11 @@ Out of scope:
   | flow logs `acceptance`, `app-checks`, `videos` and `lane-starts` | carried by `lane:<L>`'s holder, keyed by subject and head (`lane-starts` by subject), because `plan_evidence`, every seat's Needs you and the tracker publisher read them |
   | flow log `tracker-marks` | carried by `delivery`'s holder with the tracker ledger, keyed by `<seat>.<seq>` (D12) |
   | flow log `full-health` `result` entries, keyed by head | carried by `queue`'s holder |
-  | flow log `full-health` `rerun` entries | replaced: the queue holder's `full_health_results` counts a `fullhealth.rerun` journal entry at that head, from any seat, as the rerun request |
-  | `note_posture`'s dedupe through the `full-health` log | replaced: a posture note is skipped when the record already holds the same `posture.changed` or `fullhealth.skipped` at that head, whatever its origin. So it may run on whichever seat calls it, including `record_focused` at close |
+  | flow log `full-health` `rerun` entries | replaced: a `fullhealth.rerun` journal entry, from any seat, names the `at` of the failed result it asks to rerun, copied from the carried result. The queue holder's `full_health_results` counts it while its latest result at that head is still that one |
+  | `note_posture`'s dedupe through the `full-health` log | replaced, whatever the entry's origin. A `posture.changed` is skipped when the record's latest `posture.changed` has the same `from`, `to` and `source`. A `fullhealth.skipped` is skipped when the record holds one at the same head. So it may run on whichever seat calls it, including `record_focused` at close |
+  | lead files `closed.json` | replaced on a shared record: `closed_here` is true when the record holds `delivery.closed`, so every seat treats the delivery as closed and its supervisor stops |
+  | lead files `friction.md` | carried by `delivery`'s holder (the friction stub) |
+  | lead files `full-health.lock`, `full-health.log`, `supervisor.blockers.json`, `supervisor.jsonl`, `supervisor.live.log`, `supervisor.log`, `supervisor.stop`, `wait.json` | local |
   | flow log `resolutions` | carried by the resolving seat, keyed by the resolved entry's origin and translated on ingest |
   | flow log `finish` | replaced: a line counts as marked when the record holds its `finish.met` |
   | flow log `peers` | replaced: `peer_merges` skips a merge when the record already holds a `peer.merged` with the same `subject`, `peer` and `head`, whatever its origin |
@@ -575,14 +578,23 @@ Out of scope:
   | the friction stub | carried by `delivery`'s holder, so a handover keeps it |
   | hosted sidecars and the tracker ledger | carried by `delivery`'s holder (D12) |
 
-  A COLLAB-8 test finds every flow-log name in `run_delivery.py` and
+  A COLLAB-8 test finds every machine-local name in `run_delivery.py` and
   `tracker_publisher.py`:
   - names passed to `read_log`, `append_log`, `flow_log`, `plan_flow_log`,
-    `read_flow` and `append_flow`;
-  - module-level constants passed to any of them.
+    `read_flow`, `append_flow` and `lead_file`;
+  - module-level constants passed to any of them;
+  - inline paths built from `c.flow_log` or `c.state` with a literal or f-string
+    name.
 
   It fails on a name missing from this table. A planted name read through each of
-  those six paths turns it red.
+  those paths turns it red.
+- **No reader compares clocks across machines.** On a shared record, no reader
+  orders entries by comparing `at` values written on different machines.
+  - A carried `lane-starts` entry records the origin of the `lane.assigned` it
+    follows. `lane_start` and the tracker publisher match a start to its
+    assignment by that origin.
+  - A `fullhealth.rerun` is matched to its result by the copied `at` (above), never
+    by ordering two clocks.
 
 - **D20. Every refusal, and what its test checks.**
   - **Codes:**
@@ -1156,7 +1168,8 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
     `b` holding a lane whose story has merged, the close waits until `b`'s cleanup
     journals `cleanup.done` and its `checkoutsLeft` empties. Then exactly one
     `delivery.closed` is journalled, by `a`, and it reaches both records; `b`'s
-    pass runs no close-out step;
+    pass runs no close-out step. After it, `b` treats the delivery as closed
+    (`closed_here` is true there) and `b`'s supervisor stops;
   - handing that lane to `a` while the story's checkout is on `b` gives
     `scope.handover_busy`, and succeeds after `b`'s cleanup;
   - **full health:** `b`, holding `queue`, runs fullHealth at H. After the scopes
@@ -1169,6 +1182,15 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
   - a rerun asked for by `a`, which does not hold `queue`, is run once by `b`;
   - a shared delivery that merged nothing gets one fullHealth run, on the `queue`
     holder, and then closes;
+  - with nothing merged and one finish line not yet met, several passes of the
+    `queue` holder launch no fullHealth run. Then the last `finish.met` is
+    journalled, and exactly one run starts at the base head;
+  - the posture changes and is noted once across both machines, then changes
+    again; the second change is journalled once and reaches both records;
+  - **clocks:** with `b`'s clock set an hour behind `a`'s, `b`'s lane start is
+    posted once by `a`'s publisher, and a second `lane-start` on `b` does not reset
+    its focus. With `a`'s clock an hour behind `b`'s, a rerun asked for by `a` is
+    run once by `b`;
   - **peers after a handover:** `a` journals a peer merge, `delivery` moves to
     `b`, and `b`'s next pass journals no second `peer.merged`. A later peer merge
     with the same subject and peer at a new head is journalled once by `b` and
