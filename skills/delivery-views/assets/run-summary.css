@@ -202,3 +202,13 @@ a.run-commit { text-decoration: underline; text-decoration-color: color-mix(in s
 @media (max-width: 560px) {
   .run-closures:not([open]) > summary .run-closure-sev { font-size: 0; gap: 0; }
 }
+
+/* Reading a note opened: plain weight and a looser line for the finding, a measured line for the fix, and names and
+   references set so the sentence reads straight through. */
+.run-closures[open] > summary .run-finding-text { font-weight: 400; font-size: 13.5px; line-height: 1.6; max-width: 68ch; color: var(--ink, #161a1d); }
+.run-closure-fix .run-closure-resolution { font-size: 13px; line-height: 1.65; max-width: 68ch; margin-top: 8px; }
+.run-closure-verdict { font: 400 12px/16px var(--text, system-ui, sans-serif); letter-spacing: 0; color: var(--faint, #646c71); }
+.run-closure-verdict::before { content: "·"; margin: 0 7px; }
+.prose-code, .prose-name { font-family: var(--mono, ui-monospace, monospace); font-size: .9em; letter-spacing: -0.01em; }
+.prose-code { padding: 1px 4px; border-radius: 4px; background: color-mix(in srgb, var(--ink, #161a1d) 6%, transparent); white-space: nowrap; }
+.prose-ref { font: 400 11px/1 var(--mono, ui-monospace, monospace); color: var(--faint, #868f94); white-space: nowrap; margin: 0 1px; }

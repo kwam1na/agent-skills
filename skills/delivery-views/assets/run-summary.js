@@ -100,6 +100,32 @@ function runSummaryNode(summary, options) {
     if (value !== undefined && value !== null) { made.textContent = String(value); }
     return made;
   }
+  /**
+   * A finding's or a fix's words, made easier to read without changing them: a `quoted` name reads as code, a name in
+   * the code (a method like Service.create, a camelCase field) in the code's face, and a reference to a file's lines
+   * steps back to a faint aside, so the eye can run along the sentence and stop on a name only when it wants to.
+   */
+  var PROSE = /`([^`]+)`|\(((?:[\w./-]+\.\w+:\d+(?:-\d+)?(?:,\s*)?)+)\)|\b((?:[A-Za-z_]\w*\.[A-Za-z_]\w*(?:\(\))?)|(?:[a-z]+[A-Z]\w*)|(?:[A-Z][a-z]+[A-Z]\w*))\b/g;
+  function prose(className, words) {
+    var made = node("span", className);
+    var said = String(words), last = 0, found;
+    PROSE.lastIndex = 0;
+    while ((found = PROSE.exec(said))) {
+      if (found.index > last) { made.appendChild(document.createTextNode(said.slice(last, found.index))); }
+      if (found[1] !== undefined) { made.appendChild(node("code", "prose-code", found[1])); }
+      else if (found[2] !== undefined) {
+        // A reference into a document (the plan, a note) keeps only its lines; one into code keeps its file too. The
+        // whole reference stays on hover.
+        var ref = node("span", "prose-ref", found[2].replace(/[\w./-]+\.(?:md|txt|rst):/g, "").replace(/(\d)-(\d)/g, "$1\u2013$2"));
+        ref.title = found[2];
+        made.appendChild(ref);
+      }
+      else { made.appendChild(node("span", "prose-name", found[3])); }
+      last = found.index + found[0].length;
+    }
+    if (last < said.length) { made.appendChild(document.createTextNode(said.slice(last))); }
+    return made;
+  }
   function counted(findings) {
     var counts = { P0: 0, P1: 0, P2: 0, P3: 0 };
     if (findings && typeof findings === "object") {
@@ -544,7 +570,7 @@ function runSummaryNode(summary, options) {
     toggle.type = "button";
     toggle.setAttribute("aria-expanded", String(open));
     var said = node("span", "run-finding-line");
-    said.appendChild(node("span", "run-finding-text", sentenceOf(entry.summary)));
+    said.appendChild(prose("run-finding-text", sentenceOf(entry.summary)));
     toggle.appendChild(said);
     item.appendChild(toggle);
     var meta = node("p", "run-deferral-said");
@@ -618,7 +644,7 @@ function runSummaryNode(summary, options) {
     var preview = node("summary", "run-finding");
     if (finding) {
       var severity = SEVERITIES.indexOf(finding.severity) < 0 ? "P3" : finding.severity;
-      preview.appendChild(node("span", "run-finding-text", sentenceOf(finding.summary)));
+      preview.appendChild(prose("run-finding-text", sentenceOf(finding.summary)));
       preview.appendChild(node("span", "run-closure-sev is-" + severity.toLowerCase(), WORDS[severity]));
     } else {
       preview.appendChild(node("span", "run-finding-text", entry.resolution));
@@ -630,10 +656,20 @@ function runSummaryNode(summary, options) {
       // that shows it, then the resolution in its own words, then any follow-up.
       var ending = endingOf(entry);
       var fix = node("div", "run-closure-fix");
-      fix.appendChild(typeof entry.fixCommit === "string"
+      var head = typeof entry.fixCommit === "string"
         ? line("run-closure-evidence", [ending.charAt(0).toUpperCase() + ending.slice(1) + " in ", [entry.fixCommit]])
-        : node("p", "run-closure-evidence", ending.charAt(0).toUpperCase() + ending.slice(1)));
-      fix.appendChild(node("p", "run-closure-resolution", entry.resolution));
+        : node("p", "run-closure-evidence", ending.charAt(0).toUpperCase() + ending.slice(1));
+      // A short opening verdict ("Adopted as written.") joins the head, so the body starts with what changed.
+      var resolution = String(entry.resolution);
+      var verdict = /^([^.;:()]{3,40})\.\s+(?=\S)/.exec(resolution);
+      if (verdict && verdict[1].split(/\s+/).length <= 5) {
+        head.appendChild(node("span", "run-closure-verdict", verdict[1]));
+        resolution = resolution.slice(verdict[0].length);
+      }
+      fix.appendChild(head);
+      var body = node("p", "run-closure-resolution");
+      body.appendChild(prose("", resolution));
+      fix.appendChild(body);
       if (typeof entry.deferredIssue === "string" && entry.deferredIssue) { fix.appendChild(followUpNode(entry.deferredIssue)); }
       disclosure.appendChild(fix);
     } else {
@@ -838,7 +874,7 @@ function runSummaryNode(summary, options) {
             var item = node("li", "run-finding is-" + severity.toLowerCase());
             // Summaries are sentences; one stored without its full stop gets one here.
             var said = node("span", "run-finding-line");
-            said.appendChild(node("span", "run-finding-text", sentenceOf(entry.summary)));
+            said.appendChild(prose("run-finding-text", sentenceOf(entry.summary)));
             if (!uniform && fate.band !== shared) {
               said.appendChild(document.createTextNode(" "));
               said.appendChild(node("span", "run-fate is-" + fate.kind, fate.words));
