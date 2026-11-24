@@ -1,0 +1,254 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3775",
+  "headline": "V26-3775: show a plan on the live and hosted views while it is being planned, on the chapter-pages live view",
+  "baseBranch": "integrate/plan-preview-views",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-23-plan-preview-views.md",
+  "laneBrief": "docs/plans/2026-11-23-plan-preview-views.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-23-plan-preview-views.lane-notes.md"
+  },
+  "context": {
+    "sections": []
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/delivery-views/references/delivery-plan.schema.json",
+        "skills/delivery-views/scripts/views_common.py",
+        "skills/delivery-views/assets/line-map.js",
+        "skills/delivery-views/assets/line-map.css",
+        "skills/delivery-views/assets/run-summary.js",
+        "tests/test_delivery_views_plan.py",
+        "tests/test_delivery_views_plan_fixtures.py",
+        "tests/delivery_views_page/line-map-plan.test.mjs",
+        "tests/delivery_views_page/line-map-plan-review.test.mjs",
+        "tests/delivery_views_page/line-map-plan-changes.test.mjs",
+        "tests/delivery_views_page/plan-fixtures.mjs",
+        "skills/plan-work/SKILL.md",
+        "skills/run-delivery/SKILL.md",
+        "skills/delivery-views/SKILL.md",
+        "skills/orchestrate-work/SKILL.md",
+        "docs/hosted-deliveries.md",
+        "docs/own-deliveries.md"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/run-delivery/scripts/run_delivery.py",
+        "tests/test_run_delivery_plan_preview.py",
+        "tests/test_run_delivery_plan_review.py",
+        "tests/test_run_delivery_hosted.py"
+      ]
+    },
+    "lane-3": {
+      "owns": [
+        "skills/orchestrate-work/scripts/render_state.py",
+        "skills/delivery-views/scripts/render.py",
+        "skills/delivery-views/assets/runs.js",
+        "skills/delivery-views/assets/runs.css",
+        "tests/test_orchestration_render.py",
+        "tests/test_delivery_views_render.py",
+        "tests/delivery_views_page/runs.test.mjs"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3776": {
+      "title": "Say \"agent review only\" and show decisions on a plan preview",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3776-1",
+          "text": "A preview with no round renders \"Agent review only · not reviewed yet · not approved by a person\"; with three open rounds, \"Agent review only · 3 review rounds · still open · not approved by a person\"; aligned and ended use their endings; handed renders \"Handed to delivery \" and never \"not approved by a person\"."
+        },
+        {
+          "id": "v26-3776-2",
+          "text": "For every preview fixture, the plan chapter's text matches no /approv/ case-insensitively outside the approvals fold's title node and the approval item nodes, and has no switcher and no \"Changes since approval\" fold."
+        },
+        {
+          "id": "v26-3776-3",
+          "text": "Every /approv/i string literal in run-summary.js has a preview wording in its table, apart from the named exact enum values it compares against and never displays (\"approve\")."
+        },
+        {
+          "id": "v26-3776-4",
+          "text": "The schema and validate_plan alike refuse an unknown preview field, delivery without handed, handed without delivery, a short commit, approval: \"approved\", layout: \"x\", a 601-character decision or plan, and 101 decisions."
+        },
+        {
+          "id": "v26-3776-5",
+          "text": "Every existing delivery plan fixture validates and renders byte for byte unchanged, and the existing row pinning \"Approved on round 3\" for a delivery plan stays green."
+        }
+      ]
+    },
+    "V26-3777": {
+      "title": "Mark preview servers and list them on the runs page",
+      "lane": "lane-3",
+      "criteria": [
+        {
+          "id": "v26-3777-1",
+          "text": "With only a preview server running, live --if-absent starts a standing server instead of returning the preview's address; with both running, it returns the standing server's."
+        },
+        {
+          "id": "v26-3777-2",
+          "text": "The runs page lists one row per verified preview with its local link and, when its preview.json names one, its hosted link."
+        },
+        {
+          "id": "v26-3777-3",
+          "text": "An unreadable or oversized preview.json drops only that row's title and hosted link, never the row or the page."
+        },
+        {
+          "id": "v26-3777-4",
+          "text": "With no preview, previews is absent from the view and the runs page and every golden are byte for byte unchanged."
+        }
+      ]
+    },
+    "V26-3778": {
+      "title": "Build a plan preview from a plan file and its review store",
+      "lane": "lane-2",
+      "after": [
+        "V26-3776"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3778-1",
+          "text": "A delivery-layout plan gives one unit per story with its lane, after keys, and its Scenarios: and Done when items as criteria; finish lines, approvals, out-of-scope (heading or Out of scope: list) and decisions are read, and the result passes validate_plan."
+        },
+        {
+          "id": "v26-3778-2",
+          "text": "outcome.summary equals the prefix plus the title, the record's headline equals it, and a 700-character title still gives at most 600 characters starting with the full prefix."
+        },
+        {
+          "id": "v26-3778-3",
+          "text": "A plan with no ## Stories gives layout: other, no units, an empty planned, and still validates."
+        },
+        {
+          "id": "v26-3778-4",
+          "text": "A rebuild with nothing changed writes and journals nothing; a rebuild after a new commit replaces plan.json and state.json and journals one plan.updated, with the folder's inode unchanged."
+        },
+        {
+          "id": "v26-3778-5",
+          "text": "Nothing is written outside the preview folder."
+        }
+      ]
+    },
+    "V26-3779": {
+      "title": "Serve and publish the preview, unasked, from plan-review",
+      "lane": "lane-2",
+      "after": [
+        "V26-3778",
+        "V26-3777"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3779-1",
+          "text": "With liveHome and hosted pointed at the test origin, plan-view --plan on a committed plan with no round prints both links; the local page shows stories by lane with criteria, the finish line, decisions, approvals, out-of-scope and \"Agent review only · not reviewed yet · not approved by a person\"; the origin holds a cut with the same preview member and an outcome.summary starting \"Plan preview (agent review only): \"."
+        },
+        {
+          "id": "v26-3779-2",
+          "text": "After plan-review prepare and reduce, the local page and hosted cut show the round with the live server pid, hosted watcher pid and preview folder inode unchanged."
+        },
+        {
+          "id": "v26-3779-3",
+          "text": "With neither liveHome nor hosted, the plan-review commands and plan-view print no preview line, build no record and start no process."
+        },
+        {
+          "id": "v26-3779-4",
+          "text": "After lead-setup adopts the store of a running preview, the last hosted cut carries approval: handed with the store's rounds, both pids are gone, and lead-setup's output and exit code are as without a preview."
+        },
+        {
+          "id": "v26-3779-5",
+          "text": "The standing server's runs page lists the running preview with its local and hosted links."
+        }
+      ]
+    },
+    "V26-3780": {
+      "title": "Make the preview the default posture in the workflows' docs",
+      "lane": "lane-1",
+      "after": [
+        "V26-3779"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3780-1",
+          "text": "Each named doc states its part as above, in outcome language with no ticket or plan-unit identifiers."
+        },
+        {
+          "id": "v26-3780-2",
+          "text": "Every corpus pin on the changed files is re-derived in the same change and stays green."
+        },
+        {
+          "id": "v26-3780-3",
+          "text": "Catalog entries, every selected profile and provenance.lock.json digests are refreshed through scripts/update-provenance.py, and scripts/validate-registry.py passes."
+        },
+        {
+          "id": "v26-3780-4",
+          "text": "The full local suite passes on macOS with Python 3.11 with --budget tests/suite-budget.json."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "V26-3776, V26-3777, V26-3778, V26-3779 and V26-3780 land on integrate/plan-preview-views through its merge queue, each with every criterion met",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "preview-end-to-end",
+      "label": "Preview end to end",
+      "text": "Finish lines 2, 3, 5, 6 and 7 of the plan hold in their fixture repositories at the integration head: plan-view prints both links, a review round reaches the local page and hosted cut with no restart, no preview without liveHome or hosted, the handed finish on adoption, and the runs page lists the preview",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "never-approved",
+      "label": "Never reads as approved",
+      "text": "A preview's plan chapter page matches no /approv/ outside the approvals fold title and its items, for every preview fixture, and every delivery-written plan fixture renders byte for byte as before, on the chapter-pages line map",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration head, with --workers 4 --budget tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base, carrying #488 and the stories, is reviewed for main, as the orchestrate-work guide's integration review says, and merged into main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "kwamina",
+    "grantedOn": "2026-11-24"
+  },
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}
