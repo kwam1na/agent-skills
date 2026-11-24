@@ -25,7 +25,10 @@ function chapter(id, form, at, head, setbacks = [], standing = []) {
 }
 function storied(ledger, chapters, { decisions = 0 } = {}) {
   const document = record({ queue: [item("APP-3666", "merged"), item("APP-3667", "merged"), item("APP-3668", "queued")] });
-  document.story = { schemaVersion: "story/1", state: "open", tones: [], beats: [], threads: [],
+  // One landing told, so the chapter tells the story rather than what it will tell before anything has happened.
+  const landed = { id: "b0", form: "entry", tone: "landed", altitudes: ["headline", "story", "everything"], entries: [], at: "2026-11-20T18:00:00Z",
+    words: { head: "APP-3667 landed.", line: "" } };
+  document.story = { schemaVersion: "story/1", state: "open", tones: [], beats: [landed], threads: [],
     digest: { landed: 2, pieces: 3, decisions, setbacks: { closed: 0, cost: 0, standing: [] },
       words: { head: "Two of three pieces landed so far.", line: "The narrator's own line." } },
     chapters, ...(ledger ? { ledger } : {}) };

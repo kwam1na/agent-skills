@@ -30,6 +30,9 @@ SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding='utf-8'))
 MAX_BYTES = 16 * 1024 * 1024
 MAX_SOURCE_BYTES = 128 * 1024 * 1024
 CREDENTIAL_KEY = re.compile(r'^(?:password|token|secret|api[_-]?key|credential|authorization|cookie)$', re.I)
+# A file link's key: the commit and the reference as the note wrote it. The schema holds the rule, so the receiver keeps
+# it too: a path that starts at the root or climbs out of the tree with a `.` or `..` segment never names a file in it.
+FILE_KEY = re.compile(SCHEMA['properties']['links']['properties']['files']['propertyNames']['pattern'])
 
 
 class ProjectionError(ValueError):
@@ -123,15 +126,24 @@ def _strings(value):
             yield from _strings(entry)
 
 
-def _url(value):
+def _url(value, *, fragment=False):
+    """An https address with a host and nothing else to it: no user, password, port other than 443 or query, and no
+    fragment unless ``fragment``, which a file link uses to open its file at a line."""
     if not isinstance(value, str) or re.search(r'[\x00-\x20\x7f\\]', value):
         return False
     try:
         url = urlsplit(value)
         return (url.scheme == 'https' and bool(url.hostname) and not url.username and not url.password
-                and url.port in (None, 443) and not url.query and not url.fragment)
+                and url.port in (None, 443) and not url.query and (fragment or not url.fragment))
     except ValueError:
         return False
+
+
+def _file_links(links: dict) -> dict:
+    """The file links a hosted page may carry: each keyed by a reference inside the reviewed tree and opening an https
+    address. Any other is left out, so one odd reference never costs the page its other links."""
+    return {key: href for key, href in links.items()
+            if isinstance(key, str) and FILE_KEY.fullmatch(key) and _url(href, fragment=True)}
 
 
 def encode(value: dict) -> bytes:
@@ -154,6 +166,9 @@ def validate(value: object, *, secret_values=()) -> None:
         urls = [*links['issues'].values(), *links['commits'].values(),
                 *(row['href'] for row in links['changes'].values())]
         if not all(_url(url) for url in urls):
+            raise ProjectionError('snapshot.unsafe_link')
+        files = links.get('files', {})
+        if not all(FILE_KEY.fullmatch(key) and _url(href, fragment=True) for key, href in files.items()):
             raise ProjectionError('snapshot.unsafe_link')
     except (RecursionError, KeyError, TypeError) as error:
         raise ProjectionError('snapshot.structure') from error
@@ -215,6 +230,13 @@ def project(document: dict, runs: dict, config: dict, *, source_fingerprint: str
     selected = {key: value for key, value in runs.items() if key in named}
     data = render.line_map_data(document, selected, config, theme_key='hosted-delivery', history=None,
                                 plan=plan, needs=needs, files=files, repository=repository)
+    # A review note's file reference opens its file on the forge, as on the local page, when the forge names a fileUrl
+    # and the reference names one file in the reviewed tree. Without one the links hold no files at all.
+    links = {key: value for key, value in data['links'].items() if key != 'files'}
+    files = _file_links(data['links'].get('files') or {})
+    if files:
+        links['files'] = files
+    data = {**data, 'links': links}
     value = copy.deepcopy({'schemaVersion': SCHEMA['properties']['schemaVersion']['const'],
                            'sourceFingerprint': source_fingerprint, **data})
     _without_capabilities(value)

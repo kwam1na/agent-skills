@@ -45,10 +45,12 @@ function said(shown) {
 test("the chapter draws a folded group per sibling: since when each has shown no change, or why it can't be read", async () => {
   const doc = document([sibling("backend", stories("building", "merged")), sibling("payments", stories("review"), "unavailable"),
     sibling("web", [], "never")]);
-  const [shown, opened] = await open(doc, { steps: [{ toggle: "#across .across-fold" }] });
+  const [shown, paged, opened] = await open(doc, { steps: [{ click: '.rail a[href="#across"]' }, { toggle: "#across .across-fold" }] });
   const chapter = shown.app.querySelector("#across");
-  expect(chapter.hidden).toBe(false);
+  // Each chapter is its own page: the rail names this one, and following it shows it alone.
   expect(shown.app.querySelector('.rail a[href="#across"]').hidden).toBe(false);
+  expect(chapter.hidden).toBe(true);
+  expect([...paged.app.querySelectorAll(".chapter")].filter((node) => !node.hidden).map((node) => node.id)).toEqual(["across"]);
   // After What's left, on the page and on the rail.
   const order = [...shown.app.querySelectorAll(".chapter")].map((node) => node.id);
   expect(order.indexOf("across")).toBe(order.indexOf("left") + 1);
@@ -106,7 +108,10 @@ test("a sibling that can't be read now never lets the done headline show", async
 
 test("before every own story has landed, the headline is today's whatever the siblings say", async () => {
   const [shown] = await open(document([sibling("backend", stories("building"))], { landed: false }));
-  expect(said(shown)).toEqual({ title: "0 of 1 pieces have landed", across: [] });
+  // With nothing landed yet, Now looks ahead: no count, the pieces to land as a figure, and no part-done line.
+  expect(shown.app.querySelector("#now .now-count")).toBeNull();
+  expect([...shown.app.querySelectorAll("#now .ready .ready-cell")].map((cell) => cell.textContent)).toEqual(["1piece to land", "1lane"]);
+  expect(shown.app.querySelector("#now .say-across")).toBeNull();
 });
 
 test("a sibling of another epic is named under Also linked, without stories, and isn't named in the headline", async () => {
@@ -125,7 +130,7 @@ test("a sibling of another epic is named under Also linked, without stories, and
   expect(also.querySelector("li")).toBeNull();
   // With only another epic's group the chapter still names it, and says no other repository delivers this epic.
   const [alone] = await open(document([sibling("legacy", stories("building"), "other-epic")]));
-  expect(alone.app.querySelector("#across").hidden).toBe(false);
+  expect(alone.app.querySelector('.rail a[href="#across"]').hidden).toBe(false);
   expect(alone.app.querySelector("#across .title").textContent).toBe("No other repository delivers this epic.");
   expect(alone.app.querySelector("#across .across-fold")).toBeNull();
   expect(alone.app.querySelector("#across .across-also .across-head").textContent).toBe("legacyDelivers another epic since 5 minutes ago");
@@ -150,14 +155,18 @@ test("a record with no siblings has no chapter and no rail link, and a sibling n
   expect(shown.app.querySelector("#across")).toBeNull();
   expect(shown.app.querySelector('.rail a[href="#across"]')).toBeNull();
   expect(shown.app.querySelector("#now .say-across")).toBeNull();
-  expect(pushed.app.querySelector("#across").hidden).toBe(false);
+  expect(pushed.app.querySelector('.rail a[href="#across"]').hidden).toBe(false);
   const rail = [...pushed.app.querySelectorAll(".rail a")].map((link) => link.getAttribute("href"));
   expect(rail.indexOf("#across")).toBe(rail.indexOf("#left") + 1);
   // A record whose siblings are all removed hides the chapter again.
+  let tabbed;
   const [, , emptied] = await open(document([sibling("backend", stories("building"))]), { store: { read: "pending" },
-    steps: [{ run: () => {} }, { push: document([]) }] });
+    steps: [{ run: () => {} }, { push: document([]) }, { click: ".chapter-tab-button" },
+      { run: (window) => { tabbed = [...window.document.querySelectorAll(".chapter-tab-list a")].map((link) => link.getAttribute("href")); } }] });
   expect(emptied.app.querySelector("#across").hidden).toBe(true);
   expect(emptied.app.querySelector('.rail a[href="#across"]').hidden).toBe(true);
+  // Nor do the chapters tab and the pages it steps through name the emptied chapter.
+  expect(tabbed).toEqual(["#now", "#line", "#who", "#left", "#happened", "#parked"]);
 });
 
 // orchestrate-work's built-in page prints the same words: the part-done line under the status, then a folded group per
