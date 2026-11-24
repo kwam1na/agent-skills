@@ -176,11 +176,30 @@ Out of scope:
   - the plan switcher ("As amended" / "As approved") is not drawn;
   - the "Changes since approval" fold, its scope sentence ("The scope is as
     approved: …") and its scope chart are not drawn;
-  - the plan-review fold speaks without "Approved": `reviewFold` passes a
-    `preview` option through `runSummaryNode`, and `run-summary.js` then says
-    "Lenses aligned on round N" where it says "Approved on round N", and "Aligned"
-    where its round pill says "Approved". Without the option, run summaries read
-    exactly as today;
+  - the plan-review fold speaks without "approve" in any form: `reviewFold`
+    passes a `preview` option through `runSummaryNode`, and under it every
+    approving string `run-summary.js` produces takes its aligned wording:
+    - the story head: "Approved on the first round" becomes "Lenses aligned on
+      the first round", "Approved on round N" becomes "Lenses aligned on round
+      N", and "Round N approved, notes open" becomes "Round N aligned, notes
+      open";
+    - `outcomeWords`: "approved" becomes "aligned" and "approved, notes open"
+      becomes "aligned, notes open";
+    - `verdictWords`, the per-lens verdict in a round card: "approved" becomes
+      "aligned";
+    - the round pill: "Approved", "Approved with N deferrable note(s)" and
+      "Approved, notes open" become "Aligned", "Aligned with N deferrable
+      note(s)" and "Aligned, notes open";
+    - the plan review's no-bound line: "until every lens approves" becomes "until
+      every lens aligns".
+
+    The wordings sit in one table in `run-summary.js`, and a page-lane row scans
+    the file's string literals: every literal matching `/approv/i` must have a
+    preview wording in that table, so a string added later fails the row until it
+    has one. Without the option, run summaries read exactly as today;
+  - the plan's clipped note ("The plan was too large to show whole …"), which
+    sits in the changes fold, is drawn at the end of the plan chapter instead, so
+    a preview over its share still says so;
   - a "Decisions" fold shows `preview.decisions`, and for `layout: other` one line
     says the plan is not in the delivery layout and so shows no stories.
 
@@ -426,6 +445,14 @@ the files `line-map-plan.test.mjs`, `line-map-plan-review.test.mjs`,
     "Changes since approval" fold;
   - the no-round and three-rounds-open fixtures' chapter text equals its expected
     full string;
+  - the `/approv/` check also runs over fixtures that reach every approving
+    branch: aligned on round 1, aligned on round 3, a round with notes open, an
+    aligned round carrying a deferrable note, and the three-rounds-open fixture,
+    whose last round has one lens aligned and another asking for changes (so the
+    per-lens verdict is drawn);
+  - the string-literal scan finds a preview wording for every `/approv/i` literal
+    in `run-summary.js`, and fails when one is planted without a wording;
+  - a preview over its page share shows the clipped note;
   - the aligned preview's review fold says "Lenses aligned on round N", while the
     existing plan-review row pinning "Approved on round 3" for a delivery plan
     stays green;
