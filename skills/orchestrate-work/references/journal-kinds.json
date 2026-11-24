@@ -612,6 +612,18 @@
         "failed",
         "unreadable"
       ]
+    },
+    "seat": {
+      "description": "A seat of a shared record: s- and 12 lowercase hex characters.",
+      "type": "string",
+      "pattern": "^s-[0-9a-f]{12}$"
+    },
+    "partitionHeld": {
+      "description": "Why a peer's partition is held: its writer generation differs, or its slice would leave the record invalid.",
+      "enum": [
+        "generation_differs",
+        "slice_invalid"
+      ]
     }
   },
   "kinds": {
@@ -3055,6 +3067,147 @@
       "explain": "Another delivery on the same main line changed a file a piece here names.",
       "tracker": null,
       "instruction": "None: the supervisor journals a merge by another delivery on the base that changed a file one of this delivery's open stories names, and the entry shows in the record and the views."
+    },
+    "seat.requested": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Seat asked",
+      "data": {
+        "seat": {
+          "type": "seat"
+        },
+        "label": {
+          "type": "name"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{label} asked to join the delivery",
+        "line": "As seat {seat}"
+      },
+      "explain": "A checkout asked to write this shared record, as a new seat the delivery holder admits.",
+      "tracker": null,
+      "instruction": "None: a checkout joined a shared record's catch-up as a new seat, and the entry shows in the record and the views."
+    },
+    "seat.admitted": {
+      "altitude": "bookkeeping",
+      "tone": "decision",
+      "label": "Seat admitted",
+      "data": {
+        "seat": {
+          "type": "seat"
+        },
+        "label": {
+          "type": "name"
+        },
+        "approver": {
+          "type": "flag"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [
+        "seat.requested"
+      ],
+      "opensThread": false,
+      "words": {
+        "head": "{label} joined the delivery",
+        "line": {
+          "by": "approver",
+          "cases": {
+            "true": "As seat {seat}, approving the plan"
+          },
+          "otherwise": "As seat {seat}, without approving the plan"
+        }
+      },
+      "explain": "The delivery holder admitted a seat, which may now write the shared record.",
+      "tracker": null,
+      "instruction": "None: the delivery holder admitted a seat to the shared record, and the entry shows in the record and the views."
+    },
+    "seat.labeled": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Seat renamed",
+      "data": {
+        "seat": {
+          "type": "seat"
+        },
+        "label": {
+          "type": "name"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "Seat {seat} is now shown as {label}",
+        "line": "A label is only shown, never read to decide anything"
+      },
+      "explain": "A seat changed the label the views show for it.",
+      "tracker": null,
+      "instruction": "None: a seat's label is display only, and the entry shows in the record and the views."
+    },
+    "partition.held": {
+      "altitude": "story",
+      "tone": "problem",
+      "label": "Seat held",
+      "data": {
+        "seat": {
+          "type": "seat"
+        },
+        "reason": {
+          "type": "partitionHeld"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "Seat {seat}'s updates are held",
+        "line": {
+          "by": "reason",
+          "cases": {
+            "generation_differs": "It writes with another release's writer: its updates are read once both machines run the same one"
+          },
+          "otherwise": "Its updates would leave this record invalid"
+        }
+      },
+      "explain": "This machine stopped reading a peer seat's updates, and names why.",
+      "tracker": null,
+      "instruction": "None: Needs you names a held peer partition on the machine that reads it, and the entry shows in the record and the views."
+    },
+    "partition.resumed": {
+      "altitude": "story",
+      "tone": "landed",
+      "label": "Seat read again",
+      "data": {
+        "seat": {
+          "type": "seat"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [
+        "partition.held"
+      ],
+      "opensThread": false,
+      "words": {
+        "head": "Seat {seat}'s updates are read again",
+        "line": "What was held is in this record now"
+      },
+      "explain": "This machine reads a peer seat's updates again, after holding them.",
+      "tracker": null,
+      "instruction": "None: the partition held earlier is ingested again, and the entry shows in the record and the views."
     },
     "delivery.closed": {
       "altitude": "headline",

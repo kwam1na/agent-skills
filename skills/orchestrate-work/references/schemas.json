@@ -555,6 +555,93 @@
                 "pattern": "^[0-9a-f]{64}$"
               }
             }
+          },
+          "phase": {
+            "description": "Optional, the delivery holder's: planning while a shared record's plan is drafted, delivery once lead-init adopts it. Absent means delivery.",
+            "enum": [
+              "planning",
+              "delivery"
+            ]
+          },
+          "collab": {
+            "description": "Present only on a shared record, which plan-open creates; a record without it is unshared and behaves as it always has. Its key names the partition refs and each checkout's seat. Its seats are derived from the seat.requested, seat.admitted and seat.labeled entries and never written directly. Its peers and heldReason are this machine's own and never carried to another.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "seats",
+              "peers"
+            ],
+            "properties": {
+              "key": {
+                "description": "The delivery key, fixed when the shared record is created: refs/agent-skills/<key>/<seat> and the git setting agent-skills.seat.<key> are named by it.",
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9-]{0,63}$"
+              },
+              "seats": {
+                "description": "Each seat by id: its latest label, shown only and never read to decide anything, whether the delivery holder has admitted it, and whether it approves the plan.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "label",
+                    "admitted",
+                    "approver"
+                  ],
+                  "properties": {
+                    "label": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "admitted": {
+                      "type": "boolean"
+                    },
+                    "approver": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              },
+              "peers": {
+                "description": "Machine-local: each other seat whose partition this machine has fetched, by id: the last seq of it ingested, when it was last fetched, and why it is held, or null while it is ingested.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "through",
+                    "fetchedAt",
+                    "heldReason"
+                  ],
+                  "properties": {
+                    "through": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "fetchedAt": {
+                      "$ref": "#/$defs/timestamp"
+                    },
+                    "heldReason": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/$defs/partitionHeld"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "heldReason": {
+                "description": "Machine-local: seat_split once this checkout's push found its seat's chain on the remote diverged from its own; every later write from this checkout is refused, and collab join --new-seat gives it a fresh seat.",
+                "enum": [
+                  "seat_split"
+                ]
+              }
+            }
           }
         }
       },
@@ -1681,6 +1768,18 @@
             }
           }
         }
+      },
+      "seat": {
+        "description": "A seat's id: s- and 12 lowercase hex characters, made when the seat is created.",
+        "type": "string",
+        "pattern": "^s-[0-9a-f]{12}$"
+      },
+      "partitionHeld": {
+        "description": "Why a peer's partition is held, not ingested: its writer generation differs from this one's, or its slice would leave the record invalid.",
+        "enum": [
+          "generation_differs",
+          "slice_invalid"
+        ]
       }
     }
   },
@@ -1765,6 +1864,34 @@
             "type": "null"
           }
         ]
+      },
+      "origin": {
+        "description": "Present on every entry of a shared record and on none of an unshared one: the seat that wrote the entry, its seq, dense from 1 for each seat, and seen, the last seq of each other seat that seat had ingested when it wrote it. An entry is ingested only once every entry its seen names is present. because and answers still name local ids here: a partition carries them by origin, and ingest translates them.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "seat",
+          "seq",
+          "seen"
+        ],
+        "properties": {
+          "seat": {
+            "description": "A seat's id: s- and 12 lowercase hex characters, made when the seat is created.",
+            "type": "string",
+            "pattern": "^s-[0-9a-f]{12}$"
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "seen": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
       }
     }
   },
@@ -4561,6 +4688,114 @@
       "claimId": {
         "type": "string",
         "pattern": "^[0-9a-f]{32}$"
+      }
+    }
+  },
+  "delivery-partition/1": {
+    "$id": "urn:agent-skills:orchestrate-work:delivery-partition:1",
+    "title": "delivery-partition/1",
+    "description": "One seat's partition of a shared record, the partition.json of each commit on refs/agent-skills/<key>/<seat>, beside journal.jsonl, that seat's own entries in seq order with their links by origin. Every other seat fetches it and ingests it into its own record.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "seat",
+      "generation",
+      "through",
+      "slice"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "delivery-partition/1"
+      },
+      "seat": {
+        "$ref": "#/$defs/seat"
+      },
+      "generation": {
+        "description": "The writer generation of the seat's record, or null for an unpinned one. A partition whose archiveSha256 differs from the reader's own pin is held, never ingested, until the lagging machine upgrades.",
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "releaseId",
+              "archiveSha256"
+            ],
+            "properties": {
+              "releaseId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "archiveSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        ]
+      },
+      "through": {
+        "description": "The seat's last own seq: journal.jsonl holds its entries 1 to through.",
+        "type": "integer",
+        "minimum": 0
+      },
+      "slice": {
+        "description": "Every value of the record this seat's own writes set, each by path and with the origin of the write that set it. A path names the record's own fields: meta/<field>, a top-level field, a keyed array's presence as <array>[], one of its elements by the patch layer's keyed selector, such as queue[subject=K], and a field of one, such as queue[subject=K]/stage; never an index. An entry carries removed: true in place of value for an element or field its writer deleted. regionsSettled, and a queue element's leadSelection.reuse.decision, name journal entries: they are carried by origin and translated to local ids on ingest.",
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/sliceEntry"
+        }
+      }
+    },
+    "$defs": {
+      "seat": {
+        "description": "A seat's id: s- and 12 lowercase hex characters, made when the seat is created.",
+        "type": "string",
+        "pattern": "^s-[0-9a-f]{12}$"
+      },
+      "origin": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "seat",
+          "seq"
+        ],
+        "properties": {
+          "seat": {
+            "$ref": "#/$defs/seat"
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "sliceEntry": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "origin"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "origin": {
+            "$ref": "#/$defs/origin"
+          },
+          "value": {
+            "description": "The value the write set; absent when removed is true."
+          },
+          "removed": {
+            "const": true
+          }
+        }
       }
     }
   }

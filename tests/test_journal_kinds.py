@@ -133,6 +133,11 @@ TABLE = {
     "compounding.recorded": ("H", "decision", "outcome reference? *why?*", "", "epic: Compounding decided"),
     "hook.held": ("S", "note", "hook verdict lanes? pieces?", "", "-"),
     "peer.merged": ("S", "note", "peer head files", "", "-"),
+    "seat.requested": ("B", "note", "seat label", "", "-"),
+    "seat.admitted": ("B", "decision", "seat label approver", "answers:seat.requested", "-"),
+    "seat.labeled": ("B", "note", "seat label", "", "-"),
+    "partition.held": ("S", "problem", "seat reason", "", "-"),
+    "partition.resumed": ("S", "landed", "seat", "answers:partition.held", "-"),
     "delivery.closed": ("H", "landed", "skipped?", "", "epic: Delivery closed"),
 }
 ALTITUDES = {"H": "headline", "S": "story", "B": "bookkeeping"}

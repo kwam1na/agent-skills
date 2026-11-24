@@ -281,6 +281,11 @@ the lead and the lanes make them instead, as the commands print them.
 | `compounding.recorded` | On the epic: whether a learning was preserved and where, or why none was, or why the decision was skipped. | the epic | Compounding decided |
 | `hook.held` | None: a host hook held, or warned about, a lead's stop while no listener ran, and the entry shows in the record and the views. | nowhere | - |
 | `peer.merged` | None: the supervisor journals a merge by another delivery on the base that changed a file one of this delivery's open stories names, and the entry shows in the record and the views. | nowhere | - |
+| `seat.requested` | None: a checkout joined a shared record's catch-up as a new seat, and the entry shows in the record and the views. | nowhere | - |
+| `seat.admitted` | None: the delivery holder admitted a seat to the shared record, and the entry shows in the record and the views. | nowhere | - |
+| `seat.labeled` | None: a seat's label is display only, and the entry shows in the record and the views. | nowhere | - |
+| `partition.held` | None: Needs you names a held peer partition on the machine that reads it, and the entry shows in the record and the views. | nowhere | - |
+| `partition.resumed` | None: the partition held earlier is ingested again, and the entry shows in the record and the views. | nowhere | - |
 | `delivery.closed` | On the epic: the close-out summary; the epic moves to its final state. | the epic | Delivery closed |
 
 The lead posts the updates in this table, including every cross-lane
