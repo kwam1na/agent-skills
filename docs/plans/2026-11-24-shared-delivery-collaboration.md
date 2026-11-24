@@ -227,6 +227,8 @@ Out of scope:
         the token (D12);
       - `trackerThrough`, only while the seat holds `delivery`: `{seat: seq}`, the
         last origin of each seat the tracker publisher has posted (D12);
+      - the carried inputs of D21 for the scopes the seat holds, and its
+        `checkoutsLeft`;
     - `journal.jsonl`: the author's own-origin entries in seq order.
   - **Push:** fast-forward only, never forced. A rejected push re-reads the remote
     ref.
@@ -458,14 +460,27 @@ Out of scope:
 
     | Step | Runs on |
     | --- | --- |
-    | `reconcile`, `regions`, `peers`, `finish`, `deferrals`, `publish` (the hosted and tracker publishers), close-out (`cleanupBeforeClose`, the friction stub, `close_out`) | the `delivery` holder's machine only |
+    | `reconcile`, `regions`, `peers`, `finish`, `publish` (the hosted and tracker publishers), close-out (`cleanupBeforeClose`, the friction stub, `close_out`) | the `delivery` holder's machine only |
     | `fullHealth` | the `queue` holder's machine only |
-    | `lenses`, `cleanup` | every seat, for the stories of lanes that seat holds only, because their checkouts and results live there |
+    | `lenses`, `cleanup`, `deferrals` | every seat, for the stories of lanes that seat holds only, because their checkouts, review rounds and evidence live there |
     | `blockers` | every seat, journalling only blockers about its own supervisor's children |
     | `peerWaits`, `laneChanges`, `needs`, `render`, `latest` | every seat; they write only files beside the local record, which are never sliced |
 
     A COLLAB-8 test reads the step names from `one_pass` and fails on a step
     missing from this table.
+  - **Close-out on a shared record.** It reads only what D21 makes available on
+    the `delivery` holder's machine:
+    - **full health:** when the `delivery` holder does not hold `queue`,
+      `full_health_step` launches nothing. It waits for the queue holder's result
+      at the base head, carried by D21.
+    - **cleanup:** the "not cleaned up" hold reads the local check together with
+      every admitted peer's `checkoutsLeft` (D21).
+    - **follow-ups:** `followups_step` reads deferred findings from the record's
+      `deferral.held` entries (D21), not from lane folders.
+  - **Handing over a lane** (`collab give lane:<id>`) refuses with
+    `scope.handover_busy` while that lane has a merged or settled story whose
+    checkout is still on the outgoing machine, naming it. The outgoing seat
+    cleans it first.
   - The hosted and tracker publishers are the `publish` step, so only the
     `delivery` holder's supervisor runs them.
   - On a shared record the tracker marker uses `<seat>.<seq>` in place of the
@@ -535,6 +550,29 @@ Out of scope:
   - Binding seats to people means signed partition commits checked against
     admitted keys. That is a separate unit, out of scope here.
 
+- **D21. Every machine-local input has a rule.** On a shared record, every file
+  a supervisor step or lead command reads that lives on one machine is one of
+  three kinds:
+  - **local:** only that machine's own steps read it;
+  - **carried:** its holder's partition carries it, and peers ingest it;
+  - **replaced:** on a shared record, the journal stands in for it.
+
+  | Input | Rule |
+  | --- | --- |
+  | flow log `supervisor`, `prepares`, `app-checks`; `sessions.json`; `needs-you.json`; `lane-changes.json`; the peer registry under the git common directory; the machine ledger | local |
+  | flow log `acceptance` | carried by `lane:<L>`'s holder, keyed by subject and head, because every seat's Needs you reads it |
+  | flow log `full-health` (`result` and `rerun` entries, keyed by head) | carried by `queue`'s holder. On a shared record `note_posture` runs only on the `queue` holder |
+  | flow log `resolutions` | carried by the resolving seat, keyed by the resolved entry's origin and translated on ingest |
+  | flow log `finish` | replaced: a line counts as marked when the record holds its `finish.met` |
+  | flow log `peers` | replaced: `peer_merges` skips a merge when the record already holds a `peer.merged` with the same `subject`, `peer` and `head`, whatever its origin |
+  | lane checkouts and `evidence_dir` | local to the lane holder. The lane holder's partition carries `checkoutsLeft`: the subjects of its lanes' merged or settled stories whose checkout still exists there. It journals each merged story's deferred findings once as `deferral.held` (`finding`, `title`) |
+  | `plan-changes.jsonl`, the plan-review store, and the `plan.json` built from them | carried by `delivery`'s holder: its partition carries its built `plan.json`, which other seats use instead of building their own |
+  | the friction stub | carried by `delivery`'s holder, so a handover keeps it |
+  | hosted sidecars and the tracker ledger | carried by `delivery`'s holder (D12) |
+
+  A COLLAB-8 test finds every flow-log name passed to `read_log` or `append_log`
+  in `run_delivery.py`, and fails on a name missing from this table.
+
 - **D20. Every refusal, and what its test checks.**
   - **Codes:**
 
@@ -550,7 +588,7 @@ Out of scope:
     | `plan.push_exhausted` | the sixth rejected `plan-sync` push |
     | `scope.not_held` | a write, transfer, admission, re-key or feedback resolution by a non-holder; a runner write on a machine not holding `queue` |
     | `queue.not_held` | `merge_queue.py serve` started where the seat does not hold `queue` |
-    | `scope.handover_busy` | a `queue` or `delivery` handover past its `--wait` |
+    | `scope.handover_busy` | a `queue` or `delivery` handover past its `--wait`; a lane handover while the lane has a checkout left on the outgoing machine |
     | `plan.endorsement_missing`, `plan.endorsement_stale`, `plan.not_aligned`, `plan.feedback_blocking` | `lead-init`'s joint approval (D11), in that order |
     | `plan.uncommitted`, `plan.no_review_slug` | `plan-open` on a plan not committed at HEAD, or without `reviewSlug` |
     | `plan.draft_conflict` | `validate_plan` on a plan with both `draft` and `approved`, or neither |
@@ -819,6 +857,10 @@ Lane 1, tier 1, not blocked. Characterization-first. Files: `skills/orchestrate-
   - `delivery` edits `planned[subject=K].after` on `a` while `b`'s lane accepts
     K on `b`. Both machines end with K absent from `planned` and present in
     `queue`, whichever order the entries arrive in;
+  - after K's removal is ingested on both machines, a seat that may create K
+    writes a field of K, and both machines end with K re-created;
+  - after the same removal, a seat that may not create K writes a field of K,
+    and both machines keep K absent;
   - an element removed on one machine is absent on both after exchange, and a
     removal by a seat without a permitted scope is ignored;
   - a checkout with no seat ingests every admitted partition into a new record,
@@ -859,6 +901,7 @@ Lane 1, tier 2, after COLLAB-2. Test-first. Files: `skills/orchestrate-work/scri
   - `plan.endorsed` (`commit`);
   - `plan.seen` (`commit`);
   - `plan.rekeyed` (`from`, `to`, `map`);
+  - `deferral.held` (`finding`, `title`), a `lane:<L>` kind;
   - `feedback.raised` (`anchor`, `text`, `blocking`);
   - `feedback.resolved` (`outcome` is `accepted`, `declined` or `answered`, plus
     `reason`), linked by `answers`.
@@ -1096,7 +1139,26 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
   - a merged story of `b`'s lane yields one `cleanup.done`, journalled by `b`;
   - lens returns of `b`'s lane's round are journalled once by `b` and reach both
     records;
-  - the step-table test fails on a planted step missing from D12's table;
+  - the step-table test fails on a planted step missing from D12's table, and
+    the input-table test fails on a planted flow-log name missing from D21's;
+  - **cleanup and close:** with every finish line met, `a` holding `delivery` and
+    `b` holding a lane whose story has merged, the close waits until `b`'s cleanup
+    journals `cleanup.done` and its `checkoutsLeft` empties. Then exactly one
+    `delivery.closed` is journalled, by `a`, and it reaches both records; `b`'s
+    pass runs no close-out step;
+  - handing that lane to `a` while the story's checkout is on `b` gives
+    `scope.handover_busy`, and succeeds after `b`'s cleanup;
+  - **full health:** `b`, holding `queue`, runs fullHealth at H. After the scopes
+    move to `a` and the close runs, there is one fullHealth run at H across both
+    machines and one posture note;
+  - **peers after a handover:** `a` journals a peer merge, `delivery` moves to
+    `b`, and `b`'s next pass journals no second `peer.merged`;
+  - **deferrals:** a finding deferred in `b`'s lane yields one `deferral.held` by
+    `b` and one follow-up filed by `a`'s close-out. Under `noDeferrals` it yields
+    one `deferral.breached`, journalled by `b`, which holds the close on both
+    machines;
+  - **resolutions and acceptances:** a blocker resolved on `a` disappears from
+    `b`'s Needs you, and an acceptance on `b` shows as ready in `a`'s Needs you;
   - a supervisor restart keeps its roles;
   - a write on one machine reaches the peer's record within two
     `collab.pollSeconds` ticks plus one push, with no explicit sync command.
@@ -1164,6 +1226,6 @@ Lenses: the repository's declared plan lenses. Each lens raises every finding it
 can state in round 1, ends its evidence with approval conditions, and in later
 rounds raises a new finding on unchanged text only at P0 or P1.
 
-The decisions D1-D20 and each story's pin inventory are where a lens checks
+The decisions D1-D21 and each story's pin inventory are where a lens checks
 completeness. A lens that finds an unlisted pin, integer-id reader or field
 without a scope raises it as a finding against the relevant decision or story.
