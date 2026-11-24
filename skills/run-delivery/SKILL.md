@@ -333,7 +333,7 @@ offers less otherwise, the workflow takes the path on the right:
 
 **Live addresses open in a browser.** Each live view or hosted address a command prints is opened for the operator in
 the same turn, unasked: `lead-init`'s and `lead-run`'s live view, the hosted URL `doctor` and `view` show, the live
-view a status line names, and `plan-view`'s `plan preview` links. Where the host has an in-app browser pane, the agent
+view a status line names, and the `plan preview` links `plan-view` and the `plan-review` commands print. Where the host has an in-app browser pane, the agent
 opens the address there, and also presents it as a card that opens it in that pane where the host can show one. Where
 the host has no such pane, the agent opens the address in the operator's own browser, and only prints it when it can
 open it in neither. Opening is the agent's step, through whatever the host offers; no command opens anything.

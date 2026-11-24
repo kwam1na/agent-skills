@@ -16,7 +16,7 @@ ORCHESTRATE = "skills/orchestrate-work/SKILL.md"
 OPEN_RULE = (
     "Each live view or hosted address a command prints is opened for the operator in the same turn, unasked: "
     "`lead-init`'s and `lead-run`'s live view, the hosted URL `doctor` and `view` show, the live view a status line "
-    "names, and `plan-view`'s `plan preview` links.",
+    "names, and the `plan preview` links `plan-view` and the `plan-review` commands print.",
     "Where the host has an in-app browser pane, the agent opens the address there, and also presents it as a card "
     "that opens it in that pane where the host can show one.",
     "Where the host has no such pane, the agent opens the address in the operator's own browser, and only prints it "
@@ -57,6 +57,23 @@ def _document(relative: str) -> str:
     return re.sub(r"\s+", " ", (ROOT / relative).read_text(encoding="utf-8"))
 
 
+def _between(text: str, start: str, end: str) -> str:
+    at = text.index(start)
+    return text[at:text.index(end, at + len(start))]
+
+
+def delivered_passages() -> dict[str, str]:
+    """The passages that carry the two rules, read from the files: each runs from its opening words to what follows it."""
+    run_delivery, kernel, orchestrate = _document(RUN_DELIVERY), _document(KERNEL), _document(ORCHESTRATE)
+    return {
+        "run-delivery Host behaviour": _between(run_delivery, "**Live addresses open in a browser.**",
+                                                "## Where lanes read the delivery"),
+        "run-delivery Running lanes": _between(run_delivery, "- Every lane starts up front.", " - "),
+        "compound-delivery-kernel": _between(kernel, "### The live view", "## Handoff"),
+        "orchestrate-work": _between(orchestrate, "**The live view.**", "```bash"),
+    }
+
+
 class LiveAddressRuleTests(unittest.TestCase):
     def test_run_delivery_opens_every_address_a_command_prints(self) -> None:
         text = _document(RUN_DELIVERY)
@@ -78,9 +95,10 @@ class LiveAddressRuleTests(unittest.TestCase):
                 self.assertIn(phrase, section)
 
     def test_the_rules_name_no_host_or_host_tool(self) -> None:
-        passages = [*OPEN_RULE, *ONE_SENTENCE.values(), *LANES_UP_FRONT]
-        for passage in passages:
-            with self.subTest(passage=passage[:50]):
+        # Each passage as the files hold it, whole, so a name added beside the pinned sentences is found too.
+        for name, passage in delivered_passages().items():
+            with self.subTest(passage=name):
+                self.assertTrue(passage)
                 self.assertIsNone(HOST_NAMES.search(passage))
 
     def test_the_host_name_scan_is_not_vacuous(self) -> None:
