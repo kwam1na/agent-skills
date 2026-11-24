@@ -10839,6 +10839,7 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
         help_text = sh(sys.executable, "-B", self.tool, "--help", cwd=tempfile.gettempdir(), env=clean_environment()).stdout
         commands = set(re.search(r"\{([a-z,-]+)\}", help_text).group(1).split(","))
         self.assertTrue(named)
+        self.assertLessEqual({"plan-sync", "plan-watch"}, named & commands)
         self.assertLessEqual(named, commands, f"the guide or skill text names commands the tool lacks: {named - commands}")
         # Its queue and state commands are the release's own.
         for script, command in re.findall(r"orchestrate-work/scripts/(\w+\.py) [^\n]*? (run|journal) ", text):

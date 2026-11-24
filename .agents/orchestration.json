@@ -1133,6 +1133,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_plan_sync",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_plan_sync.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_plan_sync.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_product_descriptors",
         "argv": [
           ".venv/bin/python",

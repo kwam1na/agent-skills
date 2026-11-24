@@ -28,6 +28,7 @@ CATALOGUE_MODULES = (
     "measure_test_writes",
     "merge_occurrence", "merge_queue", "narrator", "no_current_set_names", "orchestration_adopter", "orchestration_render",
     "orchestration_state", "own_deliveries", "ownership_lock_race", "product_descriptors", "product_launcher", "product_release",
+    "plan_sync",
     "profile_inventory", "provenance", "provider_qualification", "qualification", "readme", "receipt", "region_claims", "region_grants", "registry",
     "release_archive", "release_channel", "release_entry_budget", "release_integration", "review_and_compounding",
     "review_base_reopening", "review_bound_corpus", "review_grace", "review_orchestration", "round_brief_template_corpus",
