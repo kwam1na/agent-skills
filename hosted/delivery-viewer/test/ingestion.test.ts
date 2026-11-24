@@ -240,6 +240,10 @@ describe('independent transport contract guards', () => {
       value.links.files={[key]:href};
       expect((await upload(publicId,sequence++,value)).status,`${key} -> ${href}`).toBe(400);
     }
+    // The fragment a file link keeps never carries over to an issue link.
+    value.links.files={};
+    value.links.issues={'APP-1':'https://example.com/issue/APP-1#x'};
+    expect((await upload(publicId,sequence++,value)).status).toBe(400);
     expect(await (await current(publicId)).json()).toMatchObject({sequence:1});
   });
   it('enforces exactly sixteen MiB on finite chunked input without a length hint', async () => {

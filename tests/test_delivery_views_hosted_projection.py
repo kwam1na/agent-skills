@@ -300,6 +300,14 @@ class ProjectionTests(unittest.TestCase):
         bad['links']['issues']['APP-1'] = 'https://user:pass@example.com/a'
         with self.assertRaisesRegex(public.ProjectionError, '^snapshot.unsafe_link$'):
             public.validate(bad)
+        # Only a file link keeps a fragment, to open its file at a line; an issue, commit or change link never does.
+        fragment = copy.deepcopy(value)
+        fragment['links']['issues']['APP-1'] = 'https://example.com/issue/APP-1#x'
+        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.unsafe_link$'):
+            public.validate(fragment)
+        # As many file links as a page may hold fit in a cut.
+        self.assertEqual(public.SCHEMA['properties']['links']['properties']['files']['maxProperties'],
+                         render.FILE_LINKS_MAX)
 
     def reviewed(self, folder: Path) -> tuple[Path, str, dict, dict]:
         """A repository whose one commit holds two files, and a record whose review round on that commit cites them."""
@@ -341,6 +349,8 @@ class ProjectionTests(unittest.TestCase):
                f'{sha} src/../../etc/passwd:1': f'https://github.com/example/app/blob/{sha}/etc/passwd#L1',
                f'{sha} /etc/passwd:1': f'https://github.com/example/app/blob/{sha}/etc/passwd#L1',
                f'{sha} src/./main.py:1': f'https://github.com/example/app/blob/{sha}/src/main.py#L1',
+               f'{sha} src/..:1': f'https://github.com/example/app/blob/{sha}/src#L1',
+               f'{sha} ..:1': f'https://github.com/example/app/blob/{sha}/#L1',
                f'{sha} src/app/http.py:1': f'http://github.com/example/app/blob/{sha}/src/app/http.py#L1',
                f'{sha} src/app/script.py:1': 'javascript:alert(1)',
                f'{sha} src/app/user.py:1': f'https://user:pass@github.com/example/app/blob/{sha}/src/app/user.py#L1',
