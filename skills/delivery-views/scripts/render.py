@@ -112,6 +112,10 @@ STAGES = ("route", "plan", "diagnose", "execute", "review", "compound")
 ENDED_STATES = frozenset({"completed", "failed", "interrupted"})
 # What the live server tells its views of the run store, when the binding names liveRuns.
 RUNS_FLAG = "DELIVERY_LIVE_RUNS"
+# The plan previews the live server serves, as JSON, which the runs page lists under "Plans in review".
+PREVIEWS_FLAG = "DELIVERY_PLAN_PREVIEWS"
+PREVIEW_LIMIT = 20
+PREVIEW_TEXT_LIMIT = 2000
 SAFE_INTEGER = 2 ** 53 - 1
 
 
@@ -1198,15 +1202,49 @@ def _page_head(title: str, styles: str) -> list[str]:
             f"<style>\n{styles}</style>", "</head>", "<body>"]
 
 
+def plan_previews(given: str | None) -> list[dict]:
+    """The plan previews the live server named, as the runs page lists them: at most PREVIEW_LIMIT objects, each with
+    a local ``live`` link and a ``plan``, and a ``title`` and an https ``hosted`` link where given. Anything else, or
+    a value that isn't such a list, is left out."""
+    try:
+        named = json.loads(given) if given else []
+    except (ValueError, RecursionError):
+        return []
+    if not isinstance(named, list):
+        return []
+
+    def said(entry: dict, name: str) -> str | None:
+        value = entry.get(name)
+        return value if isinstance(value, str) and value.strip() and len(value) <= PREVIEW_TEXT_LIMIT else None
+
+    previews = []
+    for entry in named[:PREVIEW_LIMIT]:
+        if not _is_object(entry):
+            continue
+        live, plan = said(entry, "live"), said(entry, "plan")
+        if not (live and plan and live.startswith("http://")):
+            continue
+        row = {"live": live, "plan": plan}
+        if said(entry, "title"):
+            row["title"] = said(entry, "title")
+        if (said(entry, "hosted") or "").startswith("https://"):
+            row["hosted"] = said(entry, "hosted")
+        previews.append(row)
+    return previews
+
+
 def render_runs(page: dict, config: dict, *, line_map: str | None, history: str | None, watched: str | None,
-                as_of: str, own: str | None = None) -> str:
+                as_of: str, own: str | None = None, previews: list[dict] | None = None) -> str:
     """The runs page. ``watched`` is what the live server said of the run store: watched, unwatched, or None. ``own``
-    is this page's own output, which a live page reads itself again from, wherever it was opened."""
+    is this page's own output, which a live page reads itself again from, wherever it was opened. ``previews``, the
+    plan previews being served, are left out of the page's view while there is none."""
     view = {"lineMap": line_map, "history": history, "own": own, "runs": config["runs"] is not None, "asOf": as_of,
             "watched": watched if watched in ("watched", "unwatched") else None, "lenses": config["lenses"],
             "links": page_links({}, {}, config) | {"changes": {
                 entry["changeRequest"]: link for entry in page["runs"] if _text(entry.get("changeRequest"))
                 for link in [views_common.change_request_identity(entry["changeRequest"], config["forges"])] if link}}}
+    if previews:
+        view["previews"] = previews
     return "\n".join([
         *_page_head("Runs", _asset("runs.css") + _asset("run-summary.css")),
         '<main id="app"></main>',
@@ -1882,7 +1920,8 @@ def runs(arguments: argparse.Namespace) -> int:
                                  line_map=_renderer_output(inputs.binding, "line-map"),
                                  history=_renderer_output(inputs.binding, "history"),
                                  watched=os.environ.get(RUNS_FLAG), as_of=as_of,
-                                 own=_renderer_output(inputs.binding, "runs")))
+                                 own=_renderer_output(inputs.binding, "runs"),
+                                 previews=plan_previews(os.environ.get(PREVIEWS_FLAG))))
     return 0
 
 

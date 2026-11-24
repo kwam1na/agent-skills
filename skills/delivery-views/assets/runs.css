@@ -22,8 +22,14 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .say { margin: 0; color: var(--soft); max-width: 70ch; }
 .notes { margin: 0; padding: 0; list-style: none; color: var(--soft); font-size: 14px; }
 .unwatched { margin: 0; padding: 10px 14px; border-radius: 8px; background: var(--held-wash); color: var(--held); font-weight: 500; }
-.now, .ended { display: grid; gap: 8px; border-top: 1px solid var(--hair); padding-top: 12px; }
-.now > h2, .ended > h2 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 24px; }
+.previews, .now, .ended { display: grid; gap: 8px; border-top: 1px solid var(--hair); padding-top: 12px; }
+.previews > h2, .now > h2, .ended > h2 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 24px; }
+.preview { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 16px; padding: 12px 10px; border-bottom: 1px solid var(--hair); }
+.preview-name { overflow-wrap: anywhere; }
+.preview-name b { font-weight: 550; }
+.preview-name small { display: block; color: var(--faint); font: 400 12px/18px var(--mono); }
+.preview-links { display: flex; gap: 12px; font-size: 14px; }
+.preview-links a { color: var(--soft); }
 .run { border-bottom: 1px solid var(--hair); padding-bottom: 8px; }
 .run-head { width: 100%; display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 2.6fr) minmax(0, 1fr); gap: 4px 16px; align-items: center;
   text-align: left; font: inherit; color: inherit; background: none; border: 0; border-radius: 6px; padding: 12px 10px; cursor: pointer; }

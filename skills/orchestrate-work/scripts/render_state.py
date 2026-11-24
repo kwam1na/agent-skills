@@ -134,6 +134,14 @@ INVENTORY_TIMEOUT_SECONDS = 10
 ABSENT_SPEC = "delivery-state-absent/1"
 # Tells each view the live server renders, when the binding names liveRuns, whether the run store is being watched.
 RUNS_FLAG = "DELIVERY_LIVE_RUNS"
+# Gives the liveRuns renderer the plan previews this repository's live servers serve, as JSON: a list of at most
+# PREVIEW_LIMIT {title?, plan, live, hosted?}, or empty while there is none.
+PREVIEWS_FLAG = "DELIVERY_PLAN_PREVIEWS"
+PREVIEW_FILE = "preview.json"
+PREVIEW_LIMIT = 20
+# The most of a preview's preview.json that is read, and of any one string taken from it.
+PREVIEW_BYTES = 64 * 1024
+PREVIEW_TEXT_LIMIT = 2000
 # How much of a failing command's stderr the result keeps, in characters, and
 # the bytes held to produce it.
 ERROR_LIMIT = 500
@@ -1791,11 +1799,11 @@ def _render_builtin(name: str, document: bytes) -> Outcome:
 
 
 def render(directory: Path, config: object, *, absent: bool = False,
-           env: dict[str, str] | None = None) -> tuple[int, dict]:
+           env: dict[str, str] | None = None, env_for: dict[str, dict[str, str]] | None = None) -> tuple[int, dict]:
     """Render every view and run every publisher. With ``absent``, the live server's call while the state
     directory holds no record, each argv view is given exactly the absent document and nothing else runs: a
     built-in view draws only a record, and there is nothing to publish. ``env`` is added to each argv view's
-    environment."""
+    environment, and ``env_for`` to the named renderer's alone."""
     try:
         renderers, publishers = parse_config(config)
     except ConfigError as error:
@@ -1817,7 +1825,8 @@ def render(directory: Path, config: object, *, absent: bool = False,
             outcome = _render_builtin(renderer["builtin"], document)
         else:
             argv = [part.replace("{stateDirectory}", str(directory.resolve())) for part in renderer["argv"]]
-            outcome = _execute(argv, document, renderer["timeout"], needs_stdout=True, env=env)
+            own = {**(env or {}), **(env_for or {}).get(renderer["id"], {})}
+            outcome = _execute(argv, document, renderer["timeout"], needs_stdout=True, env=own or None)
         error = outcome.error
         entry: dict = {"id": renderer["id"], "output": renderer["output"]}
         if outcome.truncated:
@@ -2091,7 +2100,7 @@ class LiveView:
     """The latest valid document, re-read and re-rendered when the record or the run store changes."""
 
     def __init__(self, directory: Path, config: object, status_file: Path | None = None,
-                 repository: Path | None = None) -> None:
+                 repository: Path | None = None, common: Path | None = None) -> None:
         self.directory = Path(directory)
         self.config = config
         # The supervisor's status file, re-read on every page served; None leaves the pages as they were.
@@ -2109,6 +2118,9 @@ class LiveView:
         self.runs_dir: Path | None = None
         self.runs_generation = 0
         self.store_seen: object = None
+        # The git common directory whose entries name the plan previews the runs page lists; None lists none.
+        self.common = common
+        self.previews_seen: list | None = None
         # Whether the views were last drawn with no record, so a record that goes is drawn once as absent.
         self.absent_drawn = False
         self.refreshed = False
@@ -2155,8 +2167,44 @@ class LiveView:
                 keys.append((os.path.relpath(path, self.runs_dir), stat.st_size, stat.st_mtime_ns))
         return tuple(keys)
 
+    def previews_key(self) -> object:
+        """The live servers' entries as names, sizes, times and whether each one's pid runs, with each preview's
+        preview.json as size and time: what moves when a preview starts, stops, dies or is rebuilt. None without
+        liveRuns or entries."""
+        folder = _entries_folder(self.common) if self.live_runs is not None else None
+        if folder is None:
+            return None
+        keys = []
+        try:
+            paths = sorted(folder.glob("*.json"))
+        except OSError:
+            return ()
+        for path in paths:
+            try:
+                stat = path.stat()
+                entry = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                keys.append((path.name, None))
+                continue
+            if not isinstance(entry, dict):
+                keys.append((path.name, None))
+                continue
+            key = [path.name, stat.st_size, stat.st_mtime_ns, _pid_runs(entry.get("pid"))]
+            if entry.get("preview") is True and isinstance(entry.get("stateDirectory"), str):
+                try:
+                    said = (Path(entry["stateDirectory"]) / PREVIEW_FILE).stat()
+                    key.append((said.st_size, said.st_mtime_ns))
+                except OSError:
+                    key.append(None)
+            keys.append(tuple(key))
+        return tuple(keys)
+
+    def previews(self) -> list[dict]:
+        """The plan previews the runs page lists: none without liveRuns."""
+        return plan_previews(self.common) if self.live_runs is not None else []
+
     def watch_key(self) -> tuple:
-        return (*self.record_key(), self.store_key())
+        return (*self.record_key(), self.store_key(), self.previews_key())
 
     def runs_watched(self, store: object) -> bool:
         return store is not None and store != "unwatched"
@@ -2186,14 +2234,21 @@ class LiveView:
         plan = self.record_key()[-1]
         store = self.store_key()
         store_moved = self.refreshed and store != self.store_seen
-        if self.refreshed and not record_moved and not store_moved and plan == self.plan_seen:
+        previews = self.previews()
+        previews_moved = self.refreshed and previews != self.previews_seen
+        if self.refreshed and not record_moved and not store_moved and not previews_moved and plan == self.plan_seen:
             return False
         self.refreshed, self.plan_seen, self.store_seen, self.absent_drawn = True, plan, store, absent
+        self.previews_seen = previews
         # Views first, then the pushes: a page told of a change finds the views that show it.
         env = ({RUNS_FLAG: "watched" if self.runs_watched(store) else "unwatched"}
                if self.live_runs is not None else None)
+        # Empty, rather than unset, while there is none, so nothing the server inherited stands in for the list.
+        env_for = ({self.live_runs["renderer"]: {PREVIEWS_FLAG: json.dumps(previews, ensure_ascii=True,
+                                                                           sort_keys=True) if previews else ""}}
+                   if self.live_runs is not None else None)
         with contextlib.suppress(Exception):
-            render(self.directory, _views_only(self.config), absent=absent, env=env)
+            render(self.directory, _views_only(self.config), absent=absent, env=env, env_for=env_for)
         with self.changed:
             if absent and self.document is not None:
                 # A record that went: the front page is the runs page again, and no page is sent it.
@@ -2201,7 +2256,8 @@ class LiveView:
             elif record_moved and not absent:
                 self.document, self.encoded, self.fingerprint = shown, encoded, encoded
                 self.generation += 1
-            if store_moved:
+            if store_moved or previews_moved:
+                # The runs page lists the previews: a page showing it reads itself again.
                 self.runs_generation += 1
             self.changed.notify_all()
         return True
@@ -2565,19 +2621,59 @@ def verified_entries(common: Path | None) -> list[dict]:
     return verified
 
 
+def preview_row(entry: dict) -> dict:
+    """One verified preview entry as the runs page lists it: its local link, and its plan, title and hosted link as
+    its folder's preview.json names them. A preview.json that can't be read, is over PREVIEW_BYTES or isn't an
+    object gives no title and no hosted link, and the plan is then the folder's name."""
+    folder = Path(entry["stateDirectory"])
+    row: dict = {"live": f"http://{_address(entry['host'], entry['port'])}/", "plan": folder.name}
+    try:
+        with (folder / PREVIEW_FILE).open("rb") as source:
+            raw = source.read(PREVIEW_BYTES + 1)
+        said = json.loads(raw.decode("utf-8")) if len(raw) <= PREVIEW_BYTES else None
+    except (OSError, ValueError, RecursionError):
+        said = None
+    if not isinstance(said, dict):
+        return row
+
+    def given(name: str) -> str | None:
+        value = said.get(name)
+        return value if isinstance(value, str) and value.strip() and len(value) <= PREVIEW_TEXT_LIMIT else None
+
+    if given("plan"):
+        row["plan"] = given("plan")
+    if given("title"):
+        row["title"] = given("title")
+    hosted = given("hosted")
+    if hosted and hosted.startswith("https://"):
+        row["hosted"] = hosted
+    return row
+
+
+def plan_previews(common: Path | None) -> list[dict]:
+    """The plan previews this repository's live servers serve: each verified entry marked preview, in the order of
+    its state directory, at most PREVIEW_LIMIT, as ``preview_row`` reads it."""
+    found = [entry for entry in verified_entries(common)
+             if entry.get("preview") is True and isinstance(entry.get("stateDirectory"), str)]
+    found.sort(key=lambda entry: (entry["stateDirectory"], entry["port"]))
+    return [preview_row(entry) for entry in found[:PREVIEW_LIMIT]]
+
+
 def serve_live(directory: Path, config: object, *, host: str, port: int, announce: Callable[[str], None],
                flags: tuple[str, ...] = (), status_file: Path | None = None, repository: Path | None = None,
-               common: Path | None = None) -> None:
+               common: Path | None = None, preview: bool = False) -> None:
     """Serve the live view until interrupted. Renders on every record change, and with liveRuns on every change of
     the run store; never writes the record. With a status file, every page carries the supervisor's banner, read
     from it as the page is served. With a repository, the built-in page lists the other deliveries registered on
     this record's base and who holds its merge slot. With a git common directory, the server writes its own entry
-    under it while it serves, and removes only that entry when it stops."""
-    view = LiveView(directory, config, status_file, repository)
+    under it while it serves, and removes only that entry when it stops. With ``preview``, the entry and /health
+    say it serves a plan preview: never the standing server, and listed on the standing server's runs page."""
+    view = LiveView(directory, config, status_file, repository, common)
     view.watch_runs()
     view.refresh()
     health = {"server": LIVE_SERVER, "pid": os.getpid(), "repository": str(common) if common else None,
-              "stateDirectory": str(Path(directory).resolve()), "liveRuns": view.live_runs is not None}
+              "stateDirectory": str(Path(directory).resolve()), "liveRuns": view.live_runs is not None,
+              **({"preview": True} if preview else {})}
     server = (_LiveServer6 if ":" in host else _LiveServer)(
         (host, port), _live_handler(view, lambda header: False, flags, health))
     if _is_wildcard(str(server.server_address[0])):
@@ -2599,7 +2695,8 @@ def serve_live(directory: Path, config: object, *, host: str, port: int, announc
             with contextlib.suppress(OSError):
                 _write_atomically(entry, (json.dumps(
                     {"pid": os.getpid(), "host": host, "port": bound, "stateDirectory": health["stateDirectory"],
-                     "liveRuns": health["liveRuns"]}, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+                     "liveRuns": health["liveRuns"], **({"preview": True} if preview else {})},
+                    indent=2, sort_keys=True) + "\n").encode("utf-8"))
         # The address alone: a browser opens it as it is.
         announce(f"{shown_host}:{bound}")
         while serving.is_alive() and not view.stopping.is_set():
@@ -2636,9 +2733,13 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
                              "its git common directory keeps the live servers' entries (the state directory's "
                              "repository when absent)")
     once = parser.add_mutually_exclusive_group()
+    parser.add_argument("--preview", action="store_true",
+                        help="mark this server as a plan preview's, in its entry and /health: --if-absent never "
+                             "names it, and the standing server's runs page lists it")
     once.add_argument("--if-absent", action="store_true",
                       help="print the address of this repository's verified live server, preferring one with "
-                           "liveRuns, and exit; serve only when there is none")
+                           "liveRuns, and exit; serve only when there is none. A plan preview's server is never "
+                           "named")
     once.add_argument("--stop", action="store_true",
                       help="stop each verified live server this state directory started, and nothing else")
     args = parser.parse_args(argv)
@@ -2662,7 +2763,8 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
         return 2, {"ok": False, "code": "config_invalid", "error": str(error)}
     # A verified server is named whatever this checkout's state directory holds, or whether it exists.
     if args.if_absent:
-        found = verified_entries(common)
+        # A plan preview's server is never the standing one, whichever was written first.
+        found = [entry for entry in verified_entries(common) if entry.get("preview") is not True]
         found.sort(key=lambda entry: not entry.get("liveRuns"))
         if found:
             said = {"ok": True, "live": _address(found[0]["host"], found[0]["port"]), "pid": found[0]["pid"],
@@ -2687,7 +2789,7 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
 
     try:
         serve_live(args.dir, config, host=args.host, port=args.port, announce=announce, flags=flags,
-                   status_file=args.status_file, repository=args.repo, common=common)
+                   status_file=args.status_file, repository=args.repo, common=common, preview=args.preview)
     except OSError as error:
         return 2, {"ok": False, "code": "live_unavailable",
                    "error": f"cannot listen on {args.host}:{args.port}: {error.strerror or error}"}

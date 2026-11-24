@@ -1943,7 +1943,8 @@ for folder, _, names in os.walk(store):
         path = os.path.join(folder, name)
         with open(path, encoding="utf-8", errors="replace") as source:
             files[os.path.relpath(path, store)] = source.read()
-said = json.dumps({"given": given, "flag": os.environ.get("DELIVERY_LIVE_RUNS"), "store": files}).replace("<", "\\\\u003c")
+said = json.dumps({"given": given, "flag": os.environ.get("DELIVERY_LIVE_RUNS"), "store": files,
+                  "previews": os.environ.get("DELIVERY_PLAN_PREVIEWS")}).replace("<", "\\\\u003c")
 sys.stdout.write('<html><head><meta name="delivery-state-live"></head><body><script type="application/json" id="said">'
                  + said + '</script></body></html>')
 """
@@ -2223,11 +2224,12 @@ class LiveRunsTests(DeliveryStateFixture):
         self.addCleanup(LiveTests.stop, self, process)
         return process
 
-    def entry(self, pid: int, port: int, directory: Path) -> Path:
+    def entry(self, pid: int, port: int, directory: Path, **marks: object) -> Path:
         self.entries.mkdir(exist_ok=True)
         path = self.entries / f"{pid}.json"
         path.write_text(json.dumps({"pid": pid, "host": "127.0.0.1", "port": port,
-                                    "stateDirectory": str(directory.resolve()), "liveRuns": True}), encoding="utf-8")
+                                    "stateDirectory": str(directory.resolve()), "liveRuns": True, **marks}),
+                        encoding="utf-8")
         return path
 
     def stranger(self, pid: int) -> int:
@@ -2316,6 +2318,67 @@ class LiveRunsTests(DeliveryStateFixture):
         record.send_signal(signal.SIGTERM)
         self.assertEqual(record.wait(10), 128 + signal.SIGTERM)
         self.assertEqual(self.own_entries(), {})
+
+    def preview_folder(self, name: str, said: bytes | None = None) -> Path:
+        """A plan preview's record folder, holding ``said`` as its preview.json when given."""
+        folder = self.root / "plan-preview" / name
+        folder.mkdir(parents=True)
+        if said is not None:
+            (folder / "preview.json").write_bytes(said)
+        return folder
+
+    def test_if_absent_never_names_a_preview_server_whichever_was_written_first(self) -> None:
+        first, first_url = self.serve(self.preview_folder("first"), "--preview")
+        self.assertIs(self.own_entries()[first.pid]["preview"], True)
+        self.assertIs(json.loads(self.client(first_url).get("health")[1])["preview"], True)
+        # Only a preview server runs: --if-absent starts the standing server rather than name it.
+        standing, said = self.if_absent(self.state_dir)
+        self.assertNotIn("existing", said)
+        self.assertIsNone(standing.poll())
+        self.assertNotIn("preview", self.own_entries()[standing.pid])
+        self.assertNotIn("preview", json.loads(self.client(f"http://{said['live']}/").get("health")[1]))
+        # A preview written before the standing server, and one written after it: the standing one is named.
+        self.serve(self.preview_folder("later"), "--preview")
+        named_by, named = self.if_absent(self.root / "not made")
+        self.assertEqual(named_by.wait(10), 0)
+        self.assertEqual((named["live"], named["pid"], named["existing"]), (said["live"], standing.pid, True))
+
+    def previews_on(self, page: bytes) -> list | None:
+        found = re.search(rb'<script type="application/json" id="said">(.*?)</script>', page, re.S)
+        return json.loads(json.loads(found.group(1))["previews"] or "[]") if found else None
+
+    def test_the_runs_page_lists_each_verified_preview_and_follows_them_without_a_restart(self) -> None:
+        _, url = self.serve(self.empty, "--state-config", self.config_with_runs())
+        client = self.client(url)
+        # No preview: the runs renderer is told so, empty rather than unset.
+        page = self.eventually(client, "view/runs.html", lambda page: b'id="said"' in page)
+        self.assertEqual(self.said(page)["previews"], "")
+        client.listen()
+        hosted = "https://views.example/d/" + "a" * 64
+        folders = {"a": self.preview_folder("a", json.dumps({"slug": "a", "plan": "docs/plans/a.md", "title": "Plan A",
+                                                             "hosted": hosted}).encode("utf-8")),
+                   # Unreadable, and over the bound: each row keeps its link and loses its title and hosted link.
+                   "b": self.preview_folder("b", b'{"title": "Plan B", "hosted": "https://'),
+                   "c": self.preview_folder("c", json.dumps({"title": "Plan C", "hosted": hosted,
+                                                             "pad": "x" * render_state.PREVIEW_BYTES}).encode("utf-8"))}
+        servers = {name: self.serve(folder, "--preview") for name, folder in folders.items()}
+        # A preview entry whose pid runs but serves nothing is never listed.
+        quiet = self.sleeper()
+        self.entry(quiet.pid, self.free_port(), self.preview_folder("d"), preview=True)
+        rows = [{"live": servers["a"][1], "plan": "docs/plans/a.md", "title": "Plan A", "hosted": hosted},
+                {"live": servers["b"][1], "plan": "b"}, {"live": servers["c"][1], "plan": "c"}]
+        self.eventually(client, "view/runs.html", lambda page: self.previews_on(page) == rows)
+        deadline = time.monotonic() + 5
+        while not client.runs and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(client.runs, "an open runs page is told the previews moved")
+        # --stop on one preview's folder stops that server alone, and its row goes.
+        stopped = run([sys.executable, "-B", str(WRAPPER), "live", "--dir", str(folders["a"]), "--stop"])
+        self.assertEqual(stopped.returncode, 0, stopped.stdout)
+        self.assertEqual([entry["pid"] for entry in json.loads(stopped.stdout)["stopped"]], [servers["a"][0].pid])
+        self.assertEqual(servers["a"][0].wait(10), 128 + signal.SIGTERM)
+        self.assertTrue(servers["b"][0].poll() is None and servers["c"][0].poll() is None and quiet.poll() is None)
+        self.eventually(client, "view/runs.html", lambda page: self.previews_on(page) == rows[1:])
 
     def test_stop_never_signals_an_entry_that_fails_verification(self) -> None:
         silent, stranger, reused = self.sleeper(), self.sleeper(), self.sleeper()
