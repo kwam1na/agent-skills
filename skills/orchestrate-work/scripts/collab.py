@@ -603,10 +603,11 @@ def _apply_slice(state: dict, origins: dict, journal: list[dict], seat: str, par
         scopes = tool.path_scopes(state, path, element)
         field = path.split("]/", 1)[1] if "]/" in path else None
         runner = selector is not None and selector.startswith("queue[") and tool.FIELD_MAP["queue"].get(field) == ("queue",)
-        if field is not None and created.get(selector) == origin["seq"] and (
-                not runner or field == "order" or field in tool.QUEUE_START and item.get("value") == tool.QUEUE_START[field]):
-            # The write that makes an element sets its starting fields, as whoever may make it: a queue element's
-            # runner fields only at their starting values.
+        at_start = field in tool.QUEUE_START and item.get("value") == tool.QUEUE_START[field]
+        # The write that makes an element sets its starting fields, as whoever may make it; a lane's re-hand-off puts
+        # its queue element's runner fields back to their starting values, as the lane.
+        if field is not None and (runner and at_start or created.get(selector) == origin["seq"] and (
+                not runner or field == "order" or at_start)):
             scopes = tool.path_scopes(state, selector, element)
         if isinstance(scopes, str) or not any(tool.holds(journal, seat, scope, at=written) for scope in scopes):
             continue

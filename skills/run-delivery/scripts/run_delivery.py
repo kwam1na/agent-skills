@@ -14223,6 +14223,15 @@ class Supervisor:
                     "--repo", str(c.root), *(["--state-config", json.dumps(config)] if config is not None else [])]
         if config is None:
             return None  # the queue needs a binding
+        if str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
+        import delivery_state
+        with contextlib.suppress(delivery_state.StateError, OSError):
+            # On a shared record the queue is served only where this checkout's seat holds it.
+            shared = delivery_state.collab_of(delivery_state.read_state(c.state))
+            if shared is not None and not delivery_state.holds(
+                    delivery_state.read_journal(c.state), delivery_state.local_seat(c.state, shared["key"]), "queue"):
+                return None
         return [sys.executable, "-B", str(scripts / "merge_queue.py"), "--repo", str(c.root), "--state", str(c.state),
                 "--remote", c.remote, "--base", c.base_branch, "serve", "--poll",
                 str(min(30.0, supervisor_pass_seconds(c)))]

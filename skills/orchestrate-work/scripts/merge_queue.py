@@ -4454,6 +4454,20 @@ def _requeue_after_setup(runner: Runner, taken: list[Result],
     return requeued, kept
 
 
+def require_queue(state_directory: Path) -> None:
+    """On a shared record, serve only where this checkout's seat holds the queue: refused before the first turn, and
+    ended on the pass after the queue was handed on."""
+    state = delivery_state.read_state(state_directory)
+    collab = delivery_state.collab_of(state)
+    if collab is None:
+        return
+    journal = delivery_state.read_journal(state_directory)
+    seat = delivery_state.local_seat(state_directory, collab["key"])
+    if not delivery_state.holds(journal, seat, "queue"):
+        raise delivery_state.StateError("queue.not_held", f"this checkout's seat does not hold the queue: seat "
+                                        f"{delivery_state.holder(journal, 'queue')} serves it")
+
+
 def serve(
     repository: Path,
     state_directory: Path,
@@ -4496,6 +4510,7 @@ def serve(
     on_result as it is written and none is kept.
     """
     results: list[Result] = []
+    require_queue(state_directory)
     while True:
         # A wrong checkout or binding would refuse every candidate in turn: find it once, before taking any.
         setup, binding, candidate = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
@@ -4533,6 +4548,8 @@ def serve(
 
     try:
         while True:
+            # The queue handed on to another seat ends serving here, before this machine takes anything more.
+            require_queue(state_directory)
             # A killed serve or run leaves live state behind; clear it first, even when nothing is queued.
             Runner(repository, state_directory, remote=remote, base=base, lead=lead).recover()
             if interval and clock() >= due:
@@ -4744,10 +4761,17 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             # A stop mid-turn leaves live state the next serve or run clears first.
             return 0
+        except delivery_state.StateError as error:
+            write_document_line({"ok": False, "code": error.code, "error": str(error)})
+            return 1
         return 1 if refused else 0
     if args.command == "serve":
-        served = serve(args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead,
-                       until_idle=True, poll=args.poll)
+        try:
+            served = serve(args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead,
+                           until_idle=True, poll=args.poll)
+        except delivery_state.StateError as error:
+            write_document_line({"ok": False, "code": error.code, "error": str(error)})
+            return 1
         documents = [result.document() for result in served]
         sys.stdout.buffer.write(ascii_json(documents))
         sys.stdout.buffer.flush()

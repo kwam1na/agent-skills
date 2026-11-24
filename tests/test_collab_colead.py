@@ -15,8 +15,9 @@ from pathlib import Path
 from unittest import mock
 
 from tests import test_collab_partitions as partitions
+from tests import test_merge_queue as mq
 
-state_tool, collab = partitions.state_tool, partitions.collab
+state_tool, collab, KEY = partitions.state_tool, partitions.collab, partitions.KEY
 HEAD, OTHER = "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901", "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
 
 
@@ -73,6 +74,194 @@ class UnsharedQueueCharacterizationTests(unittest.TestCase):
         written = state_tool.set_focus(self.directory, "lane-1", "Building APP-1", state="working")
         row = next(entry for entry in written["lanes"] if entry["id"] == "lane-1")
         self.assertEqual((row["focus"], row["state"]), ("Building APP-1", "working"))
+
+
+class LaneScopeFixture(partitions.SharedFixture):
+    """a opens the record and admits b; b holds lane-1 and a keeps lane-2, the queue and delivery."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.first = self.open()
+        self.second = self.join(self.b)
+        self.a.patch({"lanes": [lane_row("lane-1"), lane_row("lane-2")],
+                      "planned": [planned("APP-1", "lane-1"), planned("APP-2", "lane-2")]})
+        self.give("lane:lane-1", self.b)
+
+    def refused(self, write, machine, code: str = "scope.not_held") -> state_tool.StateError:
+        before = machine.surfaces(self.remote)
+        with self.assertRaises(state_tool.StateError) as refused:
+            write()
+        self.assertEqual(refused.exception.code, code)
+        self.assertEqual(machine.surfaces(self.remote), before)
+        return refused.exception
+
+    def element(self, machine, array: str, key: str, name: str) -> dict | None:
+        return next((item for item in machine.state().get(array, []) if item.get(key) == name), None)
+
+
+class LaneAndRunnerTests(LaneScopeFixture):
+    """Each lead writes its own lane's rows and queue elements; the runner writes only where its seat holds the queue."""
+
+    def test_each_lead_writes_its_own_lanes_rows_and_not_the_others(self) -> None:
+        state_tool.set_focus(self.b.directory, "lane-1", "Building APP-1", state="working")
+        said = self.refused(lambda: state_tool.set_focus(self.b.directory, "lane-2", "Not b's"), self.b)
+        self.assertIn(f"lane:lane-2 by seat {self.first}", str(said))
+        self.refused(lambda: state_tool.patch(self.a.directory, writer="lead", version=self.a.state()["version"],
+                                              selector="planned[subject=APP-1]", changes={"title": "a's"}), self.a)
+        state_tool.patch(self.a.directory, writer="lead", version=self.a.state()["version"],
+                         selector="planned[subject=APP-2]", changes={"title": "a's own"})
+        self.exchange(self.a, self.b)
+        self.assertEqual(self.element(self.a, "lanes", "id", "lane-1")["focus"], "Building APP-1")
+        self.assertEqual(self.element(self.b, "planned", "subject", "APP-2")["title"], "a's own")
+
+    def test_a_runner_write_where_the_seat_does_not_hold_the_queue_is_refused_and_the_holders_applies(self) -> None:
+        state_tool.handoff(self.b.directory, lane="lane-1", subject="APP-1", head=HEAD, change_request="cr-1")
+        self.b.push()
+        self.a.take()
+        runner = lambda machine: state_tool.patch(machine.directory, writer="runner", version=machine.state()["version"],
+                                                  selector="queue[subject=APP-1]", changes={"stage": "checking"})
+        said = self.refused(lambda: runner(self.b), self.b)
+        self.assertIn(f"seat {self.first}", str(said))
+        self.refused(lambda: state_tool.append_journal(self.b.directory, kind="check.started", subject="APP-1",
+                                                       data={}, writer="runner"), self.b)
+        self.assertEqual(self.element(self.a, "queue", "subject", "APP-1")["stage"], "queued")
+        self.assertEqual(self.element(runner(self.a) and self.a, "queue", "subject", "APP-1")["stage"], "checking")
+
+    def test_a_lanes_write_of_a_queue_field_away_from_its_start_is_refused_and_its_peers_ignore_it(self) -> None:
+        state_tool.handoff(self.b.directory, lane="lane-1", subject="APP-1", head=HEAD, change_request="cr-1")
+        self.b.push()
+        self.a.take()
+        # Locally only the runner writes a queue element's runner fields, and b's runner may not run at all.
+        for change in ({"stage": "merged"}, {"checks": [{"id": "always", "state": "passed"}]}):
+            with self.subTest(change=change):
+                self.refused(lambda: state_tool.patch(self.b.directory, writer="lead", version=self.b.state()["version"],
+                                                      selector="queue[subject=APP-1]", changes=change), self.b,
+                             "field_not_owned")
+                self.refused(lambda: state_tool.patch(self.b.directory, writer="runner", version=self.b.state()["version"],
+                                                      selector="queue[subject=APP-1]", changes=change), self.b)
+        seen = {seat: count for seat, count in state_tool.seat_counts(self.b.journal()).items() if seat != self.second}
+        own = max(entry["origin"]["seq"] for entry in self.b.journal() if entry["origin"]["seat"] == self.second)
+        self.plant(self.second, [{"path": "queue[subject=APP-1]/stage", "value": "merged",
+                                  "origin": {"seat": self.second, "seq": own, "seen": seen}}])
+        self.a.take()
+        self.assertEqual(self.element(self.a, "queue", "subject", "APP-1")["stage"], "queued")
+
+    def test_the_delivery_holders_adoption_of_a_missed_hand_off_reaches_the_queue_holder_at_its_start(self) -> None:
+        collab.give_scope(self.a.directory, "delivery", self.second)
+        self.a.push()
+        self.b.take()
+        item = {"order": 1, "subject": "APP-2", "title": "Story APP-2", "lane": "lane-2", "stage": "queued",
+                "head": HEAD, "syncedHead": None, "leadInputs": [], "reportedRounds": 1, "runId": None, "checks": []}
+        # As b's reconcile adopts a hand-off it missed: the planned story becomes a queue element at its start.
+        state_tool.patch(self.b.directory, writer="lead", version=self.b.state()["version"],
+                         changes={"planned": [planned("APP-1", "lane-1")], "queue": [item]})
+        self.b.push()
+        self.a.take()
+        adopted = self.element(self.a, "queue", "subject", "APP-2")
+        self.assertEqual({key: adopted[key] for key in state_tool.QUEUE_START}, state_tool.QUEUE_START)
+        self.assertIsNone(self.element(self.a, "planned", "subject", "APP-2"))
+
+    def test_holders_and_refusals_are_the_same_whatever_the_labels(self) -> None:
+        def seen() -> tuple:
+            journal = self.b.journal()
+            try:
+                state_tool.set_focus(self.b.directory, "lane-2", "Not b's")
+                refusal = None
+            except state_tool.StateError as error:
+                refusal = error.code
+            return tuple(state_tool.holder(journal, scope) for scope in ("delivery", "queue", "lane:lane-1", "lane:lane-2")) \
+                + (refusal,)
+        before = seen()
+        self.assertEqual(before, (self.first, self.first, self.second, self.first, "scope.not_held"))
+        for first_label, second_label in (("B", "A"), ("Same", "Same")):
+            with self.subTest(labels=(first_label, second_label)):
+                collab.label_seat(self.a.directory, first_label)
+                collab.label_seat(self.b.directory, second_label)
+                self.exchange(self.a, self.b)
+                self.assertEqual(seen(), before)
+
+
+class QueueAcrossSeatsTests(mq.MergeQueueTestCase):
+    """The queue runs on the machine whose seat holds it, over hand-offs another seat's lane accepts."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        cleared = mock.patch.dict(os.environ, partitions.own_git_environment(), clear=True)
+        cleared.start()
+        self.addCleanup(cleared.stop)
+        self.adopter = self.adopter_for_seats()
+        self.a = partitions.Machine(self.adopter.operator)
+        self.b = partitions.Machine(partitions.clone(self.adopter.remote, self.directory / "b", name="B"))
+        base = {"ref": "main", "head": partitions.git(self.a.repo, "rev-parse", "HEAD")}
+        collab.open_record(self.a.directory, key=KEY, headline="Shared", base=base)
+        self.first = self.a.seat()
+        self.a.push()
+        self.b.take()
+        collab.request_seat(self.b.directory)
+        self.b.push()
+        self.a.take()
+        collab.admit_seat(self.a.directory, self.b.seat())
+        self.second = self.b.seat()
+        self.a.patch({"lanes": [lane_row("lane-1")], "planned": [planned("feature", "lane-1")],
+                      "meta": {"handoffsNeedAcceptance": True}})
+        collab.give_scope(self.a.directory, "lane:lane-1", self.second)
+        self.a.push()
+        self.b.take()
+
+    def adopter_for_seats(self) -> "mq.Adopter":
+        adopter = self.adopter()
+        partitions.git(adopter.operator, "config", "user.name", "A")
+        partitions.git(adopter.operator, "config", "user.email", "a@example.invalid")
+        return adopter
+
+    def runner(self) -> "mq.queue.Runner":
+        return mq.queue.Runner(self.adopter.operator, self.a.directory, remote="origin", base="main")
+
+    def item(self, machine, subject: str = "feature") -> dict:
+        return next(entry for entry in machine.state()["queue"] if entry["subject"] == subject)
+
+    def test_bs_accepted_hand_off_reaches_as_queue_at_its_start_without_its_planned_story_and_merges(self) -> None:
+        head = self.adopter.lane_commit("feature", {"src/app.txt": "app two\n"})
+        state_tool.handoff(self.b.directory, lane="lane-1", subject="feature", head=head, change_request="cr-1")
+        state_tool.accept_handoff(self.b.directory, "feature")
+        self.b.push()
+        self.a.take()
+        item = self.item(self.a)
+        self.assertEqual((item["stage"], item.get("pending"), self.a.state().get("planned")), ("queued", None, []))
+        results = self.runner().run_command("run", ["feature"])
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
+        self.assertEqual(self.item(self.a)["stage"], "merged")
+        self.a.push()
+        self.b.take()
+        self.assertEqual(self.item(self.b)["stage"], "merged")
+
+    def test_a_re_hand_off_after_the_queue_sent_the_story_back_resets_its_start_and_the_queue_runs_it_again(self) -> None:
+        head = self.adopter.lane_commit("feature", {"src/app.txt": "app two\n"})
+        state_tool.handoff(self.b.directory, lane="lane-1", subject="feature", head=head, change_request="cr-1")
+        state_tool.accept_handoff(self.b.directory, "feature")
+        self.b.push()
+        self.a.take()
+        # a's queue sends it back: its run stops it.
+        state_tool.patch(self.a.directory, writer="runner", version=self.a.state()["version"],
+                         selector="queue[subject=feature]", changes={"stage": "stopped", "syncedHead": head})
+        self.a.push()
+        self.b.take()
+        again = self.adopter.lane_push("feature", {"src/app.txt": "app three\n"})
+        state_tool.handoff(self.b.directory, lane="lane-1", subject="feature", head=again, change_request="cr-1")
+        state_tool.accept_handoff(self.b.directory, "feature")
+        self.b.push()
+        self.a.take()
+        item = self.item(self.a)
+        self.assertEqual(({key: item[key] for key in state_tool.QUEUE_START}, item["head"]), (state_tool.QUEUE_START, again))
+        results = self.runner().run_command("run", ["feature"])
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
+
+    def test_serve_refuses_where_the_seat_does_not_hold_the_queue(self) -> None:
+        with self.assertRaises(mq.queue.delivery_state.StateError) as refused:
+            mq.queue.serve(self.b.repo, self.b.directory, remote="origin", base="main", until_idle=True, poll=0)
+        self.assertEqual(refused.exception.code, "queue.not_held")
+        self.assertEqual(mq.queue.serve(self.adopter.operator, self.a.directory, remote="origin", base="main",
+                                        until_idle=True, poll=0), [])
 
 
 if __name__ == "__main__":

@@ -1233,23 +1233,41 @@ def path_scopes(state: dict, path: str, element: dict | None = None) -> tuple[st
     return tuple(dict.fromkeys((f"lane:{lane}" if lane else "delivery") if scope == LANE else scope for scope in scopes))
 
 
-def scope_violations(directory: Path, before: dict, after: dict) -> list[str]:
-    """What a local write to a shared record changed in a field only the delivery holder writes, while this seat does
-    not hold delivery. An unshared record has none."""
+def scope_violations(directory: Path, before: dict, after: dict, writer: str = "lead") -> list[str]:
+    """What a local write to a shared record changed that this seat holds no scope to write, by D6's field map. The
+    runner writes only where its seat holds the queue. An element made or removed is judged by who may make it, and the
+    write that makes a queue element sets its runner fields only to their starting values. An unshared record has none."""
     collab = collab_of(after)
     if collab is None:
         return []
     journal = _raw_journal(directory)
     seat = local_seat(directory, collab["key"])
-    if holds(journal, seat, "delivery"):
-        return []
+    if writer == "runner":
+        return [] if holds(journal, seat, "queue") else [
+            f"the runner writes only on the machine whose seat holds the queue, seat {holder(journal, 'queue')}"]
     old, new = partition_paths(before), partition_paths(after)
-    # An element made or removed is judged by who may make it, not by its fields' rows.
-    whole = {path for path in set(old) ^ set(new) if path.endswith("]")}
-    return [f"{path} is written only by the delivery holder, seat {holder(journal, 'delivery')}"
-            for path in sorted(set(old) | set(new))
-            if old.get(path, ...) != new.get(path, ...) and path.split("]/", 1)[0] + "]" not in whole - {path}
-            and path_scopes(after if path in new else before, path) == ("delivery",)]
+    made = {path for path in set(new) - set(old) if path.endswith("]")}
+    gone = {path for path in set(old) - set(new) if path.endswith("]")}
+    said = []
+    for path in sorted(set(old) | set(new)):
+        if old.get(path, ...) == new.get(path, ...):
+            continue
+        element, field = (path.split("]/", 1)[0] + "]", path.split("]/", 1)[1]) if "]/" in path else (None, None)
+        if element in gone:
+            continue  # the element's own removal stands for its fields
+        runner = element is not None and element.startswith("queue[") and FIELD_MAP["queue"].get(field) == ("queue",)
+        at_start = field in QUEUE_START and new.get(path, ...) == QUEUE_START[field]
+        if element in made and (not runner or field == "order" or at_start) or runner and at_start:
+            # Set by the write that makes the element, or put back to its starting value by a re-hand-off: judged as
+            # the element.
+            path, field = element, None
+        scopes = path_scopes(after if path in new or path in made else before, path)
+        if isinstance(scopes, str) or any(holds(journal, seat, scope) for scope in scopes):
+            continue
+        holders = ", ".join(f"{scope} by seat {holder(journal, scope) if scope != ANY_LANE else 'of a lane'}"
+                            for scope in scopes)
+        said.append(f"{path} is written only by the holder of {holders}")
+    return said
 
 
 def partition_paths(state: dict) -> dict[str, object]:
@@ -3236,6 +3254,9 @@ def patch(
             violations = lane_violations(current, updated, lane)
             if violations:
                 raise StateError("writer_not_owned", "; ".join(violations))
+            held = scope_violations(directory, current, updated, writer)
+            if held:
+                raise StateError("scope.not_held", "; ".join(held))
             _stamp_lane(current, updated, lane)
             # A lane speaks when it writes its focus, by --patch or by --set.
             speaks = _written_field(selector, changes, assignments, "focus") == lane
@@ -3252,7 +3273,7 @@ def patch(
             violations = ownership_violations(current, updated, writer)
             if violations:
                 raise StateError("field_not_owned", "; ".join(sorted(set(violations))))
-            held = scope_violations(directory, current, updated) if writer == "lead" else []
+            held = scope_violations(directory, current, updated, writer)
             if held:
                 raise StateError("scope.not_held", "; ".join(held))
             _stamp_waiting(current, updated, writer, _written_field(selector, changes, assignments, "waitingOn"))
@@ -3301,6 +3322,10 @@ def append_journal(
         raise StateError("kind_not_owned", f"the runner never writes {kind}: the lead or the lane records its review")
     with file_lock(directory / STATE_LOCK):
         current = read_state(directory, for_write=True)
+        if writer == "runner":
+            held = scope_violations(directory, current, current, writer)
+            if held:
+                raise StateError("scope.not_held", "; ".join(held))
         if writer == "lane":
             # A lane also notes the gaps it meets on its own story, as they happen.
             if kind not in LANE_REVIEW_KINDS and kind not in (AUTHORIZATION_KIND, "gap.noted"):
