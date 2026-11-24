@@ -238,7 +238,7 @@
         },
         {
           "path": "skills/delivery-views/references/hosted-snapshot.schema.json",
-          "sha256": "167ea37bf7642c8269bb62e0e77ec30d6aea435241bedb04c4665032e4bd7415"
+          "sha256": "b32359b6034300901e44a14ee5e6b2cafd490b5312931442a17a68b74d05c095"
         },
         {
           "path": "skills/delivery-views/scripts/hosted.py",
@@ -246,7 +246,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/public_projection.py",
-          "sha256": "f4413e5df39bf5776ed5a2892513757ffee22e940a9d953f5b1b6b4895d32c43"
+          "sha256": "07e0c8984bbfa0b5c848734c2277c4aa98ef07c78b6d707231243f72daf4f376"
         },
         {
           "path": "skills/delivery-views/scripts/render.py",

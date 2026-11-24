@@ -10,6 +10,7 @@ import copy
 import importlib.util
 import json
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,6 +19,7 @@ from unittest import mock
 from jsonschema import Draft202012Validator
 
 from tests.delivery_views_fixtures import render, config, block
+from tests.quiet_git import quieten
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / 'tests/fixtures/delivery-views/hosted'
@@ -31,6 +33,7 @@ _hosted_spec.loader.exec_module(hosted)
 FORGE = config(forges=[{'name': 'GitHub', 'repository': 'example/app',
                         'pullUrl': 'https://github.com/{repository}/pull/{number}',
                         'commitUrl': 'https://github.com/{repository}/commit/{sha}'}])
+FILE_FORGE = config(forges=[{**FORGE['forges'][0], 'fileUrl': 'https://github.com/{repository}/blob/{sha}/{path}#L{line}'}])
 SIBLING = 'https://deliveries.example.com/d/' + 'e' * 64
 MERGE_NONCE = '0123456789abcdef' * 2
 
@@ -297,6 +300,80 @@ class ProjectionTests(unittest.TestCase):
         bad['links']['issues']['APP-1'] = 'https://user:pass@example.com/a'
         with self.assertRaisesRegex(public.ProjectionError, '^snapshot.unsafe_link$'):
             public.validate(bad)
+
+    def reviewed(self, folder: Path) -> tuple[Path, str, dict, dict]:
+        """A repository whose one commit holds two files, and a record whose review round on that commit cites them."""
+        subprocess.run(['git', 'init', '-q', str(folder)], check=True)
+        quieten(folder)
+        for name in ('src/app/main.py', 'docs/plan.md'):
+            (folder / name).parent.mkdir(parents=True, exist_ok=True)
+            (folder / name).write_text('line\n' * 20, encoding='utf-8')
+        subprocess.run(['git', '-C', str(folder), 'add', '-A'], check=True)
+        subprocess.run(['git', '-C', str(folder), '-c', 'user.name=Lens', '-c', 'user.email=lens@example.invalid',
+                        'commit', '-q', '-m', 'reviewed'], check=True)
+        head = subprocess.run(['git', '-C', str(folder), 'rev-parse', 'HEAD'], check=True, capture_output=True,
+                              text=True).stdout.strip()
+        doc, runs = source()
+        detail = runs['run-1']['roundDetail'][0]
+        detail['candidateRef'] = head
+        detail['raised'][0]['summary'] = 'Guard it (src/app/main.py:4-6) and say so (plan.md:2); (gone.py:1) stays words.'
+        return folder, head, doc, runs
+
+    def test_a_review_notes_file_references_open_on_the_forge_as_on_the_local_page(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repository, head, doc, runs = self.reviewed(Path(temporary))
+            local = render.line_map_data(doc, {'run-1': runs['run-1']}, FILE_FORGE, theme_key='local', history=None,
+                                         repository=repository)
+            value = public.project(doc, runs, FILE_FORGE, source_fingerprint='1' * 64, repository=repository)
+        blob = f'https://github.com/example/app/blob/{head}'
+        self.assertEqual(value['links']['files'], {f'{head} src/app/main.py:4-6': f'{blob}/src/app/main.py#L4',
+                                                   f'{head} plan.md:2': f'{blob}/docs/plan.md#L2'})
+        # The same links the local page draws from, and a cut both validators accept.
+        self.assertEqual(value['links']['files'], local['links']['files'])
+        Draft202012Validator(public.SCHEMA).validate(value)
+        public.validate(value)
+
+    def test_a_file_link_off_https_or_outside_the_tree_never_reaches_the_cut(self):
+        sha = 'a' * 40
+        good = {f'{sha} src/app/main.py:4': f'https://github.com/example/app/blob/{sha}/src/app/main.py#L4',
+                f'{sha} ./docs/plan.md:2-3': f'https://github.com/example/app/blob/{sha}/docs/plan.md#L2'}
+        bad = {f'{sha} ../secrets.env:1': f'https://github.com/example/app/blob/{sha}/../secrets.env#L1',
+               f'{sha} src/../../etc/passwd:1': f'https://github.com/example/app/blob/{sha}/etc/passwd#L1',
+               f'{sha} /etc/passwd:1': f'https://github.com/example/app/blob/{sha}/etc/passwd#L1',
+               f'{sha} src/./main.py:1': f'https://github.com/example/app/blob/{sha}/src/main.py#L1',
+               f'{sha} src/app/http.py:1': f'http://github.com/example/app/blob/{sha}/src/app/http.py#L1',
+               f'{sha} src/app/script.py:1': 'javascript:alert(1)',
+               f'{sha} src/app/user.py:1': f'https://user:pass@github.com/example/app/blob/{sha}/src/app/user.py#L1',
+               f'{sha} src/app/query.py:1': f'https://github.com/example/app/blob/{sha}/src/app/query.py?raw=1#L1'}
+        doc, runs = source()
+        with mock.patch.object(public.render, 'file_links', return_value={**good, **bad}):
+            value = public.project(doc, runs, FILE_FORGE, source_fingerprint='1' * 64, repository=ROOT)
+        self.assertEqual(value['links']['files'], good)
+        for key, href in bad.items():
+            with self.subTest(key=key):
+                planted = copy.deepcopy(value)
+                planted['links']['files'][key] = href
+                with self.assertRaises(public.ProjectionError):
+                    public.validate(planted)
+        # The receiver's schema holds the path rule on its own.
+        for key in [key for key in bad if 'http' not in key and 'script' not in key and 'user' not in key
+                    and 'query' not in key]:
+            with self.subTest(schema=key):
+                planted = copy.deepcopy(value)
+                planted['links']['files'][key] = good[f'{sha} src/app/main.py:4']
+                self.assertTrue(list(Draft202012Validator(public.SCHEMA).iter_errors(planted)))
+
+    def test_with_no_file_url_the_cut_carries_no_files_and_is_the_same_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repository, head, doc, runs = self.reviewed(Path(temporary))
+            with_repository = public.project(doc, runs, FORGE, source_fingerprint='1' * 64, repository=repository)
+            without = public.project(doc, runs, FORGE, source_fingerprint='1' * 64)
+            linked = public.project(doc, runs, FILE_FORGE, source_fingerprint='1' * 64, repository=repository)
+        self.assertNotIn('files', with_repository['links'])
+        self.assertEqual(public.encode(with_repository), public.encode(without))
+        # Only the files differ when the forge names a fileUrl.
+        linked['links'].pop('files')
+        self.assertEqual(public.encode(linked), public.encode(without))
 
     def test_other_snapshot_versions_and_unknown_top_level_fields_are_refused(self):
         value = self.project()

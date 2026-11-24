@@ -289,6 +289,73 @@ describe("trusted corpus DOM bridge (behavior only)", () => {
   });
 });
 
+describe("a review note's file reference on the hosted page", () => {
+  /** The corpus renderer over one projection, its story's detail opened, as the hosted page draws it. */
+  function drawn(body: PublicProjection) {
+    const built = JSON.parse(
+      readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8"),
+    ) as { renderer: string };
+    const dom = new JSDOM('<!doctype html><body><main id="app"></main></body>', {
+      url: `https://service.test/d/${publicId}`,
+      runScripts: "outside-only",
+      pretendToBeVisual: true,
+    });
+    const { window } = dom;
+    Object.assign(window, {
+      matchMedia: () => ({ matches: true }),
+      scrollTo: () => {},
+      fetch: vi.fn(() => Promise.reject(Error("unexpected HTML refresh"))),
+      deliveryStateStore: { projection: () => body, read: () => body.document, subscribe: () => {}, onStatus: () => {} },
+    });
+    for (const [key, value] of Object.entries({ state: body.document, runs: body.runs, reviews: body.reviews,
+      links: body.links, view: body.view })) {
+      const node = window.document.createElement("script");
+      node.id = `delivery-${key}`;
+      node.type = "application/json";
+      node.textContent = JSON.stringify(value);
+      window.document.body.appendChild(node);
+    }
+    window.eval(built.renderer);
+    window.document.querySelector<HTMLButtonElement>('.stop-btn[data-subject="APP-1"]')!.click();
+    return dom;
+  }
+  function cited(): PublicProjection {
+    const body = fixture();
+    // The page reads its runs, so a story's detail draws its run's rounds.
+    body.view.runs = true;
+    const runs = body.runs as Record<string, { roundDetail: { detailsUnavailable?: boolean; raised: { summary: string }[] }[] }>;
+    // A round whose details were read, so its finding is drawn.
+    delete runs["run-1"].roundDetail[0].detailsUnavailable;
+    runs["run-1"].roundDetail[0].raised[0].summary = "Guard it (src/app/main.py:4).";
+    return body;
+  }
+  it("opens the file at its line, as the local page does, when the cut carries its link", () => {
+    const body = cited();
+    const href = `https://github.com/example/app/blob/${"a".repeat(40)}/src/app/main.py#L4`;
+    body.links.files = { [`${"a".repeat(40)} src/app/main.py:4`]: href };
+    const dom = drawn(body);
+    try {
+      const ref = dom.window.document.querySelector<HTMLAnchorElement>("#detail a.prose-ref")!;
+      expect(ref).not.toBeNull();
+      expect(ref.textContent).toBe("src/app/main.py:4");
+      expect(ref.getAttribute("href")).toBe(href);
+    } finally {
+      dom.window.close();
+    }
+  });
+  it("shows the reference as words when the cut carries no file links", () => {
+    const dom = drawn(cited());
+    try {
+      const detail = dom.window.document.querySelector("#detail")!;
+      expect(detail.textContent).toContain("src/app/main.py:4");
+      expect(detail.querySelector("a.prose-ref")).toBeNull();
+      expect(detail.querySelector(".prose-ref")).not.toBeNull();
+    } finally {
+      dom.window.close();
+    }
+  });
+});
+
 describe("hosted adapter allow and fail boundaries", () => {
   it("publishes a coherent new projection before notifying its document subscribers", async () => {
     let r = await revision();
@@ -345,6 +412,27 @@ describe("hosted adapter allow and fail boundaries", () => {
     await store.poll();
     expect(store.projection()?.links.issues).toEqual({
       ordinary: "https://example.com/issue/APP-1",
+    });
+  });
+  it("keeps a file link, and drops one that would carry the view's own capability", async () => {
+    const value = fixture();
+    const sha = "a".repeat(40);
+    value.links.files = {
+      [`${sha} src/app/main.py:4`]: `https://github.com/example/app/blob/${sha}/src/app/main.py#L4`,
+      [`${sha} src/app/leak.py:1`]: `https://example.com/${publicId}/leak.py#L1`,
+    };
+    const r = await revision(1, value);
+    const store = createViewStore(publicId, {
+      fetcher: async (url) =>
+        url.endsWith("/current")
+          ? Response.json(r.meta)
+          : new Response(r.bytes, {
+              headers: { "Content-Type": "application/json" },
+            }),
+    });
+    await store.poll();
+    expect(store.projection()?.links.files).toEqual({
+      [`${sha} src/app/main.py:4`]: `https://github.com/example/app/blob/${sha}/src/app/main.py#L4`,
     });
   });
   it("accounts for time spent downloading a snapshot without refreshing source freshness", async () => {
