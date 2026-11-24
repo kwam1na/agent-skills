@@ -166,10 +166,20 @@ instant is its `occurredAt` when it has one, and its `at` otherwise.
   | `blocker.resolved` | `deferral.breached` |
   | `lease.released` | `lease.granted` |
   | `story.unheld` | `story.held` |
+  | `seat.admitted` | `seat.requested` |
+  | `partition.resumed` | `partition.held` |
 
   `candidate.stopped`, `base.broken` and `blocker.recorded` open a thread, a
   stop only when it leaves the piece stopped, and the first entry answering the
   opening closes it.
+- **A shared record's entries carry their origin.** On a record `plan-open`
+  made shared, every entry also has `origin`, `{seat, seq, seen}`: the seat that
+  wrote it, that seat's own seq, dense from 1, and the last seq of each other
+  seat it had ingested. Ids stay local and dense from 1, and links still name
+  local ids: a seat's partition carries them by origin, and the sync writer
+  translates them as it ingests a peer's entry, once every entry its `seen`
+  names is here. The skill page's "Shared records" says how seats, partitions
+  and the sync loop work.
 - **A person's decision says why.** `decision.recorded` needs `data.text` and
   `data.why`, and `blocker.recorded` needs `data.text`; none may be empty or
   only spaces. Give them with `--text` and `--why`.
@@ -281,6 +291,11 @@ the lead and the lanes make them instead, as the commands print them.
 | `compounding.recorded` | On the epic: whether a learning was preserved and where, or why none was, or why the decision was skipped. | the epic | Compounding decided |
 | `hook.held` | None: a host hook held, or warned about, a lead's stop while no listener ran, and the entry shows in the record and the views. | nowhere | - |
 | `peer.merged` | None: the supervisor journals a merge by another delivery on the base that changed a file one of this delivery's open stories names, and the entry shows in the record and the views. | nowhere | - |
+| `seat.requested` | None: a checkout joined a shared record's catch-up as a new seat, and the entry shows in the record and the views. | nowhere | - |
+| `seat.admitted` | None: the delivery holder admitted a seat to the shared record, and the entry shows in the record and the views. | nowhere | - |
+| `seat.labeled` | None: a seat's label is display only, and the entry shows in the record and the views. | nowhere | - |
+| `partition.held` | None: Needs you names a held peer partition on the machine that reads it, and the entry shows in the record and the views. | nowhere | - |
+| `partition.resumed` | None: the partition held earlier is ingested again, and the entry shows in the record and the views. | nowhere | - |
 | `delivery.closed` | On the epic: the close-out summary; the epic moves to its final state. | the epic | Delivery closed |
 
 The lead posts the updates in this table, including every cross-lane

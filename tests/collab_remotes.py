@@ -7,10 +7,15 @@ that log: a forced update the product made would have landed, and shows there as
 
 from __future__ import annotations
 
+import fnmatch
 import subprocess
 from pathlib import Path
 
-from tests.quiet_git import quieten
+from tests.quiet_git import quiet_clone, quieten
+
+ZERO = "0" * 40
+# What a shared record writes on the remote: its plan branch, its lead branch, and every seat's partition.
+SHARED_REFS = ("refs/heads/plan/*", "refs/heads/lead/*", "refs/agent-skills/*")
 
 
 def git(remote: Path, *args: str) -> subprocess.CompletedProcess:
@@ -54,3 +59,26 @@ def assert_fast_forwards_only(remote: Path, ref: str) -> None:
         if git(remote, "merge-base", "--is-ancestor", old, new).returncode != 0:
             raise AssertionError(f"{ref} on {remote} moved from {old} to {new}, which is not a fast-forward: "
                                  "a forced update")
+
+
+def clone(remote: Path, target: Path, *, name: str) -> Path:
+    """A machine's quietened clone of ``remote``'s main at ``target``, with its own git identity."""
+    quiet_clone(remote, target, settings=f"[user]\n\tname = {name}\n\temail = {name.lower()}@example.invalid\n")
+    return target
+
+
+def ref_updates(remote: Path, patterns: tuple[str, ...] = SHARED_REFS) -> list[tuple[str, str, str]]:
+    """Every update the remote logged to a ref matching ``patterns``, as ``(ref, old, new)``, oldest first."""
+    found = []
+    logs = remote / "logs"
+    for path in sorted(logs.rglob("*")) if logs.is_dir() else []:
+        ref = path.relative_to(logs).as_posix()
+        if path.is_file() and any(fnmatch.fnmatchcase(ref, pattern) for pattern in patterns):
+            found += [(ref, old, new) for old, new in updates(remote, ref)]
+    return found
+
+
+def forced_updates(remote: Path, patterns: tuple[str, ...] = SHARED_REFS) -> list[tuple[str, str, str]]:
+    """Every logged update to a ref matching ``patterns`` that was not a fast-forward; a creation or deletion is not."""
+    return [(ref, old, new) for ref, old, new in ref_updates(remote, patterns)
+            if old != ZERO and new != ZERO and git(remote, "merge-base", "--is-ancestor", old, new).returncode != 0]

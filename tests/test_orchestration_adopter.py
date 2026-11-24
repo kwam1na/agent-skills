@@ -934,7 +934,9 @@ class FixtureAdopterLiveViewTests(unittest.TestCase):
 # hooks by command-line flag. Only quoted string forms and full ref names are
 # matched, so ordinary words and identifiers such as __main__ never are.
 ADOPTER_DEFAULTS = (
-    ("remote name", re.compile(r"""(["'])origin\1""")),
+    # A remote named in a string, not a shared record's `origin` field: a subscript, a .get, a membership test, an
+    # object key or the last entry of a JSON list are that field.
+    ("remote name", re.compile(r"""(?<!\[)(?<!\.get\()(["'])origin\1(?!\s*:)(?!\s+(?:not\s+)?in\b)(?!\n\s*\])""")),
     ("branch name", re.compile(r"""(["'])(?:main|master)\1""")),
     ("branch ref", re.compile(r"refs/heads/(?:main|master)\b")),
     ("remote-tracking ref", re.compile(r"""["'](?:origin|upstream)/(?:main|master)\b""")),
@@ -979,7 +981,7 @@ class AdopterNeutralityTests(unittest.TestCase):
 
     def test_the_tools_assume_no_adopter_default(self) -> None:
         self.assertEqual([path.name for path in self.tool_sources()],
-                         ["delivery_state.py", "journal_words.py", "machine.py", "merge_queue.py", "narrator.py",
+                         ["collab.py", "delivery_state.py", "journal_words.py", "machine.py", "merge_queue.py", "narrator.py",
                           "region_ownership.py", "render_state.py", "journal-kinds.json", "schemas.json"])
         for path in self.tool_sources():
             contents = path.read_text(encoding="utf-8")
@@ -988,13 +990,15 @@ class AdopterNeutralityTests(unittest.TestCase):
                     self.assertIsNone(pattern.search(contents))
 
     def test_the_scan_finds_each_default_it_looks_for(self) -> None:
-        for planted in ('remote = "origin"', "branch = 'main'", "refs/heads/main", '["npx", "x"]',
+        for planted in ('remote = "origin"', 'default="origin"', '["git", "push", "origin"]', "branch = 'main'", "refs/heads/main", '["npx", "x"]',
                         "git push --no-verify", 'run(["gh", "pr"])', 'base = "origin/main"',
                         '["git", "commit", "-n", "-m", "x"]', "git commit -q -n -m x", 'command = "gh pr merge"'):
             with self.subTest(planted=planted):
                 self.assertTrue(any(pattern.search(planted) for _, pattern in ADOPTER_DEFAULTS))
         for innocent in ('if __name__ == "__main__":', "the main checkout", "origin_url = remote",
-                         "core.hooksPath", "highlight", '"-n"', 'git log -n 1', '"ghost"'):
+                         "core.hooksPath", "highlight", '"-n"', 'git log -n 1', '"ghost"',
+                         'entry["origin"]', '{"origin": 1}', '"origin" in entry', '"origin" not in entry',
+                         'entry.get("origin")', '"required": [\n  "path",\n  "origin"\n]'):
             with self.subTest(innocent=innocent):
                 self.assertFalse(any(pattern.search(innocent) for _, pattern in ADOPTER_DEFAULTS))
 

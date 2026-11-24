@@ -23,9 +23,13 @@ SCRIPTS = {
     "delivery_state.py": ROOT / "skills/orchestrate-work/scripts/delivery_state.py",
     "merge_queue.py": ROOT / "skills/orchestrate-work/scripts/merge_queue.py",
     "run_delivery.py": ROOT / "skills/run-delivery/scripts/run_delivery.py",
+    "collab.py": ROOT / "skills/orchestrate-work/scripts/collab.py",
 }
 # The journal command's own call: the state tool checks the kind it is given when it runs.
-EXEMPT = {("delivery_state.py", "main")}
+EXEMPT = {("delivery_state.py", "main"),
+          # A shared record's ingest copies a peer's entries, each written and walked where that peer wrote it, and
+          # checks each one's kind against the registry as it appends it.
+          ("collab.py", "ingest")}
 SENTENCE = "summary"
 # The state tool's append under its own lock: append_journal makes each entry with it, and a writer that already
 # holds the lock builds the entry itself.
@@ -142,6 +146,14 @@ INVENTORY = {
         _key("lead_resolve", {"fullhealth.rerun"}): 1,
         _key("lead_resolve", {"blocker.resolved"}): 1,
         _key("requeue", {"handoff.requeued"}): 1,
+    }),
+    "collab.py": Counter({
+        _key("open_record", {"record.started"}): 1,
+        _key("open_record", {"seat.admitted"}): 1,
+        _key("request_seat", {"seat.requested"}): 1,
+        _key("admit_seat", {"seat.admitted"}): 1,
+        _key("label_seat", {"seat.labeled"}): 1,
+        _key("_journal_hold", {"partition.held", "partition.resumed"}): 1,
     }),
 }
 

@@ -5973,7 +5973,7 @@ class SchemaAgreementTests(unittest.TestCase):
         schemas = json.loads(text)
         self.assertEqual(text, json.dumps(schemas, indent=2, ensure_ascii=False) + "\n")
         self.assertEqual(sorted(schemas), [
-            "affected-checks/1", "delivery-journal/2", "delivery-state/1", "journal-kinds/1", "machine-capacity/1",
+            "affected-checks/1", "delivery-journal/2", "delivery-partition/1", "delivery-state/1", "journal-kinds/1", "machine-capacity/1",
             "machine-claim/1", "machine-costs/1", "machine-history/1", "merge-queue-result/1", "orchestration-binding/1",
             "sibling-snapshot/1", "work-hints/1", "work-snapshot/1",
         ])
@@ -6065,7 +6065,9 @@ ADOPTER_FILES = frozenset({".agents/orchestration.json", ".agents/delivery-postu
                            # run-delivery's lead-wait: its lease in the record and its default output beside the flow logs
                            "<state>/lead-wait.json", "<delivery>.wait.json",
                            # run-delivery's lead-suite: the flow log it appends each run of the lead's suite to
-                           "<delivery>.suite.jsonl"})
+                           "<delivery>.suite.jsonl",
+                           # a shared record's sync loop, which the supervisor runs
+                           "scripts/collab.py"})
 
 
 def review_round(number: int, candidate: str, *, finding: bool = False, resolved: bool = False) -> dict:
