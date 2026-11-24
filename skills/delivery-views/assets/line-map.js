@@ -4795,6 +4795,7 @@
       inner.replaceChildren(el("div", "kicker", "What happened"), el("h2", "title", "The story could not be told from this record."));
       return;
     }
+    if (!story.beats.some(isObject)) { drawStoryAhead(inner, story); prev.story = Object.create(null); return; }
     var depth = storyDepth(story);
     var seen = Object.create(null);
     story.beats.forEach(function (beat) { if (isObject(beat)) { seen[beatKey(beat)] = true; } });
@@ -4849,6 +4850,22 @@
       ledger && ledger.length && (storyFilter === "all" || storyFilter === "problems") ? setbackLedger(ledger) : null, ol);
     // Depth changes density in place: the chapter eases from the height it had, on the shared fold's motion.
     runEaseHeight(inner, from);
+  }
+  /**
+   * Before anything has happened: no switches over an empty list, just what the chapter will tell and the marks it
+   * will tell it with, so the first landing, decision or setback reads at once when it comes.
+   */
+  function drawStoryAhead(inner, story) {
+    var started = isObject(story.digest) && text(story.digest.startedAt);
+    var key = add.apply(null, [el("ul", "ahead")].concat(
+      [["landed", "Landings", "Each piece as it merges, and how long it took."],
+       ["decision", "Decisions", "Each call the lead makes, and why."],
+       ["problem", "Setbacks", "What stopped work, until when, and what it cost."]].map(function (kind) {
+        return add(el("li", "is-" + kind[0]), toneMark(kind[0]), add(el("div", "ahead-words"), el("b", null, kind[1]), el("span", null, kind[2])));
+      })));
+    inner.replaceChildren(el("div", "kicker", "What happened"), el("h2", "title", "Nothing has happened yet."),
+      el("p", "say", started ? "The story is told here as it unfolds, newest first." : "The story starts with the first lane, and is told here as it unfolds, newest first."),
+      key);
   }
   function beatKey(beat) { return text(beat.form) + ":" + list(beat.entries).join(","); }
   var NUMBER_WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];

@@ -1236,3 +1236,15 @@ body.paged .chapter-now.is-fresh > .inner { margin-bottom: 0; }
 .aside li.open .aside-head { display: block; -webkit-line-clamp: unset; overflow: visible; }
 .aside li.open .aside-chevron { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) { .aside-chevron { transition: none; } }
+
+/* What happened, before anything has: the three kinds of moment it will tell, each with its mark. */
+.ahead { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 32px; max-width: 980px; border-top: 1px solid var(--hair); }
+.ahead li { display: flex; gap: 12px; align-items: flex-start; padding: 16px 0; }
+.ahead li > svg, .ahead li > .glyph { flex: none; margin-top: 2px; }
+.ahead-words { display: grid; gap: 4px; min-width: 0; }
+.ahead-words b { font-weight: 500; font-size: 14px; color: var(--ink); }
+.ahead-words span { font-size: 13px; line-height: 1.45; color: var(--soft); }
+@media (max-width: 720px) {
+  .ahead { grid-template-columns: 1fr; }
+  .ahead li { border-bottom: 1px solid var(--hair); padding: 14px 0; }
+}
