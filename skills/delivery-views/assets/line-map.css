@@ -1050,19 +1050,28 @@ body:not(.paged) .chapter-tab-hint { display: none; }
   .page-where { display: none; }
 }
 
-/* The pull past a page's edge: a stop's ring fills toward the page it would open. */
-.page-pull { --pull: 0; position: fixed; left: 50%; bottom: 22px; z-index: 30; display: flex; align-items: center; gap: 10px;
-  padding: 7px 14px 7px 8px; border-radius: 999px; background: var(--lift);
+/* The pull past a page's edge: the page it would open leads, the instruction steps back, and a ring around an arrow
+   fills toward the turn. The words never change mid-pull, so the pill holds its width; a full pull fills the ring. */
+.page-pull { --pull: 0; position: fixed; left: 50%; bottom: 22px; z-index: 30; display: flex; align-items: center; gap: 9px;
+  padding: 6px 15px 6px 7px; border-radius: 999px; background: var(--lift);
   box-shadow: 0 2px 6px rgba(20, 23, 25, .06), 0 12px 28px -12px rgba(20, 23, 25, .25), 0 0 0 1px color-mix(in oklab, var(--edge) 18%, transparent);
   font-size: 13px; color: var(--ink); white-space: nowrap; pointer-events: none;
   opacity: 0; transform: translate(-50%, 10px); transition: opacity .18s, transform .18s var(--ease); }
 .page-pull.is-up { bottom: auto; top: 58px; transform: translate(-50%, -10px); }
 .page-pull.is-on { opacity: 1; transform: translate(-50%, 0); }
-.page-pull-ring { width: 18px; height: 18px; border-radius: 50%; flex: none;
-  background: conic-gradient(var(--ink) calc(var(--pull) * 360deg), transparent 0);
-  -webkit-mask: radial-gradient(circle, transparent 5px, #000 5.5px); mask: radial-gradient(circle, transparent 5px, #000 5.5px);
-  box-shadow: inset 0 0 0 1.5px var(--edge); }
-.page-pull-words { font-family: var(--display); font-size: 16px; letter-spacing: -0.01em; }
+.page-pull-ring { width: 22px; height: 22px; flex: none; overflow: visible; }
+.page-pull-ring .track { fill: none; stroke: var(--hair); stroke-width: 1.5; }
+.page-pull-ring .fill { fill: transparent; stroke: var(--ink); stroke-width: 1.75; stroke-linecap: round;
+  stroke-dasharray: 1; stroke-dashoffset: calc(1 - var(--pull)); transform: rotate(-90deg); transform-origin: center;
+  transition: fill .16s var(--ease); }
+.page-pull-ring .arrow { fill: none; stroke: var(--faint); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
+  transform-origin: center; transition: stroke .16s var(--ease); }
+.page-pull.is-up .page-pull-ring .arrow { transform: rotate(180deg); }
+.page-pull.is-full .page-pull-ring .fill { fill: var(--ink); }
+.page-pull.is-full .page-pull-ring .arrow { stroke: var(--on-ink); }
+.page-pull-words { display: inline-flex; align-items: baseline; gap: 6px; }
+.page-pull-lead { font-family: var(--text); font-size: 12.5px; color: var(--faint); }
+.page-pull-name { font-family: var(--display); font-size: 16.5px; letter-spacing: -0.01em; color: var(--ink); }
 @media (prefers-reduced-motion: reduce) { .page-pull { transition: none; } }
 
 /* Blocking approvals: who holds how many, then one folded row each. */

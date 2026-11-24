@@ -869,8 +869,21 @@
   var pull = { dir: 0, amount: 0, idle: null, edgeSince: 0, pausedUntil: 0, touchY: null };
   var pullEl = el("div", "page-pull");
   pullEl.setAttribute("aria-hidden", "true");
-  var pullRing = el("span", "page-pull-ring");
+  // The ring fills toward the turn around an arrow pointing the way; the words hold still, so the pill keeps its width.
+  var pullRing = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  pullRing.setAttribute("class", "page-pull-ring");
+  pullRing.setAttribute("viewBox", "0 0 20 20");
+  [["circle", "track", { cx: 10, cy: 10, r: 8.25 }], ["circle", "fill", { cx: 10, cy: 10, r: 8.25, pathLength: 1 }],
+    ["path", "arrow", { d: "M10 6.2v7.2M6.9 10.6 10 13.6l3.1-3" }]].forEach(function (part) {
+    var node = document.createElementNS("http://www.w3.org/2000/svg", part[0]);
+    node.setAttribute("class", part[1]);
+    Object.keys(part[2]).forEach(function (name) { node.setAttribute(name, String(part[2][name])); });
+    pullRing.appendChild(node);
+  });
+  var pullLead = el("span", "page-pull-lead");
+  var pullName = el("span", "page-pull-name");
   var pullWords = el("span", "page-pull-words");
+  add(pullWords, pullLead, pullName);
   add(pullEl, pullRing, pullWords);
   document.body.appendChild(pullEl);
   function atEnd() { return window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2; }
@@ -881,8 +894,9 @@
     var share = to ? Math.min(1, pull.amount) : 0;
     pullEl.classList.toggle("is-on", share > 0.04);
     pullEl.classList.toggle("is-up", pull.dir < 0);
+    pullEl.classList.toggle("is-full", share >= 1);
     pullEl.style.setProperty("--pull", String(share));
-    if (to) { pullWords.textContent = (share >= 1 ? "" : pull.dir > 0 ? "Keep scrolling for " : "Keep scrolling up for ") + chapterName(to); }
+    if (to) { pullLead.textContent = pull.dir > 0 ? "Keep scrolling for" : "Keep scrolling up for"; pullName.textContent = chapterName(to); }
   }
   function resetPull() { pull.dir = 0; pull.amount = 0; drawPull(); }
   function turn(dir) {
