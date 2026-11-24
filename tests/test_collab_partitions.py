@@ -19,7 +19,10 @@ from pathlib import Path
 from unittest import mock
 
 import agent_skills
-from collab_remotes import SHARED_REFS, assert_fast_forward_only, bare_remote, clone, forced_updates, git
+import fnmatch
+
+from quiet_git import quiet_clone, quieten
+from tests.collab_remotes import assert_fast_forwards_only, bare_remote as shared_bare_remote
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT_ROOT = Path(agent_skills.__file__).resolve().parents[1]
@@ -28,6 +31,74 @@ SCRIPTS = SKILL / "scripts"
 TOOL = SCRIPTS / "delivery_state.py"
 MACHINE = {"cores": 16, "load5": 1.0, "diskFreeBytes": 500 * 2**30, "swapUsedBytes": 2**30}
 LEDGER = {"capacity": 4, "used": 0, "running": [], "waiting": [], "overrides": []}
+
+
+# This module's own remote fixtures, beside the shared helper's bare remote and fast-forward check: a seeded main,
+# clones with their own identity, and every logged update across several refs. They move into the shared helper once
+# it is on the integration base.
+ZERO = "0" * 40
+# What a shared record writes on the remote: its plan branch, its lead branch, and every seat's partition.
+SHARED_REFS = ("refs/heads/plan/*", "refs/heads/lead/*", "refs/agent-skills/*")
+
+
+def git(repository: Path, *arguments: str) -> str:
+    return subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *arguments], cwd=repository, check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def bare_remote(root: Path, name: str = "remote.git") -> Path:
+    """A bare remote under ``root`` whose main holds one commit, logging every ref update and allowing forced ones."""
+    remote = shared_bare_remote(root / name)
+    seed = root / f"{name}.seed"
+    subprocess.run(["git", "init", "--quiet", "--initial-branch=main", str(seed)], check=True, capture_output=True)
+    quieten(seed)
+    (seed / "README.md").write_text("A shared delivery's fixture.\n", encoding="utf-8")
+    git(seed, "add", "README.md")
+    git(seed, "-c", "user.name=Seed", "-c", "user.email=seed@example.invalid", "commit", "--quiet", "-m", "Seed")
+    git(seed, "push", "--quiet", str(remote), "main")
+    return remote
+
+
+def clone(remote: Path, target: Path, *, name: str) -> Path:
+    """A machine's clone of ``remote`` at ``target``, with its own git identity."""
+    quiet_clone(remote, target, settings=f"[user]\n\tname = {name}\n\temail = {name.lower()}@example.invalid\n")
+    return target
+
+
+def ref_updates(remote: Path, patterns: tuple[str, ...] = SHARED_REFS) -> list[tuple[str, str, str]]:
+    """Every update the remote logged to a ref matching ``patterns``, as ``(ref, old, new)``, oldest first."""
+    updates = []
+    logs = remote / "logs"
+    for path in sorted(logs.rglob("*")) if logs.is_dir() else []:
+        ref = path.relative_to(logs).as_posix()
+        if not path.is_file() or not any(fnmatch.fnmatchcase(ref, pattern) for pattern in patterns):
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            old, new = line.split(" ", 2)[:2]
+            updates.append((ref, old, new))
+    return updates
+
+
+def forced_updates(remote: Path, patterns: tuple[str, ...] = SHARED_REFS) -> list[tuple[str, str, str]]:
+    """Every logged update to a ref matching ``patterns`` that was not a fast-forward."""
+    forced = []
+    for ref, old, new in ref_updates(remote, patterns):
+        if old == ZERO or new == ZERO:
+            continue
+        ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", old, new], cwd=remote, capture_output=True)
+        if ancestor.returncode != 0:
+            forced.append((ref, old, new))
+    return forced
+
+
+def assert_fast_forward_only(remote: Path) -> None:
+    """Every partition ref on ``remote`` has a logged update, and each update was a fast-forward: the shared helper's
+    check, ref by ref."""
+    refs = sorted({ref for ref, _, _ in ref_updates(remote, ("refs/agent-skills/*",))})
+    if not refs:
+        raise AssertionError(f"{remote} logged no update to a partition ref")
+    for ref in refs:
+        assert_fast_forwards_only(remote, ref)
 
 
 def _load(name: str):
@@ -285,7 +356,7 @@ class ExchangeTests(SharedFixture):
                          {first: {"label": "A", "admitted": True, "approver": True},
                           second: {"label": "B", "admitted": True, "approver": True}})
         self.assertEqual(self.a.state()["meta"]["collab"]["peers"][second]["through"], 2)
-        assert_fast_forward_only(self, self.remote)
+        assert_fast_forward_only(self.remote)
 
     def test_concurrent_queue_elements_with_different_subjects_survive_on_both_machines_in_one_order(self) -> None:
         self.open()
@@ -424,6 +495,15 @@ class ExchangeTests(SharedFixture):
         self.a.patch({"planned": [planned_element("APP-1"), planned_element("APP-2")]})
         self.exchange(self.a, self.b)
         self.b.patch({"planned": [planned_element("APP-2")]})
+        self.b.push()
+        # b's removal names the element it removed, a's, by a's origin and the digest of the value carried.
+        tip = git(self.remote, "rev-parse", f"refs/agent-skills/{KEY}/{self.b.seat()}")
+        removal = next(item for item in json.loads(git(self.remote, "cat-file", "blob", f"{tip}:partition.json"))["slice"]
+                       if item["path"] == "planned[subject=APP-1]")
+        created = json.loads((self.a.directory / state_tool.FIELD_ORIGINS_FILE).read_text())["planned[subject=APP-1]"]
+        self.assertEqual(removal, {"path": "planned[subject=APP-1]", "removed": True,
+                                   "origin": {"seat": self.b.seat(), "seq": removal["origin"]["seq"]},
+                                   "replaces": {**created, "digest": state_tool.value_digest(True)}})
         self.plant(third, [{"path": "planned[subject=APP-2]", "removed": True, "origin": {"seat": third, "seq": 1}}])
         self.exchange(self.a, self.b)
         self.assertConverged(self.a, self.b)
@@ -596,17 +676,19 @@ class HoldAndSplitTests(SharedFixture):
                 origins = [entry["origin"] for entry in self.b.journal()]
                 self.assertIn(kept["origin"], origins)
                 self.assertNotIn(lost["data"], [entry["data"] for entry in self.b.journal()])
-                assert_fast_forward_only(self, self.remote)
+                assert_fast_forward_only(self.remote)
 
     def test_the_remote_helper_finds_only_fast_forwards_and_names_a_planted_forced_push(self) -> None:
         seat = self.open()
         self.a.decide("A second commit on the chain.")
         self.a.push()
-        assert_fast_forward_only(self, self.remote)
+        assert_fast_forward_only(self.remote)
         ref = f"refs/agent-skills/{KEY}/{seat}"
         first = git(self.remote, "rev-list", "--max-parents=0", ref)
         git(self.a.repo, "push", "--quiet", "--force", "origin", f"{first}:{ref}")
         self.assertEqual([update[0] for update in forced_updates(self.remote)], [ref])
+        with self.assertRaises(AssertionError):
+            assert_fast_forward_only(self.remote)
         self.assertEqual(forced_updates(self.remote, ("refs/heads/*",)), [])
 
 
