@@ -953,7 +953,12 @@ class ShapeAndHoldTests(SharedFixture):
                 self.open()
                 second = self.join(self.b)
                 before = composed(self.a)
-                self.plant(second, [{**item, "origin": {"seat": second, "seq": 1}} for item in held], through=through)
+                # The planted value replaces a's headline, so it is applied, and held, whatever the seat ids are.
+                headline = json.loads((self.a.directory / state_tool.FIELD_ORIGINS_FILE).read_text())["meta/headline"]
+                replaces = {"seat": headline["seat"], "seq": headline["seq"],
+                            "digest": state_tool.value_digest(self.a.state()["meta"]["headline"])}
+                self.plant(second, [{**item, "origin": {"seat": second, "seq": 1}, "replaces": replaces} for item in held],
+                           through=through)
                 taken = self.a.take()
                 self.assertEqual(taken["held"], {second: "slice_invalid"})
                 self.assertEqual(self.a.state()["meta"]["collab"]["peers"][second]["heldReason"], "slice_invalid")
