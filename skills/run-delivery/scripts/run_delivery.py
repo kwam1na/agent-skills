@@ -8015,16 +8015,19 @@ def verify_integration_checkout(c, root: Path, key: str, base: str, target: str)
 
 
 def setup_head(c, key: str, plan: str) -> str:
-    """HEAD of the standing checkout, for an integration setup, which reads only the committed tree at it and writes in
-    a checkout of its own. It refuses a tracked change, staged or not, and an untracked file at a path setup writes: the
-    delivery file, the lane brief and the binding. Every other untracked file is named and left alone."""
-    writes = {(Path(c.deliveries_rel) / f"{key}.json").as_posix(), f"{Path(plan).with_suffix('').as_posix()}.lane-brief.md",
-              ".agents/orchestration.json"}
+    """HEAD of the standing checkout, for an integration setup, which drafts from the committed tree at it into a
+    checkout of its own. It refuses a tracked change, staged or not, and an untracked file at a path setup writes (the
+    delivery file, the lane brief and the binding) or reads from the working tree (the settings the standing
+    configuration takes, which the new checkout wouldn't have). Every other untracked file is named and left alone."""
+    guarded = {(Path(c.deliveries_rel) / f"{key}.json").as_posix(), f"{Path(plan).with_suffix('').as_posix()}.lane-brief.md",
+               ".agents/orchestration.json", CONFIG, *(old for old, new in LEGACY_NAMES if new == CONFIG),
+               ".agents/delivery-views.json", "harness.config.ts"}
     changed, colliding, elsewhere = [], [], []
-    for line in git("status", "--porcelain", "--untracked-files=all", cwd=c.root).splitlines():
+    # Not stripped: the first line's leading space is its status column.
+    for line in run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=c.root).stdout.splitlines():
         if not line.startswith("?? "):
             changed.append(line)
-        elif line[3:] in writes:
+        elif line[3:] in guarded:
             colliding.append(line)
         else:
             elsewhere.append(line[3:])
@@ -8032,7 +8035,7 @@ def setup_head(c, key: str, plan: str) -> str:
     if changed:
         refused.append("the checkout has uncommitted changes; commit or remove them first:\n" + "\n".join(changed)[:800])
     if colliding:
-        refused.append("the checkout has untracked files where setup writes; commit or remove them first:\n"
+        refused.append("the checkout has untracked files where setup reads or writes; commit or remove them first:\n"
                        + "\n".join(colliding))
     if refused:
         raise Stop("\n".join(refused))

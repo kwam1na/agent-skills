@@ -5529,8 +5529,9 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
 
 
     def test_integration_setup_runs_beside_untracked_files_it_never_reads(self) -> None:
-        """lead-setup --integration reads only the committed tree: an untracked file elsewhere is named and left alone,
-        while a tracked change, or an untracked file where setup writes, still refuses it, writing nothing."""
+        """lead-setup --integration drafts from the committed tree: an untracked file elsewhere is named and left
+        alone, while a tracked change, or an untracked file where setup reads or writes, still refuses it, writing
+        nothing."""
         fx = self.fixture()
         m = fx.main
         binding = doctor_binding()
@@ -5556,9 +5557,17 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
         notes = m / "docs/delivery/notes.md"
         notes.parent.mkdir(parents=True)
         notes.write_bytes(b"the operator's own notes\n")
+        # Beside the paths setup guards, another delivery's draft is still not one of them.
+        neighbour = m / ".agents/deliveries/FX-99.json"
+        neighbour.parent.mkdir(parents=True, exist_ok=True)
+        neighbour.write_text("{}\n")
         code, out = setup("FX-1", "integrate/one")
         self.assertEqual(code, 0, out)
+        self.assertIn("left alone: untracked files setup doesn't read:", out)
         self.assertIn("docs/delivery/notes.md", out)
+        self.assertIn(".agents/deliveries/FX-99.json", out)
+        self.assertEqual(neighbour.read_text(), "{}\n")
+        neighbour.unlink()
         self.assertEqual(notes.read_bytes(), b"the operator's own notes\n")
         lead = m / "lanes/FX-1"
         self.assertEqual(json.loads((lead / ".agents/deliveries/FX-1.json").read_text())["baseBranch"], "integrate/one")
@@ -5582,8 +5591,9 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
             nothing_written("FX-5", "integrate/five")
             sh("git", "rm", "-q", "--cached", "src/staged.txt", cwd=m)
             (m / "src/staged.txt").unlink()
-        for path in (".agents/deliveries/FX-6.json", "docs/plan.lane-brief.md"):
-            with self.subTest("an untracked file where setup writes", path=path):
+        for path in (".agents/deliveries/FX-6.json", "docs/plan.lane-brief.md", ".agents/delivery-views.json",
+                     ".agents/flow.json"):
+            with self.subTest("an untracked file where setup reads or writes", path=path):
                 (m / path).parent.mkdir(parents=True, exist_ok=True)
                 (m / path).write_text("{}\n")
                 code, out = setup("FX-6", "integrate/six")
@@ -5592,6 +5602,15 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
                 self.assertEqual((m / path).read_text(), "{}\n")
                 nothing_written("FX-6", "integrate/six")
                 (m / path).unlink()
+        with self.subTest("an untracked binding"):
+            sh("git", "rm", "-q", "--cached", ".agents/orchestration.json", cwd=m)
+            sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "Leave the binding untracked", cwd=m)
+            code, out = setup("FX-6", "integrate/six")
+            self.assertEqual(code, 2, out)
+            self.assertIn("untracked files where setup reads or writes", out)
+            self.assertIn("?? .agents/orchestration.json", out)
+            nothing_written("FX-6", "integrate/six")
+            commit(m, "Track the binding again")
         self.assertEqual(notes.read_bytes(), b"the operator's own notes\n")
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
