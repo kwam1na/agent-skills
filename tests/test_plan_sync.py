@@ -594,6 +594,9 @@ class PlanSyncTests(unittest.TestCase):
         slug, branch, path = self.start()
         self.write(self.theirs, path, plan(slug, edited(BASE, "## Gamma", "theirs gamma")))
         self.sync(self.theirs, path, branch)
+        # This clone's own unpushed edit to a section it holds, so the merge's plan differs from both its parents.
+        self.write(self.ours, path, plan(slug, edited(BASE, "## Beta", "ours beta")))
+        git("commit", "-qam", "beta", cwd=self.ours)
         git("fetch", "-q", "origin", cwd=self.ours)
         git("-c", "user.name=Ann", "-c", "user.email=ann@example.com", "merge", "-q", "--no-ff", "-m", "compose",
             f"origin/{branch}", cwd=self.ours)

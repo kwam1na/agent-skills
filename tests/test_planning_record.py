@@ -375,6 +375,7 @@ class TwoSeatTests(PlanningRecordCase):
         code, out = self.flow(fx, "plan-sync", "--plan", "docs/plan.md", cwd=b_repo)
         self.assertEqual(code, 0, out)
         self.assertIn("it renders, b says.", sh("git", "show", "lead/FX-1:docs/plan.md", cwd=fx.origin).stdout)
+        stale = sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip()
         sh("git", "pull", "-q", "--ff-only", cwd=fx.main)
         # b's edit is a change since the review aligned: another round aligns on it.
         code, out = fx.flow("plan-review", "prepare", "--plan", "docs/plan.md", cwd=fx.main)
@@ -388,11 +389,28 @@ class TwoSeatTests(PlanningRecordCase):
         code, out = self.flow(fx, "plan-rekey", "--plan", "docs/plan.md", "--map", "COLLAB-1=FX-2", cwd=b_repo)
         self.assertEqual(code, 2, out)
         self.assertIn("scope.not_held", out)
+        # A re-keying whose push is refused is undone: the branch where it started, and nothing journalled.
+        remote = sh("git", "rev-parse", "lead/FX-1", cwd=fx.origin).stdout.strip()
+        hook = fx.origin / "hooks/pre-receive"
+        hook.parent.mkdir(exist_ok=True)
+        hook.write_text("#!/bin/sh\necho refused by the fixture >&2\nexit 1\n")
+        hook.chmod(0o755)
+        code, out = self.flow(fx, "plan-rekey", "--plan", "docs/plan.md", "--map", "COLLAB-1=FX-2")
+        hook.unlink()
+        self.assertEqual(code, 2, out)
+        self.assertIn("the re-keying was undone", out)
+        self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip(), remote)
+        self.assertIn("It comes after COLLAB-1.", (fx.main / "docs/plan.md").read_text())
+        self.assertEqual(sh("git", "status", "--porcelain", cwd=fx.main).stdout, "")
+        self.assertFalse([entry for entry in journal(a) if entry["kind"] == "plan.rekeyed"])
+        # From a checkout behind the remote, the re-keying starts from the remote's plan: b's edit is kept.
+        sh("git", "reset", "-q", "--hard", stale, cwd=fx.main)
         code, out = self.flow(fx, "plan-rekey", "--plan", "docs/plan.md", "--map", "COLLAB-1=FX-2")
         self.assertEqual(code, 0, out)
         rekey = next(entry for entry in journal(a) if entry["kind"] == "plan.rekeyed")
         landed = sh("git", "rev-parse", "lead/FX-1", cwd=fx.origin).stdout.strip()
-        self.assertEqual(rekey["data"]["to"], landed)
+        self.assertEqual((rekey["data"]["from"], rekey["data"]["to"]), (remote, landed))
+        self.assertIn("it renders, b says.", sh("git", "show", "lead/FX-1:docs/plan.md", cwd=fx.origin).stdout)
         self.assertIn("It comes after FX-2.", sh("git", "show", "lead/FX-1:docs/plan.md", cwd=fx.origin).stdout)
         # An ordinary commit to the section the re-keying touched is still checked: a doesn't hold it.
         plan = fx.main / "docs/plan.md"
