@@ -68,8 +68,8 @@ All of these hold:
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | SHOP-91 | `src/a.py` |
-| 2 | 2 | SHOP-92, SHOP-93 | `src/b.py` |
+| 1 | 1 | SHOP-91, SHOP-92 | `src/a.py` |
+| 2 | 2 | SHOP-93 | `src/b.py` |
 
 ## Stories
 
@@ -252,10 +252,14 @@ class PlanPreviewTests(unittest.TestCase):
 
     def test_a_long_title_and_lists_past_the_caps_are_cut_and_said(self) -> None:
         title = "T" * 700
+        goal = "G" * 2100
         lines = "".join(f"- Finish line {n} holds.\n" for n in range(1, 32))
         decisions = "".join(f"- Decision {n}.\n" for n in range(1, 103))
-        text = (f"---\nreviewSlug: capped\ntitle: {title}\n---\n\n# Capped\n\n## Goal\n\nKeep it short.\n\n"
-                f"## Decisions\n\n{decisions}\n## Finish line\n\n{lines}")
+        scenarios = "".join(f"  - scenario {n};\n" for n in range(1, 1002))
+        stories = "".join(f"### CAP-{n}. Story {n}\n\nLane 1, tier 1, not blocked.\n\n"
+                          + (f"- Scenarios:\n{scenarios}\n" if n == 1 else "") for n in range(1, 202))
+        text = (f"---\nreviewSlug: capped\ntitle: {title}\n---\n\n# Capped\n\n## Goal\n\n{goal}\n\n"
+                f"## Decisions\n\n{decisions}\n## Finish line\n\n{lines}\n## Stories\n\n{stories}")
         self.write("docs/plans/capped.md", text, "capped: the plan")
         self.view("docs/plans/capped.md")
         plan, state, _ = self.built("capped")
@@ -263,14 +267,30 @@ class PlanPreviewTests(unittest.TestCase):
         summary = plan["outcome"]["summary"]
         self.assertTrue(summary.startswith(PREFIX), summary)
         self.assertLessEqual(len(summary), 600)
-        self.assertEqual(summary, PREFIX + "T" * (600 - len(PREFIX) - 1) + "…")
+        self.assertEqual(summary, PREFIX + "T" * (600 - len(PREFIX) - 1) + "\u2026")
         self.assertEqual(state["meta"]["headline"], summary)
         self.assertEqual(len(plan["finish"]), 30)
         self.assertEqual(plan["finish"][-1]["text"], "Finish line 30 holds.")
         self.assertEqual(len(state["finish"]), 30)
         self.assertEqual(len(plan["preview"]["decisions"]), 100)
-        self.assertEqual(plan["outcome"]["text"], "Keep it short. This preview leaves out what is over the plan's caps: "
-                                                  "1 finish line, 2 decisions.")
+        self.assertEqual(([unit["subject"] for unit in plan["units"]], [row["subject"] for row in state["planned"]]),
+                         ([f"CAP-{n}" for n in range(1, 201)],) * 2)
+        self.assertEqual(sum(len(unit["criteria"]) for unit in plan["units"]), 1000)
+        said = (" This preview leaves out what is over the plan's caps: 1 story, 1 finish line, 2 decisions, "
+                "1 criterion.")
+        self.assertEqual(plan["outcome"]["text"], "G" * (2000 - len(said) - 1) + "\u2026" + said)
+
+    def test_a_preview_the_contract_refuses_is_not_written(self) -> None:
+        # 1001 long criteria: the cap keeps 1000, and the units with their snapshot copy pass the 1 MiB a plan holds.
+        scenarios = "".join(f"  - {'S' * 590} {n};\n" for n in range(1, 1002))
+        text = (f"---\nreviewSlug: oversized\n---\n\n# Oversized\n\n## Stories\n\n### BIG-1. Big\n\n"
+                f"- Scenarios:\n{scenarios}")
+        self.write("docs/plans/oversized.md", text, "oversized: the plan")
+        out = self.view("docs/plans/oversized.md", code=2)
+        self.assertRegex(out, r"the preview of docs/plans/oversized.md holds [0-9]+ bytes, over the 1 MiB a plan may "
+                              r"hold")
+        here = folder(self.fx, "oversized")
+        self.assertEqual(sorted(path.name for path in here.iterdir()), ["preview.lock"])
 
     def test_it_reads_the_plan_at_head_and_refuses_one_head_does_not_hold(self) -> None:
         self.write("docs/plans/head.md", PLAN.format(slug="head"))
@@ -285,6 +305,13 @@ class PlanPreviewTests(unittest.TestCase):
         self.assertEqual(plan["outcome"]["summary"], PREFIX + "Saved addresses")
         self.assertEqual((plan["preview"]["commit"], facts["commit"]), (head, head))
         sh("git", "checkout", "-q", "--", "docs/plans/head.md", cwd=self.fx.main)
+        # A later commit that leaves the plan alone changes nothing: the preview names the plan's own commit.
+        here, before = folder(self.fx, "head"), files_of(folder(self.fx, "head"))
+        self.write("src/unrelated.txt", "unrelated\n", "an unrelated commit")
+        self.assertNotEqual(sh("git", "rev-parse", "HEAD", cwd=self.fx.main).stdout.strip(), head)
+        self.view("docs/plans/head.md")
+        self.assertEqual(files_of(here), before)
+        self.assertEqual(self.built("head")[0]["preview"]["commit"], head)
 
     def test_a_plan_with_no_review_slug_gets_plan_reviews_advice(self) -> None:
         self.write("docs/plans/No Slug.md", "# No slug\n\n## Goal\n\nNone.\n", "no slug: the plan")
@@ -316,6 +343,16 @@ class PlanPreviewTests(unittest.TestCase):
         self.assertEqual([entry["round"] for entry in expected["rounds"]], [1, 2])
         self.assertEqual(plan["planReview"], expected)
         self.views.validate_plan(plan)
+        # Adopted by a delivery: the rounds are read where the store went, and the preview says it was handed.
+        moved = self.fx.tmp / "adopted-store"
+        store.rename(moved)
+        store.mkdir()
+        (store / "adopted.json").write_text(json.dumps({"delivery": "FX-9", "store": str(moved), "at": "now"}))
+        self.view(path)
+        plan, _, _ = self.built(slug)
+        self.assertEqual((plan["preview"]["approval"], plan["preview"]["delivery"]), ("handed", "FX-9"))
+        self.assertEqual(plan["planReview"], expected)
+        self.views.validate_plan(plan)
 
     def test_a_rebuild_writes_only_what_changed_into_the_same_folder(self) -> None:
         path, slug = "docs/plans/rebuilt.md", "rebuilt"
@@ -331,24 +368,32 @@ class PlanPreviewTests(unittest.TestCase):
         self.view(path)
         self.assertEqual(files_of(here), before, "a build with nothing changed writes nothing")
         self.assertEqual(len(journal(self.fx, slug)), 1)
-        # A story's new title: the plan and the record are replaced, in the same folder, with one plan.updated.
-        self.write(path, PLAN.format(slug=slug).replace("### SHOP-93. A story with no criteria", "### SHOP-93. Renamed"),
-                   "rebuilt: a renamed story")
+        # A story's new title, the plan's and a finish line's: the plan and the record are replaced, in the same folder,
+        # with one plan.updated.
+        head = self.write(path, PLAN.format(slug=slug).replace("### SHOP-93. A story with no criteria", "### SHOP-93. Renamed")
+                          .replace("title: Saved addresses", "title: Kept addresses")
+                          .replace("2. The export opens in a spreadsheet.", "2. The export opens anywhere."),
+                          "rebuilt: renamed")
         self.view(path)
         after = files_of(here)
         self.assertEqual(here.stat().st_ino, inode)
         for name in ("plan.json", "state.json"):
             self.assertNotEqual(after[name][0], before[name][0], f"{name} is replaced")
         self.assertEqual([entry["kind"] for entry in journal(self.fx, slug)], ["plan.updated", "plan.updated"])
-        plan, state, _ = self.built(slug)
+        plan, state, facts = self.built(slug)
         self.assertEqual(plan["units"][-1]["title"], "Renamed")
         self.assertEqual(state["planned"][-1]["title"], "Renamed")
+        self.assertEqual((state["meta"]["headline"], plan["outcome"]["summary"]), (PREFIX + "Kept addresses",) * 2)
+        self.assertEqual([line["text"] for line in state["finish"]],
+                         ["Every saved address survives a sign-out.", "The export opens anywhere."])
+        self.assertEqual((facts["commit"], plan["preview"]["commit"]), (head, head))
         # A story removed from the plan leaves both.
         text = PLAN.format(slug=slug)
-        self.write(path, text[:text.index("### SHOP-93.")] + text[text.index("## Approval handoffs"):],
-                   "rebuilt: SHOP-93 removed")
+        head = self.write(path, text[:text.index("### SHOP-93.")] + text[text.index("## Approval handoffs"):],
+                          "rebuilt: SHOP-93 removed")
         self.view(path)
-        plan, state, _ = self.built(slug)
+        plan, state, facts = self.built(slug)
+        self.assertEqual(facts["commit"], head)
         self.assertEqual([unit["subject"] for unit in plan["units"]], ["SHOP-91", "SHOP-92"])
         self.assertEqual([row["subject"] for row in state["planned"]], ["SHOP-91", "SHOP-92"])
         self.assertEqual(here.stat().st_ino, inode)
@@ -358,7 +403,7 @@ class PlanPreviewTests(unittest.TestCase):
         self.write(path, PLAN.format(slug=slug), "locked: the plan")
         self.view(path)
         here = folder(self.fx, slug)
-        self.write(path, PLAN.format(slug=slug).replace("Saved addresses - Plan", "Locked"),
+        self.write(path, PLAN.format(slug=slug).replace("title: Saved addresses", "title: Locked"),
                    "locked: a revision")
         before = {name: (here / name).read_bytes() for name in ("plan.json", "state.json")}
         with open(here / "preview.lock", "a+") as held:
@@ -371,6 +416,7 @@ class PlanPreviewTests(unittest.TestCase):
         out, _ = waiting.communicate(timeout=120)
         self.assertEqual(waiting.returncode, 0, out)
         self.assertEqual([entry["kind"] for entry in journal(self.fx, slug)], ["plan.updated", "plan.updated"])
+        self.assertEqual(self.built(slug)[1]["meta"]["headline"], PREFIX + "Locked")
         # Two builds started together both succeed, and the second finds nothing left to write.
         self.write(path, PLAN.format(slug=slug).replace("Saved addresses - Plan", "Together"), "locked: together")
         both = [self.start(path) for _ in range(2)]
@@ -378,6 +424,24 @@ class PlanPreviewTests(unittest.TestCase):
             out, _ = started.communicate(timeout=120)
             self.assertEqual(started.returncode, 0, out)
         self.assertEqual(len(journal(self.fx, slug)), 3)
+
+    def test_a_refused_journal_puts_the_plan_back_so_the_next_build_journals_it(self) -> None:
+        path, slug = "docs/plans/refused.md", "refused"
+        self.write(path, PLAN.format(slug=slug), "refused: the plan")
+        self.view(path)
+        here = folder(self.fx, slug)
+        before = (here / "plan.json").read_bytes()
+        self.write(path, PLAN.format(slug=slug).replace("1. Saving addresses.", "1. Saving them."), "refused: wording")
+        (here / "journal.jsonl").chmod(0o444)
+        self.addCleanup((here / "journal.jsonl").chmod, 0o644)
+        refused = self.start(path)
+        out, _ = refused.communicate(timeout=120)
+        self.assertNotEqual(refused.returncode, 0, out)
+        self.assertEqual((here / "plan.json").read_bytes(), before)
+        (here / "journal.jsonl").chmod(0o644)
+        self.view(path)
+        self.assertEqual([entry["kind"] for entry in journal(self.fx, slug)], ["plan.updated", "plan.updated"])
+        self.assertNotEqual((here / "plan.json").read_bytes(), before)
 
 
 if __name__ == "__main__":

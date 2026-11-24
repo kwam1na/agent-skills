@@ -6699,9 +6699,21 @@ def rebuild_preview(c, plan: Path) -> tuple[Path, str | None]:
         if old is None or not same(old, built):
             changed = [] if old is None else [
                 key for key in sorted({*built, *old}) if key != "updated" and old.get(key) != built.get(key)]
+            before = path.read_bytes() if old is not None else None
             replace_file(path, json.dumps(built, indent=2) + "\n")
-            state_tool("journal", "--kind", "plan.updated",
-                       "--data", json.dumps({"updated": built["updated"], "changed": changed}))
+            try:
+                state_tool("journal", "--kind", "plan.updated",
+                           "--data", json.dumps({"updated": built["updated"], "changed": changed}))
+            except Stop:
+                # Put the plan back, so the next build finds the change again and journals it, rather than finding
+                # nothing to do and the journal never saying the plan moved.
+                if before is None:
+                    path.unlink()
+                else:
+                    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+                    temporary.write_bytes(before)
+                    os.replace(temporary, path)
+                raise
             said.append("plan " + ("(" + ", ".join(changed) + ")" if changed else "(first build)"))
         kept = load_json(folder / PREVIEW_FILE) or {}
         facts = {**kept, "slug": slug, "plan": plan.as_posix(), "commit": commit}
