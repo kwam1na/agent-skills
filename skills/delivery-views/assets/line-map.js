@@ -1261,6 +1261,51 @@
   function plural(count, one, many) { return count + " " + (count === 1 ? one : many || one + "s"); }
 
   /* 1. Now */
+  /** Before anything lands: what the delivery holds, as a row of large figures. */
+  function readyFigures(doc, all) {
+    var lanes = [];
+    all.forEach(function (piece) { var lane = text(piece.item.lane); if (lanes.indexOf(lane) < 0) { lanes.push(lane); } });
+    var figuresRow = [[all.length, all.length === 1 ? "piece to land" : "pieces to land"], [lanes.length, lanes.length === 1 ? "lane" : "lanes"]];
+    if (plan) {
+      var counts = planCounts(doc);
+      if (counts.total) { figuresRow.push([counts.total, counts.total === 1 ? "criterion to prove" : "criteria to prove", "#plan"]); }
+    }
+    var finish = list(doc.state.finish).filter(isObject).length;
+    if (finish) { figuresRow.push([finish, finish === 1 ? "finish line" : "finish lines"]); }
+    var row = el("dl", "ready");
+    figuresRow.forEach(function (figure) {
+      var value = el("dd", "ready-number", String(figure[0]));
+      var label = el("dt", "ready-label", figure[1]);
+      var cell = add(el("div", "ready-cell"), value, label);
+      if (figure[2]) {
+        var link = add(el("a", "ready-cell is-link"), value, label);
+        link.setAttribute("href", figure[2]);
+        cell = link;
+      }
+      row.appendChild(cell);
+    });
+    return row;
+  }
+  /** Before anything lands: every piece as an open stop in its lane's colour, in landing order, up to the finish post. */
+  function startingLine(doc, all) {
+    var box = el("div", "starting");
+    var stops = el("ol", "starting-stops");
+    all.forEach(function (piece, index) {
+      var key = subjectOf(piece.item);
+      var stop = el("a", "starting-stop");
+      stop.setAttribute("href", "#line");
+      stop.style.setProperty("--c", laneColour(text(piece.item.lane)));
+      stop.style.setProperty("--i", String(index));
+      // Its name opens toward the room it has: rightward near the start, leftward near the finish.
+      stop.classList.add(index < all.length / 3 ? "opens-right" : index >= all.length * 2 / 3 ? "opens-left" : "opens-mid");
+      stop.setAttribute("aria-label", (key ? key + ", " : "") + titleOf(doc, piece.item) + ", not started");
+      stop.appendChild(el("span", "starting-name", (key ? key + " · " : "") + titleOf(doc, piece.item)));
+      stops.appendChild(add(el("li"), stop));
+    });
+    add(box, el("div", "starting-end is-start", "Ready to start"), stops, add(el("div", "starting-post"), el("span", "starting-post-mark")),
+      el("div", "starting-end is-finish", "Finish line"));
+    return box;
+  }
   function drawNow(doc, all) {
     // A redraw can remove what the card describes without a mouseleave; such a card hides.
     if (!card.hidden && cardTarget && !cardTarget.isConnected) { hideCard(); }
@@ -1300,11 +1345,15 @@
     var name = text(meta.headline) || outcome || pageTitle();
     var keyed = name.match(/^([A-Z][A-Z0-9]*-\d+):\s*(.+)$/);
     if (keyed && (!parent || keyed[1] === parent)) { name = keyed[2].charAt(0).toUpperCase() + keyed[2].slice(1); }
+    // A closing parenthetical on the name ("(draft, as of d3db458b6)") is its status, not its name: it moves to the kicker.
+    var status = /^(.*\S)\s*\(([^()]{1,80})\)$/.exec(name);
+    if (status) { name = status[1]; }
     var title = add(el("h1", "title"), name);
     // The kicker is one line: the tracker item the delivery's work is listed under, linked when the renderer linked it,
     // then how long it has run.
     var kicker = el("div", "kicker");
     if (parent) { add(kicker, issue(parent)); }
+    if (status) { add(kicker, kicker.firstChild ? " · " : null, el("span", "now-status", status[2])); }
     // How long the delivery has run, from the record's first entry: to now while it delivers, to its close once delivered.
     // The start, and for a closed one the end, read on pointing at it, in local time with UTC beside it.
     var first = list(doc.journal).filter(isObject)[0];
@@ -1340,15 +1389,28 @@
       time.addEventListener("blur", hideCard);
       add(kicker, kicker.firstChild ? " · " : null, time);
     }
+    // Before anything has landed, the page looks ahead: what is about to be delivered, rather than how much of it is zero.
+    var fresh = !closed && all.length > 0 && landed === 0 && !step && !partDone.length;
+    inner.parentNode.classList.toggle("is-fresh", fresh);
+    if (fresh) {
+      var stamp = since(doc, meta, closed).querySelector(".fact-value");
+      if (stamp && text(stamp.textContent)) { add(kicker, kicker.firstChild ? " · " : null, el("span", "now-since", stamp.textContent)); }
+    }
     var nodes = kicker.firstChild ? [kicker, title] : [title];
     // The outcome when it says more than the name, then the count, how much of the plan is proven and how often it
     // changed, linked to the plan chapter.
     var said = outcome && outcome !== text(meta.headline) && outcome !== name ? outcome : null;
     var planLink = planNow(doc);
-    nodes.push(add(el("p", "plan-now"), said, add(el("span", "plan-now-line"), count, planLink ? " · " : null, planLink)));
+    if (fresh) {
+      nodes.push(add(el("p", "plan-now"), said));
+      nodes.push(readyFigures(doc, all));
+      nodes.push(startingLine(doc, all));
+    } else {
+      nodes.push(add(el("p", "plan-now"), said, add(el("span", "plan-now-line"), count, planLink ? " · " : null, planLink)));
+    }
     if (behind) { nodes.push(el("p", "say say-across", behind)); }
-    var status = sayLine(doc, all);
-    if (status) { nodes.push(el("p", "say", status)); }
+    var sayWords = fresh ? "" : sayLine(doc, all);
+    if (sayWords) { nodes.push(el("p", "say", sayWords)); }
     var rejoining = step && !step.landed && landed === all.length && all.length ? driftLine(step) : "";
     if (rejoining) { nodes.push(figures(el("p", "say say-drift"), "drift", rejoining)); }
     // What the lead waits on in another delivery sharing the base, and what waits on the lead, as the state tool says.
@@ -1361,9 +1423,11 @@
     if (left) { nodes.push(left); }
     var partway = closeStoppedPartway(doc, closed);
     if (partway) { nodes.push(partway); }
-    nodes.push(journey(doc, all, closed ? tally.landed : landed));
-    // Under the line, three facts in one shape: how many stories have landed, what landed last, and the record's state.
-    nodes.push(add(el("div", "facts"), storiesFact(all, closed ? tally : null), lastLanded(doc, all), since(doc, meta, closed)));
+    if (!fresh) {
+      nodes.push(journey(doc, all, closed ? tally.landed : landed));
+      // Under the line, three facts in one shape: how many stories have landed, what landed last, and the record's state.
+      nodes.push(add(el("div", "facts"), storiesFact(all, closed ? tally : null), lastLanded(doc, all), since(doc, meta, closed)));
+    }
     var was = prev.checkingHeight;
     inner.replaceChildren.apply(inner, nodes);
     // A live update that changes the sheet's height, a check starting or a failure listed, eases it there instead of jumping.
