@@ -620,6 +620,10 @@ Lane 1, tier 4, after V26-3780. Added mid-delivery: Operator asked on 2026-11-24
 
 Lane 3, tier 1, after V26-3777. Added mid-delivery: Operator asked 2026-11-24 to finish #488's unshipped pieces in this delivery
 
+### V26-3810. Finish a plan preview's hand-over writes before its processes stop
+
+Lane 2, tier 3, not blocked. Added mid-delivery: V26-3780's full-suite runs found the preview hand-over test flaky (1 in 3 alone): a preview file moves after its processes stop
+
 ## Shared resources
 
 - **Provenance, catalog and profiles.** Every story refreshes `catalog.json`,
