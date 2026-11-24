@@ -361,6 +361,10 @@
         {
           "id": "v26-3847-1",
           "text": "The close waits for peer cleanup and the queue holder's full-health result, journals one delivery.closed, and peers count it closed only after the archive; reopened and resumed closes behave as the plan states."
+        },
+        {
+          "id": "v26-3847-2",
+          "text": "Full health runs once per head across machines, including a rerun asked for off the queue holder and a delivery that merged nothing; posture notes dedupe by the latest note."
         }
       ],
       "after": [
