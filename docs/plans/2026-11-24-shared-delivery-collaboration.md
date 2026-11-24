@@ -274,7 +274,7 @@ Out of scope:
     - `meta.closing.started.entry` and `meta.closing.finished.entry` are
       machine-local. Each machine derives them from its own local id of the
       `delivery.closed` entry, by the rule `_with_closing` applies on append.
-  - **Every integer field is listed.** A COLLAB-2 test walks every integer field
+  - **Every integer field is listed.** A V26-3796 test walks every integer field
     in `delivery-state/1`, following `$ref`, `items` and `additionalProperties`. It
     asserts that the set of paths it finds equals the union of the two lists here
     (fourteen paths at this commit). A planted unlisted integer inside an array
@@ -310,7 +310,7 @@ Out of scope:
     stale view, and that is refused locally before anything is written.
   - **Field map.** Every `delivery-state/1` property has one row: the scopes
     permitted to write it, or `local`, or `tool`. The table lives in
-    `delivery_state.py`. COLLAB-3 writes its delivery rows, and COLLAB-6 its lane
+    `delivery_state.py`. V26-3797 writes its delivery rows, and V26-3799 its lane
     and queue rows. A test reads the schema's properties, and `meta`'s, and fails
     on any property without a row.
 
@@ -380,7 +380,7 @@ Out of scope:
     - otherwise it refuses with `plan.sections_overlap`, naming each section and
       both diffs. A delete on one side and an edit on the other counts as changed
       on both.
-  - **Scope check:** from COLLAB-4, on a planning or delivery record, a local
+  - **Scope check:** from V26-3798, on a planning or delivery record, a local
     change outside the sections the seat holds is refused before any commit or
     push, with `plan.section_not_held` and the
     `scope.requested` command that asks for it.
@@ -396,7 +396,7 @@ Out of scope:
   - **History:** commits carry each committer's own git identity, as today. Nothing is
     force-pushed.
 - **D9. One watch stream, built for a host monitor.**
-  - **Output:** `plan-watch` (COLLAB-1) and `collab watch` (COLLAB-5) print one
+  - **Output:** `plan-watch` (V26-3795) and `collab watch` (V26-3800) print one
     line per new event and nothing else, and flush every line. Events include peer
     plan pushes and ingested peer journal entries.
   - **Exit:** with no `--until`, they exit 0 at `--timeout` (default 1800, as
@@ -466,7 +466,7 @@ Out of scope:
     | `blockers` | every seat, journalling only blockers about its own supervisor's children |
     | `peerWaits`, `laneChanges`, `needs`, `render`, `latest` | every seat; they write only files beside the local record, which are never sliced |
 
-    A COLLAB-8 test reads the step names from `one_pass` and fails on a step
+    A V26-3802 test reads the step names from `one_pass` and fails on a step
     missing from this table.
   - **Close-out on a shared record.** It reads only what D21 makes available on
     the `delivery` holder's machine:
@@ -511,7 +511,7 @@ Out of scope:
   - `delivery-plan/1` gains an optional `draft` member, `{commit, at}`. It
     replaces `approved` until the plan is approved. Exactly one of the two is
     present, and a plan with both or neither is refused by `validate_plan`.
-  - COLLAB-4 makes this change, because COLLAB-4 is the first story to write a
+  - V26-3798 makes this change, because V26-3798 is the first story to write a
     planning `plan.json`.
   - Snapshot v3 already carries `plan` and `document` as generic records, so
     `hosted-delivery-snapshot/3` and `delivery-line-map/3` stay.
@@ -580,7 +580,7 @@ Out of scope:
   | the friction stub | carried by `delivery`'s holder, so a handover keeps it |
   | hosted sidecars `hosted-identity.json`, `hosted-status.json`, `hosted-owner.json`, `hosted-retry.json`, `hosted-terminal.json`, and the tracker ledger | carried by `delivery`'s holder (D12): the identity fields D12 names and the ledger position; the owner, status, retry and terminal files are rebuilt by the incoming holder's publisher |
 
-  A COLLAB-8 test finds every machine-local name in `run_delivery.py` and
+  A V26-3802 test finds every machine-local name in `run_delivery.py` and
   `tracker_publisher.py`:
   - names passed to `read_log`, `append_log`, `flow_log`, `plan_flow_log`,
     `read_flow`, `append_flow` and `lead_file`;
@@ -673,7 +673,7 @@ Out of scope:
 
 All of the following hold at one main-push commit:
 
-1. **Two machines, end to end.** One test class (COLLAB-9) drives two clones of
+1. **Two machines, end to end.** One test class (V26-3803) drives two clones of
    one bare remote, with separate state directories and separate tracker ledgers
    sharing one fake tracker. It uses only user-facing commands and the running
    supervisors, never `collab-push`, `collab-fetch` or `collab-ingest`. With
@@ -741,7 +741,7 @@ From `AGENTS.md`, after `python3 scripts/bootstrap-test-environment.py`:
 - `.venv/bin/python tests/test_registry.py`
 - `.venv/bin/python scripts/update-provenance.py --check`
 - each story's named test modules, run alone first;
-- the page lane through `tests/test_delivery_views_page.py` for COLLAB-7, on Node 24;
+- the page lane through `tests/test_delivery_views_page.py` for V26-3801, on Node 24;
 - the full suite once at the end:
   `.venv/bin/python scripts/run-tests.py --workers 4 --budget tests/suite-budget.json`,
   run through the lead's suite command.
@@ -753,7 +753,7 @@ Clear `skills/**/__pycache__` before `scripts/cut-release.py`.
 - **Git remotes.** Every multi-machine test builds its own bare remote and clones
   under its own temporary folder through `tests/quiet_git.py`. No fixed path or
   port is used.
-- **Live view ports.** The supervisor's live view in COLLAB-8 and COLLAB-9 binds a
+- **Live view ports.** The supervisor's live view in V26-3802 and V26-3803 binds a
   derived port, as `tests.test_run_delivery_supervisor.LiveViewAddressTests`
   already does. These tests reuse that class's fixture, or are listed in the
   budget's `serial` map with their reason in the same change.
@@ -772,42 +772,39 @@ Two scripts are shared by region:
 - **`skills/run-delivery/scripts/run_delivery.py`:** lane 2 holds it whole. Lane
   1's two call sites in it are carved to lane 1 with `lead-own --carve` when those
   stories are assigned:
-  - COLLAB-3's `patch_from` seat argument;
-  - COLLAB-6's supervisor role check.
+  - V26-3797's `patch_from` seat argument;
+  - V26-3799's supervisor role check.
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | COLLAB-2 | `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/collab.py`, `skills/orchestrate-work/references/`, `skills/orchestrate-work/SKILL.md`, `tests/test_collab_partitions.py`, `tests/test_orchestration_state.py`, `tests/test_journal_kinds.py`, `tests/fixtures/journal-kinds/`, `tests/collab_remotes.py` |
-| 1 | 2 | COLLAB-1 | `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/plan_sync.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/`, `tests/test_plan_sync.py`, `tests/test_run_delivery.py` |
-| 2 | 1 | COLLAB-3 | `skills/orchestrate-work/scripts/region_ownership.py`, `tests/test_collab_scopes.py` |
-| 2 | 2 | COLLAB-4 | `skills/delivery-views/scripts/views_common.py`, `skills/delivery-views/references/delivery-plan.schema.json`, `tests/test_planning_record.py`, `tests/test_run_delivery_plan_review.py`, `tests/test_delivery_views_plan.py` |
-| 3 | 2 | COLLAB-5 | `skills/orchestrate-work/scripts/narrator.py`, `tests/test_collab_join.py`, `tests/test_lead_wait.py` |
-| 3 | 1 | COLLAB-6 | `skills/orchestrate-work/scripts/merge_queue.py`, `tests/test_collab_colead.py` |
-| 4 | 2 | COLLAB-8 | `skills/run-delivery/scripts/tracker_publisher.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_collab_colead_runtime.py` |
-| 4 | 3 | COLLAB-7 | `skills/delivery-views/`, `tests/fixtures/delivery-views/`, `tests/delivery_views_page/`, `tests/test_delivery_views_plan.py`, `tests/test_delivery_views_render.py`, `hosted/delivery-viewer/test/` |
-| 5 | 2 | COLLAB-9 | `docs/collaboration.md`, `docs/host-adapters.md`, `README.md`, `tests/test_collab_two_machines.py`, `tests/suite-budget.json` |
+| 1 | 1 | V26-3796 | `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/collab.py`, `skills/orchestrate-work/references/`, `skills/orchestrate-work/SKILL.md`, `tests/test_collab_partitions.py`, `tests/test_orchestration_state.py`, `tests/test_journal_kinds.py`, `tests/fixtures/journal-kinds/`, `tests/collab_remotes.py` |
+| 1 | 2 | V26-3795 | `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/plan_sync.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/`, `tests/test_plan_sync.py`, `tests/test_run_delivery.py` |
+| 2 | 1 | V26-3797 | `skills/orchestrate-work/scripts/region_ownership.py`, `tests/test_collab_scopes.py` |
+| 2 | 2 | V26-3798 | `skills/delivery-views/scripts/views_common.py`, `skills/delivery-views/references/delivery-plan.schema.json`, `tests/test_planning_record.py`, `tests/test_run_delivery_plan_review.py`, `tests/test_delivery_views_plan.py` |
+| 3 | 2 | V26-3800 | `skills/orchestrate-work/scripts/narrator.py`, `tests/test_collab_join.py`, `tests/test_lead_wait.py` |
+| 3 | 1 | V26-3799 | `skills/orchestrate-work/scripts/merge_queue.py`, `tests/test_collab_colead.py` |
+| 4 | 2 | V26-3802 | `skills/run-delivery/scripts/tracker_publisher.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_collab_colead_runtime.py` |
+| 4 | 3 | V26-3801 | `skills/delivery-views/`, `tests/fixtures/delivery-views/`, `tests/delivery_views_page/`, `tests/test_delivery_views_plan.py`, `tests/test_delivery_views_render.py`, `hosted/delivery-viewer/test/` |
+| 5 | 2 | V26-3803 | `docs/collaboration.md`, `docs/host-adapters.md`, `README.md`, `tests/test_collab_two_machines.py`, `tests/suite-budget.json` |
 
 **Ownership notes:**
 
 - Lane 2 holds `views_common.py`, `delivery-plan.schema.json` and
-  `tests/test_delivery_views_plan.py` for COLLAB-4 only. Lane 3's tier-4 row takes
-  them whole once COLLAB-4 merges, and COLLAB-7 starts after it.
+  `tests/test_delivery_views_plan.py` for V26-3798 only. Lane 3's tier-4 row takes
+  them whole once V26-3798 merges, and V26-3801 starts after it.
 - Lane 1 registers every new journal kind and every new wait kind, so lane 2 never
   edits the kind registry, the wait words or the orchestration guide.
 - `tests/test_journal_shape.py` counts journal writes in both layers' scripts, so
   its `INVENTORY` is shared by region. Each story's entries are granted to its lane
   with `lead-own --region --around` when it is assigned.
-- `tests/collab_remotes.py` is the shared bare-remote helper of D18. COLLAB-2
+- `tests/collab_remotes.py` is the shared bare-remote helper of D18. V26-3796
   writes it. Later stories import it and never change it.
 
-The stories are children of one epic, created through `$create-linear-ticket`
-after this plan is approved. The `COLLAB-n` keys are placeholders. The
-`delivery` holder replaces them with `plan-rekey` before `lead-setup`, as D11
-allows.
+The stories are children of the epic V26-3794.
 
 ## Stories
 
-### COLLAB-1. Sync and watch a co-authored plan
+### V26-3795. Sync and watch a co-authored plan
 
 Lane 2, tier 1, not blocked. Test-first. Files: `skills/run-delivery/scripts/plan_sync.py`, `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/`, `tests/test_plan_sync.py` and `tests/test_run_delivery.py`.
 
@@ -815,7 +812,7 @@ This story relieves the pain on its own and needs no record.
 
 - **Commands:**
   - `plan-sync --plan P` composes and pushes `plan/<slug>`, or `lead/<key>` once a
-    delivery file names the plan, by D8. The scope check comes in COLLAB-4.
+    delivery file names the plan, by D8. The scope check comes in V26-3798.
   - `plan-watch --plan P [--timeout S] [--until RE]` streams by D9.
 - **Section rules:** reused from `region_ownership.markdown_block`; it is not
   reimplemented.
@@ -863,7 +860,7 @@ This story relieves the pain on its own and needs no record.
   - `remote.origin.fetch` is unchanged;
   - `git ls-remote --heads --tags` shows only `plan/<slug>` as new.
 
-### COLLAB-2. Seats, partitions and causal journal ingest
+### V26-3796. Seats, partitions and causal journal ingest
 
 Lane 1, tier 1, not blocked. Characterization-first. Files: `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/collab.py`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/journal-kinds.json`, `skills/orchestrate-work/SKILL.md`, `tests/test_collab_partitions.py`, `tests/test_orchestration_state.py`, `tests/test_journal_kinds.py`, `tests/fixtures/journal-kinds/` and `tests/collab_remotes.py`.
 
@@ -887,7 +884,7 @@ Lane 1, tier 1, not blocked. Characterization-first. Files: `skills/orchestrate-
 
   It journals only through `delivery_state`'s append functions.
 - **The `sync` writer** (D7), applying slice values without a scope filter until
-  COLLAB-3 adds one.
+  V26-3797 adds one.
 - **State-tool subcommands:** `collab-push`, `collab-fetch` and `collab-ingest`,
   for tests and recovery. The sync loop is what runs them in use.
 - **Local fields:** the D6 `local` rows. `meta.closing` is re-derived from the
@@ -955,9 +952,9 @@ Lane 1, tier 1, not blocked. Characterization-first. Files: `skills/orchestrate-
   - `patch --writer sync` gives `collab.sync_writer_reserved`;
   - `wait --after` wakes on an ingested peer entry of a wait kind.
 
-### COLLAB-3. Authority scopes, admission and the scope filter
+### V26-3797. Authority scopes, admission and the scope filter
 
-Lane 1, tier 2, after COLLAB-2. Test-first. Files: `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/collab.py`, `skills/orchestrate-work/scripts/region_ownership.py`, `skills/orchestrate-work/references/`, `skills/orchestrate-work/SKILL.md`, `tests/test_collab_scopes.py` and `tests/test_journal_kinds.py`.
+Lane 1, tier 2, after V26-3796. Test-first. Files: `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/collab.py`, `skills/orchestrate-work/scripts/region_ownership.py`, `skills/orchestrate-work/references/`, `skills/orchestrate-work/SKILL.md`, `tests/test_collab_scopes.py` and `tests/test_journal_kinds.py`.
 
 - **Scope register:** the scopes of D6, derived from the journal. Who holds what
   is never stored as a second copy.
@@ -979,7 +976,7 @@ Lane 1, tier 2, after COLLAB-2. Test-first. Files: `skills/orchestrate-work/scri
   green.
 - **Field map:**
   - the D6 table's `delivery`, `local` and `tool` rows, with the lane and queue
-    rows present but unenforced until COLLAB-6;
+    rows present but unenforced until V26-3799;
   - `field-origins.json`, and the two-scope ordering;
   - the completeness test of D6.
 - **Checks:**
@@ -1006,7 +1003,7 @@ Lane 1, tier 2, after COLLAB-2. Test-first. Files: `skills/orchestrate-work/scri
     and never for a held section or for `queue`;
   - with it false, the same request stays open;
   - a seat admitted with `--no-approver` is not counted by `lead-init` (shown in
-    COLLAB-4);
+    V26-3798);
   - re-admission by the holder changes `approver`.
 - **Scenarios, the sync filter:**
   - a peer slice carrying a `delivery` field the peer does not hold is ingested
@@ -1035,9 +1032,9 @@ Lane 1, tier 2, after COLLAB-2. Test-first. Files: `skills/orchestrate-work/scri
   - an unshared record ignores scopes entirely, so its field-ownership tests are
     unchanged.
 
-### COLLAB-4. The planning record, the plan scope check and joint approval
+### V26-3798. The planning record, the plan scope check and joint approval
 
-Lane 2, tier 2, after COLLAB-1 and COLLAB-3. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/plan_sync.py`, `skills/run-delivery/SKILL.md`, `skills/delivery-views/scripts/views_common.py`, `skills/delivery-views/references/delivery-plan.schema.json`, `tests/test_planning_record.py`, `tests/test_run_delivery_plan_review.py` and `tests/test_delivery_views_plan.py`.
+Lane 2, tier 2, after V26-3795 and V26-3797. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/plan_sync.py`, `skills/run-delivery/SKILL.md`, `skills/delivery-views/scripts/views_common.py`, `skills/delivery-views/references/delivery-plan.schema.json`, `tests/test_planning_record.py`, `tests/test_run_delivery_plan_review.py` and `tests/test_delivery_views_plan.py`.
 
 - **`plan-open`** (D10). It starts the supervisor in planning mode: the sync
   loop, the live view and hosted publishing, with no queue and no tracker.
@@ -1088,11 +1085,11 @@ Lane 2, tier 2, after COLLAB-1 and COLLAB-3. Test-first. Files: `skills/run-deli
 - **Scenarios, the plan schema:** a plan with both `draft` and `approved`, or
   neither, gives `plan.draft_conflict`.
 
-### COLLAB-5. Feedback, join and the shared watch stream
+### V26-3800. Feedback, join and the shared watch stream
 
-Lane 2, tier 3, after COLLAB-4. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/SKILL.md`, `skills/orchestrate-work/scripts/narrator.py`, `tests/test_collab_join.py` and `tests/test_lead_wait.py`.
+Lane 2, tier 3, after V26-3798. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/SKILL.md`, `skills/orchestrate-work/scripts/narrator.py`, `tests/test_collab_join.py` and `tests/test_lead_wait.py`.
 
-- **Kinds:** `feedback.raised` and `feedback.resolved`, registered by COLLAB-3.
+- **Kinds:** `feedback.raised` and `feedback.resolved`, registered by V26-3797.
   Only the anchor's scope holder may resolve.
 - **Commands:**
   - `collab feedback add|resolve`;
@@ -1125,9 +1122,9 @@ Lane 2, tier 3, after COLLAB-4. Test-first. Files: `skills/run-delivery/scripts/
   - with `--until` it exits 0 on the first matching line;
   - with an `--until` that never matches, it exits 3 at `--timeout`.
 
-### COLLAB-6. Lane and queue scopes in the record and the queue
+### V26-3799. Lane and queue scopes in the record and the queue
 
-Lane 1, tier 3, after COLLAB-3. Characterization-first. Files: `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/merge_queue.py`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/orchestrate-work/SKILL.md` and `tests/test_collab_colead.py`.
+Lane 1, tier 3, after V26-3797. Characterization-first. Files: `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/merge_queue.py`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/orchestrate-work/SKILL.md` and `tests/test_collab_colead.py`.
 
 - **Characterize first:** the queue's serve loop and acceptance writes on an
   unshared record.
@@ -1155,7 +1152,7 @@ Lane 1, tier 3, after COLLAB-3. Characterization-first. Files: `skills/orchestra
     hand-off, and `a`'s record gets the element at `stage: queued`;
   - a reuse grant recorded on `a`, then the queue handed to `b`: `b`'s
     `check.reused` names, through `because`, the entry of the grant's origin;
-  - the COLLAB-3 label scenarios, repeated with lanes and queue elements held by
+  - the V26-3797 label scenarios, repeated with lanes and queue elements held by
     each seat.
 - **Scenarios, handover:**
   - a handover with a check running waits, then gives `scope.handover_busy`,
@@ -1165,9 +1162,9 @@ Lane 1, tier 3, after COLLAB-3. Characterization-first. Files: `skills/orchestra
   - after a handover the old machine's serve exits and the new one's starts.
 - **Compatibility:** every existing merge-queue test passes unchanged.
 
-### COLLAB-8. The co-lead runtime in run-delivery
+### V26-3802. The co-lead runtime in run-delivery
 
-Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py` and `tests/test_collab_colead_runtime.py`.
+Lane 2, tier 4, after V26-3800 and V26-3799. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py` and `tests/test_collab_colead_runtime.py`.
 
 - **Lane commands:**
   - `lead-assign`, `lead-own` and `lead-add-lane` need `delivery`, which
@@ -1324,12 +1321,12 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
   - a write on one machine reaches the peer's record within two
     `collab.pollSeconds` ticks plus one push, with no explicit sync command.
 
-### COLLAB-7. Planning, scopes and feedback in the views
+### V26-3801. Planning, scopes and feedback in the views
 
-Lane 3, tier 4, after COLLAB-4 and COLLAB-5. Characterization-first. Files: `skills/delivery-views/`, `tests/fixtures/delivery-views/`, `tests/delivery_views_page/`, `tests/test_delivery_views_plan.py`, `tests/test_delivery_views_render.py` and `hosted/delivery-viewer/test/`.
+Lane 3, tier 4, after V26-3798 and V26-3800. Characterization-first. Files: `skills/delivery-views/`, `tests/fixtures/delivery-views/`, `tests/delivery_views_page/`, `tests/test_delivery_views_plan.py`, `tests/test_delivery_views_render.py` and `hosted/delivery-viewer/test/`.
 
 - **Line map:**
-  - the plan chapter shows a draft (accepted by COLLAB-4's `validate_plan`) with
+  - the plan chapter shows a draft (accepted by V26-3798's `validate_plan`) with
     its endorsements and whether each is still current;
   - a Scopes section lists who holds what;
   - feedback shows as threads on its anchors;
@@ -1350,9 +1347,9 @@ Lane 3, tier 4, after COLLAB-4 and COLLAB-5. Characterization-first. Files: `ski
   - a queue moving between seats;
   - hostile text in feedback and labels.
 
-### COLLAB-9. Two machines end to end, and the adopter guide
+### V26-3803. Two machines end to end, and the adopter guide
 
-Lane 2, tier 5, after COLLAB-7 and COLLAB-8. Sensor-only for docs, test-first for the end-to-end class. Files: `docs/collaboration.md`, `docs/host-adapters.md`, `README.md`, `tests/test_collab_two_machines.py` and `tests/suite-budget.json`.
+Lane 2, tier 5, after V26-3801 and V26-3802. Sensor-only for docs, test-first for the end-to-end class. Files: `docs/collaboration.md`, `docs/host-adapters.md`, `README.md`, `tests/test_collab_two_machines.py` and `tests/suite-budget.json`.
 
 - **End-to-end class:** the finish line's two-machine scenario, as one
   `run_quietly` class. It is driven only through user-facing commands and running
