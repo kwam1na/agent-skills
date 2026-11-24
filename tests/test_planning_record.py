@@ -202,22 +202,28 @@ class PlanningSupervisorTests(PlanningRecordCase):
         self.addCleanup(lambda: os.kill(owner["pid"], signal.SIGTERM) if process_runs(owner["pid"]) else None)
         self.assertNotEqual(owner["pid"], first)
         self.assertTrue(process_runs(owner["pid"]), owner)
+        # plan-open itself starts the supervisor, for a second plan's record in the same repository.
+        with_slug(fx, "docs/second.md", "second-plan", "# A second plan\n")
         env["RUN_DELIVERY_SUPERVISOR"] = "on"
-        code, out = fx.flow("--delivery", KEY, "lead-run", "--resume", cwd=fx.main, env=env)
+        key = "FX-5"
+        code, out = fx.flow("plan-open", "--plan", "docs/second.md", "--key", key, cwd=fx.main, env=env)
         self.assertEqual(code, 0, out)
         self.assertIn("supervisor: running; live view http://", out)
-        lock = folder.parent / "flow-log" / f"{KEY}.supervisor.lock"
+        folder = Path(re.search(r"planning record of \S+ at (\S+):", out).group(1))
+        self.addCleanup(lambda: [os.kill(pid, signal.SIGTERM) for pid in [json.loads(
+            (folder / "hosted-owner.json").read_text())["pid"]] if process_runs(pid)])
+        lock = folder.parent / "flow-log" / f"{key}.supervisor.lock"
         children = {child["name"] for child in json.loads(lock.read_text())["children"]}
         self.assertEqual(children, {"live", "collab"})
         # The sync loop pushes the first seat's partition, as nothing else does.
-        ref = f"refs/agent-skills/{KEY}/{state_tool.local_seat(folder, KEY)}"
+        ref = f"refs/agent-skills/{key}/{state_tool.local_seat(folder, key)}"
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline and not sh("git", "ls-remote", fx.origin, ref, cwd=fx.tmp).stdout:
             time.sleep(0.5)
         self.assertTrue(sh("git", "ls-remote", fx.origin, ref, cwd=fx.tmp).stdout, "the sync loop pushed nothing")
         passes = []
         while time.monotonic() < deadline and not passes:
-            log = folder.parent / "flow-log" / f"{KEY}.supervisor.jsonl"
+            log = folder.parent / "flow-log" / f"{key}.supervisor.jsonl"
             passes = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
             time.sleep(0.5)
         self.assertTrue(passes, "no pass was logged")
