@@ -5,6 +5,7 @@ date: 2026-11-23
 topic: plan-preview-views
 reviewSlug: plan-preview-views
 execution: code
+status: approved
 ---
 
 # Show a plan on the live and hosted views while it is being planned - Plan
@@ -649,7 +650,9 @@ Lane 1, tier 4, after V26-3779. Sensor-only. Files: `skills/plan-work/SKILL.md`,
 
 ## Approval handoffs
 
-1. The operator approves this plan, after plan review.
+1. Approved by the operator on 2026-11-24, after round 4 aligned at 3864dd33. The
+   operator also ruled that the best-effort handed finish called from adopting the
+   review store is acceptable.
 2. Tracker items are created under V26-3775 for V26-3776 to V26-3780
    (`create-linear-ticket`); done, and the plan's keys renamed to them.
 3. Release: the operator tags a candidate, it is applied in this repository, and the
