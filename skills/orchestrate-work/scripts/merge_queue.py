@@ -4217,6 +4217,8 @@ class Runner:
     def _run_command(self, subcommand: str, subjects: list[str], approved_by: str | None = None) -> list[Result]:
         try:
             with self.slot(slot_doing(subcommand, subjects)), self.locked():
+                # Under the lock, so a queue handed on between serve's passes takes no turn here.
+                require_queue(self.state_directory)
                 # A state that cannot be read or written is reported by the subcommand itself, as before.
                 with contextlib.suppress(delivery_state.StateError, OSError):
                     self.recover_interrupted()

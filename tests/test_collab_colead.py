@@ -331,6 +331,29 @@ class QueueAcrossSeatsTests(mq.MergeQueueTestCase):
         self.assertEqual(mq.queue.serve(self.b.repo, self.b.directory, remote="origin", base="main",
                                         until_idle=True, poll=0), [])
 
+    def test_a_handover_between_serves_passes_ends_serve_at_its_next_turn_having_taken_nothing(self) -> None:
+        head = self.adopter.lane_commit("feature", {"src/app.txt": "app two\n"})
+        state_tool.handoff(self.b.directory, lane="lane-1", subject="feature", head=head, change_request="cr-1")
+        state_tool.accept_handoff(self.b.directory, "feature")
+        self.b.push()
+        self.a.take()
+        before = len(self.a.journal())
+
+        def hand_over() -> None:
+            # Between the pass that found work and the turn that takes it.
+            if state_tool.holder(self.a.journal(), "queue") == self.first:
+                collab.give_scope(self.a.directory, "queue", self.second, wait=1, poll=0.01)
+
+        results = []
+        with self.assertRaises(mq.queue.delivery_state.StateError) as ended:
+            mq.queue.serve(self.adopter.operator, self.a.directory, remote="origin", base="main", poll=0,
+                           before_turn=hand_over, on_result=results.append)
+        self.assertEqual(ended.exception.code, "queue.not_held")
+        # The turn took nothing: no result, no queue ref for the candidate, and the record as the lane left it.
+        self.assertEqual((results, self.adopter.queued("feature")), ([], None))
+        self.assertEqual(self.item(self.a)["stage"], "queued")
+        self.assertEqual([entry["kind"] for entry in self.a.journal()[before:]], ["queue.stopped", "scope.transferred"])
+
     def test_serve_refuses_where_the_seat_does_not_hold_the_queue(self) -> None:
         with self.assertRaises(mq.queue.delivery_state.StateError) as refused:
             mq.queue.serve(self.b.repo, self.b.directory, remote="origin", base="main", until_idle=True, poll=0)
