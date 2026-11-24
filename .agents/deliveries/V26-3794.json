@@ -415,7 +415,8 @@
     {
       "id": "approval-5",
       "text": "Ships as a release candidate before the final (D17): waiting.",
-      "state": "waiting"
+      "state": "done",
+      "who": "Kwamina"
     },
     {
       "id": "approval-6",
