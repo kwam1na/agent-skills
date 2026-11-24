@@ -1175,3 +1175,6 @@ body:not(.paged) .chapter-tab-hint { display: none; }
 .page-foot[data-lean] .foot-track, .page-foot[data-pull] .foot-track, .page-foot .foot-track:hover, .page-foot .foot-track:focus-within { opacity: 1; }
 @media (hover: none) { .page-foot .foot-end { opacity: .7; } .page-foot .foot-track { opacity: .85; } }
 @media (prefers-reduced-motion: reduce) { .page-foot .foot-end, .page-foot .foot-track { transition: none; } }
+
+/* Hidden for now while the foot is reconsidered; delete this rule to bring it back. */
+body.paged .page-foot { display: none; }
