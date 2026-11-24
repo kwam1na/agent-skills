@@ -135,7 +135,7 @@ ABSENT_SPEC = "delivery-state-absent/1"
 # Tells each view the live server renders, when the binding names liveRuns, whether the run store is being watched.
 RUNS_FLAG = "DELIVERY_LIVE_RUNS"
 # Gives the liveRuns renderer the plan previews this repository's live servers serve, as JSON: a list of at most
-# PREVIEW_LIMIT {title?, plan, live, hosted?}, or empty while there is none.
+# PREVIEW_LIMIT {title?, plan, live, hosted?}, ``live`` the server's address, or empty while there is none.
 PREVIEWS_FLAG = "DELIVERY_PLAN_PREVIEWS"
 PREVIEW_FILE = "preview.json"
 PREVIEW_LIMIT = 20
@@ -2622,11 +2622,12 @@ def verified_entries(common: Path | None) -> list[dict]:
 
 
 def preview_row(entry: dict) -> dict:
-    """One verified preview entry as the runs page lists it: its local link, and its plan, title and hosted link as
-    its folder's preview.json names them. A preview.json that can't be read, is over PREVIEW_BYTES or isn't an
-    object gives no title and no hosted link, and the plan is then the folder's name."""
+    """One verified preview entry as the runs page lists it: its server's address, and its plan, title and hosted
+    link as its folder's preview.json names them. A preview.json that can't be read, is over PREVIEW_BYTES or isn't
+    an object gives no title and no hosted link, and the plan is then the folder's name. Which links a page may
+    follow is the renderer's to judge."""
     folder = Path(entry["stateDirectory"])
-    row: dict = {"live": f"http://{_address(entry['host'], entry['port'])}/", "plan": folder.name}
+    row: dict = {"live": _address(entry["host"], entry["port"]), "plan": folder.name}
     try:
         with (folder / PREVIEW_FILE).open("rb") as source:
             raw = source.read(PREVIEW_BYTES + 1)
@@ -2644,9 +2645,8 @@ def preview_row(entry: dict) -> dict:
         row["plan"] = given("plan")
     if given("title"):
         row["title"] = given("title")
-    hosted = given("hosted")
-    if hosted and hosted.startswith("https://"):
-        row["hosted"] = hosted
+    if given("hosted"):
+        row["hosted"] = given("hosted")
     return row
 
 

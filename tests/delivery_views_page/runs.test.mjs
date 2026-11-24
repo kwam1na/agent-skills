@@ -157,9 +157,9 @@ test("the runs golden pins the page whole", async () => {
 
 // The plan previews the live server names, as render.py runs reads them from DELIVERY_PLAN_PREVIEWS.
 const PREVIEWS = [
-  { live: "http://127.0.0.1:4100/", plan: "docs/plans/2026-11-23-a.md", title: "Plan A", hosted: "https://views.example/d/" + "a".repeat(64) },
+  { live: "127.0.0.1:4100", plan: "docs/plans/2026-11-23-a.md", title: "Plan A", hosted: "https://views.example/d/" + "a".repeat(64) },
   // A preview whose preview.json could not be read: no title and no hosted link, and its plan is its folder's name.
-  { live: "http://127.0.0.1:4101/", plan: "b-slug" },
+  { live: "127.0.0.1:4101", plan: "b-slug" },
 ];
 
 function renderWithPreviews(previews) {

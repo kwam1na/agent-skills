@@ -116,6 +116,8 @@ RUNS_FLAG = "DELIVERY_LIVE_RUNS"
 PREVIEWS_FLAG = "DELIVERY_PLAN_PREVIEWS"
 PREVIEW_LIMIT = 20
 PREVIEW_TEXT_LIMIT = 2000
+# A preview server's address as the live server names it: a host name or a bracketed IPv6 address, and a port.
+PREVIEW_ADDRESS = re.compile(r"(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\]):[0-9]{1,5}")
 SAFE_INTEGER = 2 ** 53 - 1
 
 
@@ -1204,8 +1206,8 @@ def _page_head(title: str, styles: str) -> list[str]:
 
 def plan_previews(given: str | None) -> list[dict]:
     """The plan previews the live server named, as the runs page lists them: at most PREVIEW_LIMIT objects, each with
-    a local ``live`` link and a ``plan``, and a ``title`` and an https ``hosted`` link where given. Anything else, or
-    a value that isn't such a list, is left out."""
+    a ``live`` link to its server's address and a ``plan``, and a ``title`` and an https ``hosted`` link where given.
+    Anything else, or a value that isn't such a list, is left out."""
     try:
         named = json.loads(given) if given else []
     except (ValueError, RecursionError):
@@ -1222,9 +1224,9 @@ def plan_previews(given: str | None) -> list[dict]:
         if not _is_object(entry):
             continue
         live, plan = said(entry, "live"), said(entry, "plan")
-        if not (live and plan and live.startswith("http://")):
+        if not (live and plan and PREVIEW_ADDRESS.fullmatch(live)):
             continue
-        row = {"live": live, "plan": plan}
+        row = {"live": f"http://{live}/", "plan": plan}
         if said(entry, "title"):
             row["title"] = said(entry, "title")
         if (said(entry, "hosted") or "").startswith("https://"):

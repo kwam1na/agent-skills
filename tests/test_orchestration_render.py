@@ -2365,8 +2365,10 @@ class LiveRunsTests(DeliveryStateFixture):
         # A preview entry whose pid runs but serves nothing is never listed.
         quiet = self.sleeper()
         self.entry(quiet.pid, self.free_port(), self.preview_folder("d"), preview=True)
-        rows = [{"live": servers["a"][1], "plan": "docs/plans/a.md", "title": "Plan A", "hosted": hosted},
-                {"live": servers["b"][1], "plan": "b"}, {"live": servers["c"][1], "plan": "c"}]
+        # Each by its server's address: which links a page may follow is the renderer's to judge.
+        address = {name: url[len("http://"):-1] for name, (_, url) in servers.items()}
+        rows = [{"live": address["a"], "plan": "docs/plans/a.md", "title": "Plan A", "hosted": hosted},
+                {"live": address["b"], "plan": "b"}, {"live": address["c"], "plan": "c"}]
         self.eventually(client, "view/runs.html", lambda page: self.previews_on(page) == rows)
         deadline = time.monotonic() + 5
         while not client.runs and time.monotonic() < deadline:

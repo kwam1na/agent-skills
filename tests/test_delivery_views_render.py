@@ -1446,26 +1446,26 @@ class RunsPageTests(unittest.TestCase):
     def test_with_no_preview_the_runs_page_is_the_same_bytes_whatever_the_variable_says(self) -> None:
         page = self.runs_page()
         self.assertNotIn("previews", block(page, "delivery-run-page-view"))
-        for given in (None, "", "[]", "not json", '{"live": "http://127.0.0.1:1/"}', '[1, "x", {"plan": "p.md"}]',
-                      '[{"live": "file:///etc/passwd", "plan": "p.md"}]'):
+        for given in (None, "", "[]", "not json", '{"live": "127.0.0.1:1"}', '[1, "x", {"plan": "p.md"}]',
+                      '[{"live": "file:///etc/passwd", "plan": "p.md"}]', '[{"live": "127.0.0.1:1/x", "plan": "p.md"}]'):
             with self.subTest(given=given):
                 self.assertEqual(render.plan_previews(given), [])
                 self.assertEqual(self.runs_page(previews=render.plan_previews(given)), page)
 
     def test_each_named_preview_is_embedded_with_only_what_it_may_carry(self) -> None:
-        named = [{"live": "http://127.0.0.1:4100/", "plan": "docs/plans/a.md", "title": "Plan A",
+        named = [{"live": "127.0.0.1:4100", "plan": "docs/plans/a.md", "title": "Plan A",
                   "hosted": "https://views.example/d/" + "a" * 64, "extra": "dropped"},
                  # A hosted link that isn't https, and a title over the limit, are left out; the row stays.
-                 {"live": "http://127.0.0.1:4101/", "plan": "b", "title": "t" * (render.PREVIEW_TEXT_LIMIT + 1),
+                 {"live": "[::1]:4101", "plan": "b", "title": "t" * (render.PREVIEW_TEXT_LIMIT + 1),
                   "hosted": "http://views.example/d/b"},
                  # No plan, or no local link, is no row.
-                 {"live": "http://127.0.0.1:4102/"}, {"plan": "c"}]
+                 {"live": "127.0.0.1:4102"}, {"plan": "c"}]
         previews = render.plan_previews(json.dumps(named))
         self.assertEqual(previews, [{"live": "http://127.0.0.1:4100/", "plan": "docs/plans/a.md", "title": "Plan A",
                                      "hosted": "https://views.example/d/" + "a" * 64},
-                                    {"live": "http://127.0.0.1:4101/", "plan": "b"}])
+                                    {"live": "http://[::1]:4101/", "plan": "b"}])
         self.assertEqual(block(self.runs_page(previews=previews), "delivery-run-page-view")["previews"], previews)
-        many = [{"live": f"http://127.0.0.1:{4000 + index}/", "plan": f"p{index}"} for index in range(25)]
+        many = [{"live": f"127.0.0.1:{4000 + index}", "plan": f"p{index}"} for index in range(25)]
         self.assertEqual([row["plan"] for row in render.plan_previews(json.dumps(many))],
                          [f"p{index}" for index in range(render.PREVIEW_LIMIT)])
 
