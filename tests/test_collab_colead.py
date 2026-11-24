@@ -168,6 +168,19 @@ class LaneAndRunnerTests(LaneScopeFixture):
         self.refused(lambda: state_tool.handoff(self.b.directory, lane="lane-1", subject="APP-1", head=OTHER,
                                                 change_request="cr-1"), self.b)
 
+    def test_a_no_change_hand_off_of_another_lanes_story_and_its_acceptance_are_refused(self) -> None:
+        self.a.patch({"meta": {"handoffsNeedAcceptance": True}})
+        self.a.push()
+        self.b.take()
+        self.refused(lambda: state_tool.no_change_handoff(self.b.directory, lane="lane-2", subject="APP-2",
+                                                          base_head=HEAD, evidence="It already holds."), self.b)
+        state_tool.no_change_handoff(self.a.directory, lane="lane-2", subject="APP-2", base_head=HEAD,
+                                     evidence="It already holds.")
+        self.a.push()
+        self.b.take()
+        self.refused(lambda: state_tool.accept_handoff(self.b.directory, "APP-2"), self.b)
+        self.assertEqual(state_tool.accept_handoff(self.a.directory, "APP-2")["stage"], "settled")
+
     def test_a_lanes_start_value_on_an_element_the_queue_has_moved_on_is_ignored(self) -> None:
         state_tool.handoff(self.b.directory, lane="lane-1", subject="APP-1", head=HEAD, change_request="cr-1")
         self.b.push()
@@ -185,6 +198,37 @@ class LaneAndRunnerTests(LaneScopeFixture):
                                           "origin": {"seat": self.second, "seq": own, "seen": seen}}])
                 self.a.take()
                 self.assertEqual(self.element(self.a, "queue", "subject", "APP-1")["stage"], stage)
+
+    def test_a_hand_off_that_ends_a_failed_run_puts_the_queue_holders_checking_row_back_at_its_start(self) -> None:
+        state_tool.handoff(self.b.directory, lane="lane-1", subject="APP-1", head=HEAD, change_request="cr-1")
+        self.b.push()
+        self.a.take()
+        running = [{"id": "always", "state": "failed"}, {"id": "full", "state": "running"}]
+        state_tool.patch(self.a.directory, writer="runner", version=self.a.state()["version"],
+                         selector="queue[subject=APP-1]", changes={"stage": "checking", "checks": running})
+        self.a.push()
+        self.b.take()
+        # b's acceptance of the hand-off at a new head, as _take_handed writes it over the failed run.
+        origins = json.loads((self.a.directory / state_tool.FIELD_ORIGINS_FILE).read_text())
+        held = origins["queue[subject=APP-1]/stage"]
+        own = max(entry["origin"]["seq"] for entry in self.b.journal() if entry["origin"]["seat"] == self.second)
+        seen = {seat: count for seat, count in state_tool.seat_counts(self.b.journal()).items() if seat != self.second}
+        origin = {"seat": self.second, "seq": own, "seen": seen}
+        self.plant(self.second, [
+            {"path": "queue[subject=APP-1]/head", "value": OTHER, "origin": origin},
+            {"path": "queue[subject=APP-1]/stage", "value": "queued", "origin": origin,
+             "replaces": {"seat": held["seat"], "seq": held["seq"], "digest": state_tool.value_digest("checking")}},
+            {"path": "queue[subject=APP-1]/checks", "origin": origin,
+             "value": [{"id": "always", "state": "failed"}, {"id": "full", "state": "superseded"}],
+             "replaces": {"seat": origins["queue[subject=APP-1]/checks"]["seat"],
+                          "seq": origins["queue[subject=APP-1]/checks"]["seq"], "digest": state_tool.value_digest(running)}}])
+        self.a.take()
+        item = self.element(self.a, "queue", "subject", "APP-1")
+        self.assertEqual((item["stage"], item["head"], item["checks"][1]["state"]), ("queued", OTHER, "superseded"))
+        # Marking a finished check, or one the run never had, is not the run ending: it is the queue's to write.
+        self.assertFalse(collab._superseding({"checks": running}, [{"id": "always", "state": "passed"},
+                                                                  {"id": "full", "state": "superseded"}]))
+        self.assertFalse(collab._superseding({"checks": running}, [*running, {"id": "lint", "state": "superseded"}]))
 
     def test_the_delivery_holders_adoption_of_a_missed_hand_off_reaches_the_queue_holder_at_its_start(self) -> None:
         collab.give_scope(self.a.directory, "delivery", self.second)
