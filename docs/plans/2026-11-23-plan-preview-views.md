@@ -612,6 +612,14 @@ Lane 1, tier 4, after V26-3779. Sensor-only. Files: `skills/plan-work/SKILL.md`,
 - Before editing, search the tests that read these files for pinned phrases, and
   re-derive each moved pin in the same change.
 
+### V26-3807. Open live view addresses in a browser by default, whatever the host
+
+Lane 1, tier 4, after V26-3780. Added mid-delivery: Operator asked on 2026-11-24 for live view addresses to open in the in-app browser pane by default, and to deliver it in this delivery
+
+### V26-3808. Finish the chapter-pages live view for shipping: hosted file links and a steady siblings test
+
+Lane 3, tier 1, after V26-3777. Added mid-delivery: Operator asked 2026-11-24 to finish #488's unshipped pieces in this delivery
+
 ## Shared resources
 
 - **Provenance, catalog and profiles.** Every story refreshes `catalog.json`,

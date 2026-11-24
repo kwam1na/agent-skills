@@ -88,12 +88,20 @@ function scan(value: unknown): void {
     }
   }
 }
-export function safeUrl(value: unknown): boolean {
+function httpsOnly(value: unknown, fragment: boolean): boolean {
   if (typeof value !== 'string' || /[\x00-\x20\x7f\\]/.test(value)) return false;
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' && !!url.hostname && !url.username && !url.password && !url.port && !url.search && !url.hash;
+    return url.protocol === 'https:' && !!url.hostname && !url.username && !url.password && !url.port && !url.search && (fragment || !url.hash);
   } catch { return false; }
+}
+/** An https address with a host and nothing else: no user, password, port, query or fragment. */
+export function safeUrl(value: unknown): boolean {
+  return httpsOnly(value, false);
+}
+/** A file link's address: as `safeUrl`, but keeping the fragment that opens the file at a line. */
+export function safeFileUrl(value: unknown): boolean {
+  return httpsOnly(value, true);
 }
 export function projection(value: unknown): { sourceFingerprint: string } {
   if (!validateSchema(value)) fail('invalid_projection');
@@ -103,6 +111,8 @@ export function projection(value: unknown): { sourceFingerprint: string } {
   const urls = [...Object.values(object(links.issues)), ...Object.values(object(links.commits)),
     ...Object.values(object(links.changes)).map(row => object(row).href)];
   if (!urls.every(safeUrl)) fail('invalid_projection');
+  // A file link opens its file at a line, so its address keeps a fragment; its key's path is held by the schema.
+  if (links.files !== undefined && !Object.values(object(links.files)).every(safeFileUrl)) fail('invalid_projection');
   return { sourceFingerprint: identifier(body.sourceFingerprint) };
 }
 export const headers = {

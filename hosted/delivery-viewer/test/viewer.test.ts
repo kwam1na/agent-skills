@@ -227,6 +227,9 @@ describe("trusted corpus DOM bridge (behavior only)", () => {
       window.document.body.appendChild(node);
     }
     try {
+      // Every chapter on one page, the reader's other layout: paged, a click in the plan's fold opens the plan's page,
+      // and the stop on Now is rightly no longer where focus is. Pushes keep selection, folds and focus either way.
+      window.localStorage.setItem("hosted-delivery:layout", "scroll");
       window.eval(built.renderer);
       expect(window.document.querySelector("#plan")).toBeNull();
       const button =
@@ -282,6 +285,73 @@ describe("trusted corpus DOM bridge (behavior only)", () => {
       expect(window.fetch).not.toHaveBeenCalled();
     } finally {
       window.close();
+    }
+  });
+});
+
+describe("a review note's file reference on the hosted page", () => {
+  /** The corpus renderer over one projection, its story's detail opened, as the hosted page draws it. */
+  function drawn(body: PublicProjection) {
+    const built = JSON.parse(
+      readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8"),
+    ) as { renderer: string };
+    const dom = new JSDOM('<!doctype html><body><main id="app"></main></body>', {
+      url: `https://service.test/d/${publicId}`,
+      runScripts: "outside-only",
+      pretendToBeVisual: true,
+    });
+    const { window } = dom;
+    Object.assign(window, {
+      matchMedia: () => ({ matches: true }),
+      scrollTo: () => {},
+      fetch: vi.fn(() => Promise.reject(Error("unexpected HTML refresh"))),
+      deliveryStateStore: { projection: () => body, read: () => body.document, subscribe: () => {}, onStatus: () => {} },
+    });
+    for (const [key, value] of Object.entries({ state: body.document, runs: body.runs, reviews: body.reviews,
+      links: body.links, view: body.view })) {
+      const node = window.document.createElement("script");
+      node.id = `delivery-${key}`;
+      node.type = "application/json";
+      node.textContent = JSON.stringify(value);
+      window.document.body.appendChild(node);
+    }
+    window.eval(built.renderer);
+    window.document.querySelector<HTMLButtonElement>('.stop-btn[data-subject="APP-1"]')!.click();
+    return dom;
+  }
+  function cited(): PublicProjection {
+    const body = fixture();
+    // The page reads its runs, so a story's detail draws its run's rounds.
+    body.view.runs = true;
+    const runs = body.runs as Record<string, { roundDetail: { detailsUnavailable?: boolean; raised: { summary: string }[] }[] }>;
+    // A round whose details were read, so its finding is drawn.
+    delete runs["run-1"].roundDetail[0].detailsUnavailable;
+    runs["run-1"].roundDetail[0].raised[0].summary = "Guard it (src/app/main.py:4).";
+    return body;
+  }
+  it("opens the file at its line, as the local page does, when the cut carries its link", () => {
+    const body = cited();
+    const href = `https://github.com/example/app/blob/${"a".repeat(40)}/src/app/main.py#L4`;
+    body.links.files = { [`${"a".repeat(40)} src/app/main.py:4`]: href };
+    const dom = drawn(body);
+    try {
+      const ref = dom.window.document.querySelector<HTMLAnchorElement>("#detail a.prose-ref")!;
+      expect(ref).not.toBeNull();
+      expect(ref.textContent).toBe("src/app/main.py:4");
+      expect(ref.getAttribute("href")).toBe(href);
+    } finally {
+      dom.window.close();
+    }
+  });
+  it("shows the reference as words when the cut carries no file links", () => {
+    const dom = drawn(cited());
+    try {
+      const detail = dom.window.document.querySelector("#detail")!;
+      expect(detail.textContent).toContain("src/app/main.py:4");
+      expect(detail.querySelector("a.prose-ref")).toBeNull();
+      expect(detail.querySelector(".prose-ref")).not.toBeNull();
+    } finally {
+      dom.window.close();
     }
   });
 });
@@ -342,6 +412,27 @@ describe("hosted adapter allow and fail boundaries", () => {
     await store.poll();
     expect(store.projection()?.links.issues).toEqual({
       ordinary: "https://example.com/issue/APP-1",
+    });
+  });
+  it("keeps a file link, and drops one that would carry the view's own capability", async () => {
+    const value = fixture();
+    const sha = "a".repeat(40);
+    value.links.files = {
+      [`${sha} src/app/main.py:4`]: `https://github.com/example/app/blob/${sha}/src/app/main.py#L4`,
+      [`${sha} src/app/leak.py:1`]: `https://example.com/${publicId}/leak.py#L1`,
+    };
+    const r = await revision(1, value);
+    const store = createViewStore(publicId, {
+      fetcher: async (url) =>
+        url.endsWith("/current")
+          ? Response.json(r.meta)
+          : new Response(r.bytes, {
+              headers: { "Content-Type": "application/json" },
+            }),
+    });
+    await store.poll();
+    expect(store.projection()?.links.files).toEqual({
+      [`${sha} src/app/main.py:4`]: `https://github.com/example/app/blob/${sha}/src/app/main.py#L4`,
     });
   });
   it("accounts for time spent downloading a snapshot without refreshing source freshness", async () => {
@@ -1151,6 +1242,21 @@ describe("immutable tuple confirmations", () => {
   });
 });
 
+/**
+ * A delivery underway: one piece has landed. Only then does the line map draw its live line under the hero; a fresh
+ * delivery opens on what is about to land, and the hosting status is said on its own.
+ */
+function underway(body: PublicProjection): PublicProjection {
+  (body.document.state.queue as Record<string, unknown>[]).unshift({
+    subject: "APP-0",
+    title: "Landed first",
+    lane: "one",
+    stage: "merged",
+    head: "c".repeat(40),
+  });
+  return body;
+}
+
 describe("the hosting status in the hero's live line", () => {
   type Built = { renderer: string; viewer: string; shell: string };
   const built = () =>
@@ -1201,7 +1307,7 @@ describe("the hosting status in the hero's live line", () => {
   }
   it("draws no strip, and a current publication shows only as the live line, its times on hover or focus", async () => {
     expect(built().shell).not.toMatch(/hosting-strip|hosting-times|<aside/);
-    const served = { now: (await revision(1, auxiliaryProjection("old"))) as Served };
+    const served = { now: (await revision(1, underway(auxiliaryProjection("old")))) as Served };
     const { dom, document } = await hostedPage(served, false);
     try {
       await vi.waitFor(() =>
@@ -1243,7 +1349,7 @@ describe("the hosting status in the hero's live line", () => {
     ["unavailable", "Update unavailable · showing the last saved progress"],
     ["incompatible", "Incompatible update · showing the last saved progress"],
   ])("says a %s publication in the live line without interaction, and announces it", async (kind, words) => {
-    const body = auxiliaryProjection("old");
+    const body = underway(auxiliaryProjection("old"));
     const served = { now: (await revision(1, body)) as Served };
     const { dom, store, document } = await hostedPage(served);
     try {
@@ -1312,6 +1418,28 @@ describe("the hosting status in the hero's live line", () => {
         ),
       );
       expect(status(document).textContent).toBe("Saved completed delivery · connection unavailable");
+    } finally {
+      close(dom);
+    }
+  });
+  it("says the status on its own while a fresh delivery draws no live line", async () => {
+    const served = { now: (await revision(1, auxiliaryProjection("old"))) as Served };
+    const { dom, document } = await hostedPage(served, false);
+    try {
+      await vi.waitFor(() =>
+        expect(Reflect.get(dom.window, "deliveryStateStore")).toBeDefined(),
+      );
+      const store = Reflect.get(dom.window, "deliveryStateStore") as ReturnType<
+        typeof createViewStore
+      >;
+      dom.window.eval(built().renderer);
+      await store.poll();
+      expect(store.status().kind).toBe("current");
+      // Nothing has landed: the page looks ahead, with no live line under the hero.
+      expect(document.querySelector(".is-fresh")).not.toBeNull();
+      expect(document.querySelector(".fact.since")).toBeNull();
+      expect(status(document).textContent).toBe("Progress confirmed");
+      expect(status(document).classList.contains("hosted-announce")).toBe(false);
     } finally {
       close(dom);
     }

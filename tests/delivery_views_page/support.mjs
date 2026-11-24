@@ -355,9 +355,24 @@ export async function openPage(page, scenario = {}) {
     if ("click" in step) {
       const node = document.querySelectorAll(step.click)[step.index || 0];
       node.focus();
+      // A click on a link to another part of the page navigates: jsdom follows it, and the page hears of it, on tasks
+      // after the click returns. The snapshot waits for the page to turn, as a reader sees it only once it has.
+      const link = node.closest ? node.closest("a[href]") : null;
+      const to = link ? new URL(link.href) : null;
+      const here = new URL(dom.window.location.href);
+      const navigates = Boolean(to && to.hash && to.hash !== here.hash && to.origin === here.origin
+        && to.pathname === here.pathname && to.search === here.search);
+      let prevented = false;
+      dom.window.addEventListener("click", (event) => { prevented = event.defaultPrevented; }, { once: true });
+      const turned = new Promise((resolve) => dom.window.addEventListener("hashchange", resolve, { once: true }));
       // An SVG element, such as a tick on the line, has no click(): it is clicked as a pointer would.
       if (typeof node.click === "function") node.click();
       else node.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      if (navigates && !prevented) {
+        let late;
+        const bound = new Promise((_, reject) => { late = setTimeout(() => reject(new Error(`no hashchange for ${step.click}`)), 10000); });
+        await Promise.race([turned, bound]).finally(() => clearTimeout(late));
+      }
     }
     if ("toggle" in step) { const node = document.querySelector(step.toggle); node.open = !node.open; }
     if ("tick" in step) intervals.forEach((callback) => callback());
