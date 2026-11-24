@@ -568,7 +568,7 @@ Out of scope:
   | flow log `full-health` `rerun` entries | replaced: a `fullhealth.rerun` journal entry, from any seat, names the `at` of the failed result it asks to rerun, copied from the carried result. The queue holder's `full_health_results` counts it while its latest result at that head is still that one |
   | `note_posture`'s dedupe through the `full-health` log | replaced, whatever the entry's origin. A `posture.changed` is skipped when the record's latest `posture.changed` has the same `from`, `to` and `source`. A `fullhealth.skipped` is skipped when the record holds one at the same head. So it may run on whichever seat calls it, including `record_focused` at close |
   | lead files `closed.json` | the `delivery` holder still writes it after its archive, as today, and it stays the closer's local resume marker. Once written, that holder's partition carries `closedEntry`, the origin of the closing `delivery.closed`. On a seat not holding `delivery`, `closed_here` is true when the record's `latest_close` has that origin. So a supervisor stops only once the close has archived, and a delivery reopened before then stays open on every seat |
-  | `evidence-page.json` and `evidence-notes.json` beside the record | one page per seat, carried in that seat's partition, keyed by seat. Its page-wide title, intro and notes are that seat's own. A page holds clips only for stories of lanes its seat holds, because only that machine has their files. On a shared record `evidence_status` judges each merged video story against its lane holder's carried page, using that holder's carried `videos` digests, never story folders. The evidence finish line holds when every such story is current on its own seat's page, and each story links its seat's page |
+  | `evidence-page.json` and `evidence-notes.json` beside the record | one page per seat, carried in that seat's partition, keyed by seat. Its page-wide title, intro and notes are that seat's own. A page holds clips only for stories whose clips its seat recorded, because only that machine has their files. A seat keeps those clips on its page, and keeps carrying its `videos` entries and page, after it gives up the lane. On a shared record `evidence_status` judges each merged video story against the carried page of the seat that recorded the story's latest clips (the origin of its carried `videos` entries), using those digests, never story folders. The evidence finish line holds when every such story is current on its recording seat's page. Each story links that page, and the epic links every seat's page |
   | lead files `friction.md` | carried by `delivery`'s holder (the friction stub) |
   | lead files `full-health.lock`, `full-health.log`, `supervisor.blockers.json`, `supervisor.jsonl`, `supervisor.live.log`, `supervisor.log`, `supervisor.{name}.log`, `supervisor.stop`, `wait.json` | local |
   | flow log `resolutions` | carried by the resolving seat, keyed by the resolved entry's origin and translated on ingest |
@@ -1190,6 +1190,13 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
     `lead-close` reports that clip as not on the page;
   - `b`'s story has two clips at one head and `b`'s page carries one; `a` reports
     the missing one. After `b` republishes, `a` reports the evidence current;
+  - `a` re-records its own story's clip after publishing and does not republish;
+    `a`'s `lead-close` reports that clip as not on the page;
+  - **evidence after a lane moves:** story Y in `b`'s lane is recorded and
+    published on `b`, and the lane is handed to `a` after `b`'s cleanup. `a`'s
+    `lead-close` still reports Y current against `b`'s page, and Y links `b`'s
+    page. If `b`'s page is then rebuilt without Y's clip, `a` reports it as not on
+    the page;
   - handing that lane to `a` while the story's checkout is on `b` gives
     `scope.handover_busy`, and succeeds after `b`'s cleanup;
   - **full health:** `b`, holding `queue`, runs fullHealth at H. After the scopes
