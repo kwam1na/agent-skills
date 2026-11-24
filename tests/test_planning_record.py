@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 import re
+import signal
 import sys
 import time
 import unittest
@@ -40,6 +41,14 @@ QUEUE_GIT = re.compile(r"^GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL|DATE)$|^GIT_CONFIG_
 def own_git(env: dict[str, str]) -> dict[str, str]:
     """The environment with nothing the merge queue passes its checks' git: each clone's own identity and settings."""
     return {name: value for name, value in env.items() if not QUEUE_GIT.match(name)}
+
+
+def process_runs(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 def files(folder: Path) -> dict[str, bytes]:
@@ -174,12 +183,29 @@ class PlanningSupervisorTests(PlanningRecordCase):
     step, the binding's publishers with the tracker's among them, is left out."""
 
     def test_the_planning_supervisor_runs_the_view_and_the_sync_loop_and_passes_over_the_views_only(self) -> None:
+        from tests.test_delivery_views_hosted import CFG
         fx = self.fixture()
-        env = {**fx.env, "RUN_DELIVERY_SUPERVISOR": "on"}
-        code, out = fx.flow("plan-open", "--plan", "docs/plan.md", "--key", KEY, cwd=fx.main, env=env)
+        # Hosting configured, with no publish token here: its owner starts, then stops at the credential, offline.
+        (fx.main / ".agents/delivery-views.json").write_text(json.dumps(CFG))
+        commit(fx.main, "hosted delivery views")
+        env = {key: value for key, value in fx.env.items() if key != CFG["hosted"]["tokenEnv"]}
+        folder = self.opened(fx)
+        # The owner plan-open started goes; a supervisor pass over the planning record starts it again.
+        first = json.loads((folder / "hosted-owner.json").read_text())["pid"]
+        os.kill(first, signal.SIGTERM)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and process_runs(first):
+            time.sleep(0.1)
+        code, out = fx.flow("--delivery", KEY, "lead-run", "--once", cwd=fx.main, env=env)
+        self.assertEqual(code, 0, out)
+        owner = json.loads((folder / "hosted-owner.json").read_text())
+        self.addCleanup(lambda: os.kill(owner["pid"], signal.SIGTERM) if process_runs(owner["pid"]) else None)
+        self.assertNotEqual(owner["pid"], first)
+        self.assertTrue(process_runs(owner["pid"]), owner)
+        env["RUN_DELIVERY_SUPERVISOR"] = "on"
+        code, out = fx.flow("--delivery", KEY, "lead-run", "--resume", cwd=fx.main, env=env)
         self.assertEqual(code, 0, out)
         self.assertIn("supervisor: running; live view http://", out)
-        folder = Path(re.search(r"planning record of \S+ at (\S+):", out).group(1))
         lock = folder.parent / "flow-log" / f"{KEY}.supervisor.lock"
         children = {child["name"] for child in json.loads(lock.read_text())["children"]}
         self.assertEqual(children, {"live", "collab"})
