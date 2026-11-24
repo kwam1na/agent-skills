@@ -292,7 +292,7 @@
     {
       "id": "stories",
       "label": "The stories",
-      "text": "V26-3776, V26-3777, V26-3778, V26-3779, V26-3780, V26-3807, V26-3808 and V26-3810 land on integrate/plan-preview-views through its merge queue, each with every criterion met",
+      "text": "V26-3776, V26-3777, V26-3778, V26-3779, V26-3780, V26-3807, V26-3808, V26-3810 and V26-3811 land on integrate/plan-preview-views through its merge queue, each with every criterion met",
       "covers": {
         "criteria": "all",
         "proofs": [
@@ -300,7 +300,7 @@
           "merged"
         ]
       },
-      "at": "2026-11-24T18:13:05.006454Z"
+      "at": "2026-11-24T19:40:21.949299Z"
     },
     {
       "id": "preview-end-to-end",
