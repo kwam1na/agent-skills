@@ -1,7 +1,7 @@
 {
   "schemaVersion": "delivery-flow-delivery/1",
   "delivery": "V26-3794",
-  "headline": "V26-3794",
+  "headline": "Several engineers run one delivery together, with shared context",
   "baseBranch": "integrate/shared-delivery-collaboration",
   "integrationTarget": "main",
   "plan": "docs/plans/2026-11-24-shared-delivery-collaboration.md",
