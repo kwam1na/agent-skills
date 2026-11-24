@@ -3681,7 +3681,7 @@
     var blocking = list(plan.approvals).filter(function (entry) { return isObject(entry) && entry.blocking === true && entry.state === "waiting"; });
     if (blocking.length) {
       flags.push({ title: blocking.length === 1 ? "An approval is blocking work" : blocking.length + " approvals are blocking work",
-        approvals: blocking, fix: blocking.length === 1 ? "Give or refuse this approval." : "Give or refuse each approval." });
+        approvals: blocking });
     }
     var known = Object.create(null);
     planUnits(plan.units).forEach(function (unit) { known[text(unit.subject)] = true; });
@@ -3777,11 +3777,37 @@
       var who = text(entry.who);
       add(summary, el("span", "ap-id", shownId), el("span", "ap-title", parts.title), el("span", "ap-who", who === parts.title ? "" : who),
         el("span", "ap-caret"));
-      add(row, summary, parts.rest ? el("p", "ap-rest", parts.rest) : null);
-      if (!parts.rest) { row.classList.add("is-whole"); }
+      add(row, summary, parts.rest ? el("p", "ap-rest", parts.rest) : null, requestLine(shownId, parts.title));
       listing.appendChild(add(el("li"), row));
     });
-    return add(el("div", "ap"), owners.length > 1 ? byOwner : null, listing);
+    // What clears the flag. The operator doesn't run anything: they tell the agent leading the work, which records it.
+    var how = el("p", "ap-how", "Tell the agent leading this which you approve, and it records each one in the plan. Open a row for a request you can paste.");
+    return add(el("div", "ap"), owners.length > 1 ? byOwner : null, listing, how);
+  }
+  /** An approval as a request to the agent leading the work, ready to paste into its conversation. */
+  function requestLine(id, title) {
+    var request = "Approve " + (id ? id + " (" + title + ")" : "“" + title + "”") + ".";
+    var copy = el("button", "ap-copy", "Copy");
+    copy.type = "button";
+    copy.setAttribute("aria-label", "Copy the request: " + request);
+    var said = el("q", "ap-request", request);
+    function selectRequest() {
+      var range = document.createRange();
+      range.selectNodeContents(said);
+      var picked = window.getSelection();
+      picked.removeAllRanges();
+      picked.addRange(range);
+    }
+    copy.addEventListener("click", function (event) {
+      event.preventDefault();
+      var done = function () {
+        copy.textContent = "Copied";
+        copy.classList.add("is-done");
+        setTimeout(function () { copy.textContent = "Copy"; copy.classList.remove("is-done"); }, 1600);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(request).then(done, selectRequest); } else { selectRequest(); }
+    });
+    return add(el("div", "ap-act"), el("span", "ap-act-word", "Tell the agent"), said, copy);
   }
   function flagList(flags, closed) {
     var box = el("div", "plan-needs");

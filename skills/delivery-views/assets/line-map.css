@@ -1121,8 +1121,6 @@ body:not(.paged) .chapter-tab-hint { display: none; }
 .ap-row > summary::-webkit-details-marker { display: none; }
 .ap-row > summary:hover .ap-title { text-decoration: underline; text-decoration-color: var(--edge); text-underline-offset: 3px; }
 .ap-row > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 6px; }
-.ap-row.is-whole > summary { cursor: default; }
-.ap-row.is-whole > summary:hover .ap-title { text-decoration: none; }
 .ap-id { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
 .ap-title { font-size: 14.5px; color: var(--ink); line-height: 1.4; }
 .ap-who { justify-self: end; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1132,7 +1130,6 @@ body:not(.paged) .chapter-tab-hint { display: none; }
 .ap-caret { width: 7px; height: 7px; justify-self: center; align-self: center; border-right: 1.5px solid var(--faint); border-bottom: 1.5px solid var(--faint);
   transform: rotate(45deg) translate(-2px, -2px); transition: transform .2s var(--ease); }
 .ap-row[open] .ap-caret { transform: rotate(225deg) translate(-2px, -2px); }
-.ap-row.is-whole .ap-caret { visibility: hidden; }
 .ap-rest { margin: -2px 0 14px calc(5.5ch + 12px); max-width: 64ch; font-size: 13.5px; line-height: 1.6; color: var(--soft); overflow-wrap: anywhere; }
 @media (max-width: 720px) {
   .ap-row > summary { grid-template-columns: minmax(0, 1fr) 14px; grid-template-areas: "id caret" "title caret" "who caret"; gap: 4px 10px; }
@@ -1141,3 +1138,20 @@ body:not(.paged) .chapter-tab-hint { display: none; }
   .ap-rest { margin-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) { .ap-caret { transition: none; } }
+
+/* Giving an approval: the command under each opened row, and how under the list. */
+.ap-act { display: flex; align-items: center; gap: 10px; margin: 0 0 14px calc(5.5ch + 12px); max-width: 64ch; }
+.ap-act-word { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.ap-request { flex: 1 1 auto; min-width: 0; padding: 6px 11px; border-radius: 10px 10px 10px 3px; quotes: none;
+  background: var(--well); box-shadow: inset 0 0 0 1px var(--hair); color: var(--ink); font-size: 13.5px; line-height: 1.4; }
+.ap-copy { flex: none; height: 26px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--soft);
+  font: inherit; font-size: 12px; cursor: pointer; box-shadow: inset 0 0 0 1px var(--hair); }
+.ap-copy:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--edge); }
+.ap-copy:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.ap-copy.is-done { color: var(--landed); box-shadow: inset 0 0 0 1px currentColor; }
+.ap-how { margin: 2px 0 0; font-size: 13px; color: var(--soft); }
+@media (max-width: 720px) {
+  .ap-act { margin-left: 0; flex-wrap: wrap; }
+  .ap-request { flex-basis: 100%; order: 2; }
+  .ap-copy { order: 3; }
+}
