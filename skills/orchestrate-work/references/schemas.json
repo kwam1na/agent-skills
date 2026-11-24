@@ -4743,7 +4743,7 @@
         "minimum": 0
       },
       "slice": {
-        "description": "Every value of the record this seat's own writes set, each by path and with the origin of the write that set it. A path names the record's own fields: meta/<field>, a top-level field, a keyed array's presence as <array>[], one of its elements by the patch layer's keyed selector, such as queue[subject=K], and a field of one, such as queue[subject=K]/stage; never an index. An entry carries removed: true in place of value for an element or field its writer deleted. regionsSettled, and a queue element's leadSelection.reuse.decision, name journal entries: they are carried by origin and translated to local ids on ingest.",
+        "description": "Every value of the record this seat's own writes set, each by path and with the origin of the write that set it and the other seat's value it replaced. A path names the record's own fields: meta/<field>, a top-level field, a keyed array's presence as <array>[], one of its elements by the patch layer's keyed selector, such as queue[subject=K], and a field of one, such as queue[subject=K]/stage; never an index. An entry carries removed: true in place of value for an element or field its writer deleted. regionsSettled, and a queue element's leadSelection.reuse.decision, name journal entries: they are carried by origin and translated to local ids on ingest.",
         "type": "array",
         "items": {
           "$ref": "#/$defs/sliceEntry"
@@ -4794,6 +4794,29 @@
           },
           "removed": {
             "const": true
+          },
+          "replaces": {
+            "description": "The other seat's value this write replaced, by that seat, its seq and the digest of the value as carried, so every machine can tell this write follows it. Absent for a write that replaced no other seat's value.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "seat",
+              "seq",
+              "digest"
+            ],
+            "properties": {
+              "seat": {
+                "$ref": "#/$defs/seat"
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{16}$"
+              }
+            }
           }
         }
       }

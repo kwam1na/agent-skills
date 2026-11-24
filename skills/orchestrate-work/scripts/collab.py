@@ -16,9 +16,10 @@ alone, for tests and recovery.
 
 Every journal write goes through the state tool's append functions, and every state write through its own writer.
 
-A value's origin is the seat and seq of the write that set it: for a write that journals nothing, the seat's last own
-entry. Two values of a field two scopes may write are ordered by the causal order of those entries, and a tie by seat
-id, so every machine chooses the same one; a write that journals nothing can therefore lose a tie it followed in time.
+A value's origin is the seat and seq of the write that set it, its seq that seat's last own entry, and the value it
+replaced, if another seat's, by that seat, seq and digest. So a write that replaced a peer's value follows it on every
+machine; two writes neither of which replaced the other are concurrent, and the higher seat id wins, as every machine
+chooses. A removal wins over every write that does not follow it.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ import os
 import re
 import secrets
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -45,6 +47,9 @@ PEER_REFS = "refs/agent-skills-peers"
 SPLIT_REFS = "refs/agent-skills-split"
 PARTITION_FILE = "partition.json"
 JOURNAL_FILE = "journal.jsonl"
+# Beside the record, machine-local: the tip of this seat's chain and the digest of what it holds, so an unchanged
+# partition is never built into a commit again.
+TIP_FILE = "partition-tip.json"
 KEY = re.compile(r"^[A-Za-z][A-Za-z0-9-]{0,63}$")
 PATH = re.compile(r"^(?P<array>[a-z]+)\[(?P<key>[A-Za-z]+)=(?P<value>[^\]]+)\](?:/(?P<field>.+))?$")
 POLL_SECONDS = 5.0
@@ -223,16 +228,6 @@ def _origin(entry: dict) -> dict:
     return {"seat": entry["origin"]["seat"], "seq": entry["origin"]["seq"]}
 
 
-def _carried(path: str, value: object, origins_of: dict[int, dict]) -> object:
-    """A value as a partition carries it: a journal id it holds is named by its entry's origin."""
-    if path == "regionsSettled" and isinstance(value, int) and value:
-        return origins_of[value]
-    if path.endswith("/leadSelection") and isinstance((value or {}).get("reuse", {}).get("decision") if isinstance(value, dict) else None, int):
-        value = copy.deepcopy(value)
-        value["reuse"]["decision"] = origins_of[value["reuse"]["decision"]]
-    return value
-
-
 def _localized(path: str, value: object, local_ids: dict[tuple, int]) -> tuple[bool, object]:
     """A carried value as this record holds it, its origins translated to local ids; False while one is missing."""
     def local(reference: object) -> int | None:
@@ -262,7 +257,7 @@ def build_partition(directory: Path) -> tuple[dict, str]:
     seat = tool.local_seat(directory, collab["key"])
     if seat is None:
         raise _refuse("collab.seat_missing", "this checkout has no seat for the shared record")
-    origins_of = {entry["id"]: _origin(entry) for entry in journal}
+    origins_of = tool.journal_origins(journal)
     lines = []
     for entry in journal:
         if entry["origin"]["seat"] != seat:
@@ -276,11 +271,13 @@ def build_partition(directory: Path) -> tuple[dict, str]:
     for path, value in tool.partition_paths(state).items():
         origin = origins.get(path)
         if origin is not None and origin["seat"] == seat and not origin.get("removed"):
-            held.append({"path": path, "value": _carried(path, value, origins_of),
-                         "origin": {"seat": seat, "seq": origin["seq"]}})
+            held.append({"path": path, "value": tool.carried_value(path, value, origins_of),
+                         "origin": {"seat": seat, "seq": origin["seq"]},
+                         **({"replaces": origin["replaces"]} if "replaces" in origin else {})})
     for path, origin in sorted(origins.items()):
         if origin["seat"] == seat and origin.get("removed"):
-            held.append({"path": path, "removed": True, "origin": {"seat": seat, "seq": origin["seq"]}})
+            held.append({"path": path, "removed": True, "origin": {"seat": seat, "seq": origin["seq"]},
+                         **({"replaces": origin["replaces"]} if "replaces" in origin else {})})
     partition = {"schemaVersion": PARTITION, "seat": seat, "generation": state["meta"].get("writerGeneration"),
                  "through": len(lines), "slice": held}
     errors = tool.validate(partition, tool.load_schema(PARTITION))
@@ -291,8 +288,10 @@ def build_partition(directory: Path) -> tuple[dict, str]:
 
 def _identity(repo: Path, seat: str) -> dict:
     """Who a partition commit is by: the checkout's own git identity, or its seat where it has none."""
-    name = _git(repo, "config", "--get", "user.name", check=False).stdout.strip() or seat
-    email = _git(repo, "config", "--get", "user.email", check=False).stdout.strip() or f"{seat}@agent-skills.invalid"
+    found = dict(line.split(" ", 1) for line in _git(repo, "config", "--get-regexp", r"^user\.(name|email)$",
+                                                       check=False).stdout.splitlines() if " " in line)
+    name = found.get("user.name", "").strip() or seat
+    email = found.get("user.email", "").strip() or f"{seat}@agent-skills.invalid"
     return {"GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email, "GIT_COMMITTER_NAME": name, "GIT_COMMITTER_EMAIL": email}
 
 
@@ -303,15 +302,27 @@ def commit_partition(directory: Path) -> tuple[str, str, str, bool]:
     partition, journal_text = build_partition(directory)
     key, seat = _key_of(directory), partition["seat"]
     ref = partition_ref(key, seat)
-    blobs = {name: _git(directory, "hash-object", "-w", "--stdin", data=text).stdout.strip()
-             for name, text in ((JOURNAL_FILE, journal_text), (PARTITION_FILE, tool.dumps(partition)))}
-    tree = _git(directory, "mktree", data="".join(f"100644 blob {blobs[name]}\t{name}\n" for name in sorted(blobs))).stdout.strip()
+    texts = {JOURNAL_FILE: journal_text, PARTITION_FILE: tool.dumps(partition)}
+    digest = tool.value_digest(texts)
     parent = _revision(directory, ref)
+    tip_file = directory / TIP_FILE
+    with contextlib.suppress(OSError, ValueError, KeyError):
+        tip = json.loads(tip_file.read_text(encoding="utf-8"))
+        if parent is not None and tip == {"commit": parent, "digest": digest}:
+            return key, seat, parent, False
+    with tempfile.TemporaryDirectory(dir=directory) as folder:
+        for name, text in texts.items():
+            (Path(folder) / name).write_text(text, encoding="utf-8")
+        hashed = _git(directory, "hash-object", "-w", *(str(Path(folder) / name) for name in sorted(texts))).stdout.split()
+    tree = _git(directory, "mktree", data="".join(f"100644 blob {blob}\t{name}\n"
+                                                 for name, blob in zip(sorted(texts), hashed))).stdout.strip()
     if parent is not None and _git(directory, "rev-parse", f"{parent}^{{tree}}").stdout.strip() == tree:
+        tool._write_atomically(tip_file, tool.dumps({"commit": parent, "digest": digest}))
         return key, seat, parent, False
     commit = _git(directory, "commit-tree", tree, *(["-p", parent] if parent else []), "-m",
                   f"{seat} through {partition['through']}", environment=_identity(directory, seat)).stdout.strip()
     _git(directory, "update-ref", ref, commit, parent or ZERO)
+    tool._write_atomically(tip_file, tool.dumps({"commit": commit, "digest": digest}))
     return key, seat, commit, True
 
 
@@ -369,14 +380,31 @@ def fetch(directory: Path, *, remote: str = "origin", key: str | None = None) ->
     return sorted(name.rsplit("/", 1)[1] for name in listed)
 
 
+def _blobs(repo: Path, names: list[str]) -> list[str | None]:
+    """Each named blob's text, read in one git process, or None where there is no such blob."""
+    found = subprocess.run(["git", "cat-file", "--batch"], cwd=repo, input="".join(f"{name}\n" for name in names).encode("utf-8"),
+                           capture_output=True, timeout=GIT_TIMEOUT_SECONDS, check=False)
+    data, texts = found.stdout, []
+    for _ in names:
+        header, _, data = data.partition(b"\n")
+        parts = header.split()
+        if len(parts) != 3 or parts[1] != b"blob":
+            texts.append(None)
+            continue
+        size = int(parts[2])
+        texts.append(data[:size].decode("utf-8"))
+        data = data[size + 1:]
+    return texts
+
+
 def read_partition(repo: Path, ref: str) -> tuple[dict, list[dict]]:
     """A fetched partition, checked as delivery-partition/1, and its entries; ValueError when it is not one."""
     tool = _state_tool()
-    found = _git(repo, "cat-file", "blob", f"{ref}:{PARTITION_FILE}", check=False)
-    lines = _git(repo, "cat-file", "blob", f"{ref}:{JOURNAL_FILE}", check=False)
-    if found.returncode != 0 or lines.returncode != 0:
+    blobs = _blobs(repo, [f"{ref}:{PARTITION_FILE}", f"{ref}:{JOURNAL_FILE}"])
+    if None in blobs:
         raise ValueError("the partition commit lacks partition.json or journal.jsonl")
-    partition = json.loads(found.stdout)
+    partition = json.loads(blobs[0])
+    lines = type("Lines", (), {"stdout": blobs[1]})
     errors = tool.validate(partition, tool.load_schema(PARTITION))
     if errors:
         raise ValueError("; ".join(errors))
@@ -389,34 +417,23 @@ def read_partition(repo: Path, ref: str) -> tuple[dict, list[dict]]:
 
 # Ingest.
 
-class _Causality:
-    """The order of origins on this machine's journal: an entry follows what its seen names."""
+def _matches(reference: object, origin: dict, digest: str) -> bool:
+    """Whether ``reference``, a write's ``replaces``, names the value at ``origin`` whose digest is ``digest``."""
+    return (isinstance(reference, dict) and reference.get("seat") == origin["seat"]
+            and reference.get("seq") == origin["seq"] and reference.get("digest") == digest)
 
-    def __init__(self, journal: list[dict]) -> None:
-        self.vectors = {}
-        self.local_ids = {}
-        for entry in journal:
-            origin = entry["origin"]
-            self.vectors[(origin["seat"], origin["seq"])] = {**origin["seen"], origin["seat"]: origin["seq"]}
-            self.local_ids[(origin["seat"], origin["seq"])] = entry["id"]
 
-    def after(self, later: dict, earlier: dict) -> bool:
-        """Whether the write at ``later`` causally follows the one at ``earlier``. From one seat, whose partition is its
-        latest, a value at the same or a later seq is the later one."""
-        if later["seat"] == earlier["seat"]:
-            return later["seq"] >= earlier["seq"]
-        vector = self.vectors.get((later["seat"], later["seq"]), {later["seat"]: later["seq"]})
-        return vector.get(earlier["seat"], 0) >= earlier["seq"]
-
-    def supersedes(self, incoming: dict, local: dict) -> bool:
-        """Whether an incoming value replaces the local one: the causally later, and between concurrent ones, the
-        higher seat id, so every machine chooses the same."""
-        if incoming["seat"] == local["seat"]:
-            return incoming["seq"] >= local["seq"]
-        forward, backward = self.after(incoming, local), self.after(local, incoming)
-        if forward != backward:
-            return forward
-        return incoming["seat"] > local["seat"]
+def supersedes(incoming: dict, incoming_digest: str, local: dict, local_digest: str) -> bool:
+    """Whether an incoming value replaces the local one at the same path. From the same seat, whose partition is its
+    latest, it does. Otherwise the write that replaced the other is the later; between concurrent writes, the higher
+    seat id, so every machine chooses the same one."""
+    if incoming["seat"] == local["seat"]:
+        return incoming["seq"] >= local["seq"]
+    if _matches(incoming.get("replaces"), local, local_digest):
+        return True
+    if _matches(local.get("replaces"), incoming, incoming_digest):
+        return False
+    return incoming["seat"] > local["seat"]
 
 
 def permitted(journal: list[dict], seat: str) -> bool:
@@ -431,10 +448,26 @@ def _find(state: dict, array: str, key: str, value: str) -> dict | None:
 
 def _apply_slice(state: dict, origins: dict, journal: list[dict], seat: str, partition: dict, through: int) -> bool:
     """Apply one peer's slice to ``state`` and ``origins``, as far as its entries are ingested; whether it changed."""
+    tool = _state_tool()
     if not permitted(journal, seat):
         return False
-    order = _Causality(journal)
     may_create = permitted(journal, seat)
+    local_ids = {(origin["seat"], origin["seq"]): local for local, origin in tool.journal_origins(journal).items()}
+    origins_of = tool.journal_origins(journal)
+    removed_digest = tool.value_digest(tool.REMOVED_VALUE)
+
+    def held_digest(path: str) -> str:
+        """The digest of the value this record holds at ``path``, as a partition carries it."""
+        if origins.get(path, {}).get("removed"):
+            return removed_digest
+        values = tool.partition_paths(state)
+        return tool.value_digest(tool.carried_value(path, values[path], origins_of)) if path in values else removed_digest
+
+    def record(path: str, item: dict, removed: bool) -> None:
+        origins[path] = {"seat": seat, "seq": item["origin"]["seq"],
+                         **({"replaces": item["replaces"]} if "replaces" in item else {}),
+                         **({"removed": True} if removed else {})}
+
     entries = [item for item in partition["slice"]
                if item["origin"]["seat"] == seat and item["origin"]["seq"] <= through]
     # Elements before their fields, so a field finds its element.
@@ -443,82 +476,77 @@ def _apply_slice(state: dict, origins: dict, journal: list[dict], seat: str, par
     for item in entries:
         path, origin = item["path"], {"seat": seat, "seq": item["origin"]["seq"]}
         removed = item.get("removed", False)
+        incoming = {**origin, **({"replaces": item["replaces"]} if "replaces" in item else {})}
+        digest = removed_digest if removed else tool.value_digest(item["value"])
         local = origins.get(path)
-        if removed:
-            value = None
-        else:
-            ready, value = _localized(path, item["value"], order.local_ids)
+        if local is not None and (local["seat"], local["seq"]) == (seat, origin["seq"]) and held_digest(path) == digest:
+            continue  # applied already
+        value = None
+        if not removed:
+            ready, value = _localized(path, item["value"], local_ids)
             if not ready:
                 continue
         matched = PATH.match(path)
         if path.endswith("[]"):
             array = path[:-2]
-            if local is not None and not order.supersedes(origin, local):
+            if local is not None and not supersedes(incoming, digest, local, held_digest(path)):
                 continue
             if removed and state.get(array) == []:
                 del state[array]
             elif not removed:
                 state.setdefault(array, [])
-            origins[path] = {**origin, **({"removed": True} if removed else {})}
-            changed = True
         elif matched and matched.group("field") is None:
             array, key, name = matched.group("array"), matched.group("key"), matched.group("value")
             element = _find(state, array, key, name)
             if removed:
-                if local is not None and not local.get("removed") and order.after(local, origin) and local["seat"] != seat:
-                    continue  # re-created after this removal
-                if local is not None and local.get("removed") and not order.supersedes(origin, local):
+                if local is not None and local["seat"] != seat and not local.get("removed") \
+                        and _matches(local.get("replaces"), origin, removed_digest):
+                    continue  # made again after this removal
+                if local is not None and local.get("removed") and not supersedes(incoming, digest, local, removed_digest):
                     continue
                 if element is not None:
                     state[array].remove(element)
                 for other in [name for name in origins if name.startswith(path + "/")]:
                     del origins[other]
-                origins[path] = {**origin, "removed": True}
-                changed = True
-                continue
-            if local is not None and local.get("removed"):
-                if not (order.after(origin, local) and may_create):
+            else:
+                if local is not None and local.get("removed"):
+                    # A removal wins over every write that does not follow it; a later write by a seat that may
+                    # create the element makes it again.
+                    if not may_create or not (local["seat"] == seat or _matches(item.get("replaces"), local, removed_digest)):
+                        continue
+                elif local is not None and element is not None and not supersedes(incoming, digest, local, held_digest(path)):
                     continue
-            elif local is not None and element is not None and not order.supersedes(origin, local):
-                continue
-            if element is None:
-                state.setdefault(array, []).append({key: name})
-            origins[path] = origin
-            changed = True
+                if element is None:
+                    state.setdefault(array, []).append({key: name})
         elif matched:
             array, key, name, field = (matched.group("array"), matched.group("key"), matched.group("value"),
                                        matched.group("field"))
-            selector = f"{array}[{key}={name}]"
-            made = origins.get(selector)
-            if made is not None and made.get("removed"):
-                # A removal wins over a write it does not causally precede; a later write by a seat that may create
-                # the element makes it again.
-                if not (order.after(origin, made) and may_create):
-                    continue
-                origins[selector] = origin
             element = _find(state, array, key, name)
             if element is None:
+                made = origins.get(f"{array}[{key}={name}]")
+                if made is not None and made.get("removed"):
+                    continue  # a write that does not follow the removal; the element's own entry would make it again
                 element = {key: name}
                 state.setdefault(array, []).append(element)
-                origins.setdefault(selector, origin)
-            if local is not None and not order.supersedes(origin, local):
+                origins.setdefault(f"{array}[{key}={name}]", dict(origin))
+            if local is not None and not local.get("removed") and not supersedes(incoming, digest, local, held_digest(path)):
+                continue
+            if local is not None and local.get("removed") and not supersedes(incoming, digest, local, removed_digest):
                 continue
             if removed:
                 element.pop(field, None)
             else:
                 element[field] = value
-            origins[path] = {**origin, **({"removed": True} if removed else {})}
-            changed = True
         else:
             target, name = (state["meta"], path[len("meta/"):]) if path.startswith("meta/") else (state, path)
-            if local is not None and not order.supersedes(origin, local):
+            if local is not None and not supersedes(incoming, digest, local, held_digest(path)):
                 continue
             if removed:
                 target.pop(name, None)
             else:
                 target[name] = value
-            origins[path] = {**origin, **({"removed": True} if removed else {})}
-            changed = True
+        record(path, item, removed)
+        changed = True
     return changed
 
 
@@ -615,7 +643,7 @@ def ingest(directory: Path, *, key: str | None = None) -> dict:
                             and not permitted(journal, seat):
                         break  # an unadmitted seat contributes only its request
                     try:
-                        local = _localize(entry, _Causality(journal).local_ids, len(journal) + 1)
+                        local = _localize(entry, {(origin["seat"], origin["seq"]): local for local, origin in tool.journal_origins(journal).items()}, len(journal) + 1)
                         written = tool._append_journal_locked(directory, current, journal, local)
                     except (ValueError, tool.StateError):
                         held[seat] = "slice_invalid"
@@ -652,8 +680,9 @@ def ingest(directory: Path, *, key: str | None = None) -> dict:
             if changed or stale or previous.get("through") != through or previous.get("heldReason") != held.get(seat):
                 peers[seat] = {"through": through, "fetchedAt": at, "heldReason": held.get(seat)}
         if updated != current:
-            current = tool._with_state(directory, current, updated)
+            # The origins go first: the state's write orders its elements by them.
             tool._write_atomically(directory / tool.FIELD_ORIGINS_FILE, tool.dumps(origins))
+            current = tool._with_state(directory, current, updated)
         if own is not None and (current["meta"]["collab"]["seats"].get(own) or {}).get("admitted"):
             for seat in sorted(set(before) | set(peers)):
                 was, now = (before.get(seat) or {}).get("heldReason"), (peers.get(seat) or {}).get("heldReason")

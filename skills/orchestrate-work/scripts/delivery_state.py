@@ -127,6 +127,8 @@ LOCAL_META = ("updatedAt", "writerGeneration", "closing", "collab")
 # What a write on a shared record may do apart from its seat's own writes: the sync writer's ingest, and an unadmitted
 # seat's request to join.
 _COLLAB = threading.local()
+# Each checkout's seat by record folder and key, with the configuration file it was read from and that file's time.
+_SEATS: dict[tuple[str, str], tuple[str, str, int]] = {}
 # What a lane writes about itself, through the tool.
 LANE_FIELDS = ("focus", "state", "waitingOn", "since")
 # The runner writes a row only to say what became of a candidate; focusAt, focusBy, waitingBy and restedFrom are the tool's alone, for every writer.
@@ -1009,14 +1011,28 @@ def collab_of(state: dict) -> dict | None:
 def local_seat(directory: Path, key: str) -> str | None:
     """The seat this checkout writes a shared record as: ``agent-skills.seat.<key>`` in the local git configuration of
     the checkout that holds the record, or None. No environment variable sets or overrides it: git's own are left out."""
+    cached = _SEATS.get((str(directory), key))
+    if cached is not None:
+        with contextlib.suppress(OSError):
+            if os.stat(cached[1]).st_mtime_ns == cached[2]:
+                return cached[0]
     environment = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
     try:
         found = subprocess.run(["git", "config", "--local", "--get", f"agent-skills.seat.{key}"], cwd=directory,
                                env=environment, capture_output=True, text=True, timeout=60, check=False)
+        seat = found.stdout.strip()
+        if found.returncode != 0 or not SEAT.match(seat):
+            return None
+        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=directory,
+                                env=environment, capture_output=True, text=True, timeout=60, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    seat = found.stdout.strip()
-    return seat if found.returncode == 0 and SEAT.match(seat) else None
+    # Kept until the configuration file that holds it changes.
+    path = Path(common.stdout.strip()) / "config"
+    with contextlib.suppress(OSError):
+        if common.returncode == 0:
+            _SEATS[(str(directory), key)] = (seat, str(path), os.stat(path).st_mtime_ns)
+    return seat
 
 
 def require_seat(directory: Path, state: dict) -> str | None:
@@ -1142,9 +1158,37 @@ def sort_elements(state: dict, origins: dict[str, dict], journal: list[dict]) ->
             state[name].sort(key=lambda element: order(f"{name}[{key}={element[key]}]"))
 
 
+def carried_value(path: str, value: object, origins_of: dict[int, dict]) -> object:
+    """A value as a partition carries it: a journal id it holds is named by its entry's origin, ``{seat, seq}``."""
+    if path == "regionsSettled" and isinstance(value, int) and value and value in origins_of:
+        return origins_of[value]
+    reuse = value.get("reuse") if path.endswith("/leadSelection") and isinstance(value, dict) else None
+    if isinstance(reuse, dict) and isinstance(reuse.get("decision"), int) and reuse["decision"] in origins_of:
+        value = copy.deepcopy(value)
+        value["reuse"]["decision"] = origins_of[reuse["decision"]]
+    return value
+
+
+# What a removed path's digest is taken over: no value has it.
+REMOVED_VALUE = {"removed": True, "by": "partition"}
+
+
+def value_digest(value: object) -> str:
+    """A short digest of a carried value, the same on every machine; a removal's is ``REMOVED_VALUE``'s."""
+    text = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("ascii")).hexdigest()[:16]
+
+
+def journal_origins(journal: list[dict]) -> dict[int, dict]:
+    """Each entry's origin, ``{seat, seq}``, by its local id."""
+    return {entry["id"]: {"seat": entry["origin"]["seat"], "seq": entry["origin"]["seq"]}
+            for entry in journal if "origin" in entry}
+
+
 def _store_state(directory: Path, updated: dict) -> None:
     """Write ``updated`` as state.json, under the state lock the caller holds. On a shared record, the seat's own write
-    first records the origin of every value it changed, and keyed elements take their shared order."""
+    first records, for every value it changed, its origin and the value it replaced, and keyed elements take their
+    shared order."""
     if collab_of(updated) is not None:
         journal = _raw_journal(directory)
         origins = read_field_origins(directory)
@@ -1157,16 +1201,26 @@ def _store_state(directory: Path, updated: dict) -> None:
                 before = {}
             after = partition_paths(updated)
             if seat is not None and seq:
-                origin = {"seat": seat, "seq": seq}
+                origins_of = journal_origins(journal)
                 changed = False
-                for path, value in after.items():
-                    if path not in before or before[path] != value or origins.get(path, {}).get("removed"):
-                        origins[path] = dict(origin)
-                        changed = True
-                for path in before:
+                written = [path for path, value in after.items()
+                           if path not in before or before[path] != value or origins.get(path, {}).get("removed")]
+                for path in [*written, *(path for path in before if path not in after)]:
+                    previous = origins.get(path)
+                    origin: dict = {"seat": seat, "seq": seq}
+                    if previous is not None and previous["seat"] == seat:
+                        if "replaces" in previous:
+                            origin["replaces"] = previous["replaces"]
+                    elif previous is not None:
+                        # The peer's value this write replaces, so every machine can tell this write follows it.
+                        held = REMOVED_VALUE if previous.get("removed") or path not in before else \
+                            carried_value(path, before[path], origins_of)
+                        origin["replaces"] = {"seat": previous["seat"], "seq": previous["seq"],
+                                              "digest": value_digest(held)}
                     if path not in after:
-                        origins[path] = {**origin, "removed": True}
-                        changed = True
+                        origin["removed"] = True
+                    origins[path] = origin
+                    changed = True
                 for path in list(origins):
                     # A removed element's fields go with it: its removal stands for them.
                     element = path.split("]/", 1)[0] + "]" if "]/" in path else None
@@ -1441,6 +1495,8 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
         violations.append("/meta/writerGeneration is changed only by the lead writer transition")
     if meta_before.get("updatedAt") != meta_after.get("updatedAt"):
         violations.append("/meta/updatedAt is maintained by the tool")
+    if meta_before.get("collab") != meta_after.get("collab"):
+        violations.append("/meta/collab is maintained by the tool: a record is shared only when plan-open creates it")
     if writer == "runner":
         for field in set(before) | set(after):
             if field in TOOL_OWNED or field in ("meta", "queue", "lanes"):
