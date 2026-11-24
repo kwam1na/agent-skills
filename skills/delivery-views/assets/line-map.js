@@ -619,52 +619,6 @@
     }
   });
 
-  /** Each page's foot: a short line through every chapter, ink up to this one, with the pages either side at its
-   * ends. Leaning on an end draws the ink on toward that stop; the last page's far end goes back to the first. */
-  function footOf(section) {
-    var foot = section.querySelector(":scope > .page-foot");
-    if (!foot) { foot = el("nav", "page-foot"); foot.setAttribute("aria-label", "Chapters"); section.appendChild(foot); }
-    var ids = chapterIds();
-    var at = ids.indexOf(section.id);
-    var last = ids.length - 1;
-    var pct = function (index) { return String(last > 0 ? Math.max(0, Math.min(index, last)) / last : 0); };
-    var index2 = function (index) { return String(index + 1).padStart(2, "0"); };
-    foot.replaceChildren();
-    foot.style.setProperty("--fill-at", pct(at));
-    foot.style.setProperty("--lean-prev", pct(at - 1));
-    foot.style.setProperty("--lean-next", pct(at + 1));
-    function end(kind, to, word, loop) {
-      if (to === undefined) { return el("span", "foot-end is-" + kind + " is-none"); }
-      var link = el("a", "foot-end is-" + kind + (loop ? " is-loop" : ""));
-      link.setAttribute("href", "#" + to);
-      var meta = el("span", "foot-meta");
-      add(meta, el("span", "foot-index", index2(ids.indexOf(to))), el("span", "foot-word", word));
-      var arrow = el("span", "foot-arrow");
-      arrow.setAttribute("aria-hidden", "true");
-      add(link, meta, add(el("span", "foot-name"), kind === "prev" ? arrow : null, el("span", null, chapterName(to)),
-        kind === "next" ? arrow : null));
-      link.setAttribute("aria-label", word + ": " + chapterName(to));
-      link.addEventListener("pointerenter", function () { foot.setAttribute("data-lean", loop ? "loop" : kind); });
-      link.addEventListener("pointerleave", function () { foot.removeAttribute("data-lean"); });
-      link.addEventListener("focus", function () { foot.setAttribute("data-lean", loop ? "loop" : kind); });
-      link.addEventListener("blur", function () { foot.removeAttribute("data-lean"); });
-      return link;
-    }
-    var track = el("ol", "foot-track");
-    track.setAttribute("aria-label", "Page " + (at + 1) + " of " + ids.length);
-    ids.forEach(function (id, index) {
-      var stop = el("a", "foot-stop " + (index < at ? "is-past" : index === at ? "is-here" : "is-ahead"));
-      stop.setAttribute("href", "#" + id);
-      stop.setAttribute("aria-label", index2(index) + " " + chapterName(id));
-      if (index === at) { stop.setAttribute("aria-current", "page"); }
-      stop.appendChild(el("span", "foot-stop-name", chapterName(id)));
-      track.appendChild(add(el("li"), stop));
-    });
-    var onLast = at === last && last > 0;
-    add(foot, end("prev", ids[at - 1], "Previous"), track,
-      onLast ? end("next", ids[0], "Back to the start", true) : end("next", ids[at + 1], "Next"));
-  }
-
   /** Shows one chapter's page; with a target inside it, brings the target into view. */
   function showPage(id, target) {
     var ids = chapterIds();
@@ -675,7 +629,6 @@
     Array.prototype.forEach.call(app.querySelectorAll(".chapter"), function (section) {
       var on = section.id === id;
       section.hidden = PAGED && !on;
-      if (on && PAGED) { footOf(section); }
     });
     var landAtEnd = landNextAtEnd;
     landNextAtEnd = false;
@@ -718,7 +671,7 @@
   // Scrolling on past a page's end turns to the next page, and on past its top back to the one before, landing at its
   // end, so the pages still read as one scroll. A pull has to build past a threshold, counting starts only once the
   // reader has rested at the edge (a fling that reaches the end doesn't turn the page), and a turn is followed by a
-  // short pause. A ring at that edge fills toward the page it would open, and the foot's ink leans toward it.
+  // short pause. A ring at that edge fills toward the page it would open.
   var landNextAtEnd = false;
   var PULL_WHEEL = 460, PULL_TOUCH = 170, REST_MS = 220, PAUSE_MS = 700;
   var pull = { dir: 0, amount: 0, idle: null, edgeSince: 0, pausedUntil: 0, touchY: null };
@@ -738,13 +691,6 @@
     pullEl.classList.toggle("is-up", pull.dir < 0);
     pullEl.style.setProperty("--pull", String(share));
     if (to) { pullWords.textContent = (share >= 1 ? "" : pull.dir > 0 ? "Keep scrolling for " : "Keep scrolling up for ") + chapterName(to); }
-    var foot = app.querySelector("#" + currentPage + " > .page-foot");
-    if (foot) {
-      foot.style.setProperty("--pull-next", String(pull.dir > 0 ? share : 0));
-      foot.style.setProperty("--pull-prev", String(pull.dir < 0 ? share : 0));
-      foot.classList.toggle("is-pulled", share > 0);
-      if (share > 0) { foot.setAttribute("data-pull", pull.dir > 0 ? "next" : "prev"); } else { foot.removeAttribute("data-pull"); }
-    }
   }
   function resetPull() { pull.dir = 0; pull.amount = 0; drawPull(); }
   function turn(dir) {
