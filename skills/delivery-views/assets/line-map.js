@@ -449,11 +449,10 @@
   }
   CHAPTERS.forEach(function (chapter) { chapterOf(chapter); });
   // The history page, when the binding declares one: served live at /view/<output>, beside the page as a file.
-  if (typeof VIEW.history === "string" && VIEW.history) {
-    var historyLink = el("a", "history-link", "Past deliveries and runs");
-    historyLink.setAttribute("href", (typeof location === "object" && /^https?:$/.test(location.protocol) ? "/view/" : "") + VIEW.history.split("/").map(encodeURIComponent).join("/"));
-    app.appendChild(add(el("footer", "foot"), historyLink));
-  }
+  // It sits in the chapter tab, below the chapters (see the corner's tab).
+  var historyHref = typeof VIEW.history === "string" && VIEW.history
+    ? (typeof location === "object" && /^https?:$/.test(location.protocol) ? "/view/" : "") + VIEW.history.split("/").map(encodeURIComponent).join("/")
+    : null;
   if (typeof IntersectionObserver === "function") {
     var watch = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
@@ -522,6 +521,16 @@
   layoutButton.type = "button";
   var hint = el("span", "chapter-tab-hint");
   hint.innerHTML = "<kbd>[</kbd> <kbd>]</kbd> step between pages";
+  var historyItem = null;
+  if (historyHref) {
+    historyItem = el("a", "chapter-tab-history");
+    historyItem.setAttribute("href", historyHref);
+    var clock = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    clock.setAttribute("viewBox", "0 0 24 24");
+    clock.setAttribute("aria-hidden", "true");
+    clock.innerHTML = '<path d="M3 12a9 9 0 1 0 3 -6.7"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/>';
+    add(historyItem, clock, el("span", null, "Past deliveries and runs"));
+  }
   var tabFoot = add(el("div", "chapter-tab-foot"), layoutButton, hint);
   add(tab, tabButton, tabList);
   if (corner) { corner.insertBefore(tab, corner.querySelector(".theme-switch")); }
@@ -546,6 +555,7 @@
       tabList.appendChild(add(el("li"), link));
     });
     layoutButton.textContent = PAGED ? "Show all chapters on one page" : "Show one chapter per page";
+    if (historyItem) { tabList.appendChild(add(el("li", "chapter-tab-history-row"), historyItem)); }
     tabList.appendChild(add(el("li", "chapter-tab-foot-row"), tabFoot));
   }
   function openTab(open) {

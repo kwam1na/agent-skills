@@ -1066,6 +1066,10 @@ body:not(.paged) .page-foot { display: none; }
 .chapter-tab-list a:hover, .chapter-tab-list a:focus-visible { background: var(--well); outline: none; }
 .chapter-tab-list a[aria-current="page"] { background: var(--well); box-shadow: var(--shadow-press); }
 .chapter-tab-index { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+.chapter-tab-history-row { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--hair); }
+.chapter-tab-list a.chapter-tab-history { grid-template-columns: 26px 1fr; color: var(--ink); }
+.chapter-tab-history svg { width: 15px; height: 15px; fill: none; stroke: var(--faint); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; justify-self: start; }
+.chapter-tab-history:hover svg, .chapter-tab-history:focus-visible svg { stroke: var(--ink); }
 .chapter-tab-foot { display: grid; gap: 6px; margin-top: 6px; padding: 8px 10px 4px; border-top: 1px solid var(--hair); }
 .chapter-tab-layout { display: block; width: 100%; padding: 4px 0; border: 0;
   background: none; color: var(--ink); font: inherit; font-size: 12.5px; cursor: pointer; text-align: left; }
