@@ -720,7 +720,7 @@
   // reader has rested at the edge (a fling that reaches the end doesn't turn the page), and a turn is followed by a
   // short pause. A ring at that edge fills toward the page it would open, and the foot's ink leans toward it.
   var landNextAtEnd = false;
-  var PULL_WHEEL = 280, PULL_TOUCH = 110, REST_MS = 220, PAUSE_MS = 700;
+  var PULL_WHEEL = 460, PULL_TOUCH = 170, REST_MS = 220, PAUSE_MS = 700;
   var pull = { dir: 0, amount: 0, idle: null, edgeSince: 0, pausedUntil: 0, touchY: null };
   var pullEl = el("div", "page-pull");
   pullEl.setAttribute("aria-hidden", "true");
