@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUN_DELIVERY = "skills/run-delivery/SKILL.md"
 KERNEL = "skills/compound-delivery-kernel/SKILL.md"
 ORCHESTRATE = "skills/orchestrate-work/SKILL.md"
+PLAN_WORK = "skills/plan-work/SKILL.md"
 
 # run-delivery's Host behaviour: which addresses, where each opens, and that no command opens anything.
 OPEN_RULE = (
@@ -34,6 +35,11 @@ ONE_SENTENCE = {
         "Giving it means opening it in the same turn: in the host's in-app browser pane, with a card that opens it "
         "there where the host can show one; without such a pane, in the operator's own browser; and printing it only "
         "when it can be opened in neither:"
+    ),
+    PLAN_WORK: (
+        "Handing over a link means opening it in the same turn: in the host's in-app browser pane, with a card that "
+        "opens it there where the host can show one; without such a pane, in the operator's own browser; and printing "
+        "it only when it can be opened in neither."
     ),
 }
 # run-delivery's Running lanes: every lane starts with the delivery, and stories reach lanes by message.
@@ -64,13 +70,16 @@ def _between(text: str, start: str, end: str) -> str:
 
 def delivered_passages() -> dict[str, str]:
     """The passages that carry the two rules, read from the files: each runs from its opening words to what follows it."""
-    run_delivery, kernel, orchestrate = _document(RUN_DELIVERY), _document(KERNEL), _document(ORCHESTRATE)
+    run_delivery, kernel, orchestrate, plan_work = (_document(RUN_DELIVERY), _document(KERNEL), _document(ORCHESTRATE),
+                                                    _document(PLAN_WORK))
     return {
         "run-delivery Host behaviour": _between(run_delivery, "**Live addresses open in a browser.**",
                                                 "## Where lanes read the delivery"),
         "run-delivery Running lanes": _between(run_delivery, "- Every lane starts up front.", " - "),
         "compound-delivery-kernel": _between(kernel, "### The live view", "## Handoff"),
         "orchestrate-work": _between(orchestrate, "**The live view.**", "```bash"),
+        "plan-work": _between(plan_work, "Where the run-delivery tool is installed, run `plan-view",
+                              "## Plan Extension Pins"),
     }
 
 
