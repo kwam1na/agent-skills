@@ -230,6 +230,10 @@
         {
           "id": "v26-3808-3",
           "text": "The siblings page test passes in 10 consecutive full page-lane runs (tests.test_delivery_views_page), and the change names the cause of its earlier intermittent failures and fixes that cause rather than retrying."
+        },
+        {
+          "id": "v26-3808-4",
+          "text": "The hosted viewer passes hosted.test and hosted.browser at the integration head with the chapter-pages line map: its build hooks, hosting status in the corner and specs follow #488's markup, and #488's own UI is not changed to suit them."
         }
       ],
       "after": [
