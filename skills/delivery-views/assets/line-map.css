@@ -1200,10 +1200,17 @@ body.paged .chapter-now.is-fresh > .inner { margin-bottom: 0; }
 }
 @media (prefers-reduced-motion: reduce) { .starting-stop { animation: none; transition: none; } }
 
-/* Who, before anyone reports: the lanes the plan expects, drawn as waiting rather than working. */
-.person.is-expected { background: transparent; box-shadow: inset 0 0 0 1px var(--hair); }
-.person.is-expected .swatch { color: color-mix(in oklab, var(--c) 70%, var(--paper)); }
-.person.is-expected h3 { color: var(--soft); font-weight: 500; }
-.person.is-expected .doing .issue-link { color: var(--soft); }
-.chip.expected { background: transparent; color: var(--faint); font-weight: 400; box-shadow: inset 0 0 0 1px var(--hair); border: 0; }
-.chip.expected::before { content: ""; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid var(--edge); }
+/* Who, before anyone reports: the lanes the plan expects, one quiet line each. */
+.expected { list-style: none; margin: 4px 0 0; padding: 0; max-width: 980px; border-top: 1px solid var(--hair); }
+.expected li { display: grid; grid-template-columns: 120px 96px minmax(0, 1fr); align-items: center; gap: 16px; min-height: 48px; border-bottom: 1px solid var(--hair); }
+.expected-lane { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--soft); }
+.expected-lane .swatch { display: grid; width: 18px; height: 18px; color: var(--c); }
+.expected-lane .persona { width: 18px; height: 18px; }
+.expected-rings { display: flex; gap: 5px; }
+.expected-rings i { width: 9px; height: 9px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--c); }
+.expected-first { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--faint); }
+.expected-first .issue-link { color: var(--soft); }
+@media (max-width: 720px) {
+  .expected li { grid-template-columns: minmax(0, 1fr) auto; row-gap: 2px; padding: 10px 0; }
+  .expected-first { grid-column: 1 / -1; padding-left: 28px; }
+}

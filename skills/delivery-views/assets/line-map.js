@@ -3538,19 +3538,18 @@
         byLane[lane].push(piece);
       });
       if (expected.length) {
-        nodes.push(el("p", "say", plural(expected.length, "lane") + (expected.length === 1 ? " is" : " are") +
-          " planned. Each reports here once it picks up its first piece."));
-        var waiting = el("div", "people is-expected");
+        nodes.push(el("p", "say", plural(expected.length, "lane") + " will report here as " + (expected.length === 1 ? "it starts." : "they start.")));
+        var waiting = el("ol", "expected");
         expected.forEach(function (lane) {
           var pieces = byLane[lane];
           var first = pieces[0];
           var key = subjectOf(first.item);
-          var row = el("div", "person is-expected");
+          var rings = el("span", "expected-rings");
+          rings.setAttribute("aria-label", plural(pieces.length, "piece"));
+          pieces.forEach(function () { rings.appendChild(el("i")); });
+          var opener = add(el("span", "expected-first"), key ? issue(key) : null, key ? " \u00b7 " : null, titleOf(doc, first.item));
+          var row = add(el("li"), add(el("span", "expected-lane"), add(el("span", "swatch"), persona("lane")), el("span", null, lane)), rings, opener);
           row.style.setProperty("--c", laneColour(lane));
-          var opener = add(el("p", "doing"), "Starts with ", key ? issue(key) : null, key ? " \u00b7 " : null, titleOf(doc, first.item));
-          var who = add(el("div"), el("h3", null, lane), opener);
-          var st = add(el("div", "st"), el("span", "chip expected", "Not reported"), el("span", "on", plural(pieces.length, "piece")));
-          add(row, add(el("span", "swatch"), persona("lane")), who, st);
           waiting.appendChild(row);
         });
         nodes.push(waiting);
