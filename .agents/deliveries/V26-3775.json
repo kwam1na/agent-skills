@@ -253,6 +253,10 @@
         {
           "id": "v26-3810-1",
           "text": "The change names the file and writer that moved after the preview's processes stopped, and its fix addresses that cause rather than retrying."
+        },
+        {
+          "id": "v26-3810-2",
+          "text": "After lead-setup adopts a running preview's store, no file in the preview folder changes once lead-setup has returned; the live server and hosted watcher pids are gone and the last hosted cut carries approval: handed."
         }
       ]
     }
