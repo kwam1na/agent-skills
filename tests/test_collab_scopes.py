@@ -77,6 +77,13 @@ class WriteAndTransferTests(ScopeFixture):
         self.refused("scope.not_held", lambda: collab.admit_seat(self.b.directory, third), self.b)
         code, said = self.cli(self.b, "seat", "admit", "--seat", third)
         self.assertEqual((code, said["code"]), (1, "scope.not_held"))
+        # An admission journalled straight from a seat that does not hold delivery counts on no machine.
+        state_tool.append_journal(self.b.directory, kind="seat.admitted",
+                                  data={"seat": third, "label": "C", "approver": True})
+        self.exchange(self.a, self.b)
+        for machine in (self.a, self.b):
+            self.assertEqual(machine.state()["meta"]["collab"]["seats"][third]["admitted"], False)
+            self.assertFalse(collab.permitted(machine.journal(), third))
         code, said = self.cli(self.a, "seat", "admit", "--seat", third, "--no-approver")
         self.assertEqual(code, 0, said)
         self.assertEqual(self.a.state()["meta"]["collab"]["seats"][third]["approver"], False)
@@ -104,8 +111,26 @@ class WriteAndTransferTests(ScopeFixture):
         code, said = self.cli(self.a, "scope", "give", "--scope", "queue", "--to", self.second)
         self.assertEqual(code, 0, said)
         self.assertEqual(state_tool.holder(self.a.journal(), "queue"), self.second)
+        # A request answered by a transfer stays answered once the scope comes back.
+        code, asked = self.cli(self.a, "scope", "request", "--scope", "lane:lane-2", "--reason", "Mine.")
+        self.assertEqual((code, asked["code"]), (1, "scope.held"))
+        self.a.push()
+        self.b.take()
+        collab.request_scope(self.b.directory, "lane:lane-2", "I'll take lane 2.")
+        self.b.push()
+        self.a.take()
+        collab.give_scope(self.a.directory, "lane:lane-2", self.second)
+        self.a.push()
+        self.b.take()
+        collab.give_scope(self.b.directory, "lane:lane-2", self.first)
+        self.b.push()
+        self.a.take()
+        self.assertEqual([entry["data"]["scope"] for entry in collab.open_requests(self.a.journal())], [])
         self.assertEqual(self.cli(self.a, "scope", "give", "--scope", "nowhere", "--to", self.second)[1]["code"],
                          "scope.invalid")
+        self.refused("collab.seat_unknown", lambda: collab.give_scope(self.a.directory, "lane:lane-3", "s-000000000000"),
+                     self.a)
+        self.assertEqual(collab.auto_grants(self.b.directory, enabled=True), [])
 
 
 class AutoGrantTests(ScopeFixture):
@@ -136,12 +161,19 @@ class AutoGrantTests(ScopeFixture):
                          ["plan:## Decisions", "queue"])
         self.assertEqual(state_tool.held_sections(journal, self.second, PLAN), ["## Scope"])
         self.assertEqual(state_tool.held_sections(journal, self.first, PLAN), ["(preamble)", "# A plan"])
+        # A section nobody holds goes with delivery, wherever delivery goes.
+        self.give("delivery", self.b)
+        journal = self.b.journal()
+        self.assertEqual(state_tool.holder(journal, "plan:# A plan"), self.second)
+        self.assertEqual(state_tool.held_sections(journal, self.second, PLAN), ["(preamble)", "# A plan", "## Scope"])
 
     def test_with_auto_grant_off_the_request_stays_open(self) -> None:
         settings = self.root / "run-delivery.json"
         settings.write_text(json.dumps({"collab": {"autoGrant": False}}), encoding="utf-8")
         self.assertEqual(collab.auto_grants(self.a.directory, enabled=collab.auto_grant_setting(settings)), [])
         self.assertFalse(collab.auto_grant_setting(self.root / "absent.json"))
+        # Only the delivery holder grants: b, which holds no delivery, grants nothing even with its own requests open.
+        self.assertEqual(collab.auto_grants(self.b.directory, enabled=True), [])
         self.assertEqual(len(collab.open_requests(self.a.journal())), 3)
         self.assertEqual(state_tool.holder(self.a.journal(), "plan:## Scope"), self.first)
 
@@ -188,6 +220,16 @@ class SyncFilterTests(ScopeFixture):
 
     def lane_focus(self, machine: partitions.Machine) -> str:
         return next(row for row in machine.state()["lanes"] if row["id"] == "lane-1")["focus"]
+
+    def test_a_queue_element_a_lane_makes_starts_with_the_queues_fields_at_their_starting_values(self) -> None:
+        self.give("lane:lane-1", self.b)
+        self.b.patch({"queue": [partitions.queue_element("APP-9")]})
+        partition, _ = collab.build_partition(self.b.directory)
+        planted = [{**item, "value": "merged"} if item["path"] == "queue[subject=APP-9]/stage" else item
+                   for item in partition["slice"]]
+        self.plant(self.second, planted)
+        self.a.take()
+        self.assertEqual([item["stage"] for item in self.a.state()["queue"] if item["subject"] == "APP-9"], [])
 
     def test_concurrent_follow_ups_from_delivery_and_a_lane_both_survive(self) -> None:
         self.give("lane:lane-1", self.b)

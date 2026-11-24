@@ -268,14 +268,18 @@ def decline_request(directory: Path, request: int) -> dict:
 
 
 def open_requests(journal: list[dict]) -> list[dict]:
-    """Every scope.requested not yet answered: no decline names it, and no transfer since gave the scope to its seat."""
+    """Every scope.requested not yet answered: no decline names it, no transfer after it gave the scope to its seat,
+    and its seat does not hold the scope now."""
     tool = _state_tool()
     declined = {target for entry in journal if entry["kind"] == "scope.declined" for target in entry.get("answers", [])}
     found = []
-    for entry in journal:
+    for at, entry in enumerate(journal):
         if entry["kind"] != "scope.requested" or entry["id"] in declined:
             continue
-        if not tool.holds(journal, entry["origin"]["seat"], entry["data"]["scope"]):
+        seat, scope = entry["origin"]["seat"], entry["data"]["scope"]
+        given = any(later["kind"] == "scope.transferred" and later["data"]["scope"] == scope
+                    and later["data"]["to"] == seat for later in journal[at + 1:])
+        if not given and not tool.holds(journal, seat, scope):
             found.append(entry)
     return found
 

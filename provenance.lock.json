@@ -542,7 +542,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/collab.py",
-          "sha256": "2c4643cbfd0c7dccdf6cddcb6aa8aa9247115037c98e77889548f167ae86bb78"
+          "sha256": "1a0666a69571bf63b154b095c0ef66bb68e249661bbdaeac223671e58808f2f7"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
