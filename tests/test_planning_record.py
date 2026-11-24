@@ -227,7 +227,8 @@ class PlanningSupervisorTests(PlanningRecordCase):
             passes = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
             time.sleep(0.5)
         self.assertTrue(passes, "no pass was logged")
-        steps = set(passes[0]) - {"pass", "startedAt", "finishedAt", "at", "delivery", "laneWords"}
+        # A planning pass logs the list it found, needsYou, as a delivery's pass does; it has no close to hold.
+        steps = set(passes[0]) - {"pass", "startedAt", "finishedAt", "at", "delivery", "laneWords", "needsYou"}
         self.assertEqual(steps, {"needs", "render", "latest", "close"}, passes[0])
         self.assertEqual(passes[0]["close"], "planning: nothing to close")
 

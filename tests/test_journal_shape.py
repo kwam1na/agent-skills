@@ -102,6 +102,9 @@ INVENTORY = {
         _key("lead_init", {"story.approved"}): 1,
         _key("lead_plan_endorse", {"plan.endorsed"}): 1,
         _key("plan_rekey", {"plan.rekeyed"}): 1,
+        _key("collab_feedback", {"feedback.raised"}): 1,
+        _key("collab_feedback", {"feedback.resolved"}): 1,
+        _key("collab_join", {"plan.seen"}): 1,
         _key("suite_run", {"integration.suite"}): 1,
         # A run that steps off the machine's wait with --now --why: claim's and lead-suite's.
         _key("journal_override", {"decision.recorded"}): 1,

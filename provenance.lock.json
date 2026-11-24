@@ -538,7 +538,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
-          "sha256": "9cb138c8138229b0e144b6fce5174974915d8ef8ac8b51266605f85014f3cc98"
+          "sha256": "946595febec3243a2a97da1bd684282746b67bb54a2ac6c3c22c86fa6272f514"
         },
         {
           "path": "skills/orchestrate-work/scripts/collab.py",
