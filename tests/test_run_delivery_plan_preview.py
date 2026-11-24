@@ -501,6 +501,8 @@ def fixture(host, port=None, timeout=None, context=None):
     assert host == "deliveries.example.com"
     return Real("127.0.0.1", {port}, timeout=timeout)
 http.client.HTTPSConnection = fixture
+if "PREVIEW_SLOW_PUBLISHER" in __import__("os").environ and sys.argv[0].endswith("hosted.py") and "start" in sys.argv:
+    time.sleep(8)  # past the 5 seconds run-delivery gives the publisher's start
 if "--finish-handed" in sys.argv:
     real, clock = time.time, pathlib.Path({clock!r})
     time.time = lambda: real() + (float(clock.read_text()) if clock.exists() else 0.0)
@@ -678,7 +680,7 @@ class ServedPreviewTests(unittest.TestCase):
         # Every sidecar is the preview folder's own: nothing lands beside it or in a delivery's record folder.
         self.assertTrue({"live.json", "hosted-view-config.json", "hosted-view-binding.json", hosted.OWNER,
                          hosted.IDENTITY} <= {item.name for item in here.iterdir()})
-        self.assertEqual(sorted(item.name for item in here.parent.iterdir()), [slug])
+        self.assertEqual([item.name for item in here.parent.iterdir() if not item.is_dir()], [])
         self.assertFalse((self.fx.main / ".orchestration/state").exists())
         # The standing server's runs page lists the running preview, with both links.
         standing = self.fx.tmp / "standing"
@@ -766,14 +768,19 @@ class ServedPreviewTests(unittest.TestCase):
             return answering(method, operation, body, headers)
         self.origin.api = silent
         self.review_round(path, slug, 1)
-        self.adopt(slug, "FX-8")
         here = folder(self.fx, slug)
+        identity = lambda: json.loads((here / hosted.IDENTITY).read_text())
+        self.until(lambda: identity()["pending"] is not None, "the round's cut waits at the origin")
+        pending = identity()["pending"]
+        self.adopt(slug, "FX-8")
         self.until(lambda: json.loads((here / "plan.json").read_text())["preview"]["approval"] == "handed",
                    "the finisher rebuilds the preview as handed")
         log = here / "finish.log"
         waiting = re.compile(r"waiting for a cut after sequence [0-9]+ until ([0-9.]+)")
         self.until(lambda: log.exists() and waiting.search(log.read_text()), "the finisher waits")
         deadline = float(waiting.search(log.read_text()).group(1))
+        # The round's cut is still pending at the origin: the finisher counts it, so its acceptance can't end the wait.
+        self.assertIn(f"waiting for a cut after sequence {pending['sequence']} until", log.read_text())
         self.assertAlmostEqual(deadline - time.time(), PREVIEW_SECONDS, delta=30)
         # Its clock moved to five seconds before its bound: it still waits two seconds on.
         self.clock.write_text(str(deadline - 5 - time.time()))
@@ -790,6 +797,7 @@ class ServedPreviewTests(unittest.TestCase):
             ("live only", True, False, True, ["local"], True),
             ("no token", True, True, False, ["local", "unpublished"], True),
             ("invalid hosted", False, "invalid", True, ["invalid"], True),
+            ("slow publisher", True, True, True, ["local", "unavailable"], True),
         ]
         for name, live, publish, token, lines, built in cases:
             with self.subTest(name):
@@ -797,10 +805,13 @@ class ServedPreviewTests(unittest.TestCase):
                 slug = "configured-" + re.sub(r"[^a-z]+", "-", name)
                 path = self.plan(slug)
                 env = dict(self.env) if token else {k: v for k, v in self.env.items() if k != "FIXTURE_PUBLISH_TOKEN"}
+                if name == "slow publisher":
+                    env["PREVIEW_SLOW_PUBLISHER"] = "1"
                 out = self.flow("plan-view", "--plan", path, env=env)
                 said = [("local" if LOCAL.fullmatch(line) else "hosted" if LINK.fullmatch(line) else
                          "unpublished" if line == UNPUBLISHED else
                          "invalid" if line == "plan preview (hosted): not published: hosted: configuration_invalid" else
+                         "unavailable" if line == "plan preview (hosted): not published: publisher_unavailable" else
                          line) for line in out.splitlines()]
                 self.assertEqual(said, lines)
                 here = folder(self.fx, slug)
