@@ -6825,11 +6825,14 @@ def start_preview_hosted(c, folder: Path, slug: str) -> str:
         return f"not published: {error}"
     if HOSTED_TOKENS.get((member["tokenEnv"], member["origin"], member["repositoryId"])) is None:
         return f"not published: {member['tokenEnv']} is unset"
-    answer = hosted_call(c, "start", folder, preview_key(slug), archive=False)
-    deadline = time.monotonic() + 15
-    while not answer.get("url") and not answer.get("error") and time.monotonic() < deadline:
-        time.sleep(0.2)
-        answer = hosted_call(c, "status", folder, preview_key(slug), archive=False)
+    try:
+        answer = hosted_call(c, "start", folder, preview_key(slug), archive=False)
+        deadline = time.monotonic() + 15
+        while not answer.get("url") and not answer.get("error") and time.monotonic() < deadline:
+            time.sleep(0.2)
+            answer = hosted_call(c, "status", folder, preview_key(slug), archive=False)
+    except (Stop, OSError, ValueError, subprocess.SubprocessError):
+        return "not published: publisher_unavailable"
     if answer.get("url"):
         return answer["url"]
     return f"not published: {answer.get('error') or answer.get('code') or answer.get('state') or 'no answer'}"
@@ -6885,6 +6888,14 @@ def preview_publisher_runs(c, folder: Path) -> bool:
         return False
 
 
+def preview_publisher_sequence(c, folder: Path) -> int:
+    """The highest sequence the preview's publisher holds: its accepted cut's, or a pending one's."""
+    module = hosted_module(c.release)
+    identity = module.read_json(folder / module.IDENTITY, optional=True) or {}
+    return max([identity.get("sequence") or 0,
+                *((part or {}).get("sequence") or 0 for part in (identity.get("receipt"), identity.get("pending")))])
+
+
 def finish_handed(c, plan: Path) -> None:
     """The detached finisher: rebuild the preview as handed, wait up to PREVIEW_HANDED_SECONDS for the hosted page to
     hold a cut published after that rebuild, then stop the hosted publisher and the live view by their recorded pids."""
@@ -6893,16 +6904,18 @@ def finish_handed(c, plan: Path) -> None:
     folder = preview_folder(c, slug)
     key = preview_key(slug)
     hosted = preview_hosted_on(c) and preview_publisher_runs(c, folder)
-    before = hosted_call(c, "status", folder, key, archive=False).get("receipt") if hosted else None
     try:
         rebuild_preview(c, plan)
     finally:
         if hosted:
+            # A cut the publisher holds now, accepted or on its way, was collected before the handed rebuild: the
+            # handed cut is the first one numbered after all of them.
+            held = preview_publisher_sequence(c, folder)
             deadline = time.time() + PREVIEW_HANDED_SECONDS
-            print(f"{now()} hosted: waiting for the handed cut until {deadline}", flush=True)
+            print(f"{now()} hosted: waiting for a cut after sequence {held} until {deadline}", flush=True)
             while time.time() < deadline:
                 status = hosted_call(c, "status", folder, key, archive=False)
-                if status.get("state") == "current" and status.get("receipt") and status["receipt"] != before:
+                if status.get("state") == "current" and (status.get("receipt") or {}).get("sequence", 0) > held:
                     break
                 time.sleep(0.5)
             print(f"{now()} hosted: {json.dumps(hosted_call(c, 'stop', folder, key, archive=False))}", flush=True)

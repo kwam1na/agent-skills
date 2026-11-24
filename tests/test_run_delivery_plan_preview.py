@@ -564,9 +564,10 @@ class ServedPreviewTests(unittest.TestCase):
         self.origin.api.code = None
         self.origin.api = publisher_fixtures.FakeAPI()
 
-    def configure(self, *, live: bool | str = True, publish: bool = True) -> None:
+    def configure(self, *, live: bool | str = True, publish: bool | str = True) -> None:
         """The binding and delivery-views configuration: a liveHome naming the line map (or, with live="builtin", a
-        builtin renderer), and hosted publishing, each on or off; committed when they change."""
+        builtin renderer), and hosted publishing (or, with publish="invalid", a hosted member the publisher refuses),
+        each on or off; committed when they change."""
         main = self.fx.main
         binding = main / ".agents/orchestration.json"
         views = main / ".agents/delivery-views.json"
@@ -577,7 +578,9 @@ class ServedPreviewTests(unittest.TestCase):
         if live:
             state["liveHome"] = "page" if live == "builtin" else "line-map"
         for path, wanted in ((binding, {"base": {"ref": "feature/FX-1", "remote": "origin"}, "state": state}),
-                             (views, publisher_fixtures.CFG if publish else None)):
+                             (views, None if not publish else publisher_fixtures.CFG if publish is True else
+                              {**publisher_fixtures.CFG, "hosted": {**publisher_fixtures.CFG["hosted"],
+                                                                    "origin": "http://invalid.example.com"}})):
             if wanted is None:
                 path.unlink(missing_ok=True)
             else:
@@ -768,7 +771,7 @@ class ServedPreviewTests(unittest.TestCase):
         self.until(lambda: json.loads((here / "plan.json").read_text())["preview"]["approval"] == "handed",
                    "the finisher rebuilds the preview as handed")
         log = here / "finish.log"
-        waiting = re.compile(r"waiting for the handed cut until ([0-9.]+)")
+        waiting = re.compile(r"waiting for a cut after sequence [0-9]+ until ([0-9.]+)")
         self.until(lambda: log.exists() and waiting.search(log.read_text()), "the finisher waits")
         deadline = float(waiting.search(log.read_text()).group(1))
         self.assertAlmostEqual(deadline - time.time(), PREVIEW_SECONDS, delta=30)
@@ -786,6 +789,7 @@ class ServedPreviewTests(unittest.TestCase):
             ("hosted only", False, True, True, ["hosted"], True),
             ("live only", True, False, True, ["local"], True),
             ("no token", True, True, False, ["local", "unpublished"], True),
+            ("invalid hosted", False, "invalid", True, ["invalid"], True),
         ]
         for name, live, publish, token, lines, built in cases:
             with self.subTest(name):
@@ -795,12 +799,22 @@ class ServedPreviewTests(unittest.TestCase):
                 env = dict(self.env) if token else {k: v for k, v in self.env.items() if k != "FIXTURE_PUBLISH_TOKEN"}
                 out = self.flow("plan-view", "--plan", path, env=env)
                 said = [("local" if LOCAL.fullmatch(line) else "hosted" if LINK.fullmatch(line) else
-                         "unpublished" if line == UNPUBLISHED else line) for line in out.splitlines()]
+                         "unpublished" if line == UNPUBLISHED else
+                         "invalid" if line == "plan preview (hosted): not published: hosted: configuration_invalid" else
+                         line) for line in out.splitlines()]
                 self.assertEqual(said, lines)
                 here = folder(self.fx, slug)
                 self.assertEqual(here.exists(), built)
                 self.assertEqual((here / "live.json").exists(), "local" in lines)
                 self.assertEqual((here / hosted.OWNER).exists(), "hosted" in lines)
+                if built:
+                    # preview.json keeps a hosted link only when the publisher gave one.
+                    facts = json.loads((here / "preview.json").read_text())
+                    self.assertEqual(facts.get("hosted"), LINK.search(out).group(1) if "hosted" in lines else None)
+                else:
+                    # --stop with no preview says so, and stops nothing.
+                    self.assertEqual(self.flow("plan-view", "--plan", path, "--stop"),
+                                     f"plan preview: {path} has no preview\n")
                 if not built:
                     # The plan-review commands say nothing of a preview either, and build none.
                     reduced = self.review_round(path, slug, 1)
@@ -866,6 +880,13 @@ class ServedPreviewTests(unittest.TestCase):
                 self.assertTrue(said.startswith("adopted the plan review (1 round) from "), said)
                 # Neither writes a preview: none was there, and the failing one never marks itself handed.
                 self.assertEqual(files_of(self.fx.main / ".orchestration/plan-preview"), before)
+        # With a preview configured again, plan-view on the store adopted with none says where its plan shows.
+        self.configure(publish=False)
+        delivery = "FX-7"
+        self.assertEqual(self.flow("plan-view", "--plan", "docs/plans/adopt-none.md"),
+                         f"plan preview: the review of docs/plans/adopt-none.md was adopted by delivery {delivery}; its "
+                         "plan shows on that delivery's own views\n")
+        self.assertFalse(folder(self.fx, "adopt-none").exists())
 
 
 if __name__ == "__main__":
