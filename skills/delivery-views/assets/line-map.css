@@ -1102,3 +1102,47 @@ body:not(.paged) .chapter-tab-hint { display: none; }
 .ap-how { margin: 2px 0 0; font-size: 13px; color: var(--soft); }
 }
 
+
+/* The corner's way into the launcher. */
+.launch-button { height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 6px 0 7px; border: 0; border-radius: 7px; background: none;
+  color: var(--faint); font: inherit; cursor: pointer; }
+.launch-button:hover { color: var(--ink); background: var(--well); }
+.launch-button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.launch-button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.launch-key { font-family: var(--mono); font-size: 10.5px; padding: 1px 5px; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--hair); color: var(--faint); }
+@media (max-width: 720px) { .launch-key { display: none; } }
+
+/* The launcher: a sheet over a soft scrim, its search on top and its commands grouped below. */
+.launcher { position: fixed; inset: 0; z-index: 60; }
+.launcher[hidden] { display: none; }
+.launcher-scrim { position: absolute; inset: 0; background: color-mix(in oklab, var(--paper) 55%, transparent); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  animation: launcher-fade .14s var(--ease); }
+.launcher-panel { position: relative; width: min(560px, calc(100vw - 32px)); margin: min(14vh, 120px) auto 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: min(70vh, 560px); border-radius: 14px; background: var(--lift); overflow: hidden;
+  box-shadow: 0 2px 6px rgba(20, 23, 25, .08), 0 28px 64px -20px rgba(20, 23, 25, .38), 0 0 0 1px color-mix(in oklab, var(--edge) 22%, transparent);
+  animation: launcher-rise .16s var(--ease); }
+.launcher-field { display: flex; align-items: center; gap: 10px; padding: 0 14px; height: 52px; border-bottom: 1px solid var(--hair); }
+.launcher-field svg { width: 17px; height: 17px; flex: none; fill: none; stroke: var(--faint); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.launcher-input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: none; color: var(--ink); font: inherit; font-size: 16px; }
+.launcher-input::placeholder { color: var(--faint); }
+.launcher-esc, .launcher-hints kbd { font-family: var(--mono); font-size: 10.5px; padding: 1px 5px; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--hair); color: var(--faint); }
+.launcher-list { overflow-y: auto; padding: 6px; overscroll-behavior: contain; }
+.launcher-group { padding: 10px 10px 4px; font-size: 11.5px; font-weight: 500; color: var(--faint); }
+.launcher-item { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 40px; padding: 0 10px; border-radius: 9px;
+  color: var(--ink); cursor: pointer; }
+.launcher-item[aria-selected="true"] { background: var(--well); box-shadow: inset 0 0 0 1px var(--hair); }
+.launcher-lead { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+.launcher-title { font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.launcher-detail { grid-column: 2; margin-top: -8px; padding-bottom: 6px; font-size: 12px; color: var(--faint); }
+.launcher-here { font-size: 11.5px; color: var(--faint); display: flex; align-items: center; gap: 6px; }
+.launcher-here::before { content: ""; width: 14px; height: 6px; border-radius: 999px; background: var(--ink); }
+.launcher-none { margin: 0; padding: 18px 12px; font-size: 13.5px; color: var(--faint); }
+.launcher-hints { display: flex; gap: 16px; padding: 9px 14px; border-top: 1px solid var(--hair); font-size: 11.5px; color: var(--faint); }
+.launcher-hints span { display: flex; align-items: center; gap: 4px; }
+@keyframes launcher-fade { from { opacity: 0; } }
+@keyframes launcher-rise { from { opacity: 0; transform: translateY(-6px) scale(.985); } }
+@media (max-width: 720px) {
+  .launcher-panel { margin-top: 64px; max-height: calc(100dvh - 96px); }
+  .launcher-hints { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .launcher-scrim, .launcher-panel { animation: none; } }

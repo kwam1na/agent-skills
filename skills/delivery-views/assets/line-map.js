@@ -609,6 +609,7 @@
   });
   document.addEventListener("click", function (event) { if (!tab.contains(event.target)) { openTab(false); } });
   document.addEventListener("keydown", function (event) {
+    if (launcherOpen()) { return; }
     if (event.key === "Escape" && !tabList.hidden) { openTab(false); tabButton.focus(); return; }
     var typing = event.target && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
     if (!PAGED || typing || event.metaKey || event.ctrlKey || event.altKey) { return; }
@@ -668,6 +669,194 @@
   }
   window.addEventListener("hashchange", route);
 
+  // The launcher: one place to reach anything on the page by name. It is a registry of commands, each
+  // { id, group, title, detail?, keywords?, current?(), run() }, read afresh each time it opens, so a feature adds what
+  // it offers with launcher.add(...) and nothing else changes. Opened with Cmd/Ctrl-K, with / when not typing, or from
+  // the corner; arrows move, Enter runs, Escape closes and gives focus back.
+  var launcher = (function () {
+    var sources = [];
+    var shown = [];
+    var active = 0;
+    var before = null;
+    var root = el("div", "launcher");
+    root.hidden = true;
+    var scrim = el("div", "launcher-scrim");
+    var panel = el("div", "launcher-panel");
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
+    panel.setAttribute("aria-label", "Go to");
+    var field = el("div", "launcher-field");
+    var glass = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    glass.setAttribute("viewBox", "0 0 24 24");
+    glass.setAttribute("aria-hidden", "true");
+    glass.innerHTML = '<path d="M10.5 18a7.5 7.5 0 1 0 0 -15a7.5 7.5 0 0 0 0 15z"/><path d="M21 21l-5.2 -5.2"/>';
+    var input = el("input", "launcher-input");
+    input.type = "text";
+    input.setAttribute("role", "combobox");
+    input.setAttribute("aria-expanded", "true");
+    input.setAttribute("aria-controls", "launcher-list");
+    input.setAttribute("aria-autocomplete", "list");
+    input.setAttribute("autocomplete", "off");
+    input.setAttribute("spellcheck", "false");
+    input.placeholder = "Go to a page…";
+    var esc = el("kbd", "launcher-esc", "esc");
+    add(field, glass, input, esc);
+    var listing = el("div", "launcher-list");
+    listing.id = "launcher-list";
+    listing.setAttribute("role", "listbox");
+    var hints = el("div", "launcher-hints");
+    hints.innerHTML = "<span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span>";
+    add(panel, field, listing, hints);
+    add(root, scrim, panel);
+    document.body.appendChild(root);
+
+    function commands() {
+      var all = [];
+      sources.forEach(function (source) { (typeof source === "function" ? source() : [source]).forEach(function (command) { if (command) { all.push(command); } }); });
+      return all;
+    }
+    /** How well a command answers what's typed: 0 for not at all, higher for a closer match. */
+    function score(command, query) {
+      if (!query) { return 1; }
+      var hay = [command.title, command.detail || "", (command.keywords || []).join(" ")].join(" ").toLowerCase();
+      var title = command.title.toLowerCase();
+      var words = query.toLowerCase().split(/\s+/).filter(Boolean);
+      var total = 0;
+      for (var i = 0; i < words.length; i += 1) {
+        var word = words[i];
+        if (title.indexOf(word) === 0) { total += 4; }
+        else if ((" " + title).indexOf(" " + word) >= 0) { total += 3; }
+        else if (hay.indexOf(word) >= 0) { total += 1; }
+        else { return 0; }
+      }
+      return total;
+    }
+    function draw() {
+      var query = input.value.trim();
+      shown = commands().map(function (command, order) { return { command: command, rank: score(command, query), order: order }; })
+        .filter(function (entry) { return entry.rank > 0; })
+        .sort(function (a, b) { return query ? b.rank - a.rank || a.order - b.order : a.order - b.order; })
+        .map(function (entry) { return entry.command; });
+      if (active >= shown.length) { active = Math.max(0, shown.length - 1); }
+      listing.replaceChildren();
+      if (!shown.length) { listing.appendChild(el("p", "launcher-none", "Nothing matches “" + query + "”.")); }
+      var group = null;
+      shown.forEach(function (command, index) {
+        if (command.group !== group && !query) { group = command.group; listing.appendChild(el("div", "launcher-group", group)); }
+        var row = el("div", "launcher-item" + (command.current && command.current() ? " is-here" : ""));
+        row.id = "launcher-item-" + index;
+        row.setAttribute("role", "option");
+        row.setAttribute("aria-selected", String(index === active));
+        add(row, el("span", "launcher-lead", command.lead || ""), el("span", "launcher-title", command.title),
+          command.detail ? el("span", "launcher-detail", command.detail) : null,
+          command.current && command.current() ? el("span", "launcher-here", "You’re here") : null);
+        row.addEventListener("pointermove", function () { if (active !== index) { active = index; mark(); } });
+        row.addEventListener("click", function () { runAt(index); });
+        listing.appendChild(row);
+      });
+      mark();
+    }
+    function mark() {
+      Array.prototype.forEach.call(listing.querySelectorAll(".launcher-item"), function (row, index) {
+        row.setAttribute("aria-selected", String(index === active));
+        if (index === active && typeof row.scrollIntoView === "function") { row.scrollIntoView({ block: "nearest" }); }
+      });
+      input.setAttribute("aria-activedescendant", shown.length ? "launcher-item-" + active : "");
+    }
+    function runAt(index) {
+      var command = shown[index];
+      if (!command) { return; }
+      close(false);
+      command.run();
+    }
+    function open() {
+      if (!root.hidden) { return; }
+      before = document.activeElement;
+      openTab(false);
+      input.value = "";
+      active = 0;
+      var here = commands().findIndex(function (command) { return command.current && command.current(); });
+      if (here >= 0) { active = here; }
+      root.hidden = false;
+      document.documentElement.classList.add("launcher-open");
+      draw();
+      input.focus();
+    }
+    function close(giveBack) {
+      if (root.hidden) { return; }
+      root.hidden = true;
+      document.documentElement.classList.remove("launcher-open");
+      if (giveBack !== false && before && typeof before.focus === "function") { before.focus(); }
+    }
+    input.addEventListener("input", function () { active = 0; draw(); });
+    input.addEventListener("keydown", function (event) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        if (shown.length) { active = (active + (event.key === "ArrowDown" ? 1 : shown.length - 1)) % shown.length; mark(); }
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        runAt(active);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      } else if (event.key === "Tab") {
+        event.preventDefault();
+      }
+    });
+    scrim.addEventListener("click", function () { close(); });
+    document.addEventListener("keydown", function (event) {
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && (event.key === "k" || event.key === "K")) {
+        event.preventDefault();
+        if (root.hidden) { open(); } else { close(); }
+        return;
+      }
+      var typing = event.target && (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) || event.target.isContentEditable);
+      if (event.key === "/" && !typing && root.hidden && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        open();
+      }
+    });
+    return {
+      add: function (source) { sources.push(source); },
+      open: open,
+      close: close,
+      isOpen: function () { return !root.hidden; }
+    };
+  })();
+  function launcherOpen() { return launcher.isOpen(); }
+
+  // The pages, numbered as the chapter tab numbers them.
+  launcher.add(function () {
+    return chapterIds().map(function (id, index) {
+      return { id: "page:" + id, group: "Pages", lead: String(index + 1).padStart(2, "0"), title: chapterName(id),
+        keywords: [String(index + 1), id],
+        current: function () { return id === currentPage; },
+        run: function () {
+          if (PAGED) { location.hash = id; return; }
+          var section = app.querySelector("#" + id);
+          if (section && typeof section.scrollIntoView === "function") { section.scrollIntoView({ block: "start" }); }
+        } };
+    });
+  });
+  if (historyHref) {
+    launcher.add({ id: "history", group: "Elsewhere", lead: "↺", title: "Past deliveries and runs", keywords: ["history", "archive", "runs"],
+      run: function () { location.href = historyHref; } });
+  }
+
+  // The corner's way in, for a reader who doesn't know the shortcut.
+  var launchButton = el("button", "launch-button");
+  launchButton.type = "button";
+  var isMac = typeof navigator === "object" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
+  launchButton.setAttribute("aria-label", "Go to… (" + (isMac ? "Command" : "Control") + " K)");
+  launchButton.setAttribute("aria-keyshortcuts", isMac ? "Meta+K" : "Control+K");
+  var launchIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  launchIcon.setAttribute("viewBox", "0 0 24 24");
+  launchIcon.setAttribute("aria-hidden", "true");
+  launchIcon.innerHTML = '<path d="M10.5 18a7.5 7.5 0 1 0 0 -15a7.5 7.5 0 0 0 0 15z"/><path d="M21 21l-5.2 -5.2"/>';
+  add(launchButton, launchIcon, el("kbd", "launch-key", (isMac ? "⌘" : "Ctrl ") + "K"));
+  launchButton.addEventListener("click", function () { launcher.open(); });
+  if (corner) { corner.insertBefore(launchButton, tab); }
+
   // Scrolling on past a page's end turns to the next page, and on past its top back to the one before, landing at its
   // end, so the pages still read as one scroll. A pull has to build past a threshold, counting starts only once the
   // reader has rested at the edge (a fling that reaches the end doesn't turn the page), and a turn is followed by a
@@ -717,7 +906,7 @@
     if (atEnd() || atTop()) { if (!pull.edgeSince) { pull.edgeSince = Date.now(); } } else { pull.edgeSince = 0; if (pull.dir) { resetPull(); } }
   }, { passive: true });
   window.addEventListener("wheel", function (event) {
-    if (!PAGED || event.ctrlKey || !tabList.hidden || Math.abs(event.deltaX) > Math.abs(event.deltaY)) { return; }
+    if (!PAGED || event.ctrlKey || !tabList.hidden || launcherOpen() || Math.abs(event.deltaX) > Math.abs(event.deltaY)) { return; }
     var dir = event.deltaY > 0 ? 1 : event.deltaY < 0 ? -1 : 0;
     if (!dir || !edgeOf(dir) || !neighbour(dir) || Date.now() < pull.pausedUntil) { return; }
     if (!pull.edgeSince) { pull.edgeSince = Date.now(); }
@@ -730,7 +919,7 @@
     pull.touchEdge = { end: atEnd(), top: atTop() };
   }, { passive: true });
   window.addEventListener("touchmove", function (event) {
-    if (!PAGED || pull.touchY === null || Date.now() < pull.pausedUntil) { return; }
+    if (!PAGED || pull.touchY === null || launcherOpen() || Date.now() < pull.pausedUntil) { return; }
     var moved = pull.touchY - event.touches[0].clientY;
     var dir = moved > 0 ? 1 : -1;
     if (!(dir > 0 ? pull.touchEdge.end && atEnd() : pull.touchEdge.top && atTop()) || !neighbour(dir)) { return; }
