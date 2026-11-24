@@ -39,7 +39,7 @@ async function shown(document, drift = null) {
   const [first] = await openPage(drift ? withDrift(page, drift) : page, { now: NOW, store: false });
   return first.app;
 }
-const count = (app) => app.querySelector("#now .now-count").textContent;
+const count = (app) => app.querySelector("#now .now-sentence").textContent;
 const drift = (app) => app.querySelector("#now .say-drift")?.textContent ?? null;
 const steps = (app) => [...app.querySelectorAll("#line .mg-step")].map((stop) => [stop.getAttribute("data-step"), stop.getAttribute("data-state")]);
 const states = (app) => steps(app).map(([, state]) => state);
@@ -54,37 +54,39 @@ const share = (app) => parseFloat(app.querySelector("#now .journey .done").style
 const short = (head) => head.slice(0, 7);
 const near = (actual, expected) => expect(Math.round(actual * 1000)).toBe(Math.round(expected * 1000));
 
-test("the count says the two beats once every piece has landed, today's count while one is open, and every piece landed after the landing", async () => {
+test("Now says the rejoin's step once every piece has landed, the stories' count while one is open, and the close after the landing", async () => {
   const rejoining = await shown(delivery([merged(30, M)]));
-  expect(count(rejoining)).toBe("2 pieces landed beside main · Now it rejoins");
-  expect(rejoining.querySelector("#now .now-count .title-beat").textContent).toBe("Now it rejoins");
+  expect(count(rejoining)).toBe("All 2 stories are in. The full suite runs next.");
   const open = await shown(delivery([], { open: true }));
-  expect(count(open)).toBe("1 of 2 pieces have landed");
-  expect(drift(open)).toBe(null);
+  expect(count(open)).toBe("1 of 2 stories are in. B is in the queue.");
+  // Without a forge to give its address, the change request is named by what it is, and nothing links to it.
   const done = await shown(delivery([merged(30, M), suite(31, M), round(32, M), requested(33, M), rejoined(34)]));
-  expect(count(done)).toBe("Every piece landed");
+  expect(count(done)).toBe("The change request is in main. The delivery is closing.");
+  expect(done.querySelector("#now .now-sentence a")).toBe(null);
   expect(done.querySelector("#line .rejoin")).toBe(null);
   // Rejoined, nothing waits on a change request any more: none is offered under the bar.
   expect(done.querySelector("#line .mg-change-label")).toBe(null);
-  expect(drift(done)).toBe(null);
 });
 
-test("the sentence under it counts the target's moves, the catch-ups and the gap, and leaves the counts out without drift", async () => {
+test("the target gaining commits never reaches Now: no count of its moves, its catch-ups or a gap, whatever the renderer embeds", async () => {
   const twice = delivery([merged(30, M), merged(35, H1)]);
-  expect(drift(await shown(twice, { moved: 12, behind: 4 })))
-    .toBe("main moved 12 commits while this worked. The lead has caught up 2 times, and the gap is 4.");
-  expect(drift(await shown(twice))).toBe("The lead has caught up 2 times.");
-  expect(drift(await shown(delivery([merged(30, M)]), { moved: 1, behind: 0 })))
-    .toBe("main moved 1 commit while this worked. The lead has caught up 1 time, and the gap is 0.");
+  for (const page of [await shown(twice, { moved: 12, behind: 4 }), await shown(twice)]) {
+    expect(page.querySelector("#now .say-drift")).toBe(null);
+    expect(page.querySelector("#now").textContent).not.toMatch(/moved \d+ commit|caught up|the gap is/);
+    expect(count(page)).toBe("All 2 stories are in. The full suite runs next.");
+  }
 });
 
-test("a page that polls takes in the renderer's new drift counts, with no reload", async () => {
-  const document = delivery([merged(30, M)]);
+test("a page that polls takes in the forge's new word on the change request's checks, with no reload", async () => {
+  const document = delivery([merged(30, M), suite(31, M), round(32, M), requested(33, M)]);
   const page = pageWithRuns(document, {}, { config: CONFIG });
-  const snapshots = await openPage(withDrift(page, { moved: 5, behind: 2 }), { now: NOW,
-    rendered: withDrift(page, { moved: 9, behind: 6 }), steps: [{ push: document }, { wait: 3100 }] });
-  expect(drift(snapshots[0].app)).toBe("main moved 5 commits while this worked. The lead has caught up 1 time, and the gap is 2.");
-  expect(drift(snapshots[2].app)).toBe("main moved 9 commits while this worked. The lead has caught up 1 time, and the gap is 6.");
+  const forge = (checks) => page.replace("<script>\n", `<script type="application/json" id="delivery-integration">${JSON.stringify({ checks })}</script>\n<script>\n`);
+  const snapshots = await openPage(forge({ pending: 2, failing: [] }), { now: NOW,
+    rendered: forge({ pending: 0, failing: [{ name: "lint", onTarget: false }] }), steps: [{ push: document }, { wait: 3100 }] });
+  expect(count(snapshots[0].app)).toBe("All 2 stories are in. The change request's checks are still running.");
+  expect(snapshots[0].app.querySelector("#now .now-fact")).toBe(null);
+  expect(count(snapshots[2].app)).toBe("All 2 stories are in. The change request waits for your merge.");
+  expect(snapshots[2].app.querySelector("#now .now-fact").textContent).toBe("1 forge check fails, and main passes it.");
 });
 
 test("the line draws one bar of four steps past the ticks, labelled by the step it is on, and bends into the target at the finish post", async () => {
@@ -246,7 +248,7 @@ test("the journey's share counts the filled stops, gives back a superseded one, 
 
 test("a round under the delivery's key on a record without an integration draws nothing of it", async () => {
   const app = await shown(delivery([round(30, M)], { integration: null }));
-  expect(count(app)).toBe("Every piece has landed");
+  expect(count(app)).toBe("All 2 stories are in. The delivery is closing.");
   expect(app.querySelector("#line .mg-step")).toBe(null);
   expect(app.querySelector("#line .rejoin")).toBe(null);
   expect(app.querySelector("#line .mg-target")).toBe(null);
