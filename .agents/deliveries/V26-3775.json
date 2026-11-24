@@ -276,6 +276,10 @@
         {
           "id": "v26-3811-2",
           "text": "While a start stands, the rejoin step draws the suite segment as a moving stripe (still under reduced motion), a tick at the expected time when known, the label 'Rejoin main \u00b7 suite running' and one sentence: 'The full suite is running at <commit>. <n> min, about <m> usual.', past it ', so <k> over', with no expected time '<n> min so far'."
+        },
+        {
+          "id": "v26-3811-3",
+          "text": "After the finish, the step draws passed, over budget (a clay end on the segment and '<n> min against a budget of <b>: <k> min over') or failed (the stop colour and '<x> of <y> tests failed at <commit>') as the Rejoin Step Studies direction A draws them, reusing #488's tokens with no new visual language and naming no command."
         }
       ]
     }
