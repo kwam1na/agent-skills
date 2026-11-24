@@ -190,6 +190,20 @@
           "text": "The full local suite passes on macOS with Python 3.11 with --budget tests/suite-budget.json."
         }
       ]
+    },
+    "V26-3807": {
+      "title": "Open live view addresses in the host's in-app browser by default",
+      "lane": "lane-1",
+      "why": "Operator asked on 2026-11-24 for live view addresses to open in the in-app browser pane by default, and to deliver it in this delivery",
+      "criteria": [
+        {
+          "id": "v26-3807-1",
+          "text": "run-delivery's Host behaviour says that where the host offers an in-app browser the agent opens each live view or hosted address a command prints there in the same turn (lead-init, lead-run, doctor/view, status lines, plan-view's links), with printing the address as the fallback; no command calls a host's interface; other skills that hand a live address say the same in one sentence; provenance refreshed and pins green."
+        }
+      ],
+      "after": [
+        "V26-3780"
+      ]
     }
   },
   "finish": [
