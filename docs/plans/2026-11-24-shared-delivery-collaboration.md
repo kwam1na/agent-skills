@@ -472,7 +472,9 @@ Out of scope:
     the `delivery` holder's machine:
     - **full health:** when the `delivery` holder does not hold `queue`,
       `full_health_step` launches nothing. It waits for the queue holder's result
-      at the base head, carried by D21.
+      at the base head, carried by D21. So that a result always comes, the
+      `queue` holder's `post_merge_step` also runs at the base head when nothing
+      has merged and the record holds `finish.met` for every finish line.
     - **cleanup:** the "not cleaned up" hold reads the local check together with
       every admitted peer's `checkoutsLeft` (D21).
     - **follow-ups:** `followups_step` reads deferred findings from the record's
@@ -559,9 +561,12 @@ Out of scope:
 
   | Input | Rule |
   | --- | --- |
-  | flow log `supervisor`, `prepares`, `app-checks`; `sessions.json`; `needs-you.json`; `lane-changes.json`; the peer registry under the git common directory; the machine ledger | local |
-  | flow log `acceptance` | carried by `lane:<L>`'s holder, keyed by subject and head, because every seat's Needs you reads it |
-  | flow log `full-health` (`result` and `rerun` entries, keyed by head) | carried by `queue`'s holder. On a shared record `note_posture` runs only on the `queue` holder |
+  | flow log `supervisor`, `prepares`, `suite` (results are journalled as `integration.suite`), `ship-gates`; `sessions.json`; `needs-you.json`; `lane-changes.json`; the peer registry under the git common directory; the machine ledger | local |
+  | flow logs `acceptance`, `app-checks`, `videos` and `lane-starts` | carried by `lane:<L>`'s holder, keyed by subject and head (`lane-starts` by subject), because `plan_evidence`, every seat's Needs you and the tracker publisher read them |
+  | flow log `tracker-marks` | carried by `delivery`'s holder with the tracker ledger, keyed by `<seat>.<seq>` (D12) |
+  | flow log `full-health` `result` entries, keyed by head | carried by `queue`'s holder |
+  | flow log `full-health` `rerun` entries | replaced: the queue holder's `full_health_results` counts a `fullhealth.rerun` journal entry at that head, from any seat, as the rerun request |
+  | `note_posture`'s dedupe through the `full-health` log | replaced: a posture note is skipped when the record already holds the same `posture.changed` or `fullhealth.skipped` at that head, whatever its origin. So it may run on whichever seat calls it, including `record_focused` at close |
   | flow log `resolutions` | carried by the resolving seat, keyed by the resolved entry's origin and translated on ingest |
   | flow log `finish` | replaced: a line counts as marked when the record holds its `finish.met` |
   | flow log `peers` | replaced: `peer_merges` skips a merge when the record already holds a `peer.merged` with the same `subject`, `peer` and `head`, whatever its origin |
@@ -570,8 +575,14 @@ Out of scope:
   | the friction stub | carried by `delivery`'s holder, so a handover keeps it |
   | hosted sidecars and the tracker ledger | carried by `delivery`'s holder (D12) |
 
-  A COLLAB-8 test finds every flow-log name passed to `read_log` or `append_log`
-  in `run_delivery.py`, and fails on a name missing from this table.
+  A COLLAB-8 test finds every flow-log name in `run_delivery.py` and
+  `tracker_publisher.py`:
+  - names passed to `read_log`, `append_log`, `flow_log`, `plan_flow_log`,
+    `read_flow` and `append_flow`;
+  - module-level constants passed to any of them.
+
+  It fails on a name missing from this table. A planted name read through each of
+  those six paths turns it red.
 
 - **D20. Every refusal, and what its test checks.**
   - **Codes:**
@@ -1151,14 +1162,39 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
   - **full health:** `b`, holding `queue`, runs fullHealth at H. After the scopes
     move to `a` and the close runs, there is one fullHealth run at H across both
     machines and one posture note;
+  - with every finish line met, `a` holding `delivery` and `b` holding `queue`,
+    `a`'s close launches no fullHealth run and holds until `b`'s result at the
+    base head is ingested. Then it closes, with one run at H, and that run is
+    `b`'s;
+  - a rerun asked for by `a`, which does not hold `queue`, is run once by `b`;
+  - a shared delivery that merged nothing gets one fullHealth run, on the `queue`
+    holder, and then closes;
   - **peers after a handover:** `a` journals a peer merge, `delivery` moves to
-    `b`, and `b`'s next pass journals no second `peer.merged`;
+    `b`, and `b`'s next pass journals no second `peer.merged`. A later peer merge
+    with the same subject and peer at a new head is journalled once by `b` and
+    reaches both records;
   - **deferrals:** a finding deferred in `b`'s lane yields one `deferral.held` by
     `b` and one follow-up filed by `a`'s close-out. Under `noDeferrals` it yields
     one `deferral.breached`, journalled by `b`, which holds the close on both
     machines;
-  - **resolutions and acceptances:** a blocker resolved on `a` disappears from
-    `b`'s Needs you, and an acceptance on `b` shows as ready in `a`'s Needs you;
+  - **resolutions:** the fixture gives `b` an extra earlier entry, so the
+    blocker's local id differs between the machines. A blocker resolved on `a`
+    disappears from `b`'s Needs you, and the item `b` holds at `a`'s
+    untranslated number is still listed;
+  - **acceptances:** an acceptance on `b` shows as ready in `a`'s Needs you. After
+    a re-hand-off at a new head, the older acceptance no longer shows as ready;
+  - **lane evidence:** a lane start on `b` is posted once by `a`'s tracker
+    publisher. An in-app check and a clip passing on `b` for `b`'s lane story
+    show as `done` in the `plan.json` `a` builds;
+  - **the carried plan:** after a plan change recorded by `a`, `b`'s `plan.json`
+    equals `a`'s byte for byte, and `b` builds none of its own;
+  - **the friction stub:** written on `a`, then `delivery` moves to `b`; `b`'s
+    close-out uses the same stub, with its content intact;
+  - **cleanup that fails:** `b`'s cleanup cannot remove a merged checkout, so its
+    `checkoutsLeft` stays non-empty, and `a`'s close still holds;
+  - **deferrals across a lane handover:** a deferral journalled as
+    `deferral.held` by `b`, then the lane handed to `a`; `a` journals no second
+    `deferral.held` for it;
   - a supervisor restart keeps its roles;
   - a write on one machine reaches the peer's record within two
     `collab.pollSeconds` ticks plus one push, with no explicit sync command.
