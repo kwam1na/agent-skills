@@ -458,6 +458,7 @@
     var watch = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
         if (!entry.isIntersecting || PAGED) { return; }
+        followScroll(entry.target.id);
         Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
           link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + entry.target.id));
         });
@@ -483,7 +484,10 @@
   // Pages: each chapter is its own page, routed by the address's hash (#now, #line, ...). A hash that names something
   // inside a chapter opens that chapter's page and brings the thing into view. The rail, the corner's chapter tab and
   // each page's foot step between pages; [ and ] do too. With no hash the page opens on Now.
+  // The reader picks the layout in the chapter tab: one chapter per page (the default) or every chapter on one page.
+  var LAYOUT_KEY = (typeof VIEW.themeKey === "string" && VIEW.themeKey ? VIEW.themeKey.replace(/:theme$/, "") : "delivery-views") + ":layout";
   var PAGED = true;
+  try { PAGED = localStorage.getItem(LAYOUT_KEY) !== "scroll"; } catch (error) { /* paged */ }
   var currentPage = null;
   var corner = document.querySelector(".corner");
   var themeSwitch = document.querySelector(".theme-switch");
@@ -513,6 +517,12 @@
   var tabList = el("ol", "chapter-tab-list");
   tabList.id = "chapter-tab-list";
   tabList.hidden = true;
+  var tabPanel = el("div", "chapter-tab-panel");
+  var layoutButton = el("button", "chapter-tab-layout");
+  layoutButton.type = "button";
+  var hint = el("span", "chapter-tab-hint");
+  hint.innerHTML = "<kbd>[</kbd> <kbd>]</kbd> step between pages";
+  var tabFoot = add(el("div", "chapter-tab-foot"), layoutButton, hint);
   add(tab, tabButton, tabList);
   if (corner) { corner.insertBefore(tab, corner.querySelector(".theme-switch")); }
   // The delivery's name stays in the top-left corner on every page but Now, which opens with it.
@@ -535,6 +545,8 @@
       add(link, el("span", "chapter-tab-index", String(index + 1).padStart(2, "0")), el("span", null, chapterName(id)));
       tabList.appendChild(add(el("li"), link));
     });
+    layoutButton.textContent = PAGED ? "Show all chapters on one page" : "Show one chapter per page";
+    tabList.appendChild(add(el("li", "chapter-tab-foot-row"), tabFoot));
   }
   function openTab(open) {
     tabList.hidden = !open;
@@ -547,6 +559,16 @@
   }
   tabButton.addEventListener("click", function () { openTab(tabList.hidden); });
   tabList.addEventListener("click", function (event) { if (event.target.closest && event.target.closest("a")) { openTab(false); } });
+  layoutButton.addEventListener("click", function () {
+    PAGED = !PAGED;
+    try { localStorage.setItem(LAYOUT_KEY, PAGED ? "paged" : "scroll"); } catch (error) { /* lasts until reload */ }
+    var keep = currentPage;
+    showPage(keep);
+    var section = app.querySelector("#" + keep);
+    if (!PAGED && section && typeof section.scrollIntoView === "function") { section.scrollIntoView({ block: "start" }); }
+    openTab(false);
+    tabButton.focus();
+  });
   tabList.addEventListener("keydown", function (event) {
     var links = Array.prototype.slice.call(tabList.querySelectorAll("a"));
     var at = links.indexOf(document.activeElement);
@@ -560,7 +582,7 @@
   document.addEventListener("keydown", function (event) {
     if (event.key === "Escape" && !tabList.hidden) { openTab(false); tabButton.focus(); return; }
     var typing = event.target && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
-    if (typing || event.metaKey || event.ctrlKey || event.altKey) { return; }
+    if (!PAGED || typing || event.metaKey || event.ctrlKey || event.altKey) { return; }
     if (event.key === "[" || event.key === "]") {
       var ids = chapterIds();
       var to = ids[ids.indexOf(currentPage) + (event.key === "]" ? 1 : -1)];
@@ -590,11 +612,11 @@
     if (ids.indexOf(id) < 0) { id = ids[0]; }
     var changed = id !== currentPage;
     currentPage = id;
-    document.body.classList.add("paged");
+    document.body.classList.toggle("paged", PAGED);
     Array.prototype.forEach.call(app.querySelectorAll(".chapter"), function (section) {
       var on = section.id === id;
-      section.hidden = !on;
-      if (on) { footOf(section); }
+      section.hidden = PAGED && !on;
+      if (on && PAGED) { footOf(section); }
     });
     Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
       link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + id));
@@ -608,14 +630,16 @@
       (id === ids[0] ? "" : " · " + chapterName(id));
     if (target && target !== app.querySelector("#" + id) && typeof target.scrollIntoView === "function") {
       target.scrollIntoView({ block: "center" });
-    } else if (changed) {
+    } else if (changed && PAGED) {
       window.scrollTo(0, 0);
+    } else if (!PAGED && target && typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ block: "start" });
     }
   }
   /** The page a node lives on, opened, so a caller can bring the node into view. */
   function revealPage(node) {
     var section = node && node.closest ? node.closest(".chapter") : null;
-    if (section && section.id !== currentPage) {
+    if (PAGED && section && section.id !== currentPage) {
       if (history.replaceState) { history.replaceState(null, "", "#" + section.id); }
       showPage(section.id);
     }
@@ -627,6 +651,13 @@
     showPage(section ? section.id : hash, target);
   }
   window.addEventListener("hashchange", route);
+  /** In the one-page layout the tab names the chapter being read. */
+  function followScroll(id) {
+    if (id !== currentPage && history.replaceState) { history.replaceState(null, "", "#" + id); }
+    currentPage = id;
+    tabLabel.textContent = chapterName(id);
+    tabButton.setAttribute("aria-label", "Chapters: " + chapterName(id));
+  }
 
   // One card for the whole page, kept outside the chapters so no redraw removes it.
   var card = el("div", "issue-card");
@@ -4694,7 +4725,7 @@
       }
     }
     // Every draw keeps the reader on their page; the first one opens the page the address names.
-    if (PAGED) { if (currentPage === null) { route(); } else { showPage(currentPage); } }
+    if (currentPage === null) { route(); } else if (PAGED) { showPage(currentPage); }
   }
 
   safely(embedded);

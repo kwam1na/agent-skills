@@ -987,9 +987,10 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 
 /* Pages: one chapter at a time. */
 body.paged .chapter + .chapter { border-top: 0; }
-body.paged .chapter { min-height: 100vh; min-height: 100dvh; box-sizing: border-box; display: flex; flex-direction: column; }
-body.paged .chapter > .inner { flex: 1 0 auto; }
+body.paged .chapter { padding-top: 88px; }
 body.paged .chapter[hidden] { display: none; }
+body.paged .rail { display: none; }
+body:not(.paged) .page-foot { display: none; }
 .page-foot { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 980px; width: 100%; margin: 72px auto 0; }
 .page-step { display: grid; gap: 4px; padding: 16px 18px; border: 1px solid var(--hair); border-radius: 12px; text-decoration: none; color: var(--ink); }
 .page-step.is-next { text-align: right; }
@@ -1024,7 +1025,16 @@ body.paged .chapter[hidden] { display: none; }
 .chapter-tab-list a:hover, .chapter-tab-list a:focus-visible { background: var(--well); outline: none; }
 .chapter-tab-list a[aria-current="page"] { background: var(--well); box-shadow: var(--shadow-press); }
 .chapter-tab-index { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+.chapter-tab-foot { display: grid; gap: 6px; margin-top: 6px; padding: 8px 10px 4px; border-top: 1px solid var(--hair); }
+.chapter-tab-layout { display: block; width: 100%; padding: 4px 0; border: 0;
+  background: none; color: var(--ink); font: inherit; font-size: 12.5px; cursor: pointer; text-align: left; }
+.chapter-tab-layout:hover { text-decoration: underline; text-underline-offset: 3px; }
+.chapter-tab-layout:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 4px; }
+.chapter-tab-hint { font-size: 11.5px; color: var(--faint); }
+.chapter-tab-hint kbd { font-family: var(--mono); font-size: 10.5px; padding: 0 4px; border: 1px solid var(--hair); border-radius: 4px; }
+body:not(.paged) .chapter-tab-hint { display: none; }
 @media (max-width: 720px) {
+  body.paged .chapter { padding-top: 72px; }
   .chapter-tab-label { max-width: 9ch; overflow: hidden; text-overflow: ellipsis; }
   .page-where { display: none; }
   .page-foot { margin-top: 48px; }
