@@ -221,6 +221,10 @@
         {
           "id": "v26-3808-2",
           "text": "A file link that is not an https:// URL, or built from a path outside the reviewed tree, is refused by the projection's validation and never reaches the hosted page; with no fileUrl the hosted cut and every hosted golden are byte for byte unchanged."
+        },
+        {
+          "id": "v26-3808-3",
+          "text": "The siblings page test passes in 10 consecutive full page-lane runs (tests.test_delivery_views_page), and the change names the cause of its earlier intermittent failures and fixes that cause rather than retrying."
         }
       ],
       "after": [
