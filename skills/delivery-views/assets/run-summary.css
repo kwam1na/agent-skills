@@ -181,3 +181,24 @@ a.run-commit { text-decoration: underline; text-decoration-color: color-mix(in s
 }
 @keyframes run-breathe { 0%, 100% { opacity: .2; transform: scale(.92); } 50% { opacity: .7; transform: scale(1); } }
 @keyframes run-settle { 0% { transform: scale(1); } 50% { transform: scale(1.12); } 100% { transform: scale(1); } }
+
+/* A confirmed note's head. Shut, one line: the finding, its severity, the chevron. Opened, the severity rises to a small
+   label over the finding with the chevron beside it on the same line, and the finding takes the full width beneath. The
+   chevron always sits on the first line, never floating beside a tall block. */
+.run-closures > summary { grid-template-areas: "text sev chev"; align-items: start; column-gap: 10px; }
+.run-closures > summary .run-finding-text { grid-area: text; }
+.run-closures > summary .run-closure-sev { grid-area: sev; line-height: 19.5px; }
+.run-closures > summary::after { grid-area: chev; align-self: start; margin-top: 6px; }
+.run-closures.is-other > summary:has(.run-closure-sev) { grid-template-areas: "text sev fate chev"; }
+.run-closures.is-other > summary .run-fate { grid-area: fate; line-height: 19.5px; }
+.run-closures[open] > summary { grid-template-columns: auto minmax(0, 1fr) 10px; grid-template-areas: "sev . chev" "text text text"; row-gap: 4px; }
+.run-closures.is-other[open] > summary:has(.run-closure-sev) { grid-template-columns: auto auto minmax(0, 1fr) 10px; grid-template-areas: "sev fate . chev" "text text text text"; }
+.run-closures[open] > summary .run-closure-sev, .run-closures[open] > summary .run-fate { line-height: 16px; }
+.run-closures[open] > summary::after { margin-top: 5px; }
+.run-closures.is-fixed[open] > summary::before { top: .3em; }
+/* Opened, the severity reads as the raised findings' band does: the same word, weight and tone, one vocabulary. */
+.run-closures[open] > summary .run-closure-sev { font: 500 12px/16px var(--text, system-ui, sans-serif); color: var(--faint, #646c71); text-transform: capitalize; }
+/* On a narrow screen a shut note keeps its severity's mark and gives the word's room to the finding; opened, the word is back. */
+@media (max-width: 560px) {
+  .run-closures:not([open]) > summary .run-closure-sev { font-size: 0; gap: 0; }
+}
