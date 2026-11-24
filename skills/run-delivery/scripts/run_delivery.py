@@ -17500,14 +17500,13 @@ def collab_join(args) -> None:
         print(f"joined {key} as seat {seat} ({seat_labels(journal).get(seat, seat)}), admitted")
     mark = git("config", "--local", "--get", JOIN_MARK.format(key=key), cwd=c.root, check=False).split()
     after = int(mark[0]) if mark and mark[0].isdigit() else 0
-    for line in catch_up(c, key, folder, journal, seat, after, mark[1] if len(mark) > 1 else None):
+    lines, current = catch_up(c, key, folder, journal, seat, after, mark[1] if len(mark) > 1 else None)
+    for line in lines:
         print(line)
-    journal = tool.read_journal(folder)
-    plan = record_plan(c, key, folder)
-    current = shared_plan_commit(c, key, plan) if plan else None
+    # What was shown, and only that: an entry the sync loop ingests meanwhile, or a plan commit pushed meanwhile, is new
+    # to the next join.
     if current and (tool.derived_seats(journal).get(seat) or {}).get("admitted") and current != last_seen(journal, seat):
         state_tool_at(c, folder, "journal", "--kind", "plan.seen", "--data", json.dumps({"commit": current}))
-        journal = tool.read_journal(folder)
     git("config", "--local", JOIN_MARK.format(key=key), f"{journal[-1]['id'] if journal else 0} {current or '-'}",
         cwd=c.root)
 
@@ -17532,14 +17531,14 @@ def shared_plan_commit(c, key: str, plan: Path) -> str | None:
 
 
 def catch_up(c, key: str, folder: Path, journal: list[dict], seat: str | None, after: int,
-             marked: str | None) -> list[str]:
+             marked: str | None) -> tuple[list[str], str | None]:
     """What a join prints, in this order: the story since entry `after`, the plan's change since this seat last read
-    it, the feedback still open that was raised since, and the scopes this seat holds."""
+    it, the feedback still open that was raised since, and the scopes this seat holds; with the plan commit shown."""
     tool = _validator()
     import narrator
     labels = seat_labels(journal)
     story = narrator.narrate(journal, tool.read_state(folder))
-    lines = []
+    lines, by_id = [], {entry["id"]: entry for entry in journal}
     for beat in story["beats"]:
         # Each entry once, in its own beat's words or, in a run of bookkeeping, its item's; a thread's beat retells.
         if beat["form"] == "thread":
@@ -17547,9 +17546,10 @@ def catch_up(c, key: str, folder: Path, journal: list[dict], seat: str | None, a
         told = [(item["entry"], item["words"]) for item in beat["items"]] or [(beat["entries"][0], beat["words"])]
         lines += [f"  #{entry} {narrator._sentence(words['head'])}" + (f" {narrator._sentence(words['line'])}"
                                                                         if words["line"] else "")
-                  for entry, words in told if entry > after]
+                  for entry, words in told if entry > after and not own_reading(by_id[entry], seat)]
     said = ["story:" + ("" if lines else " nothing new"), *lines]
     plan = record_plan(c, key, folder)
+    current = None
     if plan is None:
         said.append("plan: none named yet")
     else:
@@ -17575,7 +17575,12 @@ def catch_up(c, key: str, folder: Path, journal: list[dict], seat: str | None, a
                     + (", stopping approval" if entry["data"].get("blocking") else "")
                     + f", by {writer}: {entry['data']['text']}")
     said.append(f"scopes held: {held_scopes(journal, seat)}")
-    return said
+    return said, current
+
+
+def own_reading(entry: dict, seat: str | None) -> bool:
+    """A seat's own plan.seen, which records a join's reading rather than telling it anything new."""
+    return entry["kind"] == "plan.seen" and (entry.get("origin") or {}).get("seat") == seat
 
 
 def held_scopes(journal: list[dict], seat: str | None) -> str:

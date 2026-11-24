@@ -125,10 +125,30 @@ class JoinTests(JoinCase):
         self.assertEqual(len([entry for entry in journal(b) if entry["kind"] == "seat.requested"]), 1)
         seen = [entry for entry in journal(b) if entry["kind"] == "plan.seen"]
         self.assertEqual(len(seen), 1, "an admitted seat journals what it read")
-        # Run a third time, nothing is new.
+        # Run a third time, nothing is new, and the plan read is not journalled again.
         third = self.ok(fx, "collab", "join", "--key", KEY, cwd=b_repo)
         self.assertIn("story: nothing new", third)
         self.assertIn("open feedback: none", third)
+        self.assertEqual(len([entry for entry in journal(b) if entry["kind"] == "plan.seen"]), 1)
+        # a changes the plan and raises feedback: b's next join shows the plan's diff and the feedback as new.
+        plan = fx.main / "docs/plan.md"
+        plan.write_text(plan.read_text().replace("- Scenarios: it loads; it fails.", "- Scenarios: it loads, a says."))
+        self.ok(fx, "plan-sync", "--plan", "docs/plan.md", "--message", "a's edit", cwd=fx.main)
+        self.ok(fx, "collab", "feedback", "add", "--key", KEY, "--anchor", "## Stories", "--text", "Split S2?",
+                cwd=fx.main)
+        self.exchange(a, b)
+        fourth = self.ok(fx, "collab", "join", "--key", KEY, cwd=b_repo)
+        self.assertRegex(fourth, r"plan: docs/plan\.md changed since [0-9a-f]{12}, now at [0-9a-f]{12}:")
+        self.assertIn("+- Scenarios: it loads, a says.", fourth)
+        self.assertRegex(fourth, r"open feedback:\n  #\d+ on ## Stories, by [^:]+: Split S2\?")
+        self.assertEqual(len([entry for entry in journal(b) if entry["kind"] == "plan.seen"]), 2)
+        # Once more, the diff and the feedback are no longer new: the feedback stays open, unrepeated.
+        fifth = self.ok(fx, "collab", "join", "--key", KEY, cwd=b_repo)
+        self.assertRegex(fifth, r"plan: docs/plan\.md unchanged since [0-9a-f]{12}")
+        self.assertIn("open feedback: none new (1 still open)", fifth)
+        self.assertNotIn("Split S2?", fifth)
+        self.assertIn("story: nothing new", fifth)
+        self.assertEqual(len([entry for entry in journal(b) if entry["kind"] == "plan.seen"]), 2)
         # A relabel reaches the peer's derived seats.
         self.ok(fx, "collab", "label", "--key", KEY, "--label", "Benedict", cwd=b_repo)
         self.exchange(b, a)
@@ -178,15 +198,24 @@ class FeedbackTests(JoinCase):
         raised = next(entry for entry in journal(a) if entry["kind"] == "feedback.raised")
         self.assertEqual(raised["data"], {"anchor": "## Decisions", "text": "The copy needs a second look.",
                                           "blocking": True})
-        # It shows in Needs you on a's record, and a's join lists it as open.
+        # Feedback that doesn't stop approval is open too, and holds nothing.
+        self.ok(fx, "collab", "feedback", "add", "--key", KEY, "--anchor", "## Stories", "--text", "A thought.",
+                cwd=fx.main)
+        # The blocking one shows in Needs you on a's record, and a's join lists both as open.
         needs = self.needs(fx, a)
         [item] = [item for item in needs if item.get("kind") == "feedback"]
         self.assertTrue(item["holding"])
         self.assertIn("## Decisions", item["text"])
+        self.assertNotIn("A thought.", json.dumps(needs))
         listed = self.ok(fx, "collab", "join", "--key", KEY, cwd=fx.main)
         self.assertRegex(listed, rf"open feedback:\n  #{raised['id']} on ## Decisions, stopping approval, by Ben: "
-                                 r"The copy needs a second look\.")
-        # b doesn't hold the section it is on, so b can't settle it; a, the delivery holder, does.
+                                 r"The copy needs a second look\.\n  #\d+ on ## Stories, by [^:]+: A thought\.")
+        # An id that is no feedback is refused.
+        code, out = fx.flow("collab", "feedback", "resolve", "--key", KEY, "--id", 1, "--outcome", "answered",
+                            "--reason", "Not feedback.", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("feedback.unknown", out)
+        # b doesn't hold the section it is on, so b can't settle it yet.
         on_b = next(entry for entry in journal(b) if entry["kind"] == "feedback.raised")
         code, out = fx.flow("collab", "feedback", "resolve", "--key", KEY, "--id", on_b["id"], "--outcome", "declined",
                             "--reason", "Mine to settle.", cwd=b_repo)
@@ -194,8 +223,16 @@ class FeedbackTests(JoinCase):
         self.assertIn("scope.not_held", out)
         self.assertIn("plan:## Decisions", out)
         self.assertFalse([entry for entry in journal(b) if entry["kind"] == "feedback.resolved"])
-        self.ok(fx, "collab", "feedback", "resolve", "--key", KEY, "--id", raised["id"], "--outcome", "accepted",
-                "--reason", "Reworded.", cwd=fx.main)
+        # b asks for the section and a passes it on: then b, its holder, settles the feedback.
+        self.ok(fx, "collab", "request", "--key", KEY, "--scope", "plan:## Decisions", "--reason", "To settle it.",
+                cwd=b_repo)
+        self.exchange(b, a)
+        self.ok(fx, "collab", "give", "--key", KEY, "--scope", "plan:## Decisions", "--to", seat_b, cwd=fx.main)
+        self.exchange(a, b)
+        self.assertEqual(self.tool.holder(journal(b), "plan:## Decisions"), seat_b)
+        self.ok(fx, "collab", "feedback", "resolve", "--key", KEY, "--id", on_b["id"], "--outcome", "accepted",
+                "--reason", "Reworded.", cwd=b_repo)
+        self.exchange(b, a)
         [resolved] = [entry for entry in journal(a) if entry["kind"] == "feedback.resolved"]
         self.assertEqual((resolved["answers"], resolved["data"]), ([raised["id"]], {"outcome": "accepted",
                                                                                      "reason": "Reworded."}))
@@ -293,8 +330,19 @@ class NarratorAttributionTests(unittest.TestCase):
         self.assertEqual(said[8]["head"], "Benedict endorsed the plan")
         self.assertNotIn(b, json.dumps(said[8]))
         # A seat entry already names its seat by label; its writer is named when another seat wrote it.
-        self.assertIn("Ben asked to join the delivery", said[3]["head"])
+        self.assertEqual(said[3]["head"], "Ben asked to join the delivery")
+        self.assertNotIn("By ", said[3]["line"])
         self.assertIn("By Ama", said[4]["line"])
+
+    def test_a_short_label_inside_a_word_is_still_attributed(self) -> None:
+        a = self.SEAT_A
+        entries = [self.entry(1, a, 1, "record.started", {"base": {"ref": "origin/main", "head": "a" * 40}}),
+                   self.entry(2, a, 2, "seat.admitted", {"seat": a, "label": "Al", "approver": True}),
+                   self.entry(3, a, 3, "feedback.raised", {"anchor": "## Stories", "text": "Also this.",
+                                                           "blocking": False})]
+        story = narrator.narrate(entries, {"meta": {"collab": {"key": "FX-1", "seats": {}}}})
+        [beat] = [beat for beat in story["beats"] if beat["entries"] == [3]]
+        self.assertEqual(beat["words"]["line"], "By Al. Also this.")
 
     def test_an_unshared_record_s_story_has_no_attribution(self) -> None:
         entries = [{"id": 1, "at": "2026-11-24T10:00:01Z", "kind": "record.started", "writer": "lead",

@@ -547,7 +547,7 @@ def _attributed(words: dict, entry: dict, labels: dict | None) -> dict:
         head, line = named(head), named(line)
         if head.startswith("A seat "):
             head = name + head[len("A seat"):]
-    if name not in head and name not in line:
+    if not re.search(rf"(?<!\w){re.escape(name)}(?!\w)", f"{head} {line}"):
         line = f"By {name}. {line}" if line else f"By {name}"
     return {**words, "head": head, "line": line}
 
