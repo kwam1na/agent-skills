@@ -604,12 +604,20 @@ Out of scope:
 - **D22. One evidence page, published by the `delivery` holder.** On a shared
   record:
   - **Commands:** `lead-evidence record`, `page` and `published` need
-    `delivery`. Elsewhere they refuse with `scope.not_held`.
-  - **What counts:** the page holds only the `delivery` holder's own recordings
-    on the merged base, which `lead-evidence record` already makes for every
-    merged story that needs video. `evidence_status` judges the evidence finish
-    line against that holder's own `evidence-page.json` and its own merged-base
-    recordings, exactly as on an unshared record.
+    `delivery`. Elsewhere each refuses with `scope.not_held` before it writes
+    anything.
+  - **Recording:** on a shared record, `record` takes each story's hold and fail
+    spec from the latest passing entry of that mode in the carried `app-checks`
+    log (`specValue`, `passthrough`), not from app-check files in story folders.
+    So it records stories in every seat's lanes on the holder's merged base.
+  - **What counts:** on a shared record, `evidence_status` and `lead-evidence
+    page` read only the holder's merged-base folder (`work/review/<key>`), never
+    a lane checkout or `evidence_dir`. The page comparison is the same as on an
+    unshared record.
+  - **Taking `delivery`:** a seat that receives `delivery` moves its own earlier
+    `evidence-page.json` and merged-base recordings aside before its first
+    evidence command. So a seat that held `delivery` before never judges against
+    a stale page.
   - **Lanes:** a clip recorded in a lane serves that story's review and the plan
     view's clip proof, and never counts for the close. Handing over a lane
     therefore never touches evidence.
@@ -632,7 +640,7 @@ Out of scope:
     | `plan.sections_overlap` | `plan-sync` finds a section changed on both sides |
     | `plan.section_not_held` | a plan change outside the seat's held sections |
     | `plan.push_exhausted` | the sixth rejected `plan-sync` push |
-    | `scope.not_held` | a write, transfer, admission, re-key or feedback resolution by a non-holder; a runner write on a machine not holding `queue` |
+    | `scope.not_held` | a write, transfer, admission, re-key or feedback resolution by a non-holder; a runner write on a machine not holding `queue`; `lead-evidence record`, `page` or `published` on a seat not holding `delivery` (D22) |
     | `queue.not_held` | `merge_queue.py serve` started where the seat does not hold `queue` |
     | `scope.handover_busy` | a `queue` or `delivery` handover past its `--wait`; a lane handover while the lane has a checkout left on the outgoing machine |
     | `plan.endorsement_missing`, `plan.endorsement_stale`, `plan.not_aligned`, `plan.feedback_blocking` | `lead-init`'s joint approval (D11), in that order |
@@ -1204,17 +1212,29 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
   - **evidence (D22):** stories needing video sit in lanes on both `a` and `b`.
     `a`, holding `delivery`, runs `lead-evidence record` on the merged base and
     publishes, and `a`'s `lead-close` reports the evidence current;
-  - `lead-evidence record` or `published` on `b` gives `scope.not_held`, with the
-    D20 surfaces unchanged;
+  - a story in `b`'s lane whose app-checks ran only on `b` is recorded by `a`'s
+    `lead-evidence record` on the merged base, and appears on `a`'s page;
+  - `lead-evidence record`, `page` and `published` on `b` each give
+    `scope.not_held`. Each leaves the D20 surfaces unchanged, as well as
+    `evidence-page.json`, `evidence-notes.json`, the `--out` folder and `b`'s
+    merged-base review folder;
   - a clip recorded in `b`'s lane shows as `done` in the plan view's clip proof on
-    both machines, and `a`'s close does not count it: with no merged-base
-    recording on `a`, the story is reported as not recorded;
+    both machines;
+  - **lane clips never count:** `a` holds `delivery` and `lane:y`. Story Z's clip
+    is recorded in `a`'s `lane:y` checkout and kept in `a`'s `evidence_dir` after
+    cleanup. `a`'s `lead-close` reports Z as not recorded, and a built page leaves
+    Z off, until `a` records Z on the merged base;
   - `a` re-records a story's clip on the merged base after publishing and does
     not republish; `a`'s `lead-close` reports that clip as not on the page;
-  - a lane handed from `b` to `a` changes nothing in `a`'s evidence verdict;
+  - a lane handed from `b` to `a` changes nothing in `a`'s evidence verdict, and
+    a clip later recorded in `a`'s new lane checkout is not counted either;
   - after `delivery` moves to `b`, `b`'s close reports each merged video story as
-    not recorded until `b` records on the merged base and publishes. The page's
-    notes written on `a` survive on `b`'s page;
+    not recorded until `b` records on the merged base and publishes. Before the
+    move, `b` ran a refused `lead-evidence page --title`; after it, `b`'s page
+    carries `a`'s title and notes, not `b`'s;
+  - `delivery` moves from `a` to `b` and back to `a`; `a`'s close does not pass
+    against its page from before the moves, and needs a fresh recording and
+    publish;
   - handing that lane to `a` while the story's checkout is on `b` gives
     `scope.handover_busy`, and succeeds after `b`'s cleanup;
   - **full health:** `b`, holding `queue`, runs fullHealth at H. After the scopes
