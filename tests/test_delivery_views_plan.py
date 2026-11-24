@@ -670,6 +670,12 @@ class PlanPreviewContractTests(unittest.TestCase):
             "a 64-character commit": (lambda p: p.update(commit="a" * 64), "preview.commit: must be a full 40-character commit id"),
             "an uppercase commit": (lambda p: p.update(commit=HEAD.upper()), "preview.commit: must be a full 40-character commit id"),
             "a commit with a newline": (lambda p: p.update(commit=HEAD[:39] + "\n"), "preview.commit: must be a full 40-character commit id"),
+        }
+        # A full commit with a newline after it: the schema's library lets `$` match before a final newline, so this one
+        # is the validator's alone, and proves it matches the whole value.
+        self.assertEqual(refusal({**preview_plan(), "preview": {**preview_plan()["preview"], "commit": HEAD + "\n"}}),
+                         "preview.commit: must be a full 40-character commit id")
+        refused |= {
             "a commit that is no string": (lambda p: p.update(commit=40), "preview.commit: must be a full 40-character commit id"),
             "an approved approval": (lambda p: p.update(approval="approved"), "preview.approval: must be agents-only or handed"),
             "an unknown layout": (lambda p: p.update(layout="x"), "preview.layout: must be delivery or other"),
