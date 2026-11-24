@@ -6482,10 +6482,10 @@ def plan_validator(c):
     return views_common
 
 
-def check_plan(plan: dict, c, what: str = "the plan this delivery file makes") -> None:
+def check_plan(plan: dict, c, what: str = "the plan this delivery file makes", planning: bool | None = None) -> None:
     views = plan_validator(c)
     try:
-        views.validate_plan(json.loads(json.dumps(plan)))
+        views.validate_plan(json.loads(json.dumps(plan)), **({} if planning is None else {"planning": planning}))
     except views.ConfigError as error:
         raise Stop(f"{what} isn't a valid delivery-plan/1: {error}")
     # Measured as rebuild_plan writes it, so the view never meets a file it refuses unread.
@@ -6729,8 +6729,10 @@ def rebuild_preview(c, plan: Path) -> tuple[Path, str | None]:
     with open(folder / PREVIEW_LOCK, "a+") as held:
         fcntl.flock(held, fcntl.LOCK_EX)
         store, adopted = preview_store(c, slug)
+        # Handed to a planning record, which takes the plan over before any delivery adopts its review.
+        adopted = adopted or load_json(folder / PREVIEW_HANDED)
         built, seed = build_preview(c, plan, text, commit, at, store, adopted)
-        check_plan(built, c, f"the preview of {plan}")
+        check_plan(built, c, f"the preview of {plan}", planning=False)
         said = []
         if not (folder / "state.json").exists():
             state_tool("init", "--headline", seed["headline"], "--seed",
@@ -6773,6 +6775,88 @@ def rebuild_preview(c, plan: Path) -> tuple[Path, str | None]:
         if facts != kept:
             replace_file(folder / PREVIEW_FILE, json.dumps(facts, indent=2) + "\n")
     return folder, ", ".join(said) or None
+
+
+def planning_endorsements(journal: list[dict]) -> list[dict]:
+    """Each seat's latest plan.endorsed, in the order the seats first endorsed, by its seat's label."""
+    labels = {seat: held["label"] for seat, held in _validator().derived_seats(journal).items()}
+    latest: dict[str, str] = {}
+    for entry in journal:
+        if entry["kind"] == "plan.endorsed" and entry.get("origin"):
+            latest[entry["origin"]["seat"]] = entry["data"]["commit"]
+    return [{"seat": seat, "label": labels.get(seat, seat)[:200], "commit": commit}
+            for seat, commit in latest.items()][:PLAN_ENDORSEMENTS]
+
+
+PLAN_ENDORSEMENTS = 20
+
+
+def planning_approval(journal: list[dict], commit: str) -> str:
+    """endorsed once every admitted approver seat's latest endorsement names `commit`; agents-only until then."""
+    approvers = [seat for seat, held in _validator().derived_seats(journal).items() if held["admitted"] and held["approver"]]
+    latest = {item["seat"]: item["commit"] for item in planning_endorsements(journal)}
+    return "endorsed" if approvers and all(latest.get(seat) == commit for seat in approvers) else "agents-only"
+
+
+def rebuild_planning_plan(c, plan: Path, key: str, folder: Path) -> str | None:
+    """The planning record's plan.json, from the plan at HEAD and its review store by the preview builder, with its
+    endorsements and approval from the record's journal: written, and journalled as plan.updated, when it changed.
+    Returns what changed, None when nothing did."""
+    text, commit, at = plan_at_head(c, plan)
+    slug = needed_review_slug(plan, text)
+    with open(folder / PREVIEW_LOCK, "a+") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        store, _ = preview_store(c, slug)
+        built, _ = build_preview(c, plan, text, commit, at, store, None)
+        journal = _validator().read_journal(folder)
+        built["preview"].update(approval=planning_approval(journal, commit), endorsements=planning_endorsements(journal))
+        check_plan(built, c, f"the planning record's plan of {plan}", planning=True)
+        path = folder / PLAN_FILE
+        old = load_json(path)
+        if old is not None and {k: v for k, v in old.items() if k != "updated"} == \
+                {k: v for k, v in built.items() if k != "updated"}:
+            return None
+        changed = [] if old is None else [name for name in sorted({*built, *old})
+                                          if name != "updated" and old.get(name) != built.get(name)]
+        before = path.read_bytes() if old is not None else None
+        replace_file(path, json.dumps(built, indent=2) + "\n")
+        try:
+            state_tool_at(c, folder, "journal", "--kind", "plan.updated",
+                          "--data", json.dumps({"updated": built["updated"], "changed": changed}))
+        except Stop:
+            # As the preview's: the plan goes back, so the next build finds the change again and journals it.
+            if before is None:
+                path.unlink()
+            else:
+                replace_file(path, before.decode("utf-8"))
+            raise
+        return "plan " + ("(" + ", ".join(changed) + ")" if changed else "(first build)")
+
+
+def planning_plan_lines(c, plan: Path, key: str, folder: Path) -> list[str]:
+    """Once a planning record holds the plan: its plan.json rebuilt, never a preview, and the record's own links."""
+    rebuild_planning_plan(c, plan, key, folder)
+    shown = Config(repo(), key)
+    held, running = read_lock(supervisor_lock_path(shown))
+    live = running.get("address") if held else None
+    return [f"plan: the planning record of {key}: " + (live or f"its supervisor isn't running; {flow_command()} "
+                                                        f"--delivery {key} lead-run --resume starts it"),
+            *([line] if (line := hosted_line(shown)) else [])]
+
+
+def rebuild_plan_view(c, plan: Path) -> str | None:
+    """After plan-sync lands: the planning record's plan.json when one holds the plan, else the preview's when it is
+    still the plan's own; what was rebuilt, or None."""
+    planning = planning_record_of(c, plan)
+    if planning:
+        said = rebuild_planning_plan(c, plan, *planning)
+        return f"the planning record of {planning[0]}: {said}" if said else None
+    text, _, _ = plan_at_head(c, plan)
+    folder = preview_folder(c, needed_review_slug(plan, text))
+    if not (folder / PREVIEW_FILE).is_file() or (folder / PREVIEW_HANDED).exists():
+        return None
+    _, said = rebuild_preview(c, plan)
+    return f"the preview: {said}" if said else None
 
 
 PREVIEW_HANDED = "handed.json"
@@ -6862,6 +6946,9 @@ def start_preview_hosted(c, folder: Path, slug: str) -> str:
 def preview_lines(c, plan: Path) -> list[str]:
     """Build the plan's preview, serve and publish it, and say where: nothing at all where the repository has no
     live view and no hosted configuration. After a delivery adopted the review, the handed finish instead."""
+    planning = planning_record_of(c, plan)
+    if planning:
+        return planning_plan_lines(c, plan, *planning)
     live_on = preview_live_config(c, Path(".")) is not None
     if not live_on and not preview_hosted_on(c):
         return []
@@ -6929,6 +7016,10 @@ def finish_handed(c, plan: Path) -> None:
     folder = preview_folder(c, slug)
     key = preview_key(slug)
     hosted = preview_hosted_on(c) and preview_publisher_runs(c, folder)
+    # The mark names who the preview is handed to, and is written just after this finisher starts.
+    marked = time.monotonic() + 10
+    while not (folder / PREVIEW_HANDED).exists() and time.monotonic() < marked:
+        time.sleep(0.05)
     try:
         rebuild_preview(c, plan)
     finally:
@@ -17133,6 +17224,13 @@ def plan_sync_command(args) -> None:
             print(line)
     except plan_sync.Refused as error:
         raise Stop(str(error)) from None
+    # The plan as it landed, on the one view the plan has. A view that can't be built never fails the sync.
+    try:
+        said = rebuild_plan_view(c, plan)
+    except (Stop, OSError, ValueError, subprocess.SubprocessError) as error:
+        said = f"not rebuilt: {error}"
+    if said:
+        print(f"plan view: {said}")
 
 
 def plan_watch_command(args) -> None:
@@ -17264,6 +17362,15 @@ def plan_open(args) -> None:
     label = tool.read_state(folder)["meta"]["collab"]["seats"][seat]["label"]
     print(f"opened the planning record of {args.key} at {folder}: seat {seat} ({label}) holds every scope; the plan "
           f"syncs on plan/{slug} with {flow_command()} plan-sync --plan {shlex.quote(plan.as_posix())}")
+    # One plan view: a preview the plan has is handed to the planning record, which builds the plan from here on.
+    preview = preview_folder(c, slug)
+    if (preview / PREVIEW_FILE).is_file() and not (preview / PREVIEW_HANDED).exists():
+        print(preview_handed_finish(c, preview, plan, {"delivery": args.key}).replace(
+            f"handed to delivery {args.key}", f"handed to the planning record of {args.key}"))
+    try:
+        rebuild_planning_plan(c, plan, args.key, folder)
+    except (Stop, OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f"plan: not built: {error}")
     # The planning record's supervisor: its live view, the sync loop and hosted publishing, under the record's key.
     c = CFG = Config(repo(), args.key)
     start_hosted(c)

@@ -251,7 +251,8 @@
         "approval": {
           "enum": [
             "agents-only",
-            "handed"
+            "handed",
+            "endorsed"
           ]
         },
         "delivery": {
@@ -271,27 +272,95 @@
             "minLength": 1,
             "maxLength": 600
           }
-        }
-      },
-      "if": {
-        "properties": {
-          "approval": {
-            "const": "handed"
+        },
+        "endorsements": {
+          "description": "Present only on a planning record's plan, always there, if empty: each seat's latest endorsement of a plan commit. One naming an older commit than `commit` is stale.",
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "seat",
+              "label",
+              "commit"
+            ],
+            "properties": {
+              "seat": {
+                "type": "string",
+                "pattern": "^s-[0-9a-f]{12}$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "commit": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              }
+            }
           }
         }
       },
-      "then": {
-        "required": [
-          "delivery"
-        ]
-      },
-      "else": {
-        "not": {
-          "required": [
-            "delivery"
-          ]
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "approval": {
+                "const": "handed"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "delivery"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "delivery"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "approval": {
+                "const": "handed"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "endorsements"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "approval": {
+                "const": "endorsed"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "endorsements"
+            ],
+            "properties": {
+              "endorsements": {
+                "minItems": 1
+              }
+            }
+          }
         }
-      }
+      ]
     }
   },
   "$defs": {

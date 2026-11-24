@@ -752,8 +752,12 @@ PLAN_REVIEW_ENTRY = ("round", "fromRound", "candidateRef", "at", "outcome", "ver
                      "clipped")
 SEVERITY_NAMES = ("P0", "P1", "P2", "P3")
 # A plan preview, written while a plan is under agent review: what `approved` means there, and the plan's decisions.
-PLAN_PREVIEW_KEYS = ("plan", "commit", "approval", "delivery", "layout", "decisions")
-PLAN_PREVIEW_APPROVALS = ("agents-only", "handed")
+PLAN_PREVIEW_KEYS = ("plan", "commit", "approval", "delivery", "layout", "decisions", "endorsements")
+PLAN_PREVIEW_APPROVALS = ("agents-only", "handed", "endorsed")
+# A planning record's endorsements: each seat's latest, at most this many. Their presence is what marks the preview of a
+# planning record, so a planning record's preview always carries the list, if empty.
+PLAN_ENDORSEMENTS = 20
+PLAN_SEAT = re.compile(r"^s-[0-9a-f]{12}$")
 PLAN_PREVIEW_LAYOUTS = ("delivery", "other")
 PLAN_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
@@ -963,8 +967,10 @@ def _plan_review(value: object) -> None:
         _text(review["endedReason"], "planReview.endedReason", PLAN_TEXT)
 
 
-def validate_plan(value: object) -> dict:
-    """A `delivery-plan/1` document, unchanged, or a ConfigError naming the key path and echoing no value."""
+def validate_plan(value: object, *, planning: bool | None = None) -> dict:
+    """A `delivery-plan/1` document, unchanged, or a ConfigError naming the key path and echoing no value. A reader
+    that knows its record is not a planning record says so with ``planning=False``, and then a preview's endorsements
+    are refused."""
     plan = _plan_object(value, "", set(PLAN_KEYS), set(PLAN_REQUIRED))
     if plan["schemaVersion"] != PLAN_SPEC:
         raise ConfigError(f"schemaVersion: must be {PLAN_SPEC}")
@@ -1086,17 +1092,20 @@ def validate_plan(value: object) -> dict:
         _text(close_out["reason"], "closeOut.reason", PLAN_TEXT)
     if "preview" in plan:
         _plan_preview(plan["preview"])
+        if planning is False and "endorsements" in plan["preview"]:
+            raise ConfigError("preview.endorsements: is only given on a planning record")
     return plan
 
 
 def _plan_preview(value: object) -> None:
     """A preview member: the plan's path and commit, who has approved it so far, its layout and its decisions."""
-    preview = _plan_object(value, "preview", set(PLAN_PREVIEW_KEYS), set(PLAN_PREVIEW_KEYS) - {"delivery"})
+    preview = _plan_object(value, "preview", set(PLAN_PREVIEW_KEYS), set(PLAN_PREVIEW_KEYS) - {"delivery", "endorsements"})
     _text(preview["plan"], "preview.plan", PLAN_TEXT)
     if not isinstance(preview["commit"], str) or not PLAN_COMMIT.fullmatch(preview["commit"]):
         raise ConfigError("preview.commit: must be a full 40-character commit id")
     if preview["approval"] not in PLAN_PREVIEW_APPROVALS:
-        raise ConfigError(f"preview.approval: must be {' or '.join(PLAN_PREVIEW_APPROVALS)}")
+        raise ConfigError(f"preview.approval: must be {', '.join(PLAN_PREVIEW_APPROVALS[:-1])} or "
+                          f"{PLAN_PREVIEW_APPROVALS[-1]}")
     if preview["approval"] == "handed" and "delivery" not in preview:
         raise ConfigError("preview.delivery: is required when the approval is handed")
     if preview["approval"] != "handed" and "delivery" in preview:
@@ -1107,9 +1116,22 @@ def _plan_preview(value: object) -> None:
         raise ConfigError(f"preview.layout: must be {' or '.join(PLAN_PREVIEW_LAYOUTS)}")
     for i, text in enumerate(_bounded(preview["decisions"], "preview.decisions", PLAN_LIST)):
         _text(text, f"preview.decisions[{i}]", PLAN_TEXT)
+    if "endorsements" in preview:
+        if preview["approval"] == "handed":
+            raise ConfigError("preview.endorsements: is never given when the approval is handed")
+        for i, item in enumerate(_bounded(preview["endorsements"], "preview.endorsements", PLAN_ENDORSEMENTS)):
+            where = f"preview.endorsements[{i}]"
+            item = _plan_object(item, where, {"seat", "label", "commit"}, {"seat", "label", "commit"})
+            if not isinstance(item["seat"], str) or not PLAN_SEAT.fullmatch(item["seat"]):
+                raise ConfigError(f"{where}.seat: must be a seat id")
+            _text(item["label"], f"{where}.label", PLAN_LABEL)
+            if not isinstance(item["commit"], str) or not PLAN_COMMIT.fullmatch(item["commit"]):
+                raise ConfigError(f"{where}.commit: must be a full 40-character commit id")
+    if preview["approval"] == "endorsed" and not preview.get("endorsements"):
+        raise ConfigError("preview.endorsements: is required, and not empty, when the approval is endorsed")
 
 
-def read_plan(path: Path) -> dict:
+def read_plan(path: Path, *, planning: bool | None = None) -> dict:
     """The validated plan at `path`. A file over 1 MiB is refused unread; nothing from the file is echoed."""
     try:
         size = path.stat().st_size
@@ -1129,7 +1151,7 @@ def read_plan(path: Path) -> dict:
         raise ConfigError(f"{path}: isn't JSON (at line {getattr(error, 'lineno', '?')})") from None
     except RecursionError:
         raise ConfigError(f"{path}: nests too deeply to read") from None
-    return validate_plan(value)
+    return validate_plan(value, planning=planning)
 
 
 # Command line

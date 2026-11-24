@@ -620,6 +620,10 @@ class PlanReviewContractTests(unittest.TestCase):
         self.assertTrue(list(validator.iter_errors(document)))
 
 
+# Two seats, and a plan commit older than the preview's.
+SEAT_A, SEAT_B, OLDER = "s-aaaaaaaaaaaa", "s-bbbbbbbbbbbb", "b" * 40
+
+
 def preview_plan(**preview) -> dict:
     """A plan preview as its builder writes one: the plan as its own approved snapshot, no changes, no evidence, no
     review reference, and the preview member."""
@@ -652,6 +656,14 @@ class PlanPreviewContractTests(unittest.TestCase):
             "handed": preview_plan(approval="handed", delivery="FX-1"),
             "another layout": preview_plan(layout="other", decisions=[]),
             "at its caps": preview_plan(plan="p" * 600, decisions=["d" * 600] * 100),
+            # A planning record's: always its endorsements, none yet, some, one of them stale, or every seat's.
+            "a planning record not yet endorsed": preview_plan(endorsements=[]),
+            "a planning record with a stale endorsement": preview_plan(endorsements=[
+                {"seat": SEAT_A, "label": "Ama", "commit": HEAD}, {"seat": SEAT_B, "label": "Ben", "commit": OLDER}]),
+            "an endorsed planning record": preview_plan(approval="endorsed", endorsements=[
+                {"seat": SEAT_A, "label": "Ama", "commit": HEAD}]),
+            "at the endorsements' cap": preview_plan(endorsements=[
+                {"seat": f"s-{n:012x}", "label": "l" * 200, "commit": HEAD} for n in range(20)]),
         }
         for name, document in cases.items():
             with self.subTest(case=name):
@@ -677,7 +689,24 @@ class PlanPreviewContractTests(unittest.TestCase):
                          "preview.commit: must be a full 40-character commit id")
         refused |= {
             "a commit that is no string": (lambda p: p.update(commit=40), "preview.commit: must be a full 40-character commit id"),
-            "an approved approval": (lambda p: p.update(approval="approved"), "preview.approval: must be agents-only or handed"),
+            "an approved approval": (lambda p: p.update(approval="approved"),
+                                     "preview.approval: must be agents-only, handed or endorsed"),
+            "endorsed without endorsements": (lambda p: p.update(approval="endorsed"),
+                                              "preview.endorsements: is required, and not empty, when the approval is endorsed"),
+            "endorsed with none": (lambda p: p.update(approval="endorsed", endorsements=[]),
+                                   "preview.endorsements: is required, and not empty, when the approval is endorsed"),
+            "endorsements on a handed preview": (lambda p: p.update(approval="handed", delivery="FX-1", endorsements=[]),
+                                                 "preview.endorsements: is never given when the approval is handed"),
+            "21 endorsements": (lambda p: p.update(endorsements=[{"seat": SEAT_A, "label": "Ama", "commit": HEAD}] * 21),
+                                "preview.endorsements: holds 21 entries, over the cap of 20"),
+            "an endorsement with no seat id": (lambda p: p.update(endorsements=[{"seat": SECRET, "label": "Ama", "commit": HEAD}]),
+                                               "preview.endorsements[0].seat: must be a seat id"),
+            "an endorsement of a short commit": (lambda p: p.update(endorsements=[{"seat": SEAT_A, "label": "Ama", "commit": HEAD[:12]}]),
+                                                 "preview.endorsements[0].commit: must be a full 40-character commit id"),
+            "an endorsement with another key": (lambda p: p.update(endorsements=[{"seat": SEAT_A, "label": "Ama", "commit": HEAD, "at": 1}]),
+                                                "preview.endorsements[0]: holds an unknown key"),
+            "an empty label": (lambda p: p.update(endorsements=[{"seat": SEAT_A, "label": "", "commit": HEAD}]),
+                               "preview.endorsements[0].label: must be non-empty text"),
             "an unknown layout": (lambda p: p.update(layout="x"), "preview.layout: must be delivery or other"),
             "a 601-character decision": (lambda p: p["decisions"].append(SECRET + "d" * 600), "preview.decisions[2]: holds 625 characters, over the cap of 600"),
             "a 601-character plan": (lambda p: p.update(plan="p" * 601), "preview.plan: holds 601 characters, over the cap of 600"),
@@ -700,11 +729,25 @@ class PlanPreviewContractTests(unittest.TestCase):
         self.assertTrue(list(validator.iter_errors(document)))
         self.assertEqual(refusal(document), "preview: must be an object")
 
+    def test_endorsements_on_a_plain_preview_are_refused_where_its_reader_knows_it_is_one(self) -> None:
+        # The document alone can't say: endorsements are what mark a planning record's plan. A plain preview's builder
+        # and its readers pass planning=False, and the endorsements are refused; a planning record's validate.
+        planned = preview_plan(endorsements=[])
+        self.assertEqual(views.validate_plan(copy.deepcopy(planned), planning=True), planned)
+        self.assertEqual(views.validate_plan(copy.deepcopy(planned)), planned)
+        with self.assertRaises(views.ConfigError) as refused:
+            views.validate_plan(copy.deepcopy(planned), planning=False)
+        self.assertEqual(str(refused.exception), "preview.endorsements: is only given on a planning record")
+        plain = preview_plan()
+        self.assertEqual(views.validate_plan(copy.deepcopy(plain), planning=False), plain)
+
     def test_the_schema_names_the_validators_preview_fields(self) -> None:
         member = json.loads(SCHEMA.read_text(encoding="utf-8"))["properties"]["preview"]
         self.assertIs(member["additionalProperties"], False)
         self.assertEqual(list(member["properties"]), list(views.PLAN_PREVIEW_KEYS))
-        self.assertEqual(set(member["required"]), set(views.PLAN_PREVIEW_KEYS) - {"delivery"})
+        self.assertEqual(set(member["required"]), set(views.PLAN_PREVIEW_KEYS) - {"delivery", "endorsements"})
+        self.assertEqual(member["properties"]["endorsements"]["maxItems"], views.PLAN_ENDORSEMENTS)
+        self.assertEqual(member["properties"]["endorsements"]["items"]["properties"]["label"]["maxLength"], views.PLAN_LABEL)
         self.assertEqual(member["properties"]["approval"]["enum"], list(views.PLAN_PREVIEW_APPROVALS))
         self.assertEqual(member["properties"]["layout"]["enum"], list(views.PLAN_PREVIEW_LAYOUTS))
         self.assertEqual(member["properties"]["decisions"]["maxItems"], views.PLAN_LIST)

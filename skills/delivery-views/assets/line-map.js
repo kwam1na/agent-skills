@@ -4409,15 +4409,30 @@
   }
   /**
    * A plan preview's line, never "Approved": "Agent review only · 3 review rounds · still open · not approved by a person",
-   * "… · not reviewed yet · …" before its first round, and "Handed to delivery <key> · …" once a delivery took it.
+   * "… · not reviewed yet · …" before its first round, and "Handed to delivery <key> · …" once a delivery took it. A
+   * planning record's names its endorsements: "Endorsed by Ama and Ben · …" once every approver seat endorsed the
+   * commit it shows, and before that each seat that did, with one of an older commit said to be stale.
    */
   function previewLine(review) {
     var count = review ? reviewRounds(review) : 0;
     var rounds = !review ? "not reviewed yet" : count + (count === 1 ? " review round" : " review rounds") +
       (REVIEW_ENDINGS[review.state] ? " · " + REVIEW_ENDINGS[review.state] : "");
-    var handed = plan.preview.approval === "handed";
+    var approval = plan.preview.approval;
+    var endorsed = list(plan.preview.endorsements).filter(isObject);
+    var named = function (items) {
+      var labels = items.map(function (item) { return text(item.label); });
+      return labels.length < 2 ? labels.join("") : labels.slice(0, -1).join(", ") + " and " + labels[labels.length - 1];
+    };
+    var current = endorsed.filter(function (item) { return item.commit === plan.preview.commit; });
+    var stale = endorsed.filter(function (item) { return item.commit !== plan.preview.commit; });
+    if (approval === "endorsed") {
+      return el("p", "plan-approval", "Endorsed by " + named(current) + " · " + rounds +
+        (stale.length ? " · stale endorsement by " + named(stale) : ""));
+    }
+    var handed = approval === "handed";
     return el("p", "plan-approval", (handed ? "Handed to delivery " + text(plan.preview.delivery) : "Agent review only") +
-      " · " + rounds + (handed ? "" : " · not approved by a person"));
+      " · " + rounds + (current.length ? " · endorsed by " + named(current) : "") +
+      (stale.length ? " · stale endorsement by " + named(stale) : "") + (handed ? "" : " · not approved by a person"));
   }
   /** What the page left out of a plan too large to show whole; a preview's plan was never approved, so it says "the plan". */
   function clippedNote(preview) {
