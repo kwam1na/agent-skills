@@ -338,6 +338,20 @@
           "text": "The full local suite passes on macOS with Python 3.11 inside tests/suite-budget.json."
         }
       ]
+    },
+    "V26-3809": {
+      "title": "Show the planning record's plan through the plan-preview builder",
+      "lane": "lane-2",
+      "why": "Operator ruling 2026-11-24: V26-3798 is split so the planning-record core starts now; this story carries its preview-builder work, which waits on V26-3775's V26-3779 (approval-7).",
+      "criteria": [
+        {
+          "id": "v26-3809-1",
+          "text": "endorsed without endorsements, and endorsements without a planning record, are refused by the schema and validate_plan; every V26-3776 preview fixture validates and renders unchanged."
+        }
+      ],
+      "after": [
+        "V26-3798"
+      ]
     }
   },
   "finish": [

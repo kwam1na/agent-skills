@@ -1450,6 +1450,10 @@ Lane 2, tier 5, after V26-3801 and V26-3802. Sensor-only for docs, test-first fo
 - **Pins:** the docs' corpus pins in `tests/test_declared_mechanics_corpus.py`,
   where they read these files.
 
+### V26-3809. Show the planning record's plan through the plan-preview builder
+
+Lane 2, tier 5, after V26-3798. Added mid-delivery: Operator ruling 2026-11-24: V26-3798 is split so the planning-record core starts now; this story carries its preview-builder work, which waits on V26-3775's V26-3779 (approval-7).
+
 ## Scenarios across stories
 
 - A seat offline for ten minutes keeps writing its own scopes. They catch
