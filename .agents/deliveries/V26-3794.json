@@ -369,6 +369,10 @@
         {
           "id": "v26-3847-3",
           "text": "Evidence follows D22, including recording a peer lane's story from the carried log, lane-tenure ordering, a lane that returns, lane clips never counting, and each lead-evidence refusal leaving every listed surface unchanged."
+        },
+        {
+          "id": "v26-3847-4",
+          "text": "Each carried input arrives on the peer with its key and ordering rule, and an unshared record writes no carried member."
         }
       ],
       "after": [
