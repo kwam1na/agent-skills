@@ -19,10 +19,10 @@ from pathlib import Path
 from unittest import mock
 
 import agent_skills
-import fnmatch
 
-from quiet_git import quiet_clone, quieten
-from tests.collab_remotes import assert_fast_forwards_only, bare_remote as shared_bare_remote
+from quiet_git import quieten
+from tests.collab_remotes import (assert_fast_forwards_only, bare_remote as shared_bare_remote, clone, forced_updates,
+                                  ref_updates)
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT_ROOT = Path(agent_skills.__file__).resolve().parents[1]
@@ -31,14 +31,6 @@ SCRIPTS = SKILL / "scripts"
 TOOL = SCRIPTS / "delivery_state.py"
 MACHINE = {"cores": 16, "load5": 1.0, "diskFreeBytes": 500 * 2**30, "swapUsedBytes": 2**30}
 LEDGER = {"capacity": 4, "used": 0, "running": [], "waiting": [], "overrides": []}
-
-
-# This module's own remote fixtures, beside the shared helper's bare remote and fast-forward check: a seeded main,
-# clones with their own identity, and every logged update across several refs. They move into the shared helper once
-# it is on the integration base.
-ZERO = "0" * 40
-# What a shared record writes on the remote: its plan branch, its lead branch, and every seat's partition.
-SHARED_REFS = ("refs/heads/plan/*", "refs/heads/lead/*", "refs/agent-skills/*")
 
 
 def git(repository: Path, *arguments: str) -> str:
@@ -57,38 +49,6 @@ def bare_remote(root: Path, name: str = "remote.git") -> Path:
     git(seed, "-c", "user.name=Seed", "-c", "user.email=seed@example.invalid", "commit", "--quiet", "-m", "Seed")
     git(seed, "push", "--quiet", str(remote), "main")
     return remote
-
-
-def clone(remote: Path, target: Path, *, name: str) -> Path:
-    """A machine's clone of ``remote`` at ``target``, with its own git identity."""
-    quiet_clone(remote, target, settings=f"[user]\n\tname = {name}\n\temail = {name.lower()}@example.invalid\n")
-    return target
-
-
-def ref_updates(remote: Path, patterns: tuple[str, ...] = SHARED_REFS) -> list[tuple[str, str, str]]:
-    """Every update the remote logged to a ref matching ``patterns``, as ``(ref, old, new)``, oldest first."""
-    updates = []
-    logs = remote / "logs"
-    for path in sorted(logs.rglob("*")) if logs.is_dir() else []:
-        ref = path.relative_to(logs).as_posix()
-        if not path.is_file() or not any(fnmatch.fnmatchcase(ref, pattern) for pattern in patterns):
-            continue
-        for line in path.read_text(encoding="utf-8").splitlines():
-            old, new = line.split(" ", 2)[:2]
-            updates.append((ref, old, new))
-    return updates
-
-
-def forced_updates(remote: Path, patterns: tuple[str, ...] = SHARED_REFS) -> list[tuple[str, str, str]]:
-    """Every logged update to a ref matching ``patterns`` that was not a fast-forward."""
-    forced = []
-    for ref, old, new in ref_updates(remote, patterns):
-        if old == ZERO or new == ZERO:
-            continue
-        ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", old, new], cwd=remote, capture_output=True)
-        if ancestor.returncode != 0:
-            forced.append((ref, old, new))
-    return forced
 
 
 def assert_fast_forward_only(remote: Path) -> None:
