@@ -481,8 +481,8 @@
   }
 
   // Pages: each chapter is its own page, routed by the address's hash (#now, #line, ...). A hash that names something
-  // inside a chapter opens that chapter's page and brings the thing into view. The rail, the corner's chapter tab and
-  // each page's foot step between pages; [ and ] do too. With no hash the page opens on Now.
+  // inside a chapter opens that chapter's page and brings the thing into view. The rail, the corner's chapter tab,
+  // scrolling on past a page's end and the Left and Right arrow keys step between pages. With no hash the page opens on Now.
   // The reader picks the layout in the chapter tab: one chapter per page (the default) or every chapter on one page.
   var LAYOUT_KEY = (typeof VIEW.themeKey === "string" && VIEW.themeKey ? VIEW.themeKey.replace(/:theme$/, "") : "delivery-views") + ":layout";
   var PAGED = true;
@@ -520,7 +520,7 @@
   var layoutButton = el("button", "chapter-tab-layout");
   layoutButton.type = "button";
   var hint = el("span", "chapter-tab-hint");
-  hint.innerHTML = "<kbd>[</kbd> <kbd>]</kbd> step between pages";
+  hint.innerHTML = "<kbd>←</kbd> <kbd>→</kbd> step between pages";
   var historyItem = null;
   if (historyHref) {
     historyItem = el("a", "chapter-tab-history");
@@ -614,15 +614,25 @@
     }
   });
   document.addEventListener("click", function (event) { if (!tab.contains(event.target)) { openTab(false); } });
+  /** Whether a control the focus is in uses the Left and Right arrows itself: the chapter tab's list, or a region that scrolls sideways. */
+  function arrowsOwned(node) {
+    for (var at = node; at && at.nodeType === 1 && at !== document.body; at = at.parentNode) {
+      if (at === tabList) { return true; }
+      var style = typeof getComputedStyle === "function" ? getComputedStyle(at) : null;
+      if (style && /^(auto|scroll)$/.test(style.overflowX) && at.scrollWidth > at.clientWidth) { return true; }
+    }
+    return false;
+  }
   document.addEventListener("keydown", function (event) {
     if (launcherOpen()) { return; }
     if (event.key === "Escape" && !tabList.hidden) { openTab(false); tabButton.focus(); return; }
-    var typing = event.target && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
-    if (!PAGED || typing || event.metaKey || event.ctrlKey || event.altKey) { return; }
-    if (event.key === "[" || event.key === "]") {
+    var typing = event.target && (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) || event.target.isContentEditable === true);
+    if (!PAGED || typing || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) { return; }
+    // The Left and Right arrows turn to the previous and next page, unless the control in focus uses them.
+    if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && !arrowsOwned(event.target)) {
       var ids = chapterIds();
-      var to = ids[ids.indexOf(currentPage) + (event.key === "]" ? 1 : -1)];
-      if (to) { location.hash = to; }
+      var to = ids[ids.indexOf(currentPage) + (event.key === "ArrowRight" ? 1 : -1)];
+      if (to) { event.preventDefault(); location.hash = to; }
     }
   });
 
@@ -4324,12 +4334,33 @@
     return el("p", "plan-approval", "Approved " + day + " after " + count + (count === 1 ? " review round" : " review rounds") +
       (REVIEW_ENDINGS[review.state] ? " · " + REVIEW_ENDINGS[review.state] : ""));
   }
+  /**
+   * A plan preview's line, never "Approved": "Agent review only · 3 review rounds · still open · not approved by a person",
+   * "… · not reviewed yet · …" before its first round, and "Handed to delivery <key> · …" once a delivery took it.
+   */
+  function previewLine(review) {
+    var count = review ? reviewRounds(review) : 0;
+    var rounds = !review ? "not reviewed yet" : count + (count === 1 ? " review round" : " review rounds") +
+      (REVIEW_ENDINGS[review.state] ? " · " + REVIEW_ENDINGS[review.state] : "");
+    var handed = plan.preview.approval === "handed";
+    return el("p", "plan-approval", (handed ? "Handed to delivery " + text(plan.preview.delivery) : "Agent review only") +
+      " · " + rounds + (handed ? "" : " · not approved by a person"));
+  }
+  /** What the page left out of a plan too large to show whole; a preview's plan was never approved, so it says "the plan". */
+  function clippedNote(preview) {
+    var clip = PLAN.clipped;
+    return el("p", "plan-clipped", "The plan was too large to show whole: " +
+      [clip.changes ? "the text of the " + clip.changes + " oldest " + (clip.changes === 1 ? "change" : "changes") : "",
+        clip.texts ? clip.texts + " other " + (clip.texts === 1 ? "text" : "texts") : ""].filter(Boolean).join(" and ") + " left out." +
+      (clip.overShare ? (preview ? " The plan alone is over the page's share for it." : " The approved plan alone is over the page's share for it.") : ""));
+  }
   function reviewFold(review) {
     var count = reviewRounds(review);
     var summary = { observational: true, observationKey: "plan-review", open: false, roundDetail: list(review.rounds).filter(isObject),
       planReview: { state: text(review.state), endedReason: text(review.endedReason) } };
     var box = el("div", "plan-review");
-    box.appendChild(runSummaryNode(summary, { commitHref: commitHref, issueHref: issueHref, fileHref: fileHref, tickets: Object.keys(LINKS.issues || {}), ticket: function (id) { return issue(id); }, lenses: VIEW.lenses }));
+    box.appendChild(runSummaryNode(summary, { commitHref: commitHref, issueHref: issueHref, fileHref: fileHref, tickets: Object.keys(LINKS.issues || {}), ticket: function (id) { return issue(id); }, lenses: VIEW.lenses,
+      preview: isObject(plan.preview) }));
     return fold("review", "Plan review (" + count + (count === 1 ? " round)" : " rounds)"), null, box);
   }
 
@@ -4470,10 +4501,15 @@
       behind.setAttribute("role", "status");
     }
     var review = planReview();
+    // A plan under agent review: no person has approved it, so nothing in the chapter reads as approved.
+    var preview = isObject(plan.preview) ? plan.preview : null;
+    if (preview) { planAsApproved = false; }
     nodes.push(title);
     if (behind) { nodes.push(behind); }
     nodes.push(el("p", "say plan-outcome", text(isObject(plan.outcome) ? plan.outcome.summary : "")));
-    if (review) { nodes.push(approvalLine(review)); }
+    if (preview) { nodes.push(previewLine(review)); } else if (review) { nodes.push(approvalLine(review)); }
+    var otherLayout = Boolean(preview) && preview.layout === "other";
+    if (otherLayout) { nodes.push(el("p", "say plan-layout", "This plan isn't in the delivery layout, so it shows no stories.")); }
     var closeOut = isObject(plan.closeOut) && plan.closeOut.fullHealth === "skipped" ? plan.closeOut : null;
     if (closeOut) {
       nodes.push(el("p", "say plan-close-out", "The close-out's fullHealth run was skipped under the " + text(closeOut.posture)
@@ -4518,7 +4554,8 @@
       switcher.appendChild(button);
     });
     switcher.appendChild(el("span", "ps-when", "Approved " + (spoken(approved.at) || "at an unknown time") + (text(approved.review) ? " · " + text(approved.review) : "")));
-    add(all, switcher, add(el("div", "plan-grid-head"), el("div", null, "Unit"), el("div", null, "Criteria"), el("div", null, "Status")));
+    // A preview has one plan, the one under review, so there is nothing to switch between.
+    add(all, preview ? null : switcher, add(el("div", "plan-grid-head"), el("div", null, "Unit"), el("div", null, "Criteria"), el("div", null, "Status")));
     var allProofs = planProofs(doc, shownUnits);
     shownUnits.forEach(function (unit) {
       var row = unitRow(allProofs[text(unit.subject)], kinds, planAsApproved);
@@ -4527,8 +4564,16 @@
       all.appendChild(row);
     });
     var folds = el("div", "plan-folds");
-    folds.appendChild(fold("units", "All units", shownUnits.length, all));
+    if (!otherLayout) { folds.appendChild(fold("units", "All units", shownUnits.length, all)); }
     if (review) { folds.appendChild(reviewFold(review)); }
+    if (preview) {
+      var decisions = list(preview.decisions).map(text).filter(Boolean);
+      var decided = el("ul", "plan-decisions");
+      decisions.forEach(function (entry) { decided.appendChild(add.apply(null, [el("li")].concat(linked(entry)))); });
+      // Before the plan records a decision, the fold says what will appear in it.
+      folds.appendChild(fold("decisions", "Decisions", decisions.length ? decisions.length : null,
+        decisions.length ? decided : el("p", "waiting", "The plan's decisions will show here once it records them.")));
+    }
     var changes = list(plan.changes).filter(isObject);
     var changeBox = el("div", "plan-changes");
     changeBox.appendChild(el("p", "waiting plan-scoped", scopeSentence(changes)));
@@ -4536,14 +4581,9 @@
     var changeList = el("ul");
     changes.slice().reverse().forEach(function (change) { changeList.appendChild(changeRow(change)); });
     if (changes.length) { changeBox.appendChild(changeList); }  // with none, the sentence above says the scope is as approved
-    if (isObject(PLAN.clipped)) {
-      var clip = PLAN.clipped;
-      changeBox.appendChild(el("p", "plan-clipped", "The plan was too large to show whole: " +
-        [clip.changes ? "the text of the " + clip.changes + " oldest " + (clip.changes === 1 ? "change" : "changes") : "",
-          clip.texts ? clip.texts + " other " + (clip.texts === 1 ? "text" : "texts") : ""].filter(Boolean).join(" and ") + " left out." +
-        (clip.overShare ? " The approved plan alone is over the page's share for it." : "")));
-    }
-    folds.appendChild(fold("changes", "Changes since approval", changes.length, changeBox));
+    if (isObject(PLAN.clipped) && !preview) { changeBox.appendChild(clippedNote(false)); }
+    // A preview was never approved, so nothing has changed since: no fold, no scope sentence and no chart.
+    if (!preview) { folds.appendChild(fold("changes", "Changes since approval", changes.length, changeBox)); }
     var waivers = el("ul", "plan-waivers");
     var waivedCount = 0;
     counts.units.forEach(function (unit) {
@@ -4571,6 +4611,8 @@
     }
     folds.appendChild(fold("outcome", "The full outcome", null, el("p", "plan-full", text(isObject(plan.outcome) ? plan.outcome.text : ""))));
     nodes.push(folds);
+    // A preview has no changes fold, so what the page left out is said at the chapter's end.
+    if (isObject(PLAN.clipped) && preview) { nodes.push(clippedNote(true)); }
     inner.replaceChildren.apply(inner, nodes);
   }
 

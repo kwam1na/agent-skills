@@ -6,6 +6,8 @@ import hashlib
 import importlib.util
 import json
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,12 +50,47 @@ def load_capture():
     return module
 
 
+PAGE_FIXTURES = ROOT / "tests" / "delivery_views_page" / "plan-fixtures.mjs"
+PREVIEW_ENDINGS = {"preview-none": None, "preview-open": "open", "preview-aligned": "aligned", "preview-ended": "ended",
+                   "preview-handed": "aligned", "preview-other": "aligned"}
+
+
+def preview_fixtures() -> dict:
+    """The page lane's preview plans, as plan-fixtures.mjs builds them, by name."""
+    script = ("const { PREVIEW_CASES } = await import(process.argv[1]);"
+              "process.stdout.write(JSON.stringify(Object.fromEntries(Object.entries(PREVIEW_CASES).map(([n, b]) => [n, b().plan]))));")
+    result = subprocess.run(["node", "--input-type=module", "-e", script, PAGE_FIXTURES.as_uri()], capture_output=True, text=True,
+                            timeout=120, check=True)
+    return json.loads(result.stdout)
+
+
 class PlanFixtureTests(unittest.TestCase):
     def test_each_golden_delivery_plan_passes_the_plan_validator(self) -> None:
         for case in PLAN_CASES:
             with self.subTest(case=case):
                 plan = json.loads((CORPUS / case / "plan.json").read_text(encoding="utf-8"))
                 self.assertIs(views_common.validate_plan(plan), plan)
+
+    @unittest.skipIf(shutil.which("node") is None, "the page lane's fixtures need Node")
+    def test_each_preview_fixture_is_a_valid_preview_and_the_set_reaches_every_ending(self) -> None:
+        import jsonschema
+
+        validator = jsonschema.Draft202012Validator(json.loads(
+            (ROOT / "skills/delivery-views/references/delivery-plan.schema.json").read_text(encoding="utf-8")))
+        plans = preview_fixtures()
+        self.assertLessEqual(set(PREVIEW_ENDINGS), set(plans))
+        for name, plan in plans.items():
+            with self.subTest(case=name):
+                self.assertIs(views_common.validate_plan(plan), plan)
+                self.assertEqual(list(validator.iter_errors(plan)), [])
+                self.assertIn(plan["preview"]["approval"], ("agents-only", "handed"))
+                self.assertNotIn("review", plan["approved"])
+                self.assertEqual((plan["changes"], plan["evidence"]), ([], {}))
+                if name in PREVIEW_ENDINGS:
+                    self.assertEqual(plan.get("planReview", {}).get("state"), PREVIEW_ENDINGS[name])
+        self.assertEqual(plans["preview-handed"]["preview"]["approval"], "handed")
+        self.assertEqual((plans["preview-other"]["preview"]["layout"], plans["preview-other"]["units"]), ("other", []))
+        self.assertEqual(len(plans["preview-open"]["planReview"]["rounds"]), 3)
 
     def test_the_plan_fixtures_carry_no_first_adopter_term(self) -> None:
         paths = [path for case in PLAN_CASES for path in sorted((CORPUS / case).iterdir())] + sorted(RECORDS.iterdir())
