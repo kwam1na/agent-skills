@@ -409,7 +409,8 @@
     {
       "id": "approval-4",
       "text": "No hosted snapshot or renderer version change (D14): waiting.",
-      "state": "waiting"
+      "state": "done",
+      "who": "Kwamina"
     },
     {
       "id": "approval-5",
