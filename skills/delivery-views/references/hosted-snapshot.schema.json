@@ -188,6 +188,19 @@
             "type": "string",
             "maxLength": 2048
           }
+        },
+        "files": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "maxProperties": 2000,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 2048,
+            "pattern": "^[0-9a-f]{7,40} (?:\\./)?(?!\\.\\.?(?:/|:))(?![^:]*/\\.\\.?(?:/|:))[^\\x00-\\x20\\x7f\\\\:/]+(?:/[^\\x00-\\x20\\x7f\\\\:/]+)*:[0-9]+(?:-[0-9]+)?$"
+          }
         }
       },
       "required": [

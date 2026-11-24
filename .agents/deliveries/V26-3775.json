@@ -50,7 +50,13 @@
         "skills/delivery-views/assets/runs.css",
         "tests/test_orchestration_render.py",
         "tests/test_delivery_views_render.py",
-        "tests/delivery_views_page/runs.test.mjs"
+        "tests/delivery_views_page/runs.test.mjs",
+        "skills/delivery-views/scripts/public_projection.py",
+        "skills/delivery-views/references/hosted-snapshot.schema.json",
+        "tests/test_delivery_views_hosted_projection.py",
+        "tests/test_delivery_views_hosted.py",
+        "tests/delivery_views_page/line-map-siblings.test.mjs",
+        "hosted/delivery-viewer/**"
       ]
     }
   },
@@ -78,6 +84,10 @@
         {
           "id": "v26-3776-5",
           "text": "Every existing delivery plan fixture validates and renders byte for byte unchanged, and the existing row pinning \"Approved on round 3\" for a delivery plan stays green."
+        },
+        {
+          "id": "v26-3776-6",
+          "text": "On the paged line map, the Left and Right arrow keys turn to the previous and next chapter page, and [ and ] no longer turn pages. The arrows do nothing while typing in a field, with a modifier held, while the launcher is open, or while focus is in a control that uses those keys itself (the chapters tab list, a horizontally scrolling region); any text on the page or in the launcher that names [ ] names the arrow keys instead."
         }
       ]
     },
@@ -186,20 +196,65 @@
           "text": "The full local suite passes on macOS with Python 3.11 with --budget tests/suite-budget.json."
         }
       ]
+    },
+    "V26-3807": {
+      "title": "Open live view addresses in a browser by default, whatever the host",
+      "lane": "lane-1",
+      "why": "Operator asked on 2026-11-24 for live view addresses to open in the in-app browser pane by default, and to deliver it in this delivery",
+      "criteria": [
+        {
+          "id": "v26-3807-1",
+          "text": "run-delivery's Host behaviour says that for each live view or hosted address a command prints (lead-init, lead-run, doctor/view, status lines, plan-view's links), the agent in the same turn must open it in the host's in-app browser pane where the host offers one, and must also present it as a card that opens in that pane where the host can; where there is no such pane, it opens the address in the operator's own browser, and prints it only when it can open neither."
+        },
+        {
+          "id": "v26-3807-2",
+          "text": "The text names no host, product or host tool; no command calls a host's interface; each other skill that hands a live address says the same in one sentence; catalog, profiles and provenance are refreshed and the corpus pins stay green."
+        }
+      ],
+      "after": [
+        "V26-3780"
+      ]
+    },
+    "V26-3808": {
+      "title": "Finish the chapter-pages live view for shipping: hosted file links and a steady siblings test",
+      "lane": "lane-3",
+      "why": "Operator asked 2026-11-24 to finish #488's unshipped pieces in this delivery",
+      "criteria": [
+        {
+          "id": "v26-3808-1",
+          "text": "A hosted cut of a delivery whose review notes cite (path:line) with a forge fileUrl configured carries those file links, validates against the hosted snapshot schema, and the hosted page links them as the local page does."
+        },
+        {
+          "id": "v26-3808-2",
+          "text": "A file link that is not an https:// URL, or built from a path outside the reviewed tree, is refused by the projection's validation and never reaches the hosted page; with no fileUrl the hosted cut and every hosted golden are byte for byte unchanged."
+        },
+        {
+          "id": "v26-3808-3",
+          "text": "The siblings page test passes in 10 consecutive full page-lane runs (tests.test_delivery_views_page), and the change names the cause of its earlier intermittent failures and fixes that cause rather than retrying."
+        },
+        {
+          "id": "v26-3808-4",
+          "text": "The hosted viewer passes hosted.test and hosted.browser at the integration head with the chapter-pages line map: its build hooks, hosting status in the corner and specs follow #488's markup, and #488's own UI is not changed to suit them."
+        }
+      ],
+      "after": [
+        "V26-3777"
+      ]
     }
   },
   "finish": [
     {
       "id": "stories",
       "label": "The stories",
-      "text": "V26-3776, V26-3777, V26-3778, V26-3779 and V26-3780 land on integrate/plan-preview-views through its merge queue, each with every criterion met",
+      "text": "V26-3776, V26-3777, V26-3778, V26-3779, V26-3780, V26-3807 and V26-3808 land on integrate/plan-preview-views through its merge queue, each with every criterion met",
       "covers": {
         "criteria": "all",
         "proofs": [
           "review",
           "merged"
         ]
-      }
+      },
+      "at": "2026-11-24T08:01:07.953005Z"
     },
     {
       "id": "preview-end-to-end",
