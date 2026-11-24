@@ -225,6 +225,22 @@ class LaneAndRunnerTests(LaneScopeFixture):
         self.a.take()
         item = self.element(self.a, "queue", "subject", "APP-1")
         self.assertEqual((item["stage"], item["head"], item["checks"][1]["state"]), ("queued", OTHER, "superseded"))
+        # Past the boundary: a reset over a checking run with no failed check, or at the same head, is the queue's.
+        for checks, head in (([{"id": "always", "state": "passed"}, {"id": "full", "state": "running"}], "a new head"),
+                             (running, "the same head")):
+            with self.subTest(past=head):
+                state_tool.patch(self.a.directory, writer="runner", version=self.a.state()["version"],
+                                 selector="queue[subject=APP-1]", changes={"stage": "checking", "checks": checks})
+                origins = json.loads((self.a.directory / state_tool.FIELD_ORIGINS_FILE).read_text())
+                held = origins["queue[subject=APP-1]/stage"]
+                own = max(entry["origin"]["seq"] for entry in self.b.journal() if entry["origin"]["seat"] == self.second)
+                origin = {"seat": self.second, "seq": own, "seen": seen}
+                moved = [{"path": "queue[subject=APP-1]/head", "value": HEAD, "origin": origin}] if head == "a new head" else []
+                self.plant(self.second, [*moved, {
+                    "path": "queue[subject=APP-1]/stage", "value": "queued", "origin": origin,
+                    "replaces": {"seat": held["seat"], "seq": held["seq"], "digest": state_tool.value_digest("checking")}}])
+                self.a.take()
+                self.assertEqual(self.element(self.a, "queue", "subject", "APP-1")["stage"], "checking")
         # Marking a finished check, or one the run never had, is not the run ending: it is the queue's to write.
         self.assertFalse(collab._superseding({"checks": running}, [{"id": "always", "state": "passed"},
                                                                   {"id": "full", "state": "superseded"}]))

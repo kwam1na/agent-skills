@@ -1257,9 +1257,12 @@ def scope_violations(directory: Path, before: dict, after: dict, writer: str = "
             continue  # the element's own removal stands for its fields
         runner = element is not None and element.startswith("queue[") and FIELD_MAP["queue"].get(field) == ("queue",)
         at_start = field in QUEUE_START and new.get(path, ...) == QUEUE_START[field]
-        # A re-hand-off is legal only for a stopped or queued element, or one checking whose run it ends.
-        reset = runner and at_start and (before_element(before, element) or {}).get("stage") in ("stopped", "queued",
-                                                                                                "checking")
+        # A re-hand-off is legal only for a stopped or queued element, or one checking whose failed run it ends at a
+        # new head.
+        was, now = before_element(before, element) or {}, before_element(after, element) or {}
+        ends = was.get("stage") == "checking" and now.get("head") != was.get("head") and any(
+            check.get("state") == "failed" for check in was.get("checks", []))
+        reset = runner and at_start and (was.get("stage") in ("stopped", "queued") or ends)
         if element in made and (not runner or field == "order" or at_start) or reset:
             # Set by the write that makes the element, or put back to its starting value by a re-hand-off: judged as
             # the element.

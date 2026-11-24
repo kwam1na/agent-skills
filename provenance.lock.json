@@ -542,11 +542,11 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/collab.py",
-          "sha256": "ef712dfe57f84d04928ff8db0997616d669e32280c923aecdadb6c26777cd017"
+          "sha256": "019d4ee236568ab4e768196f0e5c4cfac64fa5c57838ec045ee392b7c219f3ac"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "503f8e961f43f25872c4889fb4704ca1cf19ae03a5560e96e1b9b53ef9035832"
+          "sha256": "d1b204b2223a77270843452dd393146786fb382ec8c5867530f557b9ab927887"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",

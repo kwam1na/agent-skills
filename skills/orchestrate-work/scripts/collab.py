@@ -626,8 +626,17 @@ def _apply_slice(state: dict, origins: dict, journal: list[dict], seat: str, par
                if item["origin"]["seat"] == seat and item["origin"]["seq"] <= through]
     # The lane each element in the slice names, for an element this record does not hold yet.
     lanes = {item["path"][:-len("/lane")]: item.get("value") for item in entries if item["path"].endswith("/lane")}
-    # Each queue element's stage before this slice, which a re-hand-off is judged by however the slice moves it.
+    # Each queue element's stage before this slice, which a re-hand-off is judged by however the slice moves it; and a
+    # checking element only a hand-off that ends a failed run may reset: one of its checks failed, and the same write
+    # moves its head.
     stages = {f"queue[subject={item['subject']}]": item.get("stage") for item in state.get("queue", [])}
+    for item in state.get("queue", []):
+        selector = f"queue[subject={item['subject']}]"
+        moved = next((entry for entry in entries if entry["path"] == f"{selector}/head"
+                      and entry.get("value") != item.get("head")), None)
+        if item.get("stage") == "checking" and not (
+                moved is not None and any(check.get("state") == "failed" for check in item.get("checks", []))):
+            stages[selector] = "running"
     # The seq of the write that made each element this slice makes.
     created = {item["path"]: item["origin"]["seq"] for item in entries
                if item["path"].endswith("]") and not item.get("removed")}
@@ -657,8 +666,8 @@ def _apply_slice(state: dict, origins: dict, journal: list[dict], seat: str, par
         at_start = field in tool.QUEUE_START and item.get("value") == tool.QUEUE_START[field]
         # The write that makes an element sets its starting fields, as whoever may make it; a lane's re-hand-off puts
         # its queue element's runner fields back to their starting values, as the lane.
-        # A re-hand-off is legal only for a stopped or queued element, or one checking whose run it ends; ending that run
-        # marks the checks it was still running, or had yet to start, superseded.
+        # A re-hand-off is legal only for a stopped or queued element, or one checking whose failed run it ends at a new
+        # head; ending that run marks the checks it was still running, or had yet to start, superseded.
         held_stage = stages.get(selector)
         reset = runner and held_stage in ("stopped", "queued", "checking") and (
             at_start or held_stage == "checking" and field == "checks" and _superseding(held_element, item.get("value")))
