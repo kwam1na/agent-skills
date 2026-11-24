@@ -174,14 +174,6 @@
           "text": "With review aligned on X and plan-rekey at Y, both seats endorsing Y lets lead-init pass; each D11 failure gives its own code, earlier codes winning pairwise; a --no-approver seat does not hold it."
         },
         {
-          "id": "v26-3798-5",
-          "text": "endorsed without endorsements, and endorsements without a planning record, are refused by the schema and validate_plan; every V26-3776 preview fixture validates and renders unchanged."
-        },
-        {
-          "id": "v26-3798-6",
-          "text": "plan-open on a slug with a running preview leaves its last hosted cut handed to the key with its server and publisher gone; later rebuilds touch only the planning record."
-        },
-        {
           "id": "v26-3798-7",
           "text": "PlanReviewWithoutDeliveryTests stays unchanged."
         }
@@ -345,6 +337,32 @@
           "id": "v26-3803-4",
           "text": "The full local suite passes on macOS with Python 3.11 inside tests/suite-budget.json."
         }
+      ]
+    },
+    "V26-3809": {
+      "title": "Show the planning record's plan through the plan-preview builder",
+      "lane": "lane-2",
+      "why": "Operator ruling 2026-11-24: V26-3798 is split so the planning-record core starts now; this story carries its preview-builder work, which waits on V26-3775's V26-3779 (approval-7).",
+      "criteria": [
+        {
+          "id": "v26-3809-1",
+          "text": "endorsed without endorsements, and endorsements without a planning record, are refused by the schema and validate_plan; every V26-3776 preview fixture validates and renders unchanged."
+        },
+        {
+          "id": "v26-3809-2",
+          "text": "plan-open on a slug with a running preview leaves its last hosted cut handed to the key with its server and publisher gone; later rebuilds touch only the planning record."
+        },
+        {
+          "id": "v26-3809-3",
+          "text": "A planning record's plan.json carries preview.approval agents-only until every approver seat endorses the current commit, then endorsed with the endorsements; an endorsement of an older commit is shown stale."
+        },
+        {
+          "id": "v26-3809-4",
+          "text": "plan-sync landing a push rebuilds the preview, or the planning record when one exists."
+        }
+      ],
+      "after": [
+        "V26-3798"
       ]
     }
   },
