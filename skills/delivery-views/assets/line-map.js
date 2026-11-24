@@ -853,7 +853,7 @@
   launchIcon.setAttribute("viewBox", "0 0 24 24");
   launchIcon.setAttribute("aria-hidden", "true");
   launchIcon.innerHTML = '<path d="M10.5 18a7.5 7.5 0 1 0 0 -15a7.5 7.5 0 0 0 0 15z"/><path d="M21 21l-5.2 -5.2"/>';
-  add(launchButton, launchIcon, el("kbd", "launch-key", (isMac ? "⌘" : "Ctrl ") + "K"));
+  add(launchButton, launchIcon, el("span", "launch-label", "Go to"), el("kbd", "launch-key", (isMac ? "⌘" : "Ctrl ") + "K"));
   launchButton.addEventListener("click", function () { launcher.open(); });
   if (corner) { corner.insertBefore(launchButton, tab); }
 
