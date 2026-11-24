@@ -960,8 +960,14 @@ read them.
 
 - **Who writes what.** Every `delivery-state/1` field has one row in the state
   tool's field map: the scopes that may write it, or `local`, `tool` or
-  `derived`. A lead write on a shared record that changes a field only the
-  `delivery` holder writes is refused with `scope.not_held`, naming the holder.
+  `derived`. A lead or lane write on a shared record that changes a field its
+  seat holds no scope to write is refused with `scope.not_held`, naming the
+  holder: each lead writes its own lanes' rows and queue elements. The write
+  that makes a queue element, a lane's acceptance or the `delivery` holder's
+  adoption of a missed hand-off, sets its runner fields only to their starting
+  values, and a re-hand-off may put them back there. The runner writes only on
+  the machine whose seat holds `queue`, and `merge_queue.py serve` refuses
+  anywhere else with `queue.not_held`, and stops once the queue is handed on.
   The sync writer applies a peer's value only if that seat held a scope that
   may write it when it wrote it. A field two scopes may write, such as a lane
   row's focus, goes to the write that replaced the other, and between
@@ -969,13 +975,18 @@ read them.
 - **Admission.** Only the `delivery` holder admits a seat, and only its
   `seat.admitted` counts. Admitting a seat again with another `--no-approver`
   setting changes whether it approves the plan.
+- **The queue's handover.** `scope give --scope queue` waits, up to `--wait`
+  seconds, for the queue to be idle: no check running, no merge in progress and
+  no turn holding the queue lock. Busy past that, it refuses with
+  `scope.handover_busy`, naming the check or merge. Idle, holding the queue
+  lock, it journals `queue.stopped` and then `scope.transferred`.
 - **Requests.** Any seat may ask for a scope with `scope.requested`. Its
   holder passes it on, or keeps it with `scope.declined`. With
   `collab.autoGrant` on, the `delivery` holder passes a requested plan section
   nobody holds to the seat that asked, and never any other scope.
 
 ```bash
-python3 -B scripts/delivery_state.py --dir STATE scope give --scope SCOPE --to SEAT
+python3 -B scripts/delivery_state.py --dir STATE scope give --scope SCOPE --to SEAT [--wait SECONDS]
 python3 -B scripts/delivery_state.py --dir STATE scope request --scope SCOPE --reason "<why>"
 python3 -B scripts/delivery_state.py --dir STATE scope decline --request ID
 python3 -B scripts/delivery_state.py --dir STATE seat admit --seat SEAT [--no-approver]

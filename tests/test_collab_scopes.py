@@ -226,9 +226,12 @@ class SyncFilterTests(ScopeFixture):
         self.a.take()
         self.assertEqual(state_tool.holder(self.a.journal(), "lane:lane-1"), self.first)
         self.assertEqual(self.lane_focus(self.a), "b's, holding lane-1")
-        # b's lane rows are not refused locally until the lane checks land; its peers ignore the write.
-        self.focus(self.b, "b's, after passing lane-1 on")
-        self.b.push()
+        # b, no longer holding lane-1, is refused on its own machine; a write its partition carries anyway, after the
+        # transfer, is ignored by its peers.
+        self.refused("scope.not_held", lambda: self.focus(self.b, "b's, after passing lane-1 on"), self.b)
+        after = next(entry for entry in reversed(self.b.journal()) if entry["kind"] == "scope.transferred")["origin"]
+        self.plant(self.second, [{"path": "lanes[id=lane-1]/focus", "value": "b's, after passing lane-1 on",
+                                  "origin": {"seat": self.second, "seq": after["seq"], "seen": after["seen"]}}])
         self.a.take()
         self.assertEqual(self.lane_focus(self.a), "b's, holding lane-1")
 

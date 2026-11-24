@@ -518,15 +518,15 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "27f7ce13daa2ab0ff4ef1167c03983d9d0fbeb742c53b96f2441f06beb48a950"
+          "sha256": "1bb7c42e6d688e00cefc103ea28b4e080794228cfadbaeefd0b63cb9e9b5b221"
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
-          "sha256": "7ecdd0fa6426a41f7e92f30b67466082cc2b2bd7ed4b87376e5d569eb3035f45"
+          "sha256": "ccbe0c408ae2a2fc3d24fc79467fb2e7c79d615ce97c7ae8e6b87b7108f5ea9f"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "55a225a03409c814e809910d0314c14a269dfb797a3c2464b8b680f6b8cb625b"
+          "sha256": "b0dc900eec1de4351a9b93d40a5cf11e87f03290b79d65dda12593aa39ba960f"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -542,11 +542,11 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/collab.py",
-          "sha256": "1a0666a69571bf63b154b095c0ef66bb68e249661bbdaeac223671e58808f2f7"
+          "sha256": "b6c415f2db663d96477e4c9df3a96e79a9d2302ef91ada2d0fdb03355cb0b8b8"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "1c0a4bef2d41261497b197ab75be11e76d220e10b9a02b7cbc7d689912395b3d"
+          "sha256": "ceba92166ad9d8c0fb0e41d2e1958e3203fd5eb0f4d9acb0e92b14f522ac7edf"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
@@ -558,7 +558,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "7e6cec40a903a9385256053126c12b4117a538eb42a32bbfe5287b8362c1ac23"
+          "sha256": "7b2506b82ab17e7c0db56fb2734abcd0e38c1b9f9e58c3682514723b1994faf8"
         },
         {
           "path": "skills/orchestrate-work/scripts/narrator.py",
@@ -1147,7 +1147,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "934bab8dd13e08fe37479f68e634609b645b397d1adc661d0e75826a27192fc4"
+          "sha256": "643856a2e4cbe4f487ec3a43599a0b455a535bdd44dd1de71ab0c41175136f21"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

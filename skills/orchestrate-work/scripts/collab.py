@@ -58,6 +58,10 @@ MIN_POLL_SECONDS = 2.0
 # record alone.
 FETCHED_REFRESH_SECONDS = 60.0
 GIT_TIMEOUT_SECONDS = 120
+# How long a queue handover waits for the queue to be idle before it refuses.
+HANDOVER_WAIT_SECONDS = 60.0
+# A finished check's states that fail its run, as the queue journals check.failed for them.
+FAILING = ("failed", "timed_out")
 ZERO = "0" * 40
 
 state_tool = None
@@ -232,8 +236,10 @@ def admit_seat(directory: Path, seat: str, *, approver: bool = True) -> dict:
                                answers=[request["id"]])
 
 
-def give_scope(directory: Path, scope: str, to: str) -> dict:
-    """Pass ``scope`` from this seat, its holder, to the admitted seat ``to``."""
+def give_scope(directory: Path, scope: str, to: str, *, wait: float = HANDOVER_WAIT_SECONDS,
+               poll: float = 0.5, sleep=time.sleep) -> dict:
+    """Pass ``scope`` from this seat, its holder, to the admitted seat ``to``. The queue is handed over only once it is
+    idle, waiting up to ``wait`` seconds for that."""
     tool = _state_tool()
     _check_scope(scope)
     journal = tool.read_journal(directory)
@@ -242,7 +248,42 @@ def give_scope(directory: Path, scope: str, to: str) -> dict:
         raise _refuse("collab.seat_unknown", f"seat {to} is not an admitted seat of this record")
     if to == seat:
         raise _refuse("scope.held", f"seat {seat} holds {scope} already")
+    if scope == "queue":
+        return _hand_over_queue(directory, seat, to, wait=wait, poll=poll, sleep=sleep)
     return tool.append_journal(directory, kind="scope.transferred", data={"scope": scope, "from": seat, "to": to})
+
+
+def _queue_busy(state: dict) -> str | None:
+    """What keeps the queue from being handed over: a check running, or a merge in progress."""
+    running = state["meta"]["checking"].get("now")
+    if running:
+        return f"the check of {running['subject']} ({running['title']}) is running"
+    merging = [item["subject"] for item in state["queue"] if item["stage"] == "merging"]
+    return f"the merge of {', '.join(merging)} is in progress" if merging else None
+
+
+def _hand_over_queue(directory: Path, seat: str, to: str, *, wait: float, poll: float, sleep) -> dict:
+    """D13: once the queue is idle, holding the queue lock so no turn starts, journal that this machine's queue takes
+    no more work, then pass the queue on. Busy past ``wait``, refuse naming what is running."""
+    tool = _state_tool()
+    deadline = time.monotonic() + wait
+    while True:
+        busy = None
+        try:
+            with tool.file_lock(directory / tool.QUEUE_LOCK, timeout=min(poll, max(0.0, deadline - time.monotonic()))):
+                busy = _queue_busy(tool.read_state(directory))
+                if busy is None:
+                    tool.append_journal(directory, kind="queue.stopped", data={"seat": seat})
+                    return tool.append_journal(directory, kind="scope.transferred",
+                                               data={"scope": "queue", "from": seat, "to": to})
+        except tool.StateError as error:
+            if error.code != "lock_timeout":
+                raise
+            busy = _queue_busy(tool.read_state(directory)) or "a turn of the queue is running"
+        if time.monotonic() >= deadline:
+            raise _refuse("scope.handover_busy", f"the queue is not idle: {busy}; hand it over once it is, or wait "
+                          "longer")
+        sleep(poll)
 
 
 def request_scope(directory: Path, scope: str, reason: str) -> dict:
@@ -548,6 +589,16 @@ def permitted(journal: list[dict], seat: str) -> bool:
             or (_state_tool().derived_seats(journal).get(seat) or {}).get("admitted", False))
 
 
+def _superseding(element: dict | None, checks: object) -> bool:
+    """Whether ``checks`` is ``element``'s checks with only those still running or pending marked superseded, as a
+    hand-off that ends a failed run leaves them."""
+    held = (element or {}).get("checks")
+    if not isinstance(held, list) or not isinstance(checks, list) or len(held) != len(checks):
+        return False
+    return all(isinstance(new, dict) and (new == old or old.get("state") in ("running", "pending")
+                                          and new == {**old, "state": "superseded"}) for old, new in zip(held, checks))
+
+
 def _find(state: dict, array: str, key: str, value: str) -> dict | None:
     return next((element for element in state.get(array, []) if element.get(key) == value), None)
 
@@ -577,6 +628,17 @@ def _apply_slice(state: dict, origins: dict, journal: list[dict], seat: str, par
                if item["origin"]["seat"] == seat and item["origin"]["seq"] <= through]
     # The lane each element in the slice names, for an element this record does not hold yet.
     lanes = {item["path"][:-len("/lane")]: item.get("value") for item in entries if item["path"].endswith("/lane")}
+    # Each queue element's stage before this slice, which a re-hand-off is judged by however the slice moves it; and a
+    # checking element only a hand-off that ends a failed run may reset: one of its checks failed, and the same write
+    # moves its head.
+    stages = {f"queue[subject={item['subject']}]": item.get("stage") for item in state.get("queue", [])}
+    for item in state.get("queue", []):
+        selector = f"queue[subject={item['subject']}]"
+        moved = next((entry for entry in entries if entry["path"] == f"{selector}/head"
+                      and entry.get("value") != item.get("head")), None)
+        if item.get("stage") == "checking" and not (
+                moved is not None and any(check.get("state") in FAILING for check in item.get("checks", []))):
+            stages[selector] = "running"
     # The seq of the write that made each element this slice makes.
     created = {item["path"]: item["origin"]["seq"] for item in entries
                if item["path"].endswith("]") and not item.get("removed")}
@@ -594,7 +656,7 @@ def _apply_slice(state: dict, origins: dict, journal: list[dict], seat: str, par
             continue  # applied already
         # D7: the value counts only if its seat held a scope that may write it when it wrote it.
         selector = (path.split("]/", 1)[0] + "]" if "]/" in path else path) if PATH.match(path) else None
-        element = None
+        element = held_element = None
         if selector is not None:
             held_element = _find(state, *PATH.match(selector).group("array", "key", "value"))
             if held_element is None or "lane" not in held_element:
@@ -603,10 +665,16 @@ def _apply_slice(state: dict, origins: dict, journal: list[dict], seat: str, par
         scopes = tool.path_scopes(state, path, element)
         field = path.split("]/", 1)[1] if "]/" in path else None
         runner = selector is not None and selector.startswith("queue[") and tool.FIELD_MAP["queue"].get(field) == ("queue",)
-        if field is not None and created.get(selector) == origin["seq"] and (
-                not runner or field == "order" or field in tool.QUEUE_START and item.get("value") == tool.QUEUE_START[field]):
-            # The write that makes an element sets its starting fields, as whoever may make it: a queue element's
-            # runner fields only at their starting values.
+        at_start = field in tool.QUEUE_START and item.get("value") == tool.QUEUE_START[field]
+        # The write that makes an element sets its starting fields, as whoever may make it; a lane's re-hand-off puts
+        # its queue element's runner fields back to their starting values, as the lane.
+        # A re-hand-off is legal only for a stopped or queued element, or one checking whose failed run it ends at a new
+        # head; ending that run marks the checks it was still running, or had yet to start, superseded.
+        held_stage = stages.get(selector)
+        reset = runner and held_stage in ("stopped", "queued", "checking") and (
+            at_start or held_stage == "checking" and field == "checks" and _superseding(held_element, item.get("value")))
+        if field is not None and (reset or created.get(selector) == origin["seq"] and (
+                not runner or field == "order" or at_start)):
             scopes = tool.path_scopes(state, selector, element)
         if isinstance(scopes, str) or not any(tool.holds(journal, seat, scope, at=written) for scope in scopes):
             continue

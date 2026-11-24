@@ -147,6 +147,7 @@ TABLE = {
     "deferral.held": ("B", "note", "finding *title*", "", "-"),
     "feedback.raised": ("S", "note", "anchor *text* blocking", "", "-"),
     "feedback.resolved": ("S", "decision", "outcome reason", "answers:feedback.raised", "-"),
+    "queue.stopped": ("S", "note", "seat", "", "-"),
     "delivery.closed": ("H", "landed", "skipped?", "", "epic: Delivery closed"),
 }
 ALTITUDES = {"H": "headline", "S": "story", "B": "bookkeeping"}
