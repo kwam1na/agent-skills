@@ -191,7 +191,7 @@ which holds the corpus pins any doc or skill change can break, and
 brings `tests.test_delivery_views_adopter` and `tests.test_delivery_views_snapshots`,
 the line map's outside adopter among them. A change under `docs/solutions/` brings
 `tests.test_compound_learning_corpus`, which pins each note's shape. A change to
-any Markdown file under `skills/` brings the five corpus tests that read the shipped
+any Markdown file under `skills/` brings the six corpus tests that read the shipped
 skill prose, `tests.test_run_event_emission_corpus` among them, which holds each
 journal kind to the one skill that owns it. A change to any `tests/test_*.py` module
 brings `tests.test_own_deliveries`, so a module added without its entry fails in the

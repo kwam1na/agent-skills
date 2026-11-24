@@ -41,7 +41,7 @@
       "outputs": [
         {
           "path": "skills/compound-delivery-kernel/SKILL.md",
-          "sha256": "c6593a83c2afef859921e58d572346799710571d5f1179fed86799d3cea12495"
+          "sha256": "7adc4684034580a9379aaa8f6d1769eed885bcdfbfab030f0194a6f3363486c7"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -518,7 +518,7 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "ed23fe43d6c3d5fb9d089b7955f9b181c3aa43173c44888b6e8a5d01a6f457a6"
+          "sha256": "e3d3cd8fef2ca595bd28c200d8f0f0bbfe464107dd35955b1c074fa401aa27a2"
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
@@ -1045,7 +1045,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "52ebda0602a58cc8c9871555f0c527e2af1aa4d9cb67d3bdb61acacc1dd27ff3"
+          "sha256": "15b9d07cb22ed294a736f81ecb72e85fc557775441dc5f0708119d07b4d79b10"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -1095,7 +1095,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "e5f6bc4b8b3630a8841d390efaa3ca62d815ba4006465a7dca9cfa42f6d1cf61"
+          "sha256": "d992dcc277b3cc7c142375eb044bcfb9705cf6bb80f207be58241ed56a5c6e31"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",

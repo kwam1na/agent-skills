@@ -115,6 +115,10 @@ chapter, with every review round, and says the review is agent-only until a
 person approves the plan. Where a command prints no preview line at all, the
 repository has no live view or hosted page for it: say nothing about a preview.
 A line saying the preview wasn't built or published is passed on as printed.
+Handing over a link means opening it in the same turn: in the host's in-app
+browser pane, with a card that opens it there where the host can show one;
+without such a pane, in the operator's own browser; and printing it only when it
+can be opened in neither.
 
 ## Plan Extension Pins and Shared Resources
 

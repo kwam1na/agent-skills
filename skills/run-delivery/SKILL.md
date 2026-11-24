@@ -307,6 +307,11 @@ operator can then open, watch and steer each lane, and stop it on its own.
 
 - One session per lane, started fresh. Its prompt is exactly what `lead-assign` prints, plus anything the lead decides
   for that lane (an order, a wait). The brief and the record carry everything else.
+- Every lane starts up front. In the same turn that starts the delivery, the lead starts one session for every lane of
+  the delivery file, including a lane whose first story is blocked, which it tells to wait. A blocked lane stays idle
+  until the lead messages it its story, and every later story reaches a lane as a message to that lane's session, never
+  as a new session. Some hosts let the lead start a session only in a turn the operator began, not in one a lane's
+  report or a wake began, so a lane started later can sit waiting on the operator.
 - The session shares the main checkout: the lane makes each story's checkout itself, at `laneCheckout`
   (`.orchestration/lanes/<key>` by default, beside the binding's state and ignored by git), and touches nothing
   outside it.
@@ -326,6 +331,13 @@ offers less otherwise, the workflow takes the path on the right:
 | --- | --- |
 | Publishing the evidence page | A local page the operator shares |
 | Tracker moves | The lane reports the move in its hand-off, and the lead makes it |
+
+**Live addresses open in a browser.** Each live view or hosted address a command prints is opened for the operator in
+the same turn, unasked: `lead-init`'s and `lead-run`'s live view, the hosted URL `doctor` and `view` show, the live
+view a status line names, and the `plan preview` links `plan-view` and the `plan-review` commands print. Where the host has an in-app browser pane, the agent
+opens the address there, and also presents it as a card that opens it in that pane where the host can show one. Where
+the host has no such pane, the agent opens the address in the operator's own browser, and only prints it when it can
+open it in neither. Opening is the agent's step, through whatever the host offers; no command opens anything.
 
 ## Where lanes read the delivery
 
