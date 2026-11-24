@@ -262,10 +262,6 @@
           "text": "Each handover keeps the public link and posts nothing twice, with the allow side shown before and after the move; scope.handover_busy covers pending publication, tracker posts in flight and checkouts left."
         },
         {
-          "id": "v26-3802-4",
-          "text": "Full health runs once per head across machines, including a rerun asked for off the queue holder and a delivery that merged nothing; posture notes dedupe by the latest note."
-        },
-        {
           "id": "v26-3802-5",
           "text": "Evidence follows D22, including recording a peer lane's story from the carried log, lane-tenure ordering, a lane that returns, lane clips never counting, and each lead-evidence refusal leaving every listed surface unchanged."
         },
