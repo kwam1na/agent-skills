@@ -365,6 +365,10 @@
         {
           "id": "v26-3847-2",
           "text": "Full health runs once per head across machines, including a rerun asked for off the queue holder and a delivery that merged nothing; posture notes dedupe by the latest note."
+        },
+        {
+          "id": "v26-3847-3",
+          "text": "Evidence follows D22, including recording a peer lane's story from the carried log, lane-tenure ordering, a lane that returns, lane clips never counting, and each lead-evidence refusal leaving every listed surface unchanged."
         }
       ],
       "after": [
