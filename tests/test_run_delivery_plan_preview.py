@@ -376,10 +376,12 @@ class PlanPreviewTests(unittest.TestCase):
         self.assertEqual((done, out), (0, "plan preview: handed to delivery FX-9; its preview stops once the hosted "
                                           "page shows that\n"))
         here = folder(self.fx, slug)
+        finisher = json.loads((here / "handed.json").read_text())["finisher"]
         deadline = time.monotonic() + 60
-        while "live: " not in ((here / "finish.log").read_text() if (here / "finish.log").exists() else ""):
+        while runs(finisher):
             self.assertLess(time.monotonic(), deadline, "the handed finish ends")
             time.sleep(0.1)
+        self.assertIn(" live: ", (here / "finish.log").read_text())
         plan, _, _ = self.built(slug)
         self.assertEqual((plan["preview"]["approval"], plan["preview"]["delivery"]), ("handed", "FX-9"))
         self.assertEqual(plan["planReview"], expected)
@@ -506,6 +508,11 @@ if "PREVIEW_SLOW_PUBLISHER" in __import__("os").environ and sys.argv[0].endswith
 if "--finish-handed" in sys.argv:
     real, clock = time.time, pathlib.Path({clock!r})
     time.time = lambda: real() + (float(clock.read_text()) if clock.exists() else 0.0)
+    if "PREVIEW_SLOW_STOP" in __import__("os").environ:  # the finisher dwells after each signal it sends
+        import os
+        def dwelling(send):
+            return lambda pid, sig: (send(pid, sig), time.sleep(1))[0]
+        os.kill, os.killpg = dwelling(os.kill), dwelling(os.killpg)
 """
 LOCAL = re.compile(r"^plan preview: (http://127\.0\.0\.1:([0-9]+)/)$", re.M)
 LINK = re.compile(r"^plan preview \(hosted\): (https://deliveries\.example\.com/d/[0-9a-f]{64})$", re.M)
@@ -724,10 +731,18 @@ class ServedPreviewTests(unittest.TestCase):
             self.review_round(path, slug, n)
         live_pid, watcher_pid = self.pids(slug)
         expected = f"adopted the plan review (2 rounds) from {slug_store(self.fx, slug)} into "
-        said = self.adopt(slug)
+        # The finisher dwells a second after each signal, so a write after the view has gone can't hide in the poll.
+        said = self.adopt(slug, env={**self.env, "PREVIEW_SLOW_STOP": "1"})
         self.assertTrue(said.startswith(expected), said)
         self.until(lambda: not runs(live_pid) and not runs(watcher_pid), "the handed finish stops both", 90)
         here = folder(self.fx, slug)
+        # Once both have gone, the finish writes nothing more in the folder, up to its finisher's exit.
+        stopped = files_of(here)
+        finisher = json.loads((here / "handed.json").read_text())["finisher"]
+        self.until(lambda: not runs(finisher), "the finisher exits", 30)
+        self.assertEqual(files_of(here), stopped)
+        self.assertRegex((here / "finish.log").read_text().splitlines()[-1],
+                         rf" live: stopping the live view \(pid {live_pid}\) on port [0-9]+$")
         built = json.loads((here / "plan.json").read_text())
         self.assertEqual((built["preview"]["approval"], built["preview"]["delivery"]), ("handed", "FX-9"))
         self.assertEqual([entry["round"] for entry in built["planReview"]["rounds"]], [1, 2])
