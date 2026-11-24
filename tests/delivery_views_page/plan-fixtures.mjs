@@ -271,7 +271,8 @@ export function previewReview(count, state = "aligned") {
  * person checks, the plan's approvals waiting, and the preview member. `rounds` and `state` give its review, none by
  * default; `approval: "handed"` names the delivery that took it; `layout: "other"` has no stories.
  */
-export function previewDelivery({ rounds = 0, state = "aligned", approval = "agents-only", delivery = "SHOP-90", layout = "delivery" } = {}) {
+export function previewDelivery({ rounds = 0, state = "aligned", approval = "agents-only", delivery = "SHOP-90", layout = "delivery",
+  decisions = ["Addresses are kept per account, never per device.", "No new renderer version."] } = {}) {
   const units = layout === "other" ? [] : [unit("SHOP-91", { criteria: 2, title: "Saved addresses" }), unit("SHOP-92", { title: "Address book export" })];
   const finish = [finishLine("finish-1", { criteria: [], proofs: [] }, { label: "Finish 1", text: "Every saved address survives a sign-out" })];
   const plan = planFor(units, { finish, approvedAt: minute(-400), updated: "2026-10-30T11:00:00Z",
@@ -279,14 +280,14 @@ export function previewDelivery({ rounds = 0, state = "aligned", approval = "age
     approvals: [{ text: "Product Owner signs off the copy", state: "waiting" }, { text: "The operator approves the plan", state: "waiting" }],
     outOfScope: ["Importing addresses"], requiredLenses: [] });
   plan.preview = { plan: "docs/plans/saved-addresses.md", commit: headOf("plan"), approval, ...(approval === "handed" ? { delivery } : {}), layout,
-    decisions: ["Addresses are kept per account, never per device.", "No new renderer version."] };
+    decisions };
   if (rounds) plan.planReview = previewReview(rounds, state);
   const document = record({ planned: units.map((entry) => ({ subject: entry.subject, title: entry.title, lane: "lane-1", stage: "planned" })),
     finish: finish.map((line) => ({ id: line.id, text: line.text, met: false })), meta: { headline: plan.outcome.summary } });
   return { document, plan };
 }
 
-/** The preview fixtures: no round, three rounds open, aligned, ended, handed, and a plan outside the delivery layout. */
+/** The preview fixtures: no round, three rounds open, aligned, ended, handed, a plan outside the delivery layout, and none decided. */
 export const PREVIEW_CASES = {
   "preview-none": () => previewDelivery(),
   "preview-open": () => previewDelivery({ rounds: 3, state: "open" }),
@@ -296,6 +297,7 @@ export const PREVIEW_CASES = {
   "preview-ended": () => previewDelivery({ rounds: 2, state: "ended" }),
   "preview-handed": () => previewDelivery({ rounds: 3, approval: "handed" }),
   "preview-other": () => previewDelivery({ rounds: 2, layout: "other" }),
+  "preview-no-decisions": () => previewDelivery({ rounds: 1, decisions: [] }),
 };
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));

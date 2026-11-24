@@ -206,6 +206,7 @@ test("a preview's line says agent review only, how far it went, and that no pers
   expect(line(await previewShown("preview-none"))).toBe("Agent review only · not reviewed yet · not approved by a person");
   expect(line(await previewShown("preview-open"))).toBe("Agent review only · 3 review rounds · still open · not approved by a person");
   expect(line(await previewShown("preview-aligned"))).toBe("Agent review only · 3 review rounds · every lens aligned · not approved by a person");
+  expect(line(await previewShown("preview-aligned-first"))).toBe("Agent review only · 1 review round · every lens aligned · not approved by a person");
   expect(line(await previewShown("preview-ended"))).toBe("Agent review only · 2 review rounds · ended without alignment · not approved by a person");
   const handed = await previewShown("preview-handed");
   expect(line(handed)).toBe("Handed to delivery SHOP-90 · 3 review rounds · every lens aligned");
@@ -282,6 +283,10 @@ test("the decisions fold lists every decision, and a plan outside the delivery l
   expect(app.querySelector('#plan .plan-fold[data-fold="units"]')).toBeNull();
   expect(app.querySelector("#plan .plan-open")).toBeNull();
   expect(folds(app)).toEqual(["Plan review (2 rounds)", "Decisions2", "Waived proofs0", "Approvals ahead2", "Out of scope1", "The full outcome"]);
+  // A preview that records no decisions still draws the fold, saying so.
+  const none = (await previewShown("preview-no-decisions")).querySelector('#plan .plan-fold[data-fold="decisions"]');
+  expect([none.querySelector("summary").textContent, none.querySelector(".plan-decisions"), none.querySelector(".waiting").textContent]).toEqual(
+    ["Decisions0", null, "The plan records no decisions."]);
   // A delivery-layout preview draws no such line.
   expect((await previewShown("preview-aligned")).querySelector("#plan .plan-layout")).toBeNull();
 });
