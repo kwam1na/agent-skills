@@ -50,7 +50,12 @@
         "skills/delivery-views/assets/runs.css",
         "tests/test_orchestration_render.py",
         "tests/test_delivery_views_render.py",
-        "tests/delivery_views_page/runs.test.mjs"
+        "tests/delivery_views_page/runs.test.mjs",
+        "skills/delivery-views/scripts/public_projection.py",
+        "skills/delivery-views/references/hosted-snapshot.schema.json",
+        "tests/test_delivery_views_hosted_projection.py",
+        "tests/test_delivery_views_hosted.py",
+        "tests/delivery_views_page/line-map-siblings.test.mjs"
       ]
     }
   },
@@ -61,7 +66,7 @@
       "criteria": [
         {
           "id": "v26-3776-1",
-          "text": "A preview with no round renders \"Agent review only \u00b7 not reviewed yet \u00b7 not approved by a person\"; with three open rounds, \"Agent review only \u00b7 3 review rounds \u00b7 still open \u00b7 not approved by a person\"; aligned and ended use their endings; handed renders \"Handed to delivery \" and never \"not approved by a person\"."
+          "text": "A preview with no round renders \"Agent review only · not reviewed yet · not approved by a person\"; with three open rounds, \"Agent review only · 3 review rounds · still open · not approved by a person\"; aligned and ended use their endings; handed renders \"Handed to delivery \" and never \"not approved by a person\"."
         },
         {
           "id": "v26-3776-2",
@@ -146,7 +151,7 @@
       "criteria": [
         {
           "id": "v26-3779-1",
-          "text": "With liveHome and hosted pointed at the test origin, plan-view --plan on a committed plan with no round prints both links; the local page shows stories by lane with criteria, the finish line, decisions, approvals, out-of-scope and \"Agent review only \u00b7 not reviewed yet \u00b7 not approved by a person\"; the origin holds a cut with the same preview member and an outcome.summary starting \"Plan preview (agent review only): \"."
+          "text": "With liveHome and hosted pointed at the test origin, plan-view --plan on a committed plan with no round prints both links; the local page shows stories by lane with criteria, the finish line, decisions, approvals, out-of-scope and \"Agent review only · not reviewed yet · not approved by a person\"; the origin holds a cut with the same preview member and an outcome.summary starting \"Plan preview (agent review only): \"."
         },
         {
           "id": "v26-3779-2",
