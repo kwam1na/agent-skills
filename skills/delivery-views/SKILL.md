@@ -442,8 +442,9 @@ you".
 2. **The base is broken**: the last base event in the record is `base.broken`.
    While it holds, the title can't read "Every criterion is proven".
 3. **Approvals are blocking work**: an `approvals` entry is `blocking` and
-   `waiting`. The flag names each. A waiting approval that isn't blocking
-   raises nothing and stays in "Approvals ahead".
+   `waiting`. The flag names each, in a list, and is headed with the count:
+   "An approval is blocking work" or "N approvals are blocking work". A waiting
+   approval that isn't blocking raises nothing and stays in "Approvals ahead".
 4. **Work in the record isn't in the plan**: a queue or planned subject has no
    unit. The flag names the subjects.
 5. **The plan and the record disagree on finish lines**: a finish line in the
