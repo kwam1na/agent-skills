@@ -301,6 +301,18 @@ class PlanSyncTests(unittest.TestCase):
         self.assertEqual(self.remote_text(branch, path),
                          expected.replace("theirs 5\n", "theirs 5\ntheirs 6\n"))
 
+    def test_the_remote_helper_fails_on_a_planted_forced_push(self) -> None:
+        """The check the cases above rely on: a forced update lands on these remotes, and the helper names it."""
+        slug, branch, path = self.start()
+        assert_fast_forwards_only(self.remote, f"refs/heads/{branch}")
+        git("commit", "-q", "--amend", "-m", "the first draft, rewritten", cwd=self.ours)
+        git("push", "-q", "--force", "origin", f"HEAD:refs/heads/{branch}", cwd=self.ours)
+        self.assertEqual(git("rev-parse", f"refs/heads/{branch}", cwd=self.remote), git("rev-parse", "HEAD", cwd=self.ours))
+        with self.assertRaisesRegex(AssertionError, "not a fast-forward"):
+            assert_fast_forwards_only(self.remote, f"refs/heads/{branch}")
+        with self.assertRaisesRegex(AssertionError, "reflog is empty"):
+            assert_fast_forwards_only(self.remote, "refs/heads/never-pushed")
+
     # -- what stays untouched -----------------------------------------------------------------------------------------
 
     def test_only_plan_branches_are_new_and_the_fetch_refspec_is_unchanged(self) -> None:
