@@ -563,13 +563,13 @@ Out of scope:
   | --- | --- |
   | flow log `supervisor`, `prepares`, `suite` (results are journalled as `integration.suite`), `ship-gates`; `sessions.json`; `needs-you.json`; `lane-changes.json`; the peer registry under the git common directory; the machine ledger | local |
   | flow logs `acceptance`, `app-checks` and `lane-starts` | carried by `lane:<L>`'s holder, because `plan_evidence`, every seat's Needs you and the tracker publisher read them. `acceptance` and `app-checks` are keyed by subject and head, `lane-starts` by subject |
-  | flow log `videos` | carried by the seat that recorded each entry, whatever scope it holds, including the `delivery` holder's recordings on the merged base. Keyed by subject, clip name and head, with the latest entry for a name winning across origins |
+  | flow log `videos` | carried by the seat that recorded each entry, keyed by subject, clip name and head with the latest entry for a name winning, so the plan view's clip proof (`plan_evidence`) is right on every seat. A lane's recordings serve that story's review and plan view only. They never count for the close (D22) |
   | flow log `tracker-marks` | carried by `delivery`'s holder with the tracker ledger, keyed by `<seat>.<seq>` (D12) |
   | flow log `full-health` `result` entries, keyed by head | carried by `queue`'s holder |
   | flow log `full-health` `rerun` entries | replaced: a `fullhealth.rerun` journal entry, from any seat, names the `at` of the failed result it asks to rerun, copied from the carried result. The queue holder's `full_health_results` counts it while its latest result at that head is still that one |
   | `note_posture`'s dedupe through the `full-health` log | replaced, whatever the entry's origin. A `posture.changed` is skipped when the record's latest `posture.changed` has the same `from`, `to` and `source`. A `fullhealth.skipped` is skipped when the record holds one at the same head. So it may run on whichever seat calls it, including `record_focused` at close |
   | lead files `closed.json` | the `delivery` holder still writes it after its archive, as today, and it stays the closer's local resume marker. Once written, that holder's partition carries `closedEntry`, the origin of the closing `delivery.closed`. On a seat not holding `delivery`, `closed_here` is true when the record's `latest_close` has that origin. So a supervisor stops only once the close has archived, and a delivery reopened before then stays open on every seat |
-  | `evidence-page.json` and `evidence-notes.json` beside the record | one page per seat, carried in that seat's partition, keyed by seat. Its page-wide title, intro and notes are that seat's own. A page holds the clips its seat recorded, because only that machine has their files. Every page that seat builds keeps them, whichever lanes it holds now. On a shared record `evidence_status` judges each clip of a merged video story, by name, against the carried page of the seat that originated that name's latest `videos` entry, using that entry's digest, never story folders. The evidence finish line holds when every such clip is current. Each story links every page that carries one of its clips, and the epic links every seat's page |
+  | `evidence-page.json` and `evidence-notes.json` beside the record | written only by the `delivery` holder (D22). Its partition carries `evidence-notes.json`, so a delivery handover keeps the page's title, intro and notes. `evidence-page.json` and the merged-base recordings it lists stay local to the holder that made them |
   | lead files `friction.md` | carried by `delivery`'s holder (the friction stub) |
   | lead files `full-health.lock`, `full-health.log`, `supervisor.blockers.json`, `supervisor.jsonl`, `supervisor.live.log`, `supervisor.log`, `supervisor.{name}.log`, `supervisor.stop`, `wait.json` | local |
   | flow log `resolutions` | carried by the resolving seat, keyed by the resolved entry's origin and translated on ingest |
@@ -600,6 +600,24 @@ Out of scope:
     assignment by that origin.
   - A `fullhealth.rerun` is matched to its result by the copied `at` (above), never
     by ordering two clocks.
+
+- **D22. One evidence page, published by the `delivery` holder.** On a shared
+  record:
+  - **Commands:** `lead-evidence record`, `page` and `published` need
+    `delivery`. Elsewhere they refuse with `scope.not_held`.
+  - **What counts:** the page holds only the `delivery` holder's own recordings
+    on the merged base, which `lead-evidence record` already makes for every
+    merged story that needs video. `evidence_status` judges the evidence finish
+    line against that holder's own `evidence-page.json` and its own merged-base
+    recordings, exactly as on an unshared record.
+  - **Lanes:** a clip recorded in a lane serves that story's review and the plan
+    view's clip proof, and never counts for the close. Handing over a lane
+    therefore never touches evidence.
+  - **Handing over `delivery`:** the incoming holder has no merged-base
+    recordings. Its `evidence_status` reports each merged video story as not
+    recorded until it runs `lead-evidence record` and publishes again. The
+    carried notes keep the page's write-up. The published URL changes with the
+    new page, and the epic links the current one.
 
 - **D20. Every refusal, and what its test checks.**
   - **Codes:**
@@ -1183,30 +1201,20 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
     both machines;
   - **a resumed close:** a close-out on `a` interrupted after archiving and resumed
     archives once;
-  - **peer evidence at close:** stories needing video sit in lanes on both `a`
-    and `b`. Each is recorded and published on its own seat, and `a`'s
-    `lead-close` reports the evidence current, with each story linking its own
-    seat's page;
-  - `b` re-records its story's clip after publishing and does not republish; `a`'s
-    `lead-close` reports that clip as not on the page;
-  - `b`'s story has two clips at one head and `b`'s page carries one; `a` reports
-    the missing one. After `b` republishes, `a` reports the evidence current;
-  - `a` re-records its own story's clip after publishing and does not republish;
-    `a`'s `lead-close` reports that clip as not on the page;
-  - **evidence after a lane moves:** story Y in `b`'s lane is recorded and
-    published on `b`, and the lane is handed to `a` after `b`'s cleanup. `a`'s
-    `lead-close` still reports Y current against `b`'s page, and Y links `b`'s
-    page. After the move, `b` records and publishes another story of a lane it
-    still holds, through the ordinary publish command, and `b`'s new page still
-    carries Y's clip, so `a` reports both current. If `b`'s page is then rebuilt
-    without Y's clip, `a` reports it as not on the page;
-  - **clips from two seats:** after the lane moves to `a`, `a` re-records one of
-    Y's two clips. Before `a` publishes, `a`'s close reports that clip as not on
-    the page; after it publishes, Y is current, with that clip on `a`'s page and
-    the other on `b`'s, and Y links both pages;
-  - **the lead's merged-base recording:** Y in `b`'s lane is recorded only by
-    `a`'s `lead-evidence record` on the merged base and published on `a`; `a`'s
-    `lead-close` reports Y current against `a`'s page;
+  - **evidence (D22):** stories needing video sit in lanes on both `a` and `b`.
+    `a`, holding `delivery`, runs `lead-evidence record` on the merged base and
+    publishes, and `a`'s `lead-close` reports the evidence current;
+  - `lead-evidence record` or `published` on `b` gives `scope.not_held`, with the
+    D20 surfaces unchanged;
+  - a clip recorded in `b`'s lane shows as `done` in the plan view's clip proof on
+    both machines, and `a`'s close does not count it: with no merged-base
+    recording on `a`, the story is reported as not recorded;
+  - `a` re-records a story's clip on the merged base after publishing and does
+    not republish; `a`'s `lead-close` reports that clip as not on the page;
+  - a lane handed from `b` to `a` changes nothing in `a`'s evidence verdict;
+  - after `delivery` moves to `b`, `b`'s close reports each merged video story as
+    not recorded until `b` records on the merged base and publishes. The page's
+    notes written on `a` survive on `b`'s page;
   - handing that lane to `a` while the story's checkout is on `b` gives
     `scope.handover_busy`, and succeeds after `b`'s cleanup;
   - **full health:** `b`, holding `queue`, runs fullHealth at H. After the scopes
@@ -1322,6 +1330,6 @@ Lenses: the repository's declared plan lenses. Each lens raises every finding it
 can state in round 1, ends its evidence with approval conditions, and in later
 rounds raises a new finding on unchanged text only at P0 or P1.
 
-The decisions D1-D21 and each story's pin inventory are where a lens checks
+The decisions D1-D22 and each story's pin inventory are where a lens checks
 completeness. A lens that finds an unlisted pin, integer-id reader or field
 without a scope raises it as a finding against the relevant decision or story.
