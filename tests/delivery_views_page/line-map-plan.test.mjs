@@ -1316,3 +1316,52 @@ test("a plan unit's review proof holds at the head the lead carried its evidence
   expect(await review(moved(null))).toEqual(stale);
   expect(await review(moved({ ...carry, to: headOf("native-sync", 8) }))).toEqual(stale);
 });
+
+// The paged line map turns pages with the Left and Right arrow keys; [ and ] no longer do. The arrows do nothing while
+// the reader types, holds a modifier, has the launcher open, or is in a control that uses them itself.
+test("the Left and Right arrows turn the chapter pages, and nothing else does or is told to", async () => {
+  const { document, plan } = recordOnlyDelivery();
+  const seen = [];
+  const press = (key, options = {}) => ({ run: (window) => {
+    const target = options.on ? options.on(window) : window.document.body;
+    target.dispatchEvent(new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options.init }));
+  } });
+  const page = (label) => ({ run: (window) => { seen.push([label, window.location.hash, window.document.querySelector(".chapter:not([hidden])")?.id]); } });
+  const scroller = (window) => {
+    const box = window.document.querySelector(".lines");
+    Object.defineProperty(box, "scrollWidth", { configurable: true, get: () => 900 });
+    Object.defineProperty(box, "clientWidth", { configurable: true, get: () => 300 });
+    box.tabIndex = 0;
+    return box;
+  };
+  const input = (window) => { const field = window.document.createElement("input"); window.document.body.appendChild(field); return field; };
+  await open(render(document, plan), { steps: [
+    page("start"),
+    press("ArrowRight"), { wait: 20 }, page("right"),
+    press("ArrowRight"), { wait: 20 }, page("right again"),
+    press("ArrowLeft"), { wait: 20 }, page("left"),
+    press("]"), { wait: 20 }, page("bracket"),
+    press("ArrowRight", { init: { shiftKey: true } }), { wait: 20 }, page("shift"),
+    press("ArrowRight", { init: { metaKey: true } }), { wait: 20 }, page("meta"),
+    press("ArrowRight", { on: input }), { wait: 20 }, page("typing"),
+    press("ArrowRight", { on: (window) => window.document.querySelector(".chapter-tab-list") }), { wait: 20 }, page("tab list"),
+    press("ArrowRight", { on: scroller }), { wait: 20 }, page("sideways scroller"),
+    { run: (window) => { seen.push(["hint", window.document.querySelector(".chapter-tab-hint").textContent]); } },
+    press("k", { init: { metaKey: true, ctrlKey: true } }), { wait: 20 },
+    { run: (window) => { seen.push(["launcher", window.document.documentElement.classList.contains("launcher-open")]); } },
+    press("ArrowRight"), { wait: 20 }, page("launcher open"),
+  ] });
+  const [start, right, again, left] = seen;
+  expect([start[2], right[2], again[2], left[2]]).toEqual(["now", "line", "who", "line"]);
+  expect(right[1]).toBe("#line");
+  // Nothing else turns a page.
+  for (const label of ["bracket", "shift", "meta", "typing", "tab list", "sideways scroller"]) {
+    expect([label, seen.find((entry) => entry[0] === label)[2]]).toEqual([label, "line"]);
+  }
+  expect(seen.find((entry) => entry[0] === "launcher")[1]).toBe(true);
+  expect(seen.find((entry) => entry[0] === "launcher open")[2]).toBe("line");
+  // The chapter tab names the arrows, and no page text names the brackets.
+  expect(seen.find((entry) => entry[0] === "hint")[1]).toBe("← → step between pages");
+  const source = readFileSync(path.join(ROOT, "skills", "delivery-views", "assets", "line-map.js"), "utf8");
+  expect(source.includes("<kbd>[</kbd>")).toBe(false);
+});

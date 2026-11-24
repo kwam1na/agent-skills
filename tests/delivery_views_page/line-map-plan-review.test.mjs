@@ -187,7 +187,7 @@ async function previewShown(name, steps = []) {
 function unapprovedText(app) {
   const chapter = app.querySelector("#plan").cloneNode(true);
   for (const node of chapter.querySelectorAll('.plan-fold[data-fold="approvals"] > summary, .plan-approvals > li')) node.remove();
-  const own = chapter.querySelector(".plan-preview-line");
+  const own = chapter.querySelector(".plan-approval");
   if (own && own.textContent.endsWith(" · not approved by a person")) own.textContent = own.textContent.slice(0, -" · not approved by a person".length);
   const labels = [...chapter.querySelectorAll("[aria-label], [title]")].map((node) => `${node.getAttribute("aria-label") ?? ""} ${node.getAttribute("title") ?? ""}`);
   const tab = app.querySelector('.rail a[href="#plan"]');
@@ -283,10 +283,16 @@ test("the decisions fold lists every decision, and a plan outside the delivery l
   expect(app.querySelector('#plan .plan-fold[data-fold="units"]')).toBeNull();
   expect(app.querySelector("#plan .plan-open")).toBeNull();
   expect(folds(app)).toEqual(["Plan review (2 rounds)", "Decisions2", "Waived proofs0", "Approvals ahead2", "Out of scope1", "The full outcome"]);
-  // A preview that records no decisions still draws the fold, saying so.
+  // A decision reads through the page's one formatter: what it quotes as code reads as code, and nothing becomes markup.
+  const quoted = previewDelivery({ rounds: 1, decisions: ["Keep `plan.json` whole.", "<b>never markup</b>"] });
+  const rich = (await openPage(render(quoted.document, quoted.plan), { now: NOW, store: false })).pop().app;
+  const items = [...rich.querySelectorAll("#plan .plan-decisions li")];
+  expect(items.map((node) => [node.textContent, node.querySelector("code")?.textContent ?? null, node.querySelector("b")])).toEqual(
+    [["Keep plan.json whole.", "plan.json", null], ["<b>never markup</b>", null, null]]);
+  // A preview that records no decisions still draws the fold, saying what will appear there, with no zero.
   const none = (await previewShown("preview-no-decisions")).querySelector('#plan .plan-fold[data-fold="decisions"]');
-  expect([none.querySelector("summary").textContent, none.querySelector(".plan-decisions"), none.querySelector(".waiting").textContent]).toEqual(
-    ["Decisions0", null, "The plan records no decisions."]);
+  expect([none.querySelector("summary").textContent, none.querySelector(".pf-count"), none.querySelector(".plan-decisions"),
+    none.querySelector(".waiting").textContent]).toEqual(["Decisions", null, null, "The plan's decisions will show here once it records them."]);
   // A delivery-layout preview draws no such line.
   expect((await previewShown("preview-aligned")).querySelector("#plan .plan-layout")).toBeNull();
 });

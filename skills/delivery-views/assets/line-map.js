@@ -481,8 +481,8 @@
   }
 
   // Pages: each chapter is its own page, routed by the address's hash (#now, #line, ...). A hash that names something
-  // inside a chapter opens that chapter's page and brings the thing into view. The rail, the corner's chapter tab and
-  // each page's foot step between pages; [ and ] do too. With no hash the page opens on Now.
+  // inside a chapter opens that chapter's page and brings the thing into view. The rail, the corner's chapter tab,
+  // scrolling on past a page's end and the Left and Right arrow keys step between pages. With no hash the page opens on Now.
   // The reader picks the layout in the chapter tab: one chapter per page (the default) or every chapter on one page.
   var LAYOUT_KEY = (typeof VIEW.themeKey === "string" && VIEW.themeKey ? VIEW.themeKey.replace(/:theme$/, "") : "delivery-views") + ":layout";
   var PAGED = true;
@@ -520,7 +520,7 @@
   var layoutButton = el("button", "chapter-tab-layout");
   layoutButton.type = "button";
   var hint = el("span", "chapter-tab-hint");
-  hint.innerHTML = "<kbd>[</kbd> <kbd>]</kbd> step between pages";
+  hint.innerHTML = "<kbd>←</kbd> <kbd>→</kbd> step between pages";
   var historyItem = null;
   if (historyHref) {
     historyItem = el("a", "chapter-tab-history");
@@ -614,15 +614,25 @@
     }
   });
   document.addEventListener("click", function (event) { if (!tab.contains(event.target)) { openTab(false); } });
+  /** Whether a control the focus is in uses the Left and Right arrows itself: the chapter tab's list, or a region that scrolls sideways. */
+  function arrowsOwned(node) {
+    for (var at = node; at && at.nodeType === 1 && at !== document.body; at = at.parentNode) {
+      if (at === tabList) { return true; }
+      var style = typeof getComputedStyle === "function" ? getComputedStyle(at) : null;
+      if (style && /^(auto|scroll)$/.test(style.overflowX) && at.scrollWidth > at.clientWidth) { return true; }
+    }
+    return false;
+  }
   document.addEventListener("keydown", function (event) {
     if (launcherOpen()) { return; }
     if (event.key === "Escape" && !tabList.hidden) { openTab(false); tabButton.focus(); return; }
-    var typing = event.target && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
-    if (!PAGED || typing || event.metaKey || event.ctrlKey || event.altKey) { return; }
-    if (event.key === "[" || event.key === "]") {
+    var typing = event.target && (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) || event.target.isContentEditable === true);
+    if (!PAGED || typing || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) { return; }
+    // The Left and Right arrows turn to the previous and next page, unless the control in focus uses them.
+    if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && !arrowsOwned(event.target)) {
       var ids = chapterIds();
-      var to = ids[ids.indexOf(currentPage) + (event.key === "]" ? 1 : -1)];
-      if (to) { location.hash = to; }
+      var to = ids[ids.indexOf(currentPage) + (event.key === "ArrowRight" ? 1 : -1)];
+      if (to) { event.preventDefault(); location.hash = to; }
     }
   });
 
@@ -4333,7 +4343,7 @@
     var rounds = !review ? "not reviewed yet" : count + (count === 1 ? " review round" : " review rounds") +
       (REVIEW_ENDINGS[review.state] ? " · " + REVIEW_ENDINGS[review.state] : "");
     var handed = plan.preview.approval === "handed";
-    return el("p", "plan-approval plan-preview-line", (handed ? "Handed to delivery " + text(plan.preview.delivery) : "Agent review only") +
+    return el("p", "plan-approval", (handed ? "Handed to delivery " + text(plan.preview.delivery) : "Agent review only") +
       " · " + rounds + (handed ? "" : " · not approved by a person"));
   }
   /** What the page left out of a plan too large to show whole; a preview's plan was never approved, so it says "the plan". */
@@ -4559,8 +4569,10 @@
     if (preview) {
       var decisions = list(preview.decisions).map(text).filter(Boolean);
       var decided = el("ul", "plan-decisions");
-      decisions.forEach(function (entry) { decided.appendChild(el("li", null, entry)); });
-      folds.appendChild(fold("decisions", "Decisions", decisions.length, decisions.length ? decided : el("p", "waiting", "The plan records no decisions.")));
+      decisions.forEach(function (entry) { decided.appendChild(add.apply(null, [el("li")].concat(linked(entry)))); });
+      // Before the plan records a decision, the fold says what will appear in it.
+      folds.appendChild(fold("decisions", "Decisions", decisions.length ? decisions.length : null,
+        decisions.length ? decided : el("p", "waiting", "The plan's decisions will show here once it records them.")));
     }
     var changes = list(plan.changes).filter(isObject);
     var changeBox = el("div", "plan-changes");
