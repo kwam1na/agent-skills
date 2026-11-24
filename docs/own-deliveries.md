@@ -104,6 +104,29 @@ one this checkout started with `--stop` in place of `--if-absent`. The run store
 sits under the git common directory, so one server shows every worktree's runs.
 Runs are observability: no gate, approval or finish line reads them.
 
+## Plans in review
+
+A plan shows on its own preview from its first commit, before it is a delivery.
+Once the installed generation carries `plan-view`, run it from the repository
+root after each commit of the plan, and hand the operator both links it prints:
+
+```bash
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py plan-view --plan docs/plans/<plan>.md
+```
+
+`plan preview: <address>` is the preview's own live view on this machine, and
+`plan preview (hosted): <link>` its page on the hosted site, under the key
+`plan-<reviewSlug>`; with `AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN` unset, the second
+line says the preview was not published. Each `plan-review prepare`, `reduce` and
+`end` with `--plan` rebuilds the preview and prints the same lines. The standing
+server's runs page lists every running preview under "Plans in review". The
+preview's record and every file its live view and publisher keep sit in the main
+checkout's `.orchestration/plan-preview/<reviewSlug>/`, beside the review store,
+never in a delivery's record. When `lead-setup` or `lead-init` adopts the review,
+the preview is rebuilt once as handed to the delivery and then stops; from then on
+the plan shows on the delivery's own views. `plan-view --plan <path> --stop` stops
+a preview at any time.
+
 ## Tracker updates
 
 The binding names run-delivery's tracker publisher, which posts this repository's
@@ -168,7 +191,7 @@ which holds the corpus pins any doc or skill change can break, and
 brings `tests.test_delivery_views_adopter` and `tests.test_delivery_views_snapshots`,
 the line map's outside adopter among them. A change under `docs/solutions/` brings
 `tests.test_compound_learning_corpus`, which pins each note's shape. A change to
-any Markdown file under `skills/` brings the five corpus tests that read the shipped
+any Markdown file under `skills/` brings the six corpus tests that read the shipped
 skill prose, `tests.test_run_event_emission_corpus` among them, which holds each
 journal kind to the one skill that owns it. A change to any `tests/test_*.py` module
 brings `tests.test_own_deliveries`, so a module added without its entry fails in the

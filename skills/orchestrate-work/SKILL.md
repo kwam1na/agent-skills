@@ -469,7 +469,10 @@ Keeping the view current is the lead's job, never the operator's: the
 operator should never have to ask whether it is up to date.
 
 **The live view.** At the start of a delivery, start the live view and give
-the operator the address it prints:
+the operator the address it prints. Giving it means opening it in the same
+turn: in the host's in-app browser pane, with a card that opens it there where
+the host can show one; without such a pane, in the operator's own browser; and
+printing it only when it can be opened in neither:
 
 ```bash
 python3 -B scripts/render_state.py live --dir <state directory> --binding .agents/orchestration.json
@@ -521,6 +524,14 @@ says so: in the line it prints and at the top of that page.
   PID of each verified entry the given state directory started, waits for its
   entry to go, and says which it stopped; an entry that fails verification is
   left alone, its PID never signalled.
+- `live --preview` serves a plan's preview, a record kept for a plan under
+  agent review before any delivery exists. Its entry and `/health` say so, and
+  `live --if-absent` never returns a preview's entry, so the standing server
+  stays the one it names. The standing server's runs page lists every verified
+  preview entry, at most 20, under "Plans in review", each with its plan's
+  title, its live address and, where the preview is published, its hosted
+  page, and draws it again when a preview starts, stops or is rebuilt. With no
+  preview running, the section is absent.
 - It serves the built-in static page in its live mode, with a quiet live or
   disconnected indicator, and any HTML view whose head carries
   `<meta name="delivery-state-live">`, at `/view/<output>`, the output's

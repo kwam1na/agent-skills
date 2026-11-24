@@ -226,6 +226,72 @@
           "maxLength": 600
         }
       }
+    },
+    "preview": {
+      "description": "Present only on a plan preview, which a plan's preview builder writes while the plan is under agent review; a delivery's producer never writes it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plan",
+        "commit",
+        "approval",
+        "layout",
+        "decisions"
+      ],
+      "properties": {
+        "plan": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "approval": {
+          "enum": [
+            "agents-only",
+            "handed"
+          ]
+        },
+        "delivery": {
+          "$ref": "#/$defs/id"
+        },
+        "layout": {
+          "enum": [
+            "delivery",
+            "other"
+          ]
+        },
+        "decisions": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "approval": {
+            "const": "handed"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "delivery"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "delivery"
+          ]
+        }
+      }
     }
   },
   "$defs": {

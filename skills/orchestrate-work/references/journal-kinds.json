@@ -1861,6 +1861,10 @@
         "budgetSeconds": {
           "type": "seconds",
           "optional": true
+        },
+        "stopped": {
+          "type": "flag",
+          "optional": true
         }
       },
       "because": {
@@ -1881,6 +1885,39 @@
         "line": "At {head:commit}, in {seconds:duration}[ against a budget of {budgetSeconds:duration}]"
       },
       "explain": "The lead ran the full suite on the integration at one head.",
+      "tracker": null,
+      "instruction": "None: the integration step shows in the record and the live view."
+    },
+    "integration.suite.started": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Integration suite started",
+      "data": {
+        "head": {
+          "type": "commit"
+        },
+        "startedAt": {
+          "type": "instant"
+        },
+        "expectedSeconds": {
+          "type": "seconds",
+          "optional": true
+        },
+        "budgetSeconds": {
+          "type": "seconds",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "The integration suite started",
+        "line": "At {head:commit}[, usually {expectedSeconds:duration}][, against a budget of {budgetSeconds:duration}]"
+      },
+      "explain": "The lead began the full suite on the integration at one head; its finish, or a later start, supersedes it.",
       "tracker": null,
       "instruction": "None: the integration step shows in the record and the live view."
     },

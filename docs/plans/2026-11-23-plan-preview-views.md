@@ -612,6 +612,22 @@ Lane 1, tier 4, after V26-3779. Sensor-only. Files: `skills/plan-work/SKILL.md`,
 - Before editing, search the tests that read these files for pinned phrases, and
   re-derive each moved pin in the same change.
 
+### V26-3807. Open live view addresses in a browser by default, whatever the host
+
+Lane 1, tier 4, after V26-3780. Added mid-delivery: Operator asked on 2026-11-24 for live view addresses to open in the in-app browser pane by default, and to deliver it in this delivery
+
+### V26-3808. Finish the chapter-pages live view for shipping: hosted file links and a steady siblings test
+
+Lane 3, tier 1, after V26-3777. Added mid-delivery: Operator asked 2026-11-24 to finish #488's unshipped pieces in this delivery
+
+### V26-3810. Finish a plan preview's hand-over writes before its processes stop
+
+Lane 2, tier 3, not blocked. Added mid-delivery: V26-3780's full-suite runs found the preview hand-over test flaky (1 in 3 alone): a preview file moves after its processes stop
+
+### V26-3811. Show the integration suite while it runs on the line's rejoin step
+
+Lane 1, tier 4, not blocked. Added mid-delivery: Operator chose direction A (Rejoin Step Studies) on 2026-11-24: the rejoin step looked stale for the whole integration suite run
+
 ## Shared resources
 
 - **Provenance, catalog and profiles.** Every story refreshes `catalog.json`,

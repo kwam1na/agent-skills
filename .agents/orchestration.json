@@ -989,6 +989,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_live_address_corpus",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_live_address_corpus.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_live_address_corpus.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_machine",
         "argv": [
           ".venv/bin/python",
@@ -1777,6 +1795,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_run_delivery_plan_preview",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_plan_preview.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_plan_preview.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_run_delivery_plan_review",
         "argv": [
           ".venv/bin/python",
@@ -2364,6 +2400,7 @@
         "checks": [
           "tests.test_declared_mechanics_corpus",
           "tests.test_lane_ruling_corpus",
+          "tests.test_live_address_corpus",
           "tests.test_review_bound_corpus",
           "tests.test_round_brief_template_corpus",
           "tests.test_run_event_emission_corpus"

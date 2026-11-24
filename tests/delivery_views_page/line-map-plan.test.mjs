@@ -866,7 +866,8 @@ test("a reader within the plan stays where they are, and one past it moves with 
   const { document, plan, replanned } = replanning();
   const line = finishLine("grown", { criteria: [], proofs: ["merged"] }, { label: "A finish line added above the chapter" });
   const after = render(replanned, { ...plan, updated: "2026-10-30T13:00:00Z", units: [...plan.units, { ...unit("GROWN"), proofs: plan.units[0].proofs }], finish: [...plan.finish, line] });
-  const scenario = (y) => ({ scroll: { y }, quicker: 10 });
+  // Read as one scrolling page, the layout the chapters tab offers beside the paged one: there a reader can be within or past the plan.
+  const scenario = (y) => ({ scroll: { y }, quicker: 10, stored: { "delivery-views:test:layout": "scroll" } });
   const within = await live(render(document, plan), after, [{ push: replanned }, SETTLE], scenario(10));
   expect(within[2].text).toContain("GROWN");
   expect(within.scrollY).toBe(10);
@@ -936,7 +937,8 @@ test("folds stored for this page start open on the next load", async () => {
 test("each stop on the line opens its unit in the chapter, in the open list or in the folded units", async () => {
   const { document, plan } = inAppDelivery();
   const page = render(document, plan);
-  let snaps = await open(page, { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="CART-105"]' }, { click: "#detail .d-plan" }] });
+  // The plan is its own page: the button moves to it through the address's hash, so the page needs an address to rewrite.
+  let snaps = await open(page, { rendered: page, steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="CART-105"]' }, { click: "#detail .d-plan" }] });
   expect(snaps[1].app.querySelector("#detail .d-plan").textContent).toBe("See in the plan");
   expect(snaps[1].app.querySelector("#detail .d-plan-row").className).toBe("d-plan-row");
   // The card says where the story is in its state line, so the proofs left and the next proof stay in the plan.
@@ -945,7 +947,7 @@ test("each stop on the line opens its unit in the chapter, in the open list or i
   expect(snaps[1].app.querySelector("#detail .d-plan-next")).toBeNull();
   expect(snaps[2].focused).toBe("li");
   expect(snaps[2].app.querySelector('.plan-fold[data-fold="units"]').open).toBe(false);
-  snaps = await open(page, { steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="CART-101"]' }, { click: "#detail .d-plan" }] });
+  snaps = await open(page, { rendered: page, steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="CART-101"]' }, { click: "#detail .d-plan" }] });
   expect(snaps[1].app.querySelector("#detail .d-plan-row").className).toBe("d-plan-row proven");
   expect(snaps[1].app.querySelector("#detail .d-plan-row").textContent).toBe("ProvenSee in the plan");
   // Where the unit stands sits with the stop's title and links, above its run and steps.
@@ -953,7 +955,7 @@ test("each stop on the line opens its unit in the chapter, in the open list or i
   expect(snaps[2].focused).toBe("div");
   expect(snaps[2].app.querySelector('.plan-fold[data-fold="units"]').open).toBe(true);
   // From the plan as approved, a unit added since is found once the switch is back on the plan as amended.
-  snaps = await open(page, { steps: [{ toggle: '.plan-fold[data-fold="units"]' }, { click: ".plan-switch button", index: 1 },
+  snaps = await open(page, { rendered: page, steps: [{ toggle: '.plan-fold[data-fold="units"]' }, { click: ".plan-switch button", index: 1 },
     { click: ':is(.stop-btn, .mg-tick)[data-subject="CART-113"]' }, { click: "#detail .d-plan" }] });
   expect([...snaps[4].app.querySelectorAll(".plan-switch button")].map((button) => button.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
   expect(snaps[4].focused).toBe("div");
@@ -968,7 +970,10 @@ test("each stop on the line opens its unit in the chapter, in the open list or i
 
 test("on a phone each unit is a card with labelled proofs, and both themes colour the chapter from their tokens", async () => {
   const css = readFileSync(path.join(ROOT, "skills", "delivery-views", "assets", "line-map.css"), "utf8");
-  const section = css.slice(css.indexOf("/* The plan:"));
+  // The plan's rules run up to the pages' own, and its blocking approvals' rows sit later, between their two comments.
+  const between = (start, end) => css.slice(css.indexOf(start), css.indexOf(end));
+  const section = between("/* The plan:", "/* Pages: one chapter at a time. */") +
+    between("/* Blocking approvals:", "/* The corner's way into the launcher:");
   const phone = section.slice(section.indexOf("@media (max-width: 640px)"));
   expect(phone).toContain(".plan-unit { grid-template-columns: 1fr;");
   expect(phone).toContain(".plan-grid-head { display: none; }");
@@ -1067,7 +1072,9 @@ test("a closed delivery reads as closed, and work resuming after the close reope
   expect(short.querySelector("#now .checking")).toBeNull();
 
   const resumed = await first(closing([...landed, close, [50, "candidate.handed", "A"]], [item("A", "queued")]), plan);
-  expect(resumed.querySelector("#now .now-count").textContent).not.toMatch(/Delivered|Closed/);
+  // Reopened with nothing landed now, Now looks ahead to the piece again, and nothing on it says delivered or closed.
+  expect(resumed.querySelector("#now").classList.contains("is-fresh")).toBe(true);
+  expect(resumed.querySelector("#now").textContent).not.toMatch(/Delivered|Closed/);
   expect(resumed.querySelector("#left .left-number").textContent).toBe("1piece to go");
   expect(resumed.querySelector("#who .st").textContent).toContain("waiting on lead");
   expect(resumed.querySelector("#plan .plan-calm, #plan .plan-needs .ah")).not.toBeNull();
@@ -1248,7 +1255,7 @@ test("plan text never becomes markup, and a ref becomes a link only through the 
       before: hostile, after: `${hostile} now`, source: hostile, ref: "javascript:alert(3)" }] });
   const page = render(document, plan);
   expect(page).not.toContain("<img src=x");
-  const snaps = await open(page, { steps: [{ toggle: '.plan-fold[data-fold="changes"]' }, { click: ".stop-btn" }, { click: "#detail .d-plan" }] });
+  const snaps = await open(page, { rendered: page, steps: [{ toggle: '.plan-fold[data-fold="changes"]' }, { click: ".stop-btn" }, { click: "#detail .d-plan" }] });
   const app = snaps[1].app;
   expect(app.querySelectorAll("img, script")).toHaveLength(0);
   expect(app.querySelector(".plan-change .pc-title").textContent).toBe(hostile);
@@ -1308,4 +1315,78 @@ test("a plan unit's review proof holds at the head the lead carried its evidence
   expect(await review(moved(carry))).toEqual(approved);
   expect(await review(moved(null))).toEqual(stale);
   expect(await review(moved({ ...carry, to: headOf("native-sync", 8) }))).toEqual(stale);
+});
+
+// The paged line map turns pages with the Left and Right arrow keys; [ and ] no longer do. The arrows do nothing while
+// the reader types, holds a modifier, has the launcher open, or is in a control that uses them itself.
+test("the Left and Right arrows turn the chapter pages, and nothing else does or is told to", async () => {
+  const { document, plan } = recordOnlyDelivery();
+  const seen = [];
+  const press = (key, options = {}) => ({ run: (window) => {
+    const target = options.on ? options.on(window) : window.document.body;
+    const event = new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options.init });
+    target.dispatchEvent(event);
+    prevented.push([options.label ?? key, event.defaultPrevented]);
+  } });
+  const prevented = [];
+  const page = (label) => ({ run: (window) => { seen.push([label, window.location.hash, window.document.querySelector(".chapter:not([hidden])")?.id]); } });
+  const scroller = (window) => {
+    const box = window.document.querySelector(".lines");
+    Object.defineProperty(box, "scrollWidth", { configurable: true, get: () => 900 });
+    Object.defineProperty(box, "clientWidth", { configurable: true, get: () => 300 });
+    box.tabIndex = 0;
+    return box;
+  };
+  // A line that fits its width scrolls nowhere, so it leaves the arrows to the page.
+  const fitting = (window) => window.document.querySelector(".lines");
+  const editable = (window) => {
+    const node = window.document.createElement("div");
+    Object.defineProperty(node, "isContentEditable", { configurable: true, get: () => true });
+    window.document.body.appendChild(node);
+    return node;
+  };
+  const input = (window) => { const field = window.document.createElement("input"); window.document.body.appendChild(field); return field; };
+  await open(render(document, plan), { steps: [
+    page("start"),
+    press("ArrowRight", { label: "right" }), { wait: 20 }, page("right"),
+    press("ArrowRight", { label: "right again" }), { wait: 20 }, page("right again"),
+    press("ArrowLeft"), { wait: 20 }, page("left"),
+    press("]"), { wait: 20 }, page("bracket"),
+    press("ArrowRight", { init: { shiftKey: true }, label: "shift" }), { wait: 20 }, page("shift"),
+    press("ArrowRight", { init: { metaKey: true } }), { wait: 20 }, page("meta"),
+    press("ArrowRight", { on: input }), { wait: 20 }, page("typing"),
+    press("ArrowRight", { on: (window) => window.document.querySelector(".chapter-tab-list") }), { wait: 20 }, page("tab list"),
+    press("ArrowRight", { on: editable, label: "editable" }), { wait: 20 }, page("editable"),
+    press("ArrowRight", { on: scroller, label: "scroller" }), { wait: 20 }, page("sideways scroller"),
+    press("ArrowLeft", { on: (window) => { const box = window.document.querySelector(".lines"); delete box.scrollWidth; delete box.clientWidth; return box; }, label: "fitting line" }),
+    { wait: 20 }, page("fitting line"),
+    press("ArrowRight", { label: "before malformed" }), { wait: 20 }, page("before malformed"),
+    // An address whose hash holds a malformed escape opens the first page instead of stopping the router.
+    { run: (window) => { window.location.hash = "%"; } },
+    { wait: 20 }, page("malformed hash"),
+    { run: (window) => { seen.push(["hint", window.document.querySelector(".chapter-tab-hint").textContent]); } },
+    press("k", { init: { metaKey: true, ctrlKey: true } }), { wait: 20 },
+    { run: (window) => { seen.push(["launcher", window.document.documentElement.classList.contains("launcher-open")]); } },
+    press("ArrowRight"), { wait: 20 }, page("launcher open"),
+  ] });
+  const [start, right, again, left] = seen;
+  expect([start[2], right[2], again[2], left[2]]).toEqual(["now", "line", "who", "line"]);
+  expect(right[1]).toBe("#line");
+  // Nothing else turns a page.
+  for (const label of ["bracket", "shift", "meta", "typing", "tab list", "editable", "sideways scroller"]) {
+    expect([label, seen.find((entry) => entry[0] === label)[2]]).toEqual([label, "line"]);
+  }
+  // A line that fits its width owns no arrows: Left turns back from line to now.
+  expect(seen.find((entry) => entry[0] === "fitting line")[2]).toBe("now");
+  expect(seen.find((entry) => entry[0] === "before malformed")[2]).toBe("line");
+  expect(seen.find((entry) => entry[0] === "malformed hash")[2]).toBe("now");
+  // A turning arrow is the page's alone, so the browser doesn't scroll as well; a guarded one is left to the browser.
+  expect(prevented.filter(([label]) => ["right", "right again", "shift", "scroller", "fitting line"].includes(label))).toEqual(
+    [["right", true], ["right again", true], ["shift", false], ["scroller", false], ["fitting line", true]]);
+  expect(seen.find((entry) => entry[0] === "launcher")[1]).toBe(true);
+  expect(seen.find((entry) => entry[0] === "launcher open")[2]).toBe("now");
+  // The chapter tab names the arrows, and no page text names the brackets.
+  expect(seen.find((entry) => entry[0] === "hint")[1]).toBe("← → step between pages");
+  const source = readFileSync(path.join(ROOT, "skills", "delivery-views", "assets", "line-map.js"), "utf8");
+  expect(source.includes("<kbd>[</kbd>")).toBe(false);
 });

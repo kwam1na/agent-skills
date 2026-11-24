@@ -232,6 +232,21 @@ link grants read access to that delivery, so it is a credential too: the page
 names the sibling without it. The git identity in the local page's corner belongs to the reader's checkout,
 not to the record, so the hosted page has none.
 
+A review note's reference to a file's lines, `(path:line)`, opens that file on
+the forge at the commit the note was written about, as on the local page, when
+the forge names a `fileUrl`. The cut carries each such link, and the service
+refuses any other. A service deployed before the release that carries file links
+refuses a cut that carries them, with `invalid_projection`, so its page stops
+following the delivery: redeploy it from that release before a publisher whose
+forge names a `fileUrl` sends files.
+
+A plan's preview, published while the plan is still under agent review, is a cut
+like any other, published under its own key, `plan-<reviewSlug>`. Its plan
+chapter says the review is agent-only and never reads as approved, but only on
+a service built from the release that carries previews: an older one draws its
+approval line as approved, beside the "Plan preview (agent review only)"
+headline. Redeploy the service from that release before publishing previews.
+
 ## Service checks
 
 Use Node 24 via the repository’s `.nvmrc` for development and CI. The service supports Node 22.22.2+ on the 22 line and Node 24.15 or newer. Run the service's own

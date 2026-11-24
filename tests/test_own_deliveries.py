@@ -24,7 +24,7 @@ CATALOGUE_MODULES = (
     "delivery_views_hosted", "delivery_views_hosted_projection", "delivery_views_page", "delivery_views_plan", "delivery_views_plan_fixtures", "delivery_views_render",
     "delivery_views_review_projection", "delivery_views_snapshots", "diagnosis", "documented_install_surface",
     "fault_injection", "forge_adapters", "handoff_listing", "historical_qualifications", "hive_knowledge_adapter", "hooks", "host_exposure", "jira_profile", "journal_kinds", "journal_shape", "knowledge_library", "lane_changes", "lane_rows",
-    "lane_ruling_corpus", "lead_assign_owns", "lead_plan_changes", "lead_add_lane", "lead_wait", "lifecycle", "linear_profile", "linear_qualification", "machine",
+    "lane_ruling_corpus", "lead_assign_owns", "lead_plan_changes", "lead_add_lane", "lead_wait", "lifecycle", "linear_profile", "linear_qualification", "live_address_corpus", "machine",
     "measure_test_writes",
     "merge_occurrence", "merge_queue", "narrator", "no_current_set_names", "orchestration_adopter", "orchestration_render",
     "orchestration_state", "own_deliveries", "ownership_lock_race", "product_descriptors", "product_launcher", "product_release",
@@ -33,7 +33,7 @@ CATALOGUE_MODULES = (
     "profile_inventory", "provenance", "provider_qualification", "qualification", "readme", "receipt", "region_claims", "region_grants", "registry",
     "release_archive", "release_channel", "release_entry_budget", "release_integration", "review_and_compounding",
     "review_base_reopening", "review_bound_corpus", "review_grace", "review_orchestration", "round_brief_template_corpus",
-    "router", "run_delivery", "run_delivery_compounding", "run_delivery_finish", "run_delivery_hooks", "run_delivery_hosted", "run_delivery_peers", "run_delivery_plan_review",
+    "router", "run_delivery", "run_delivery_compounding", "run_delivery_finish", "run_delivery_hooks", "run_delivery_hosted", "run_delivery_peers", "run_delivery_plan_preview", "run_delivery_plan_review",
     "run_delivery_gaps", "run_delivery_lens_request", "run_delivery_pr_review",
     "run_delivery_pr_review_gates", "run_delivery_review_wait", "run_delivery_supervisor", "run_delivery_tracker", "run_delivery_tool_commits", "run_event_acceptance",
     "run_event_emission_corpus",
@@ -50,7 +50,7 @@ SERVICE_IDS = ('hosted.install', 'hosted.typecheck', 'hosted.build', 'hosted.tes
                'hosted.browser-install', 'hosted.browser', 'hosted.conformance', 'hosted.node-test', 'hosted.conformance-node')
 GUARDS = ["tests.test_linear_qualification", "tests.test_registry"]
 SKILL_PROSE_READERS = ["tests.test_declared_mechanics_corpus", "tests.test_lane_ruling_corpus",
-                       "tests.test_review_bound_corpus", "tests.test_round_brief_template_corpus",
+                       "tests.test_live_address_corpus", "tests.test_review_bound_corpus", "tests.test_round_brief_template_corpus",
                        "tests.test_run_event_emission_corpus"]
 # Modules that run as scripts, holding no unittest case.
 SCRIPT_MODULES = ("tests.test_registry",)
@@ -567,7 +567,7 @@ class StandingBinding(unittest.TestCase):
         prose = binding["selection"]["readers"][2]
         self.assertEqual(prose, {"paths": ["skills/**/*.md"], "checks": SKILL_PROSE_READERS})
         text = " ".join((ROOT / "docs/own-deliveries.md").read_text(encoding="utf-8").split())
-        self.assertIn("A change to any Markdown file under `skills/` brings the five corpus tests that read the "
+        self.assertIn("A change to any Markdown file under `skills/` brings the six corpus tests that read the "
                       "shipped skill prose, `tests.test_run_event_emission_corpus` among them,", text)
         for changed, brought in ((["skills/run-delivery/SKILL.md"], True),
                                  (["README.md", "skills/orchestrate-work/references/orchestration-guide.md"], True),

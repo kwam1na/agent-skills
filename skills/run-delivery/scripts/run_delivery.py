@@ -221,19 +221,22 @@ def hosted_settings(c):
     return raw,validated['hosted']
 
 
-def hosted_files(c):
+def hosted_files(c,folder):
+    """The publisher's configuration and binding, written into the record folder it publishes."""
     settings=hosted_settings(c)
     if settings is None:return None
     raw,member=settings;module=hosted_module(c.release)
-    c.state.mkdir(parents=True,exist_ok=True)
-    config=c.state/'hosted-view-config.json';binding=c.state/'hosted-view-binding.json'
+    folder.mkdir(parents=True,exist_ok=True)
+    config=folder/'hosted-view-config.json';binding=folder/'hosted-view-binding.json'
     module.atomic(config,raw)
-    module.atomic(binding,{'state':{'directory':str(c.state)}})
+    module.atomic(binding,{'state':{'directory':str(folder)}})
     return module,member,config,binding
 
 
-def hosted_call(c,operation,*,resume=False,timeout=5):
-    files=hosted_files(c)
+def hosted_call(c,operation,folder,key,*,archive=True,resume=False,timeout=5):
+    """Run the publisher's `operation` on the record in `folder`, published under `key`: a delivery's record, with its
+    archive root, or a plan preview's, which has none."""
+    files=hosted_files(c,folder)
     if files is None:return {'state':'disabled'}
     module,member,config,binding=files
     environment=dict(os.environ)
@@ -242,9 +245,9 @@ def hosted_call(c,operation,*,resume=False,timeout=5):
     pointer=c.root/'.agent-skills/current'
     watched=pointer if pointer.exists() and pointer.resolve()==c.release.resolve() else c.release
     command=[sys.executable,'-B',str(c.release/'skills/delivery-views/scripts/hosted.py'),operation,
-             '--config',str(config),'--binding',str(binding),'--state-dir',str(c.state),'--key',c.delivery,
+             '--config',str(config),'--binding',str(binding),'--state-dir',str(folder),'--key',key,
              '--generation',str(watched),'--generation-target',str(c.release.resolve()),
-             '--archive-root',str(archive_root(c)),'--record-root',str(c.state)]
+             *(['--archive-root',str(archive_root(c))] if archive else []),'--record-root',str(folder)]
     if resume:command.append('--resume')
     done=run(command,cwd=c.root,check=False,timeout=timeout,env=environment,_publishing=True)
     try:answer=json.loads(done.stdout)
@@ -254,7 +257,7 @@ def hosted_call(c,operation,*,resume=False,timeout=5):
 
 
 def start_hosted(c,*,resume=False,timeout=5):
-    try:return hosted_call(c,'start',resume=resume,timeout=timeout)
+    try:return hosted_call(c,'start',c.state,c.delivery,resume=resume,timeout=timeout)
     except (Stop,OSError,ValueError,subprocess.SubprocessError):return {'state':'failed','code':'publisher_unavailable'}
 
 
@@ -319,7 +322,8 @@ def owned_hosted_processes(c):
 
 def hosted_retry(args):
     if not args.archive:
-        print(json.dumps(hosted_call(cfg(),'retry',resume=args.resume)))
+        c=cfg()
+        print(json.dumps(hosted_call(c,'retry',c.state,c.delivery,resume=args.resume)))
         return
     # The current checkout supplies trusted collection configuration. An archive
     # supplies only its bounded record and identity, never executable commands.
@@ -349,7 +353,7 @@ def hosted_retry(args):
     from types import SimpleNamespace
     proxy=SimpleNamespace(root=c.root,state=record,release=c.release,shelf=c.shelf,
                           delivery=identity['deliveryKey'],flow_raw={'cleanup':{'archive':str(record)}},main=c.main)
-    print(json.dumps(hosted_call(proxy,'retry',resume=args.resume)))
+    print(json.dumps(hosted_call(proxy,'retry',proxy.state,proxy.delivery,resume=args.resume)))
 
 
 def finalize_hosted(c,archive,closed,*,seconds=HOSTED_CLOSE_SECONDS):
@@ -2631,6 +2635,28 @@ def review_slug(plan: Path, text: str) -> str | None:
     return slug
 
 
+def needed_review_slug(plan: Path, text: str) -> str:
+    """The plan's `reviewSlug`, refused with the front matter to add when it has none."""
+    slug = review_slug(plan, text)
+    if slug is None:
+        suggested = re.sub(r"[^a-z0-9]+", "-", plan.stem.lower()).strip("-")[:64] or "plan"
+        raise Stop(f"{plan} has no review slug, which keeps its review when the plan is renamed. Add this front matter "
+                   f"at its top and commit it before round 1:\n---\nreviewSlug: {suggested}\n---")
+    return slug
+
+
+def with_preview(command):
+    """A plan-review command that, with --plan, ends by rebuilding the plan's preview and printing its links. A
+    preview that can't be built is said, and never changes the command's outcome."""
+    def run_then_preview(args) -> None:
+        command(args)
+        if getattr(args, "plan", None):
+            sys.stdout.flush()
+            preview_quietly(args.plan)
+    run_then_preview.__name__ = command.__name__
+    return run_then_preview
+
+
 def plan_review_config(args):
     """The config a plan-review command runs under: the delivery's, or with --plan the plan's own store, which needs no
     delivery file, binding or record."""
@@ -2642,11 +2668,7 @@ def plan_review_config(args):
     path = c.root / plan
     if not path.is_file():
         raise Stop(f"no plan at {path}")
-    slug = review_slug(plan, path.read_text())
-    if slug is None:
-        suggested = re.sub(r"[^a-z0-9]+", "-", plan.stem.lower()).strip("-")[:64] or "plan"
-        raise Stop(f"{plan} has no review slug, which keeps its review when the plan is renamed. Add this front matter "
-                   f"at its top and commit it before round 1:\n---\nreviewSlug: {suggested}\n---")
+    slug = needed_review_slug(plan, path.read_text())
     c.plan, c.plan_store = plan, c.main / c.work / "plan-review" / slug
     adopted = load_json(c.plan_store / "adopted.json")
     if adopted:
@@ -2672,6 +2694,20 @@ def adoptable_plan_review(c, plan: Path) -> Path | None:
     return source if n > 1 else None
 
 
+def preview_handed_quietly(c, slug: str, delivery: str) -> None:
+    """After an adoption: the preview's handed finish, best effort and silent. It starts only where a preview folder
+    exists for the slug, and nothing it does or fails at reaches the adoption's output or exit code."""
+    try:
+        folder = preview_folder(c, slug)
+        facts = load_json(folder / PREVIEW_FILE) if folder.is_dir() else None
+        if not facts or (folder / PREVIEW_HANDED).exists():
+            return
+        with open(os.devnull, "w") as quiet, contextlib.redirect_stdout(quiet):
+            preview_handed_finish(c, folder, Path(facts["plan"]), {"delivery": delivery})
+    except Exception:  # noqa: BLE001  (best effort: the adoption stands whatever happens here)
+        return
+
+
 def adopt_plan_review(c, source: Path, delivery: str) -> str:
     """Move the plan's own review store into the delivery's, leaving a pointer behind, so the plan chapter shows it."""
     target = c.main / c.work / "review" / delivery / "plan"
@@ -2691,6 +2727,7 @@ def adopt_plan_review(c, source: Path, delivery: str) -> str:
     source.mkdir()
     (source / "adopted.json").write_text(json.dumps({"delivery": delivery, "store": str(target), "at": now()},
                                                     indent=2) + "\n")
+    preview_handed_quietly(c, source.name, delivery)
     return f"adopted the plan review ({rounds} round{'' if rounds == 1 else 's'}) from {source} into {target}"
 
 
@@ -6445,16 +6482,16 @@ def plan_validator(c):
     return views_common
 
 
-def check_plan(plan: dict, c) -> None:
+def check_plan(plan: dict, c, what: str = "the plan this delivery file makes") -> None:
     views = plan_validator(c)
     try:
         views.validate_plan(json.loads(json.dumps(plan)))
     except views.ConfigError as error:
-        raise Stop(f"the plan this delivery file makes isn't a valid delivery-plan/1: {error}")
+        raise Stop(f"{what} isn't a valid delivery-plan/1: {error}")
     # Measured as rebuild_plan writes it, so the view never meets a file it refuses unread.
     size = len((json.dumps(plan, indent=2) + "\n").encode("utf-8"))
     if size > views.PLAN_LIMIT_BYTES:
-        raise Stop(f"the plan this delivery file makes holds {size} bytes, over the 1 MiB a plan may hold")
+        raise Stop(f"{what} holds {size} bytes, over the 1 MiB a plan may hold")
 
 
 def rebuild_plan(c) -> str | None:
@@ -6498,6 +6535,474 @@ def rebuild_plan_quietly(c) -> str:
     except (Stop, ValueError) as error:  # a refusal, or a delivery file saved mid-edit that isn't JSON
         return f"plan: not rebuilt: {error}"
     return f"plan: {moved}" if moved else "plan: unchanged"
+
+
+# -- plan preview -------------------------------------------------------------------------------
+# A plan under agent review, shown on the line map before any delivery exists: `plan-view --plan` reads the plan as
+# committed at HEAD and its plan-review store, and keeps a record of its own per reviewSlug, beside the review store,
+# at <main>/<work>/plan-preview/<slug>/. The folder is made once and never replaced: a rebuild replaces only its files,
+# so whatever follows the folder keeps following it.
+
+PREVIEW_PREFIX = "Plan preview (agent review only): "
+PREVIEW_FOLDER = "plan-preview"
+PREVIEW_LOCK = "preview.lock"
+PREVIEW_FILE = "preview.json"
+# The contract's caps a preview cuts its lists to, keeping the first items, and the words it names each by.
+PREVIEW_CAPS = {"units": (200, "story", "stories"), "finish": (30, "finish line", "finish lines"),
+                "approvals": (100, "approval", "approvals"), "outOfScope": (100, "out-of-scope item", "out-of-scope items"),
+                "decisions": (100, "decision", "decisions")}
+PREVIEW_CRITERIA = 1000  # every unit's criteria together
+PREVIEW_OUTCOME_TEXT = 2000
+
+
+def preview_folder(c, slug: str) -> Path:
+    return c.main / c.work / PREVIEW_FOLDER / slug
+
+
+def plan_labelled_list(section: str, label: str) -> list[str]:
+    """The items of the list a story section opens with `label` (`Scenarios:`, `Done when`), each with its deeper lines
+    joined to one line as plan_list_items joins them: the items nested under a bullet that opens with the label, or the
+    list right after a paragraph line that does. A `Done when` bullet with nothing nested under it is its own one item.
+    Only the first such list counts; none gives no items."""
+    lines = section.splitlines()
+    opening = re.compile(rf"^(?P<indent>[ \t]*)(?P<bullet>(?:[-*+]|\d+[.)])[ \t]+)?{re.escape(label)}(?P<rest>.*)$")
+    marker = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+(?P<text>.*)$")
+    width = lambda line: len(line) - len(line.lstrip(" \t"))
+    for at, line in enumerate(lines):
+        found = opening.match(line)
+        if not found:
+            continue
+        indent, bulleted = len(found.group("indent")), bool(found.group("bullet"))
+        own, items, level = label + found.group("rest"), [], None
+        for below in lines[at + 1:]:
+            if not below.strip():
+                continue
+            here, item = width(below), marker.match(below)
+            if below.lstrip().startswith("#") or (here <= indent if bulleted else here < indent):
+                break
+            if item and level is None:
+                level = here
+            if level is None:
+                own += " " + below.strip()  # the opening line's own continuation
+            elif item and here == level:
+                items.append(item.group("text"))
+            elif here > level and items:
+                items[-1] += " " + below.strip()
+            else:
+                break
+        if not items and bulleted and label == "Done when" and found.group("rest").strip(" :"):
+            items = [own]
+        return [plan_line(text) for text in items if text.strip()]
+    return []
+
+
+def preview_out_of_scope(sections: list[tuple[int, str, str]]) -> list[str]:
+    """The items of a heading named `Out of scope`, else of the list after an `Out of scope:` line inside `## Scope`."""
+    own = next((body for _, title, body in sections if title.strip().rstrip(":") == "Out of scope"), None)
+    if own is not None:
+        return plan_list_all(own)
+    scope = next((body for level, title, body in sections if level == 2 and title == "Scope"), None)
+    found = re.search(r"^Out of scope:[ \t]*$", scope or "", re.M)
+    if found is None:
+        return []
+    items: list[str] = []
+    for line in ("\n" + scope[found.end():]).splitlines()[1:]:
+        if line.strip() and not re.match(r"^(?:[-*+]|\d+[.)])\s", line) and line[:1] not in (" ", "\t"):
+            break  # the list ends at the next paragraph
+        items.append(line)
+    return plan_list_all("\n" + "\n".join(items))
+
+
+def plan_at_head(c, plan: Path) -> tuple[str, str, str]:
+    """The plan's text as committed at HEAD, the last commit at HEAD that changed it, and that commit's committer time
+    in UTC: never the working tree, so edits not yet committed wait for their commit."""
+    shown = run(["git", "show", f"HEAD:{plan.as_posix()}"], cwd=c.root, check=False)
+    if shown.returncode != 0:
+        raise Stop(f"{plan} isn't committed at HEAD here; commit it, then run {flow_command()} plan-view --plan "
+                   f"{shlex.quote(str(plan))}")
+    commit, stamp = git("log", "-1", "--format=%H %ct", "HEAD", "--", plan.as_posix(), cwd=c.root).split()
+    at = datetime.datetime.fromtimestamp(int(stamp), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return shown.stdout, commit, at
+
+
+def preview_store(c, slug: str) -> tuple[Path, dict | None]:
+    """The plan's review store and, once a delivery adopted it, the adoption: then the store is the delivery's, which
+    holds every round. Never through plan_review_config, which refuses an adopted store."""
+    own = c.main / c.work / "plan-review" / slug
+    adopted = load_json(own / "adopted.json")
+    return (Path(adopted["store"]) if adopted and adopted.get("store") else own), adopted
+
+
+def build_preview(c, plan: Path, text: str, commit: str, at: str, store: Path, adopted: dict | None) -> tuple[dict, dict]:
+    """The preview's delivery-plan/1 and the record's seed (headline, planned, finish), from the plan's text."""
+    sections = plan_sections(text)
+    meta = front_matter(text)
+    heading = re.search(r"^# (.+)$", text, re.M)
+    title = " ".join((meta.get("title") or (heading.group(1) if heading else "") or plan.stem).split())
+    room = 600 - len(PREVIEW_PREFIX)
+    summary = PREVIEW_PREFIX + (title if len(title) <= room else title[:room - 1] + "…")
+    goal = next((body for level, name, body in sections if level == 2 and name == "Goal"), None)
+    paragraph = next((" ".join(part.split()) for part in re.split(r"\n\s*\n", goal.split("\n", 1)[1] if goal and "\n" in goal
+                      else "") if part.strip() and not part.lstrip().startswith("#")), None)
+    stories = next((body for level, name, body in sections if level == 2 and name == "Stories"), None)
+    table, _ = units_table(text)
+    lane_of = {key: row["lane"] for row in table or [] for key in row["items"]}
+    units, planned, seen = [], [], set()
+    for level, name, body in plan_sections(stories or ""):
+        found = re.match(STORY_HEADING, f"### {name}") if level == 3 else None
+        if found is None or found.group("key") in seen:
+            continue
+        key = found.group("key")
+        seen.add(key)
+        criteria = [*plan_labelled_list(body, "Scenarios:"), *plan_labelled_list(body, "Done when")]
+        unit_title = plan_line(found.group("title"))
+        units.append({"subject": key, "title": unit_title,
+                      "criteria": [{"id": f"{key.lower()}-{n}", "text": item} for n, item in enumerate(criteria, 1)],
+                      "proofs": [kind["id"] for kind in PLAN_RECORD_KINDS]})
+        order = story_plan(body) or {}
+        files = section_files(body)
+        planned.append({"subject": key, "title": unit_title, "lane": order.get("lane") or lane_of.get(key),
+                        "stage": "planned", **({"after": order["after"]} if order.get("after") else {}),
+                        **({"files": files} if files else {})})
+    finish_body = next((body for level, name, body in sections if level == 2 and name == "Finish line"), "")
+    approvals_body = next((body for level, name, body in sections if level == 2 and name == "Approval handoffs"), "")
+    decisions_body = next((body for level, name, body in sections if level == 2 and name.startswith("Decisions")), "")
+    lists = {"units": units, "finish": plan_list_all(finish_body), "approvals": plan_list_all(approvals_body),
+             "outOfScope": preview_out_of_scope(sections), "decisions": plan_list_all(decisions_body)}
+    dropped = []
+    for member, (cap, one, many) in PREVIEW_CAPS.items():
+        over = len(lists[member]) - cap
+        if over > 0:
+            lists[member] = lists[member][:cap]
+            dropped.append(f"{over} {one if over == 1 else many}")
+    planned = planned[:len(lists["units"])]
+    left = PREVIEW_CRITERIA
+    for unit in lists["units"]:
+        kept = unit["criteria"][:max(left, 0)]
+        left -= len(unit["criteria"])
+        unit["criteria"] = kept
+    if left < 0:
+        dropped.append(f"{-left} criteri{'on' if left == -1 else 'a'}")
+    said = (f" This preview leaves out what is over the plan's caps: {', '.join(dropped)}." if dropped else "")
+    body_text = paragraph or title
+    keep = PREVIEW_OUTCOME_TEXT - len(said)
+    body_text = (body_text if len(body_text) <= keep else body_text[:keep - 1] + "…") + said
+    finish = [{"id": f"finish-{n}", "label": f"Finish {n}", "text": line, "at": at,
+               "covers": {"criteria": [], "proofs": []}} for n, line in enumerate(lists["finish"], 1)]
+    preview = {"plan": plan.as_posix()[:600], "commit": commit,
+               "approval": "handed" if adopted else "agents-only",
+               **({"delivery": adopted["delivery"]} if adopted else {}),
+               "layout": "delivery" if units else "other", "decisions": lists["decisions"]}
+    built = {
+        "schemaVersion": "delivery-plan/1", "updated": now(), "outcome": {"summary": summary, "text": body_text},
+        "requiredLenses": [], "proofKinds": PLAN_RECORD_KINDS, "units": lists["units"], "finish": finish,
+        "approved": {"at": at, "snapshot": {"units": lists["units"], "finish": finish}},
+        "changes": [], "evidence": {},
+        **({"approvals": [{"text": item, "state": "waiting"} for item in lists["approvals"]]} if lists["approvals"] else {}),
+        **({"outOfScope": lists["outOfScope"]} if lists["outOfScope"] else {}),
+        "preview": preview,
+    }
+    c.plan_store = store
+    review = plan_review_of(c)
+    if review:
+        built["planReview"] = review
+    seed = {"headline": summary, "planned": planned,
+            "finish": [{"id": line["id"], "text": line["text"], "met": False} for line in finish]}
+    return built, seed
+
+
+def replace_file(path: Path, text: str) -> None:
+    """Write a file by replacing it with a temporary file in its own folder."""
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(text)
+    os.replace(temporary, path)
+
+
+def rebuild_preview(c, plan: Path) -> tuple[Path, str | None]:
+    """Build the plan's preview and write what changed, under the folder's lock. Returns the folder and what changed,
+    None when nothing did."""
+    text, commit, at = plan_at_head(c, plan)
+    slug = needed_review_slug(plan, text)
+    folder = preview_folder(c, slug)
+    folder.mkdir(parents=True, exist_ok=True)
+    c.state = folder
+    with open(folder / PREVIEW_LOCK, "a+") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        store, adopted = preview_store(c, slug)
+        built, seed = build_preview(c, plan, text, commit, at, store, adopted)
+        check_plan(built, c, f"the preview of {plan}")
+        said = []
+        if not (folder / "state.json").exists():
+            state_tool("init", "--headline", seed["headline"], "--seed",
+                       json.dumps({"planned": seed["planned"], "finish": seed["finish"]}))
+            said.append("record")
+        else:
+            def compute(doc):
+                state = doc["state"]
+                body = {**({"meta": {"headline": seed["headline"]}} if state["meta"].get("headline") != seed["headline"]
+                           else {}),
+                        **{key: seed[key] for key in ("planned", "finish") if state.get(key, []) != seed[key]}}
+                return body or None
+            if patch_from(compute, f"the preview record of {plan}"):
+                said.append("record")
+        path = folder / PLAN_FILE
+        old = load_json(path)
+        same = lambda a, b: {k: v for k, v in a.items() if k != "updated"} == {k: v for k, v in b.items() if k != "updated"}
+        if old is None or not same(old, built):
+            changed = [] if old is None else [
+                key for key in sorted({*built, *old}) if key != "updated" and old.get(key) != built.get(key)]
+            before = path.read_bytes() if old is not None else None
+            replace_file(path, json.dumps(built, indent=2) + "\n")
+            try:
+                state_tool("journal", "--kind", "plan.updated",
+                           "--data", json.dumps({"updated": built["updated"], "changed": changed}))
+            except Stop:
+                # Put the plan back, so the next build finds the change again and journals it, rather than finding
+                # nothing to do and the journal never saying the plan moved.
+                if before is None:
+                    path.unlink()
+                else:
+                    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+                    temporary.write_bytes(before)
+                    os.replace(temporary, path)
+                raise
+            said.append("plan " + ("(" + ", ".join(changed) + ")" if changed else "(first build)"))
+        kept = load_json(folder / PREVIEW_FILE) or {}
+        facts = {**kept, "slug": slug, "plan": plan.as_posix(), "title": built["outcome"]["summary"][len(PREVIEW_PREFIX):],
+                 "commit": commit}
+        if facts != kept:
+            replace_file(folder / PREVIEW_FILE, json.dumps(facts, indent=2) + "\n")
+    return folder, ", ".join(said) or None
+
+
+PREVIEW_HANDED = "handed.json"
+PREVIEW_LOG = "live.log"
+PREVIEW_FINISH_LOG = "finish.log"
+# How long the handed finish waits for the hosted page to hold the handed cut before it stops the processes anyway.
+PREVIEW_HANDED_SECONDS = 120
+
+
+def preview_key(slug: str) -> str:
+    """The preview's key: its hosted publisher's, and the one its live port is derived from."""
+    return f"plan-{slug}"
+
+
+def preview_live_config(c, folder: Path) -> dict | None:
+    """The live view's state configuration for a preview, derived from the binding: its folder, the one renderer
+    `state.liveHome` names, and `liveHome`; no publishers, snapshots, runs page or other renderers. None when the
+    binding names no liveHome, or one that isn't an argv renderer."""
+    state = binding_state(c) or {}
+    home = state.get("liveHome")
+    renderer = next((entry for entry in state.get("renderers") or [] if isinstance(entry, dict)
+                     and entry.get("id") == home and entry.get("argv")), None)
+    if not isinstance(home, str) or renderer is None:
+        return None
+    return {"directory": str(folder), "renderers": [renderer], "liveHome": home}
+
+
+def preview_hosted_on(c) -> bool:
+    try:
+        return hosted_settings(c) is not None
+    except Stop:
+        return True  # configured, if not validly: the publisher's own answer says why
+
+
+def start_preview_live(c, folder: Path, slug: str, config: dict) -> str:
+    """The preview's live view: the one `live.json` names, while it serves from this generation's render_state.py;
+    otherwise one started detached, a running one of another generation stopped by its recorded pid first, on the
+    recorded port, else the one derived from the main checkout and the preview's key, else a free one. Its address."""
+    script = str((c.release / "skills/orchestrate-work/scripts/render_state.py").resolve())
+    live = recorded_live(folder)
+    if live and pid_runs(live["pid"]) and listens(live["pid"], live["port"]):
+        if live.get("renderState") == script:
+            return live_address(live["port"])
+        stop_view(folder)
+        free = time.monotonic() + 10
+        while port_open(live["port"]) and time.monotonic() < free:
+            time.sleep(0.1)
+    wanted = (live.get("port") or 0) if live_port_setting() == 0 else wanted_live_port(folder, live_top(c),
+                                                                                         preview_key(slug))
+    holders = port_takers(wanted) if wanted else []
+    argv = [sys.executable, "-B", script, "live", "--dir", str(folder), "--repo", str(c.root), "--state-config",
+            json.dumps(config), "--preview"]
+    log = folder / PREVIEW_LOG
+    started = spawn_live_view([*argv, "--port", str(0 if holders else wanted)], log, c.root, 0 if holders else wanted)
+    if started is None:  # the port was taken between the look and the bind
+        holders = port_takers(wanted)
+        started = spawn_live_view([*argv, "--port", "0"], log, c.root, 0)
+    proc, bound = started
+    record = {"port": bound, "pid": proc.pid, "renderState": script, "startedAt": now(), "address": live_address(bound)}
+    if holders:
+        record["fallback"] = {"wanted": wanted, "heldBy": [{"pid": pid, "command": command} for pid, command in holders]}
+    replace_file(folder / LIVE_FILE, json.dumps(record, indent=2) + "\n")
+    return record["address"]
+
+
+def start_preview_hosted(c, folder: Path, slug: str) -> str:
+    """The hosted line for a preview: its link once the publisher has one, or why it wasn't published."""
+    try:
+        member = hosted_settings(c)[1]
+    except Stop as error:
+        return f"not published: {error}"
+    if HOSTED_TOKENS.get((member["tokenEnv"], member["origin"], member["repositoryId"])) is None:
+        return f"not published: {member['tokenEnv']} is unset"
+    try:
+        answer = hosted_call(c, "start", folder, preview_key(slug), archive=False)
+        deadline = time.monotonic() + 15
+        while not answer.get("url") and not answer.get("error") and time.monotonic() < deadline:
+            time.sleep(0.2)
+            answer = hosted_call(c, "status", folder, preview_key(slug), archive=False)
+    except (Stop, OSError, ValueError, subprocess.SubprocessError):
+        return "not published: publisher_unavailable"
+    if answer.get("url"):
+        return answer["url"]
+    return f"not published: {answer.get('error') or answer.get('code') or answer.get('state') or 'no answer'}"
+
+
+def preview_lines(c, plan: Path) -> list[str]:
+    """Build the plan's preview, serve and publish it, and say where: nothing at all where the repository has no
+    live view and no hosted configuration. After a delivery adopted the review, the handed finish instead."""
+    live_on = preview_live_config(c, Path(".")) is not None
+    if not live_on and not preview_hosted_on(c):
+        return []
+    text, _, _ = plan_at_head(c, plan)
+    slug = needed_review_slug(plan, text)
+    folder = preview_folder(c, slug)
+    _, adopted = preview_store(c, slug)
+    if adopted:
+        if (folder / PREVIEW_HANDED).exists() or not folder.is_dir():
+            return [f"plan preview: the review of {plan} was adopted by delivery {adopted['delivery']}; its plan shows "
+                    "on that delivery's own views"]
+        return [preview_handed_finish(c, folder, plan, adopted)]
+    rebuild_preview(c, plan)
+    links = {}
+    if live_on:
+        links["live"] = start_preview_live(c, folder, slug, preview_live_config(c, folder))
+    hosted = start_preview_hosted(c, folder, slug) if preview_hosted_on(c) else None
+    if hosted and hosted.startswith("https://"):
+        links["hosted"] = hosted
+    kept = load_json(folder / PREVIEW_FILE) or {}
+    if {**kept, **links} != kept:
+        replace_file(folder / PREVIEW_FILE, json.dumps({**kept, **links}, indent=2) + "\n")
+    return [*([f"plan preview: {links['live']}"] if live_on else []),
+            *([f"plan preview (hosted): {hosted}"] if hosted else [])]
+
+
+def preview_handed_finish(c, folder: Path, plan: Path, adopted: dict) -> str:
+    """Once a delivery adopts the review: mark the preview handed and start one detached finisher, which rebuilds it as
+    handed, waits for the hosted page to hold that cut, then stops the preview's processes. Returns at once."""
+    with open(folder / PREVIEW_FINISH_LOG, "a") as out:
+        finisher = subprocess.Popen([sys.executable, "-B", str(Path(__file__).resolve()), "plan-view", "--plan",
+                                     plan.as_posix(), "--finish-handed"], cwd=c.root, stdin=subprocess.DEVNULL,
+                                    stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+    # Marked once its finisher runs, so a finish that couldn't start is started again by the next plan-view. The
+    # finisher's pid says when the finish is over: once it has gone, nothing more is written in the folder.
+    replace_file(folder / PREVIEW_HANDED, json.dumps({"delivery": adopted["delivery"], "at": now(),
+                                                       "finisher": finisher.pid}, indent=2) + "\n")
+    return f"plan preview: handed to delivery {adopted['delivery']}; its preview stops once the hosted page shows that"
+
+
+def preview_publisher_runs(c, folder: Path) -> bool:
+    """Whether the hosted publisher the preview's folder records runs, as the publisher itself identifies it."""
+    try:
+        module = hosted_module(c.release)
+        return bool(module.process_matches(module.read_json(folder / module.OWNER, optional=True)))
+    except (OSError, ValueError, RuntimeError, ImportError):
+        return False
+
+
+def preview_publisher_sequence(c, folder: Path) -> int:
+    """The highest sequence the preview's publisher holds: its accepted cut's, or a pending one's."""
+    module = hosted_module(c.release)
+    identity = module.read_json(folder / module.IDENTITY, optional=True) or {}
+    return max([identity.get("sequence") or 0,
+                *((part or {}).get("sequence") or 0 for part in (identity.get("receipt"), identity.get("pending")))])
+
+
+def finish_handed(c, plan: Path) -> None:
+    """The detached finisher: rebuild the preview as handed, wait up to PREVIEW_HANDED_SECONDS for the hosted page to
+    hold a cut published after that rebuild, then stop the hosted publisher and the live view by their recorded pids.
+    The live view stops last, and its log line is written before it is signalled: once the publisher and the view have
+    both gone, the finish writes nothing more in the preview's folder."""
+    text, _, _ = plan_at_head(c, plan)
+    slug = needed_review_slug(plan, text)
+    folder = preview_folder(c, slug)
+    key = preview_key(slug)
+    hosted = preview_hosted_on(c) and preview_publisher_runs(c, folder)
+    try:
+        rebuild_preview(c, plan)
+    finally:
+        if hosted:
+            # A cut the publisher holds now, accepted or on its way, was collected before the handed rebuild: the
+            # handed cut is the first one numbered after all of them.
+            held = preview_publisher_sequence(c, folder)
+            deadline = time.time() + PREVIEW_HANDED_SECONDS
+            print(f"{now()} hosted: waiting for a cut after sequence {held} until {deadline}", flush=True)
+            while time.time() < deadline:
+                status = hosted_call(c, "status", folder, key, archive=False)
+                if status.get("state") == "current" and (status.get("receipt") or {}).get("sequence", 0) > held:
+                    break
+                time.sleep(0.5)
+            print(f"{now()} hosted: {json.dumps(hosted_call(c, 'stop', folder, key, archive=False))}", flush=True)
+        live = recorded_live(folder)
+        if not live or not pid_runs(live["pid"]):
+            print(f"{now()} live: not running", flush=True)
+        elif not is_view(live["pid"]):
+            print(f"{now()} live: left pid {live['pid']} alone: live.json names it, but it no longer runs the live "
+                  "view", flush=True)
+        else:
+            print(f"{now()} live: stopping the live view (pid {live['pid']}) on port {live['port']}", flush=True)
+            stop_view_process(live["pid"], live["port"])
+
+
+def stop_preview(c, plan: Path) -> list[str]:
+    """Stop the preview's hosted publisher and live view, each by the pid its folder records, and nothing else."""
+    text, _, _ = plan_at_head(c, plan)
+    folder = preview_folder(c, needed_review_slug(plan, text))
+    if not folder.is_dir():
+        return [f"plan preview: {plan} has no preview"]
+    lines = []
+    if preview_hosted_on(c) and (folder / "hosted-view-config.json").exists():
+        answer = hosted_call(c, "stop", folder, preview_key(folder.name), archive=False)
+        lines.append(f"plan preview (hosted): {answer.get('state') or answer.get('error') or 'no answer'}")
+    lines.append(f"plan preview: {stop_view(folder) or 'not running'}")
+    return lines
+
+
+def preview_quietly(plan: str) -> None:
+    """After a plan-review command: the preview's links, or why it wasn't built; never the command's own outcome."""
+    global CFG
+    try:
+        c = CFG = preview_config(plan)
+        for line in preview_lines(c, Path(plan)):
+            print(line)
+    except (Stop, OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f"plan preview: not built: {error}")
+
+
+def preview_config(given: str):
+    c = Config(repo(), need_delivery=False, pick=False)
+    plan = Path(given)
+    if plan.is_absolute():
+        try:
+            plan = plan.resolve().relative_to(c.root.resolve())
+        except ValueError:
+            raise Stop(f"{given} isn't inside this checkout, {c.root}")
+    c.preview_plan = plan
+    return c
+
+
+def plan_view_command(args) -> None:
+    """`plan-view --plan PATH`: build or rebuild the plan's preview from the plan at HEAD and its review store, serve it
+    on its own live view and publish it where the repository configures those, and print its links. Needs no
+    delivery file, record, tracker or forge. `--stop` stops what the preview runs."""
+    global CFG
+    c = CFG = preview_config(args.plan)
+    if args.finish_handed:
+        finish_handed(c, c.preview_plan)
+        return
+    for line in (stop_preview if args.stop else preview_lines)(c, c.preview_plan):
+        print(line)
 
 
 def lead_plan_checkout(c) -> Path:
@@ -7940,6 +8445,13 @@ def story_plan(section: str) -> dict | None:
 
 def units_rows(text: str) -> tuple[list[tuple[int, str, list[str]]] | None, str | None]:
     """The plan's `Units and order` table as (tier, lane, owns) rows, or None with what's missing."""
+    rows, missing = units_table(text)
+    return (None if rows is None else [(row["tier"], row["lane"], row["owns"]) for row in rows]), missing
+
+
+def units_table(text: str) -> tuple[list[dict] | None, str | None]:
+    """The plan's `Units and order` table as rows of tier, lane, the story keys its items cell names in order, and
+    owns; or None with what's missing."""
     body = next((b for level, title, b in plan_sections(text) if level == 2 and title == UNITS_SECTION), None)
     if body is None:
         return None, f"the plan has no '{UNITS_SECTION}' section"
@@ -7954,7 +8466,8 @@ def units_rows(text: str) -> tuple[list[tuple[int, str, list[str]]] | None, str 
             continue
         tier, lane = re.fullmatch(r"[0-9]+", row[at["Tier"]]), re.fullmatch(r"(?:Lane )?([0-9]+)", row[at["Lane"]])
         if tier is not None and lane is not None:
-            found.append((int(tier.group()), f"lane-{int(lane.group(1))}", plan_paths(row[at["Owns"]])))
+            found.append({"tier": int(tier.group()), "lane": f"lane-{int(lane.group(1))}",
+                          "items": re.findall(PLAN_KEY, row[at["Items, in order"]]), "owns": plan_paths(row[at["Owns"]])})
     return found, None
 
 
@@ -7991,7 +8504,12 @@ def plan_with_story(text: str, key: str, title: str, lane: str, after: list[str]
 
 def plan_list_items(body: str) -> list[str]:
     """Each top-level list item of a plan section, before its first subheading, as one line of at most 600
-    characters; an item's indented continuation lines join it."""
+    characters; an item's indented continuation lines join it. At most the first 100."""
+    return plan_list_all(body)[:100]
+
+
+def plan_list_all(body: str) -> list[str]:
+    """plan_list_items without its cap on the count, so a reader that cuts the list can say how many it dropped."""
     items: list[str] = []
     for line in body.splitlines()[1:]:
         if line.startswith("#"):
@@ -8001,8 +8519,13 @@ def plan_list_items(body: str) -> list[str]:
             items.append(item.group(1).strip())
         elif items and line[:1] in (" ", "\t") and line.strip():
             items[-1] += " " + line.strip()
-    items = [re.sub(r"\s+", " ", text) for text in items if text][:100]
-    return [text if len(text) <= 600 else text[:599] + "\u2026" for text in items]
+    return [plan_line(text) for text in items if text.strip()]
+
+
+def plan_line(text: str) -> str:
+    """A plan list item as one line, its whitespace folded, of at most 600 characters."""
+    text = re.sub(r"\s+", " ", text).strip()
+    return text if len(text) <= 600 else text[:599] + "\u2026"
 
 
 def lead_carry_review(args) -> None:
@@ -10922,6 +11445,31 @@ STOPPED_WORDS = {"close": "it closed the delivery", "replaced": "lead-init --rep
                  "upgrade": "it stopped to start again on the newly applied generation; if none runs, its log says why"}
 UNRECORDED_STOP = "stopped without recording why"
 NOT_STARTED = "not started"
+
+
+def spawn_live_view(argv: list[str], log: Path, cwd: Path, port: int) -> tuple[subprocess.Popen, int] | None:
+    """Start a live view, `argv` asking for `port` (0: a free one), in a session of its own with its output appended
+    to `log`, and wait until it says where it serves. None when it couldn't listen on a port it was given, so the
+    caller binds a free one instead."""
+    offset = log.stat().st_size if log.exists() else 0
+    with open(log, "a") as out:
+        proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        for line in log.read_text()[offset:].splitlines():
+            with contextlib.suppress(ValueError):
+                said = json.loads(line)
+                if said.get("live") and said.get("ok"):
+                    return proc, int(str(said["live"]).rsplit(":", 1)[1])
+                if said.get("code") == "live_unavailable" and port:
+                    proc.wait()
+                    return None
+        if proc.poll() is not None:
+            raise Stop(f"the live view stopped as it started: {log.read_text()[offset:][-400:].strip()}")
+        time.sleep(0.1)
+    stop_group(proc)
+    raise Stop(f"the live view didn't start within 60s; its log is {log}")
 
 
 def derived_live_port(top: str, key: str) -> int:
@@ -14354,26 +14902,7 @@ class Supervisor:
         None when it couldn't listen on a port it was given, so the caller binds a free one instead."""
         c = self.c
         argv = [*self.child_argv("live"), "--port", str(port), "--status-file", str(c.state / SUPERVISOR_FILE)]
-        log = lead_file(c, "supervisor.live.log")
-        offset = log.stat().st_size if log.exists() else 0
-        with open(log, "a") as out:
-            proc = subprocess.Popen(argv, cwd=c.root, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-                                    start_new_session=True)
-        deadline = time.monotonic() + 60
-        while time.monotonic() < deadline:
-            for line in log.read_text()[offset:].splitlines():
-                with contextlib.suppress(ValueError):
-                    said = json.loads(line)
-                    if said.get("live") and said.get("ok"):
-                        return proc, int(str(said["live"]).rsplit(":", 1)[1])
-                    if said.get("code") == "live_unavailable" and port:
-                        proc.wait()
-                        return None
-            if proc.poll() is not None:
-                raise Stop(f"the live view stopped as it started: {log.read_text()[offset:][-400:].strip()}")
-            time.sleep(0.1)
-        stop_group(proc)
-        raise Stop(f"the live view didn't start within 60s; its log is {log}")
+        return spawn_live_view(argv, lead_file(c, "supervisor.live.log"), c.root, port)
 
     def say(self, line: str) -> None:
         """A line on the supervisor's output: held until the address is printed, so that stays its first line."""
@@ -14923,6 +15452,9 @@ def suite_run(c, binding: dict, commit: str, argv: list[str]) -> int:
     # A stop ends the run through main's handler, as an interruption does: its command's group is stopped, by
     # run_group, and its checkout removed, by in_detached_checkout.
     began = time.monotonic()
+    integration = record_integration()
+    if integration:
+        suite_started(c, commit, argv)
 
     def suite(checkout: Path) -> tuple[int, str, tuple[str | None, str | None], float | None]:
         asked = program_version(argv[0], checkout)
@@ -14939,6 +15471,13 @@ def suite_run(c, binding: dict, commit: str, argv: list[str]) -> int:
     except Stop as error:  # the checkout or a prepare step failed, before the interpreter was asked
         code, out, version, unread, budget = 1, str(error), None, "the run ended before its interpreter was asked", None
         started = False
+    except (KeyboardInterrupt, Terminated):
+        # A run stopped part way ends its start entry as a failure, so the record never shows it running on.
+        if integration:
+            state_tool("journal", "--kind", "integration.suite", "--subject", c.delivery, "--data", json.dumps(
+                {"head": commit, "result": "failed", "seconds": round(time.monotonic() - began, 1), "stopped": True}),
+                       check=False)
+        raise
     seconds = round(time.monotonic() - began, 1)
     # Exit 3 is over its budget only where the run itself was held to a suite-budget/1 file; elsewhere it is a failure.
     result = ("unreadable" if not started else "passed" if code == 0 else
@@ -14946,7 +15485,6 @@ def suite_run(c, binding: dict, commit: str, argv: list[str]) -> int:
     append_log("suite", c.delivery, {"commit": commit, "result": result, "exit": code, "argv": argv, "seconds": seconds,
                                      "output": out[-2000:], "platform": platform.platform(), "interpreter": version,
                                      **({"interpreterUnread": unread} if unread else {})})
-    integration = record_integration()
     if integration:
         state_tool("journal", "--kind", "integration.suite", "--subject", c.delivery, "--data", json.dumps(
             {"head": commit, "result": result, "seconds": seconds,
@@ -14958,18 +15496,55 @@ def suite_run(c, binding: dict, commit: str, argv: list[str]) -> int:
 # The run's budget: the file a --budget argument names, read in the run's own checkout at the head it ran, as its
 # wall seconds when it reads as suite-budget/1, and None otherwise.
 def suite_budget(argv: list[str], checkout: Path) -> float | None:
-    named = next((argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--budget"),
-                 next((arg.split("=", 1)[1] for arg in argv if arg.startswith("--budget=")), None))
+    named = budget_named(argv)
     if not named:
         return None
     try:
-        budget = json.loads((checkout / named).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return budget_seconds((checkout / named).read_text(encoding="utf-8"))
+    except OSError:
+        return None
+# The path a --budget argument names, or None.
+def budget_named(argv: list[str]) -> str | None:
+    return next((argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--budget"),
+                next((arg.split("=", 1)[1] for arg in argv if arg.startswith("--budget=")), None))
+# A budget file's wall seconds when it reads as suite-budget/1, and None otherwise.
+def budget_seconds(text: str) -> float | None:
+    try:
+        budget = json.loads(text)
+    except ValueError:
         return None
     if not isinstance(budget, dict) or budget.get("schemaVersion") != "suite-budget/1":
         return None
     wall = budget.get("wallSeconds")
     return wall if isinstance(wall, (int, float)) and not isinstance(wall, bool) and wall >= 0 else None
+# The start of lead-suite's run at commit, journalled before its checkout is made: when it began and, from the last
+# run of the integration suite that finished under the same budget, how long it usually takes. A run that never
+# started, or one stopped part way, did not finish. The budget is read
+# from the commit itself, as the run will read it in its checkout. A start the journal refuses never holds the run.
+SUITE_FINISHED = ("passed", "over-budget", "failed")
+
+
+def suite_started(c, commit: str, argv: list[str]) -> None:
+    named = budget_named(argv)
+    shown = git("show", f"{commit}:{named}", check=False) if named else None
+    budget = budget_seconds(shown) if shown else None
+    try:
+        earlier = journal_entries("integration.suite", c.delivery)
+    except (Stop, OSError, ValueError, KeyError):
+        earlier = []
+    usual = next((entry["data"]["seconds"] for entry in reversed(earlier) if isinstance(entry.get("data"), dict)
+                  and entry["data"].get("result") in SUITE_FINISHED and not entry["data"].get("stopped")
+                  and entry["data"].get("budgetSeconds") == budget
+                  and isinstance(entry["data"].get("seconds"), (int, float))
+                  and not isinstance(entry["data"].get("seconds"), bool)), None)
+    done = state_tool("journal", "--kind", "integration.suite.started", "--subject", c.delivery, "--data", json.dumps(
+        {"head": commit, "startedAt": now(), **({"expectedSeconds": usual} if usual is not None else {}),
+         **({"budgetSeconds": budget} if budget is not None else {})}), check=False)
+    if done.returncode:
+        print(f"lead-suite: the journal refused the run's start, so the live view shows it only once it finishes: "
+              f"{(done.stderr or done.stdout).strip()}", file=sys.stderr, flush=True)
+
+
 # The record's integration step, {base, target, remote}, or None for a delivery without one or with no record yet.
 def record_integration() -> dict | None:
     if not (cfg().state / "state.json").exists():
@@ -16854,14 +17429,22 @@ def main(argv: list[str] | None = None) -> None:
     q.add_argument("--restart", action="store_true", help="discard the prepared round's results and prepare it again")
     q.add_argument("--plan", help=plan_help)
     q.add_argument("--lenses", help="with --plan: the comma-separated lenses, fixed at round 1 (later rounds keep them)")
-    q.set_defaults(fn=plan_review_prepare)
+    q.set_defaults(fn=with_preview(plan_review_prepare))
     q = command(review_commands, "reduce", help="check the lenses' results and record the round")
-    q.add_argument("--plan", help=plan_help); q.set_defaults(fn=plan_review_reduce)
+    q.add_argument("--plan", help=plan_help); q.set_defaults(fn=with_preview(plan_review_reduce))
     q = command(review_commands, "end", help="end a review that isn't converging, with the operator's reason")
     q.add_argument("--plan", help=plan_help)
-    q.add_argument("--reason", required=True); q.set_defaults(fn=plan_review_end)
+    q.add_argument("--reason", required=True); q.set_defaults(fn=with_preview(plan_review_end))
     q = command(review_commands, "check", help="validate plan-review-evidence/1 records, hand-written or written by a review")
     q.add_argument("records", nargs="+", metavar="RECORD"); q.set_defaults(fn=plan_review_check)
+    p = command(sub, "plan-view", help="build or rebuild a plan's preview record from the plan at HEAD and its review "
+                "store, with no delivery")
+    p.add_argument("--plan", required=True, help="the plan, by its repository-relative path; its front matter names "
+                   "its reviewSlug")
+    p.add_argument("--stop", action="store_true", help="stop the preview's live view and hosted publisher, by the "
+                   "pids its folder records")
+    p.add_argument("--finish-handed", action="store_true", help=argparse.SUPPRESS)
+    p.set_defaults(fn=plan_view_command)
     p = command(sub, "gate"); p.add_argument("key")
     p.add_argument("--skip-guards", action="store_true", help="don't run the binding's guards first; needs --why")
     p.add_argument("--now", action="store_true", help="run the guards and named gates at once, whatever the machine "

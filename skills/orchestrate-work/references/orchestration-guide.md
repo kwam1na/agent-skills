@@ -252,6 +252,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `base.moved` | On the epic, record the previous and published base heads and the default branch commit. | the epic | Delivery base updated |
 | `integration.merged` | None: the integration step shows in the record and the live view. | nowhere | - |
 | `integration.suite` | None: the integration step shows in the record and the live view. | nowhere | - |
+| `integration.suite.started` | None: the integration step shows in the record and the live view. | nowhere | - |
 | `integration.requested` | None: the integration step shows in the record and the live view. | nowhere | - |
 | `integration.landed` | None: the integration step shows in the record and the live view. | nowhere | - |
 | `base.published` | None: the push shows in the record and the views; a base move posts with `base.moved`. | nowhere | - |
@@ -773,7 +774,11 @@ three steps, with the supervisor or without it:
    integration step, it also journals the run as `integration.suite` at that
    commit: `passed`, `over-budget` when every test passed and a run held to
    the suite's own budget file with `--budget` went over it, `failed`, or
-   `unreadable` when its checkout or a prepare step failed first. Record each merge of the target
+   `unreadable` when its checkout or a prepare step failed first. Before its
+   checkout is made it journals the run's start as `integration.suite.started`,
+   with the commit, when it began and how long the last finished run under the
+   same budget took, so the live view shows the suite running; its finish, a
+   later start, or a `failed` finish marked `stopped` when the run is stopped, supersedes it. Record each merge of the target
    into the integration with `lead-integrate merged --head <merge>`, adding
    `--conflict <path>` for each path whose conflict you resolved by hand.
 2. **Review the integration.** Run `$review-work` with the delivery's lenses and
