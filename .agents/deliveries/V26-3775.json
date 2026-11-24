@@ -272,6 +272,10 @@
         {
           "id": "v26-3811-1",
           "text": "lead-suite, on a record with an integration step, journals the run's start under the delivery's key before the suite starts (commit, start time, expected seconds from the last finished run at the same budget, else none); the finish answers it, and a later start or finish supersedes an unfinished one, so no step stays running across a new run."
+        },
+        {
+          "id": "v26-3811-2",
+          "text": "While a start stands, the rejoin step draws the suite segment as a moving stripe (still under reduced motion), a tick at the expected time when known, the label 'Rejoin main \u00b7 suite running' and one sentence: 'The full suite is running at <commit>. <n> min, about <m> usual.', past it ', so <k> over', with no expected time '<n> min so far'."
         }
       ]
     }
