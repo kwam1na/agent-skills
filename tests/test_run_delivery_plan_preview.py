@@ -397,6 +397,10 @@ class PlanPreviewTests(unittest.TestCase):
         bystander.wait()
         (here / "handed.json").unlink()
         self.assertTrue(finish().endswith(" live: not running"))
+        # With no live view recorded at all, it says the same.
+        (here / "live.json").unlink()
+        (here / "handed.json").unlink()
+        self.assertTrue(finish().endswith(" live: not running"))
         plan, _, _ = self.built(slug)
         self.assertEqual((plan["preview"]["approval"], plan["preview"]["delivery"]), ("handed", "FX-9"))
         self.assertEqual(plan["planReview"], expected)
