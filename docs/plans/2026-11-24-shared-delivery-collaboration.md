@@ -184,15 +184,20 @@ Out of scope:
     check, refusal or ownership rule reads it.
   - **Membership:**
     - `plan-open` creates the first seat and admits it;
-    - `collab join` creates a seat and journals `seat.requested`;
+    - `collab join` on a clone with no local record first fetches every admitted
+      seat's partition and ingests it into a new local record, so the first
+      seat's `record.started` is local entry 1. Only then does it create a seat and
+      journal `seat.requested`, whose `seen` names what it ingested;
     - the `delivery` holder journals `seat.admitted`, `{seat, label, approver}`,
       with `approver` true unless `--no-approver` is given.
-    - `meta.collab.seats` is derived from those entries, never written directly.
+    - `collab label` journals `seat.labeled`, `{seat, label}`;
+    - `meta.collab.seats` is derived from those entries, never written directly,
+      and takes each seat's latest label.
   - **Refusals:**
     - on a shared record, any write from a checkout with no seat is refused with
       `collab.seat_missing`;
-    - any write from a seat not yet admitted, other than its own `seat.requested`,
-      is refused with `collab.seat_not_admitted`.
+    - any write from a seat not yet admitted, other than its own `seat.requested`
+      and the `sync` writer's ingest, is refused with `collab.seat_not_admitted`.
   - **Environment:** no environment variable sets or overrides the seat.
 - **D3. Transport.**
   - **Where:** each author's partition is a commit chain at
@@ -202,13 +207,32 @@ Out of scope:
       - `seat`;
       - `generation`, `{releaseId, archiveSha256}`;
       - `through`, the last own seq;
-      - `slice`, a map from JSON pointer to value;
+      - `slice`, a list of `{path, value, origin}`. `path` addresses array
+        elements by the keyed selector the patch layer already uses
+        (`ELEMENT_KEYS`, for example `queue[subject=K]/stage` or
+        `lanes[id=L]/focus`), never by index. `origin` is the `{seat, seq}` of the
+        write that set the value;
+      - `hosted`, only while the seat holds `delivery`: the hosted identity's
+        `publicId`, `ownerId`, `epoch`, `sequence`, `receipt` and `pending`, never
+        the token (D12);
+      - `trackerThrough`, only while the seat holds `delivery`: `{seat: seq}`, the
+        last origin of each seat the tracker publisher has posted (D12);
     - `journal.jsonl`: the author's own-origin entries in seq order.
   - **Push:** fast-forward only, never forced. A rejected push re-reads the remote
     ref.
-    - If the remote ref is not an ancestor of the local chain, the same id is
-      writing from a second checkout, for example a copied one. The push is refused
-      with `collab.seat_split`, and nothing is ingested from that ref.
+    - If the remote ref is not an ancestor of the local chain, the same seat is
+      writing from a second checkout, for example a copied one.
+    - **Whichever chain reached the remote first is the seat's chain**, for every
+      machine. A third seat ingests only what the remote ref holds.
+    - **The checkout whose push is refused** gets `collab.seat_split`:
+      - its unpushed chain is kept locally at `refs/agent-skills-split/<key>/<seat>`;
+      - its record marks itself held, with `heldReason: "seat_split"`, and every
+        later write from that checkout is refused with `collab.seat_split`;
+      - Needs you names the split. `collab join --new-seat` gives that checkout a
+        fresh seat, which needs admission.
+  - **Remote settings.** The plan requires nothing of the remote. Tests set
+    `receive.denyNonFastForwards` and `core.logAllRefUpdates=always` on their bare
+    remotes so a forced update would be visible (D18).
   - **Admitted seats only:** a peer ref whose seat has no `seat.admitted` entry is
     fetched but ingested only for its `seat.requested` entry.
   - **Fetch:** peers' refs come down by explicit refspec into
@@ -229,10 +253,20 @@ Out of scope:
     machines' journals hold the same set of origins in an order consistent with
     causality. Local ids may differ between machines, and nothing compares them
     across machines.
+  - **State fields that hold journal ids.** `delivery-state/1` has exactly two:
+    - `regionsSettled` is carried in slices as the origin of the merge it names,
+      and translated to the local id on ingest;
+    - `meta.closing.started.entry` and `meta.closing.finished.entry` are
+      machine-local. Each machine derives them from its own local id of the
+      `delivery.closed` entry, by the rule `_with_closing` applies on append.
+
+    A COLLAB-2 test walks the schema for integer fields documented as journal ids
+    and fails on one not listed here.
   - **Schema:** `delivery-journal/2` gains `origin` as an optional member, so its
     version does not change. D5 keeps every writer on one generation.
-- **D5. One generation per shared record.** A peer partition whose generation
-  digest differs from the local writer pin is held, not ingested.
+- **D5. One generation per shared record.** A peer partition whose
+  `archiveSha256` differs from the local writer pin is held, not ingested. Only
+  the digest is compared, never `releaseId`.
   - Needs you names it as `collab.generation_differs`.
   - It is ingested after the lagging machine runs its own `lead-upgrade-writer`.
   - Each machine's upgrade is its own parked transition. No machine upgrades
@@ -245,16 +279,48 @@ Out of scope:
   - **Auto-grant:** where `collab.autoGrant` is true in `.agents/run-delivery.json`,
     the `delivery` holder's supervisor grants a requested unclaimed section on its
     next pass.
-  - **Why no voiding is needed:** each scope has one writer, so two machines can
+  - **Why no voiding is needed:** each scope has one holder, so two machines can
     never act on a scope concurrently. The only case is a non-holder acting on a
     stale view, and that is refused locally before anything is written.
-  - **Field map:** each scope's state fields are fixed by a table in
-    `delivery_state.py`, written by COLLAB-3 and COLLAB-6. A field with no scope is
-    tool-owned, as today.
+  - **Field map.** Every `delivery-state/1` property has one row: the scopes
+    permitted to write it, or `local`, or `tool`. The table lives in
+    `delivery_state.py`. COLLAB-3 writes its delivery rows, and COLLAB-6 its lane
+    and queue rows. A test reads the schema's properties, and `meta`'s, and fails
+    on any property without a row.
+
+    | Property | Written by |
+    | --- | --- |
+    | `schemaVersion` | tool |
+    | `version` | local |
+    | `meta.updatedAt`, `meta.writerGeneration`, `meta.closing`, `meta.collab.peers` | local |
+    | `meta.headline`, `planFile`, `trackerParent`, `hold`, `statusOverride`, `handoffsNeedAcceptance`, `integration`, `phase` | `delivery` |
+    | `meta.collab.seats` | derived from the journal, never sliced |
+    | `meta.checking`, `baseHead`, `releasedHead`, `checkHistory`, `baseReruns`, `sources`, `sourceReports`, `baseMove` | `queue` |
+    | `siblings`, `tickets`, `outside` | `delivery`, whose holder alone runs reconcile and the tracker |
+    | `finish[id=…]`, `extensions`, `leases[id=…]` | `delivery` |
+    | `followups[id=…]` | `delivery`, and `lane:<L>` for the follow-ups its own acceptance writes |
+    | `laneOwnership`, `laneRegions`, `regionsSettled` | `delivery`, which arbitrates files between lanes |
+    | `liveFlakes` | `queue` |
+    | `planned[subject=K]` | `delivery` (creation, `lane`, `after`); `lane:<its lane>` for the rest; a planned item with no lane is `delivery` only |
+    | `lanes[id=L]` `id`, `title` | `delivery` |
+    | `lanes[id=L]` `focus`, `state`, `waitingOn`, `since` and the tool's `focusAt`, `focusBy`, `waitingBy`, `restedFrom`, `waitingFrom`, `freed` | `lane:L` (the lead and the `lane` writer) and `queue` (the runner) |
+    | `queue[subject=K]` `stage`, `checks`, `syncedHead`, `checkSelection`, `repair`, `order` | `queue` |
+    | `queue[subject=K]` every other field | `lane:<its lane>` |
+
+  - **Fields with two permitted scopes.** Only the rows that already have two
+    writers today (lane rows, shared by a lane and the runner, and planned items)
+    permit two scopes. Ingest applies such a value when its origin is causally
+    after the local value's, ties broken by seat id. Each machine keeps the origin
+    of every local value in `field-origins.json` beside the record, machine-local
+    and outside `state.json`. Every other row has exactly one scope, so it never
+    meets a concurrent write.
 - **D7. Ingesting a slice is a tool write.**
-  - A new writer, `sync`, applies a peer's slice to the local `state.json`. It may
-    set only the fields of the scopes that peer held at the slice's `through`.
-  - The `patch` CLI refuses `--writer sync`.
+  - A new writer, `sync`, applies a peer's slice to the local `state.json`.
+  - **Filter:** for each value, it checks that the writing seat held a permitted
+    scope at that value's own origin seq, by the journal as ingested so far. It
+    ignores any other value, and journals nothing for it. The local value then
+    stays.
+  - The `patch` CLI refuses `--writer sync` with `collab.sync_writer_reserved`.
   - On a shared record, `lead` writes are checked against the local seat's
     scopes. `runner` writes are allowed only on the `queue` holder's machine.
 - **D8. Plan text sync.**
@@ -264,25 +330,39 @@ Out of scope:
     three-way merge:
     - it resolves sections in base, ours and theirs with `region_ownership`'s
       Markdown rules;
-    - if no section was changed on both sides, it writes theirs with our changed
-      sections replaced;
+    - the text before the first heading, including the front matter, is one more
+      section, `(preamble)`;
+    - a section is changed on a side when it was edited, added or deleted there;
+    - if no section was changed on both sides, the result applies both sides'
+      changes: every section ours added is inserted after the section that
+      precedes it in ours, every section ours deleted is removed, every section ours
+      edited replaces theirs, and every change of theirs stays;
     - otherwise it refuses with `plan.sections_overlap`, naming each section and
-      both diffs.
-  - **Scope check:** after COLLAB-3, a local change outside the sections the
-    seat holds is refused before any push, with `plan.section_not_held` and the
+      both diffs. A delete on one side and an edit on the other counts as changed
+      on both.
+  - **Scope check:** from COLLAB-4, on a planning or delivery record, a local
+    change outside the sections the seat holds is refused before any commit or
+    push, with `plan.section_not_held` and the
     `scope.requested` command that asks for it.
   - **Retries:** a push rejected for being behind recomposes and retries, up to 5
-    times, the bound `RECONCILE_ATTEMPTS` already uses.
+    times, the bound `RECONCILE_ATTEMPTS` already uses. The sixth rejection stops
+    with `plan.push_exhausted`, leaving the local branch at its last composed
+    commit and the remote unchanged.
   - **History:** commits carry each committer's own git identity, as today. Nothing is
     force-pushed.
 - **D9. One watch stream, built for a host monitor.**
   - **Output:** `plan-watch` (COLLAB-1) and `collab watch` (COLLAB-5) print one
     line per new event and nothing else, and flush every line. Events include peer
     plan pushes and ingested peer journal entries.
-  - **Exit:** they exit 0 at `--timeout` (default 1800, as `wait`) and 3 when
-    `--until` matches nothing.
-  - **Poll:** default 5 seconds, set by `collab.pollSeconds`, at least 2. A tick
-    costs one `git fetch` process.
+  - **Exit:** with no `--until`, they exit 0 at `--timeout` (default 1800, as
+    `wait`). With `--until RE`, they exit 0 after printing the first line matching
+    it, and 3 at `--timeout` if none did.
+  - **Poll:** default 5 seconds, set by `collab.pollSeconds`, at least 2. The
+    `run-delivery.json` schema refuses a lower value. A tick costs one
+    `git fetch` process.
+  - **Readers only:** neither command pushes or ingests. `plan-watch` fetches the
+    plan branch. `collab watch` reads the local record, which the sync loop keeps
+    current (D12).
   - **Host-neutral:** Claude Code's monitor and a plain terminal read the stream the
     same way, and no host interface is called.
 - **D10. The planning record.**
@@ -301,33 +381,63 @@ Out of scope:
 - **D11. Joint approval.**
   - Each seat journals `plan.endorsed`, `{commit}`, against the plan commit it
     approves.
+  - **Re-keying.** `plan-rekey --map OLD=NEW[,OLD=NEW...]` replaces placeholder
+    story keys with tracker keys in one commit, and journals `plan.rekeyed`,
+    `{from, to, map}`. Only the `delivery` holder may run it.
   - On a shared record, `lead-init` requires:
-    - one endorsement from every admitted approver seat, naming the same commit;
-    - that commit equal to the commit plan review aligned on;
-    - no open blocking feedback.
+    - one endorsement from every admitted approver seat, naming the current plan
+      commit (`plan.endorsement_missing`);
+    - no endorsement of an older commit standing in for one
+      (`plan.endorsement_stale`);
+    - the endorsed commit equal to the commit plan review aligned on, or reached
+      from it only through `plan.rekeyed` commits whose text equals the aligned
+      text with each map applied (`plan.not_aligned`);
+    - no open blocking feedback (`plan.feedback_blocking`).
 
-    It refuses naming the first of these that is missing.
+    It refuses with the code of the first of these that is missing.
   - A new plan commit makes earlier endorsements stale. The views say so.
 - **D12. Which machine runs what.**
   - Every seat runs a supervisor on its machine. It handles sync, the live
     view, peers and Needs you.
+  - **The sync loop** is a supervisor child, `collab.py serve`, as the merge queue
+    is.
+    - It pushes this seat's partition within one `collab.pollSeconds` of a local
+      write, watched through `changes.jsonl`.
+    - It fetches and ingests peers every `collab.pollSeconds`.
+    - So a write reaches a running peer's record within two ticks plus one push.
+    - `plan-open`, `collab join` and `lead-init` start it as part of the
+      supervisor. Nothing else pushes or ingests a partition.
   - Only the `queue` holder's supervisor starts `merge_queue.py serve` and runs
     `fullHealth`.
   - Only the `delivery` holder's supervisor runs the hosted and tracker publishers.
   - On a shared record the tracker marker uses `<seat>.<seq>` in place of the
     local id. Its ledger keys by origin, so moving `delivery` never posts twice.
+  - **Handing over `delivery`** is a parked transition, like D13:
+    - it waits for no pending hosted publication and no tracker post in flight;
+    - it stops both publishers on this machine;
+    - it writes the hosted identity and `trackerThrough` into this seat's
+      partition, then journals `scope.transferred`.
+    - The incoming seat's supervisor writes them as its `hosted-identity.json` and
+      tracker position before its first publish. It resumes the hosted session by
+      `resume` with the carried `ownerId` and `epoch`, so the public link is
+      unchanged.
+    - Each machine that may hold `delivery` needs the repository's publishing
+      token and tracker credentials in its own environment.
   - The machine ledger and the merge slot stay per machine.
 - **D13. Queue handover is a parked transition.**
   - `collab give queue --to B` waits for an idle queue, meaning no check running
-    and no merge in progress, up to `--wait` seconds.
+    and no merge in progress, up to `--wait` seconds. Past that it refuses with
+    `scope.handover_busy`, naming the check or merge.
   - It stops this machine's queue child, then journals `scope.transferred`.
   - B's supervisor starts its queue on the pass that ingests that entry.
   - Between the two, no machine serves the queue. The line map says
     "queue moving to B".
 - **D14. Hosted pages without a version change.**
   - `delivery-plan/1` gains an optional `draft` member, `{commit, at}`. It
-    replaces `approved` until the plan is approved, and exactly one of the two is
-    present.
+    replaces `approved` until the plan is approved. Exactly one of the two is
+    present, and a plan with both or neither is refused by `validate_plan`.
+  - COLLAB-4 makes this change, because COLLAB-4 is the first story to write a
+    planning `plan.json`.
   - Snapshot v3 already carries `plan` and `document` as generic records, so
     `hosted-delivery-snapshot/3` and `delivery-line-map/3` stay.
   - A planning cut exists only with a publisher and service from this release. The
@@ -348,6 +458,11 @@ Out of scope:
   - The two-machine fixture builds one bare remote and two clones once per class.
   - It is marked `run_quietly`, because it waits on real `git` and supervisor
     processes.
+  - Every bare remote a test builds sets `receive.denyNonFastForwards=true` and
+    `core.logAllRefUpdates=always`. A shared helper asserts that the remote's
+    reflog is non-empty and that every recorded update to `plan/<slug>`,
+    `lead/<key>` and each `refs/agent-skills` ref is a fast-forward. One planted
+    forced push shows the helper catches it.
   - `tests/suite-budget.json` is not raised.
 - **D19. Identity is trust-based.**
   - Anyone who can push to the base remote can write any `refs/agent-skills/...`
@@ -357,12 +472,42 @@ Out of scope:
   - Binding seats to people means signed partition commits checked against
     admitted keys. That is a separate unit, out of scope here.
 
+- **D20. Every refusal, and what its test checks.**
+  - **Codes:**
+
+    | Code | Raised when |
+    | --- | --- |
+    | `collab.seat_missing` | a shared-record write from a checkout with no seat |
+    | `collab.seat_not_admitted` | a write from a seat not yet admitted |
+    | `collab.seat_split` | a push finds the remote seat chain diverged, and every later write from that checkout |
+    | `collab.record_exists` | `plan-open` for a key that already has a record |
+    | `collab.sync_writer_reserved` | `patch --writer sync` |
+    | `plan.sections_overlap` | `plan-sync` finds a section changed on both sides |
+    | `plan.section_not_held` | a plan change outside the seat's held sections |
+    | `plan.push_exhausted` | the sixth rejected `plan-sync` push |
+    | `scope.not_held` | a write, transfer, admission, re-key or feedback resolution by a non-holder; a runner write on a machine not holding `queue` |
+    | `queue.not_held` | `merge_queue.py serve` started where the seat does not hold `queue` |
+    | `scope.handover_busy` | a `queue` or `delivery` handover past its `--wait` |
+    | `plan.endorsement_missing`, `plan.endorsement_stale`, `plan.not_aligned`, `plan.feedback_blocking` | `lead-init`'s joint approval (D11) |
+
+    A held peer partition (`collab.generation_differs`) is a state shown in Needs
+    you, not a refusal.
+  - **Surfaces:** each code's test checks that these are unchanged:
+    - `state.json` and `journal.jsonl`;
+    - the local partition ref and the remote `refs/agent-skills` ref;
+    - the local and remote plan branch.
+  - **Allow case:** each code's test also runs the allowed case beside it.
+
 ## Finish line
 
 All of the following hold at one main-push commit:
 
 1. **Two machines, end to end.** One test class (COLLAB-9) drives two clones of
-   one bare remote, with separate state directories, through:
+   one bare remote, with separate state directories and separate tracker ledgers
+   sharing one fake tracker. It uses only user-facing commands and the running
+   supervisors, never `collab-push`, `collab-fetch` or `collab-ingest`. With
+   `collab.pollSeconds` set to 2, every journal write on one machine appears in the
+   other's record within 10 seconds. The class runs through:
    - `plan-open` on the first clone, creating seat `a`;
    - `collab join` on the second, creating seat `b`, admitted by `a`;
    - concurrent disjoint plan edits that compose;
@@ -374,16 +519,19 @@ All of the following hold at one main-push commit:
    - lanes split between `a` and `b`, each accepting its own lane's hand-off;
    - `a`'s queue merging `b`'s accepted candidate;
    - the queue handed to `b`, and `b` merging;
+   - `delivery` handed to `b`, with the hosted public link unchanged and the
+     tracker posting each entry exactly once;
    - every scope handed back to `a`, and the close.
 
    At each step both machines' records compose to the same state and the same set
    of journal origins in a causal order. "The same state" ignores only the fields
-   COLLAB-2 names as local.
+   D6 marks `local`. For `regionsSettled` and `meta.closing.*.entry`, the entry
+   each names has the same origin on both machines.
 2. **Unshared records unchanged.** Every existing test, line-map, history and runs
    golden, narrator story and hosted fixture passes without change, other than the
    pins the stories list.
-3. **Refusals named.** Each refusal code in D2-D13 has a test that triggers it and
-   checks that nothing was written.
+3. **Refusals named.** Each code in D20 has a test that triggers it, checks
+   every surface D20 lists, and runs its allow case.
 4. **Views.** The line map and the hosted viewer render a new planning-record
    fixture and a co-lead fixture, with goldens captured by the existing recapture
    mechanism in their own commit.
@@ -447,36 +595,44 @@ Clear `skills/**/__pycache__` before `scripts/cut-release.py`.
 ## Units and order
 
 Lane 1 is the record layer, lane 2 the command layer and lane 3 the views.
-`skills/run-delivery/scripts/run_delivery.py` and
-`skills/orchestrate-work/scripts/delivery_state.py` are shared by region:
+Two scripts are shared by region:
 
-- Lane 1 holds `delivery_state.py` whole.
-- Lane 2 holds `run_delivery.py` whole.
-- Lane 1's two call sites in `run_delivery.py` (COLLAB-3's `patch_from` seat
-  argument and COLLAB-6's supervisor role check) are carved to lane 1 with
-  `lead-own --carve` when those stories are assigned.
+- **`skills/orchestrate-work/scripts/delivery_state.py`:** lane 1 holds it whole.
+- **`skills/run-delivery/scripts/run_delivery.py`:** lane 2 holds it whole. Lane
+  1's two call sites in it are carved to lane 1 with `lead-own --carve` when those
+  stories are assigned:
+  - COLLAB-3's `patch_from` seat argument;
+  - COLLAB-6's supervisor role check.
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | COLLAB-2 | `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/collab.py`, `skills/orchestrate-work/references/`, `skills/orchestrate-work/SKILL.md`, `tests/test_collab_partitions.py`, `tests/test_orchestration_state.py`, `tests/test_journal_kinds.py`, `tests/test_journal_shape.py`, `tests/fixtures/journal-kinds/` |
+| 1 | 1 | COLLAB-2 | `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/collab.py`, `skills/orchestrate-work/references/`, `skills/orchestrate-work/SKILL.md`, `tests/test_collab_partitions.py`, `tests/test_orchestration_state.py`, `tests/test_journal_kinds.py`, `tests/fixtures/journal-kinds/`, `tests/collab_remotes.py` |
 | 1 | 2 | COLLAB-1 | `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/plan_sync.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/`, `tests/test_plan_sync.py`, `tests/test_run_delivery.py` |
 | 2 | 1 | COLLAB-3 | `skills/orchestrate-work/scripts/region_ownership.py`, `tests/test_collab_scopes.py` |
-| 2 | 2 | COLLAB-4 | `tests/test_planning_record.py`, `tests/test_run_delivery_plan_review.py` |
+| 2 | 2 | COLLAB-4 | `skills/delivery-views/scripts/views_common.py`, `skills/delivery-views/references/delivery-plan.schema.json`, `tests/test_planning_record.py`, `tests/test_run_delivery_plan_review.py`, `tests/test_delivery_views_plan.py` |
 | 3 | 2 | COLLAB-5 | `skills/orchestrate-work/scripts/narrator.py`, `tests/test_collab_join.py`, `tests/test_lead_wait.py` |
 | 3 | 1 | COLLAB-6 | `skills/orchestrate-work/scripts/merge_queue.py`, `tests/test_collab_colead.py` |
-| 4 | 2 | COLLAB-8 | `skills/run-delivery/scripts/tracker_publisher.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py` |
+| 4 | 2 | COLLAB-8 | `skills/run-delivery/scripts/tracker_publisher.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_collab_colead_runtime.py` |
 | 4 | 3 | COLLAB-7 | `skills/delivery-views/`, `tests/fixtures/delivery-views/`, `tests/delivery_views_page/`, `tests/test_delivery_views_plan.py`, `tests/test_delivery_views_render.py`, `hosted/delivery-viewer/test/` |
 | 5 | 2 | COLLAB-9 | `docs/collaboration.md`, `docs/host-adapters.md`, `README.md`, `tests/test_collab_two_machines.py`, `tests/suite-budget.json` |
 
-Lane 1 registers every new journal kind, and every new wait kind, so lane 2 never
-edits the kind registry, the wait words or the orchestration guide.
-`tests/test_journal_shape.py` counts journal writes in both layers' scripts, so
-its `INVENTORY` is shared by region: each story's entries are granted to its lane
-with `lead-own --region --around` when it is assigned.
+**Ownership notes:**
+
+- Lane 2 holds `views_common.py`, `delivery-plan.schema.json` and
+  `tests/test_delivery_views_plan.py` for COLLAB-4 only. Lane 3's tier-4 row takes
+  them whole once COLLAB-4 merges, and COLLAB-7 starts after it.
+- Lane 1 registers every new journal kind and every new wait kind, so lane 2 never
+  edits the kind registry, the wait words or the orchestration guide.
+- `tests/test_journal_shape.py` counts journal writes in both layers' scripts, so
+  its `INVENTORY` is shared by region. Each story's entries are granted to its lane
+  with `lead-own --region --around` when it is assigned.
+- `tests/collab_remotes.py` is the shared bare-remote helper of D18. COLLAB-2
+  writes it. Later stories import it and never change it.
 
 The stories are children of one epic, created through `$create-linear-ticket`
-after this plan is approved. The `COLLAB-n` keys are placeholders. The tracker
-keys replace them in one commit before `lead-setup`.
+after this plan is approved. The `COLLAB-n` keys are placeholders. The
+`delivery` holder replaces them with `plan-rekey` before `lead-setup`, as D11
+allows.
 
 ## Stories
 
@@ -488,12 +644,12 @@ This story relieves the pain on its own and needs no record.
 
 - **Commands:**
   - `plan-sync --plan P` composes and pushes `plan/<slug>`, or `lead/<key>` once a
-    delivery file names the plan, by D8 without the scope check.
+    delivery file names the plan, by D8. The scope check comes in COLLAB-4.
   - `plan-watch --plan P [--timeout S] [--until RE]` streams by D9.
 - **Section rules:** reused from `region_ownership.markdown_block`; it is not
   reimplemented.
-- **Settings:** `collab.pollSeconds` is added to the `run-delivery.json` schema and
-  `references/config.md`.
+- **Settings:** `collab.pollSeconds` (minimum 2) and `collab.autoGrant` (default
+  false) are added to the `run-delivery.json` schema and `references/config.md`.
 - **Skill page:** a new `## Collaboration` section in `skills/run-delivery/SKILL.md`
   carries the rows. They come after every existing table, so the
   `lead-add-lane`-after-`lead-plan` row order pinned by `tests/test_lead_add_lane.py`
@@ -502,73 +658,118 @@ This story relieves the pain on its own and needs no record.
   - `tests/test_run_delivery.py::RunDeliveryAdoptionGuideTests.test_every_command_the_guide_names_exists`:
     both commands appear in `--help` choices.
   - `test_every_shipped_file_is_listed_and_clean`: `plan_sync.py` is listed.
-- **Scenarios:**
-  - disjoint edits by two clones compose, including a section added by one side;
-  - one section changed on both sides gives `plan.sections_overlap`, naming it,
-    with both diffs and the local branch unchanged;
-  - an edit at the end of one section and the heading of the next compose, which is
-    the case git's three-way merge would conflict on;
-  - a push behind the remote recomposes and succeeds; six straight rejections stop
-    with a named refusal;
-  - nothing is force-pushed, which the test checks from the remote's reflog;
-  - `plan-watch` prints one line per peer push within two ticks, flushes each line,
-    and exits 0 at its timeout.
+- **Scenarios, composing.** Each disjoint case ends with both sides' changes
+  present:
+  - ours edits one section, theirs edits another;
+  - ours adds a section, theirs edits another;
+  - theirs adds a section, ours edits another;
+  - ours deletes a section, theirs edits another;
+  - theirs deletes a section ours left unchanged;
+  - only one side edits the front matter;
+  - an edit at the end of one section and an edit to the next section's heading,
+    the case git's three-way merge would conflict on.
+- **Scenarios, refusals:**
+  - one section edited on both sides gives `plan.sections_overlap`, naming it,
+    with both diffs, and the local branch is unchanged;
+  - a delete on one side against an edit on the other is refused the same way;
+  - both sides editing the front matter is refused the same way;
+  - five rejected pushes and then a success compose and land;
+  - six rejections stop with `plan.push_exhausted` and leave the D20 surfaces
+    unchanged;
+  - the D18 helper finds only fast-forward updates on `plan/<slug>`.
+- **Scenarios, watching:**
+  - `plan-watch` prints one flushed line per peer push within two ticks, and
+    nothing else;
+  - with no `--until` it exits 0 at its timeout;
+  - with `--until` it exits 0 on the first matching line;
+  - with an `--until` that never matches, it exits 3 at the timeout;
+  - a `collab.pollSeconds` of 1 is refused by the settings schema.
+- **Scenarios, what stays untouched:**
+  - `remote.origin.fetch` is unchanged;
+  - `git ls-remote --heads --tags` shows only `plan/<slug>` as new.
 
 ### COLLAB-2. Seats, partitions and causal journal ingest
 
-Lane 1, tier 1, not blocked. Characterization-first. Files: `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/collab.py`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/journal-kinds.json`, `skills/orchestrate-work/SKILL.md`, `tests/test_collab_partitions.py`, `tests/test_orchestration_state.py`, `tests/test_journal_kinds.py`, `tests/test_journal_shape.py` and `tests/fixtures/journal-kinds/`.
+Lane 1, tier 1, not blocked. Characterization-first. Files: `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/collab.py`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/journal-kinds.json`, `skills/orchestrate-work/SKILL.md`, `tests/test_collab_partitions.py`, `tests/test_orchestration_state.py`, `tests/test_journal_kinds.py`, `tests/fixtures/journal-kinds/` and `tests/collab_remotes.py`.
 
 - **Characterize first:** journal validation, `because`/`answers` linking, `wait`
-  and the writer pin on an unshared record. These tests stay unchanged
-  through the story.
-- **Record and journal:** `meta.collab` (`seats`, derived from the journal,
-  `peers` with each peer's
-  `through`, `fetchedAt` and `heldReason`) and the `origin` member (D4), each
-  optional.
-- **Partition and transport:** `collab.py` holds seat creation and lookup (D2),
-  partition build
-  and push, peer fetch, causal ingest with link translation, and the generation
-  hold (D5). It journals only through `delivery_state`'s append functions.
-- **The `sync` writer** (D7), and the state-tool subcommands `collab-push`,
-  `collab-fetch` and `collab-ingest`.
-- **Local fields:** which state fields are machine-local (`meta.updatedAt`,
-  `version`, `meta.collab.peers`). The finish line's comparison ignores exactly
-  these.
+  and the writer pin on an unshared record. These tests stay unchanged through
+  the story.
+- **Record and journal:** all optional:
+  - `meta.collab`: `seats`, derived from the journal, and `peers`, with each peer's
+    `through`, `fetchedAt` and `heldReason`;
+  - `meta.phase`: `planning` or `delivery`, absent meaning `delivery`;
+  - the `origin` member (D4).
+- **Partition and transport:** `collab.py` holds:
+  - seat creation and lookup (D2);
+  - partition build, with keyed-selector paths (D3);
+  - push;
+  - peer fetch;
+  - causal ingest with link translation, including `regionsSettled` (D4);
+  - the generation hold (D5);
+  - the split quarantine (D3);
+  - the sync loop, `collab.py serve` (D12).
+
+  It journals only through `delivery_state`'s append functions.
+- **The `sync` writer** (D7), applying slice values without a scope filter until
+  COLLAB-3 adds one.
+- **State-tool subcommands:** `collab-push`, `collab-fetch` and `collab-ingest`,
+  for tests and recovery. The sync loop is what runs them in use.
+- **Local fields:** the D6 `local` rows. `meta.closing` is re-derived from the
+  local `delivery.closed` entry on ingest (D4).
 - **New kinds:**
   - `seat.requested`, with data `{seat, label}`;
   - `seat.admitted`, with data `{seat, label, approver}`, linked by `answers` to
     its request except for the first seat;
+  - `seat.labeled`, with data `{seat, label}`;
   - `partition.held`, with data `{seat, reason}`;
   - `partition.resumed`.
+- **Helper:** `tests/collab_remotes.py`, the D18 bare-remote helper with its
+  planted forced-push case.
 - **Pins:**
   - `tests/test_orchestration_state.py::test_schemas_are_keyed_by_name_use_urn_ids_and_declare_no_dialect`
     gains `delivery-partition/1`, making 14 names;
   - `ADOPTER_FILES` gains `scripts/collab.py`;
   - `tests/test_journal_kinds.py` `TABLE` and `ALTITUDES` gain the new kinds;
-  - `tests/test_journal_shape.py` `SCRIPTS` gains `collab.py` and its `INVENTORY`
-    counts are re-derived.
-- **Scenarios:**
+  - this story's region of `tests/test_journal_shape.py` (`SCRIPTS` gains
+    `collab.py`, and its `INVENTORY` rows).
+- **Scenarios, exchange:**
   - two records exchange partitions and reach the same origin set and state;
+  - two seats append queue elements with different subjects concurrently, and
+    both survive on both machines;
   - a peer entry whose `because` names the other side's entry links to the right
     local id;
   - with three seats, an entry waits until the entry its `seen` names is
     ingested;
-  - a different generation digest is held, named, and ingested after the local
-    writer upgrade;
-  - a copied checkout writing as the same seat gets `collab.seat_split`, and its
-    ref is never ingested;
-  - a write with no seat, or from a seat not yet admitted, is refused with nothing
-    written;
+  - a merge accepted on one machine and settled leaves `regionsSettled` on both
+    naming the merge of the same origin;
+  - a close journalled on one seat leaves both records with closing marks naming
+    their own local ids of the same origin;
+  - the schema walk finds no journal-id field beyond the two D4 lists.
+- **Scenarios, holds and splits:**
+  - a partition whose `archiveSha256` differs, with the same `releaseId`, is held,
+    named, and ingested after the local writer upgrade;
+  - a copied checkout that pushes first wins. The original is refused with
+    `collab.seat_split`, keeps its unpushed chain under
+    `refs/agent-skills-split/`, and refuses later writes. A third seat's origin set
+    holds the copy's chain only.
+  - the reverse order gives the reverse result;
+  - the D18 helper finds only fast-forward updates on each `refs/agent-skills`
+    ref.
+- **Scenarios, refusals:**
+  - a write with no seat gives `collab.seat_missing`, and a write from an
+    unadmitted seat gives `collab.seat_not_admitted`, each with the D20 surfaces
+    unchanged;
   - a requested but unadmitted seat's partition contributes only its
     `seat.requested` entry;
-  - a seat's label changes nothing but display: the same record with labels
-    swapped composes to the same scopes and ownership;
-  - `patch --writer sync` is refused;
+  - setting `AGENT_SKILLS_SEAT` or any other variable changes nothing about which
+    seat writes;
+  - `patch --writer sync` gives `collab.sync_writer_reserved`;
   - `wait --after` wakes on an ingested peer entry of a wait kind.
 
-### COLLAB-3. Authority scopes and plan-section enforcement
+### COLLAB-3. Authority scopes, admission and the scope filter
 
-Lane 1, tier 2, after COLLAB-2. Test-first. Files: `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/collab.py`, `skills/orchestrate-work/scripts/region_ownership.py`, `skills/orchestrate-work/references/`, `skills/orchestrate-work/SKILL.md`, `tests/test_collab_scopes.py`, `tests/test_journal_kinds.py` and `tests/test_journal_shape.py`.
+Lane 1, tier 2, after COLLAB-2. Test-first. Files: `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/collab.py`, `skills/orchestrate-work/scripts/region_ownership.py`, `skills/orchestrate-work/references/`, `skills/orchestrate-work/SKILL.md`, `tests/test_collab_scopes.py` and `tests/test_journal_kinds.py`.
 
 - **Scope register:** the scopes of D6, derived from the journal. Who holds what
   is never stored as a second copy.
@@ -579,63 +780,110 @@ Lane 1, tier 2, after COLLAB-2. Test-first. Files: `skills/orchestrate-work/scri
 - **Kinds registered here for lane 2's commands:**
   - `plan.endorsed` (`commit`);
   - `plan.seen` (`commit`);
+  - `plan.rekeyed` (`from`, `to`, `map`);
   - `feedback.raised` (`anchor`, `text`, `blocking`);
   - `feedback.resolved` (`outcome` is `accepted`, `declined` or `answered`, plus
     `reason`), linked by `answers`.
-- **Wait kinds:** `feedback.raised` and `scope.requested` join `WAIT_KINDS`, with
-  their wait words. The orchestration guide's list is updated in this change,
-  which keeps `test_the_guide_names_every_kind_that_ends_a_wait` green.
-- **Field map:** `delivery` covers `finish`, `meta` fields that are neither tool
-  nor runner fields, `extensions` and approvals. `plan:<section>` has no record
-  fields. Lane and queue rows come in COLLAB-6.
+- **Wait kinds:** `feedback.raised`, `scope.requested` and `seat.requested` join
+  `WAIT_KINDS`, with their wait words. The orchestration guide's list is updated
+  in this change, which keeps `test_the_guide_names_every_kind_that_ends_a_wait`
+  green.
+- **Field map:**
+  - the D6 table's `delivery`, `local` and `tool` rows, with the lane and queue
+    rows present but unenforced until COLLAB-6;
+  - `field-origins.json`, and the two-scope ordering;
+  - the completeness test of D6.
 - **Checks:**
-  - `ownership_violations` checks `lead` writes against the local seat's
-    scopes on a shared record (D7);
-  - `delivery_state` exposes `holder(scope)` and `holds(seat, scope)` for
-    run-delivery;
-  - `plan_sync` gains the scope check of D8 through `region_ownership`'s section
+  - `ownership_violations` checks `lead` writes against the local seat's scopes on
+    a shared record (D7);
+  - the `sync` writer's filter at each value's origin (D7);
+  - `delivery_state` exposes `holder(scope)`, `holds(seat, scope)` and
+    `held_sections(seat, plan)`, the last through `region_ownership`'s section
     spans.
-- **Admission:** only the `delivery` holder may journal `seat.admitted`, and
+- **Admission:** only the `delivery` holder may journal `seat.admitted`.
   `approver` changes only by a new `seat.admitted` from that holder.
 - **State-tool subcommands:** `scope give|request|decline` and
-  `seat admit [--no-approver]`. `--auto-grant` is read
-  from the binding.
+  `seat admit [--no-approver]`.
+- **Auto-grant:** read from `collab.autoGrant` in the binding.
 - **The carved call site** in `run_delivery.py` passes the seat through
   `patch_from`. Nothing else in `run_delivery.py` changes.
-- **Scenarios:**
-  - a non-holder's write to a `delivery` field is refused with
-    `scope.not_held`, naming the holder;
-  - only the holder can transfer; any other transfer is refused;
-  - a seat admitted by a non-holder is refused with `scope.not_held`;
-  - a request is auto-granted for an unclaimed section, and never for a held
-    section or for `queue`;
-  - a plan edit outside held sections is refused before any push, naming the
-    request command;
-  - an unshared record ignores scopes entirely, so its field-ownership tests
-    are unchanged.
+- **Scenarios, writes and transfers:**
+  - a non-holder's write to a `delivery` field gives `scope.not_held`, naming the
+    holder; the holder's write is applied;
+  - only the holder can transfer; any other transfer gives `scope.not_held`;
+  - a seat admitted by a non-holder gives `scope.not_held`.
+- **Scenarios, auto-grant and approvers:**
+  - with `collab.autoGrant` true, a request is granted for an unclaimed section,
+    and never for a held section or for `queue`;
+  - with it false, the same request stays open;
+  - a seat admitted with `--no-approver` is not counted by `lead-init` (shown in
+    COLLAB-4);
+  - re-admission by the holder changes `approver`.
+- **Scenarios, the sync filter:**
+  - a peer slice carrying a `delivery` field the peer does not hold is ingested
+    with that field ignored and the local value unchanged; the holder's slice
+    with the same field is applied;
+  - a slice value written while its seat held `lane:x`, ingested after a
+    `scope.transferred` of `lane:x` that comes after that value's origin, is
+    applied;
+  - a value written after that transfer is ignored.
+- **Scenarios, two-scope fields:**
+  - two concurrent writes to one lane row's `focus` resolve the same way on both
+    machines, by causal order, then seat id.
+- **Scenarios, labels:** in a record where `a` and `b` hold distinct scopes
+  including a lane, `holder`, `holds`, `scope.not_held` and lane ownership are
+  unchanged:
+  - with labels swapped;
+  - with both seats carrying the same label.
+- **Scenarios, completeness and compatibility:**
+  - a schema property added without a field-map row turns the completeness test
+    red;
+  - an unshared record ignores scopes entirely, so its field-ownership tests are
+    unchanged.
 
-### COLLAB-4. The planning record and joint approval
+### COLLAB-4. The planning record, the plan scope check and joint approval
 
-Lane 2, tier 2, after COLLAB-1 and COLLAB-3. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/SKILL.md`, `tests/test_planning_record.py` and `tests/test_run_delivery_plan_review.py`.
+Lane 2, tier 2, after COLLAB-1 and COLLAB-3. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/plan_sync.py`, `skills/run-delivery/SKILL.md`, `skills/delivery-views/scripts/views_common.py`, `skills/delivery-views/references/delivery-plan.schema.json`, `tests/test_planning_record.py`, `tests/test_run_delivery_plan_review.py` and `tests/test_delivery_views_plan.py`.
 
-- **`plan-open`** (D10). It starts the supervisor in planning mode: sync, live view
-  and hosted publishing, with no queue and no tracker.
+- **`plan-open`** (D10). It starts the supervisor in planning mode: the sync
+  loop, the live view and hosted publishing, with no queue and no tracker.
 - **Adoption:** `lead-setup` and `lead-init` adopt the planning record in place,
   beside the existing review-store adoption (`run_delivery.py:2593-2627`), which is
   unchanged.
-- **`lead-plan endorse`** journals `plan.endorsed`, registered by COLLAB-3.
-  `lead-init`'s joint-approval check follows D11.
-- **Plan file:** `build_plan` writes a planning `plan.json` with `draft` (D14).
-  Stories come from the plan headings through `lead-setup`'s existing parser.
+- **Scope check:** `plan_sync` refuses changes outside `held_sections` (D8).
+- **Approval commands:**
+  - `lead-plan endorse` journals `plan.endorsed`.
+  - `plan-rekey` follows D11.
+  - `lead-init`'s joint-approval check follows D11.
+- **Plan file:**
+  - `validate_plan` accepts `draft` exclusive with `approved` (D14).
+  - `build_plan` writes a planning `plan.json` with `draft`. Its stories come from
+    the plan headings through `lead-setup`'s existing parser.
 - **Pins:** `PlanReviewWithoutDeliveryTests` stays unchanged. New adoption cases
   sit beside it.
-- **Scenarios:**
+- **Scenarios, opening and adoption:**
   - `plan-open` creates exactly one admitted approver seat holding every scope;
-  - `lead-init` refuses naming the missing endorsement, a stale endorsement, a
-    commit plan review did not align on, or an open blocking feedback;
-  - adoption keeps the journal ids, partitions and `hosted-identity.json`
-    unchanged;
+  - `plan-open` for a key with an existing unshared record gives
+    `collab.record_exists`, and that record is unchanged;
+  - adoption keeps the journal, partitions and `hosted-identity.json`, and
+    `lead-init`'s own entries continue the same journal's ids after the planning
+    entries;
   - `meta.phase` moves to `delivery` exactly once.
+- **Scenarios, plan edits:**
+  - a plan edit outside held sections gives `plan.section_not_held` before any
+    commit or push, naming the request command, with the D20 surfaces unchanged;
+  - an edit inside a held section lands.
+- **Scenarios, joint approval:**
+  - with plan review aligned on X, `plan-rekey` at Y, and both seats endorsing Y,
+    `lead-init` passes;
+  - an unrecorded text edit at Y gives `plan.not_aligned`;
+  - one approver missing gives `plan.endorsement_missing`;
+  - an endorsement of X after Y gives `plan.endorsement_stale`;
+  - open blocking feedback gives `plan.feedback_blocking`;
+  - a `--no-approver` seat's missing endorsement does not hold `lead-init`;
+  - `plan-rekey` by a non-holder gives `scope.not_held`.
+- **Scenarios, the plan schema:** a plan with both `draft` and `approved`, or
+  neither, is refused by `validate_plan`.
 
 ### COLLAB-5. Feedback, join and the shared watch stream
 
@@ -645,23 +893,34 @@ Lane 2, tier 3, after COLLAB-4. Test-first. Files: `skills/run-delivery/scripts/
   Only the anchor's scope holder may resolve.
 - **Commands:**
   - `collab feedback add|resolve`;
-  - `collab give|request`, wrapping the state tool;
-  - `collab join` creates a seat and requests admission on first use (D2). Every
-    use prints, in this order: the narrator's story, the plan diff since this
-    seat's last `plan.seen`, open feedback, and scopes held;
-  - `collab label` changes this seat's label;
+  - `collab give|request|admit`, wrapping the state tool;
+  - `collab join`, by D2's order: build the local record from admitted
+    partitions, start the supervisor, then create the seat and request admission.
+    Every use prints, in this order: the narrator's story, the plan diff since
+    this seat's last `plan.seen`, open feedback, and scopes held.
+  - `collab label`, journalling `seat.labeled`;
   - `collab watch` (D9), over the shared record.
 - **Narrator:** words for the new kinds, and peer entries attributed to their
   seat's label.
-- **Pins:** narrator story goldens are unchanged, because unshared records' journals
-  have no new kinds.
-- **Scenarios:**
+- **Pins:** narrator story goldens are unchanged, because unshared records'
+  journals have no new kinds.
+- **Scenarios, joining:**
+  - on a fresh clone, `b`'s entry 1 is `record.started` with `a`'s `at`, and the
+    tracker publisher's init id is equal on both machines;
   - `b`'s join wakes `a`'s `lead-wait` with the admission request;
-  - feedback from `b` wakes `a`'s `lead-wait`;
-  - a resolution by a non-holder is refused;
   - `join` after a fresh clone gives the full catch-up, and run again gives only
     what is new;
+  - a relabel reaches the peer's derived seats.
+- **Scenarios, feedback:**
+  - feedback from `b` wakes `a`'s `lead-wait`;
+  - a resolution by a non-holder gives `scope.not_held`;
   - blocking feedback shows in Needs you, and releases once it is resolved.
+- **Scenarios, watching:**
+  - `collab watch` prints one flushed line per ingested peer entry within two
+    ticks, and nothing else;
+  - with no `--until` it exits 0 at `--timeout`;
+  - with `--until` it exits 0 on the first matching line;
+  - with an `--until` that never matches, it exits 3 at `--timeout`.
 
 ### COLLAB-6. Lane and queue scopes in the record and the queue
 
@@ -669,54 +928,76 @@ Lane 1, tier 3, after COLLAB-3. Characterization-first. Files: `skills/orchestra
 
 - **Characterize first:** the queue's serve loop and acceptance writes on an
   unshared record.
-- **Field map rows:**
-  - `lane:<id>` covers `lanes[id=…]` lead fields, the lead fields of queue elements
-    whose lane is `<id>`, that lane's planned items, `laneOwnership[<id>]`, and
-    `laneRegions` with that lane;
-  - `queue` covers the runner's fields, and authorizes the `runner` writer on its
-    holder's machine only.
+- **Field map:** the D6 table's `lane:<L>` and `queue` rows are enforced. The
+  `runner` writer is authorized only on the `queue` holder's machine.
 - **Queue:** `merge_queue.py serve` refuses to start on a shared record unless the
   local seat holds `queue`, with `queue.not_held`.
 - **Supervisor role check:** the carved call site in `run_delivery.py`.
-- **Queue handover:** the state-tool half of D13. An idle check runs, then
-  `scope.transferred`.
-- **Scenarios:**
-  - each lead writes its own lanes' rows and is refused on the other's;
-  - a runner write on a non-holder machine is refused;
-  - a handover with a check running waits, then times out naming the check;
+- **Queue handover:** the state-tool half of D13. An idle check (no check
+  running, no merge in progress), then the queue child stopped, then
+  `scope.transferred`, in that order.
+- **Scenarios, lanes and the runner:**
+  - each lead writes its own lane's rows and queue elements, and gets
+    `scope.not_held` on the other's;
+  - a runner write on a non-holder machine gives `scope.not_held`, while the
+    holder's runner write is applied;
+  - the COLLAB-3 label scenarios, repeated with lanes and queue elements held by
+    each seat.
+- **Scenarios, handover:**
+  - a handover with a check running waits, then gives `scope.handover_busy`,
+    naming the check;
+  - the same happens with a merge in progress;
+  - the journal shows the queue child stopped before `scope.transferred`;
   - after a handover the old machine's serve exits and the new one's starts.
-  - Every existing merge-queue test passes unchanged.
+- **Compatibility:** every existing merge-queue test passes unchanged.
 
 ### COLLAB-8. The co-lead runtime in run-delivery
 
-Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py` and `tests/test_collab_colead.py`.
+Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py` and `tests/test_collab_colead_runtime.py`.
 
-- **Lane commands:** `lead-assign`, `lead-accept`, `lead-own` and `lead-add-lane`
-  check the lane's scope. The assignment message names the seat's label (D15).
-- **Supervisor roles** follow D12.
-- **Queue handover:** `collab give queue --to` runs the full handover of D13.
-- **Tracker:** markers use `<seat>.<seq>` on shared records. Its ledger
-  migration is none, because no shared record existed before.
+- **Lane commands:**
+  - `lead-assign`, `lead-own` and `lead-add-lane` need `delivery`, which
+    arbitrates files and lanes (D6).
+  - `lead-accept` needs the lane's scope.
+  - The assignment message names the seat's label (D15).
+- **Supervisor roles** follow D12. The sync loop runs as a supervisor child.
+- **Handovers:**
+  - `collab give queue --to` runs the full handover of D13;
+  - `collab give delivery --to` runs the delivery handover of D12, carrying the
+    hosted identity and `trackerThrough`.
+- **Tracker:** markers use `<seat>.<seq>` on shared records. No ledger migration
+  is needed, because no shared record existed before.
 - **Pins:** tracker publisher tests on unshared records are unchanged. New
   cases sit beside them.
-- **Scenarios:**
-  - `b` assigning a lane `a` holds is refused, naming `a`;
-  - `delivery` moving from `a` to `b` posts nothing twice;
-  - only the `delivery` holder's supervisor publishes hosted and tracker updates;
-  - a supervisor restart keeps its roles.
+- **Scenarios, scope checks:**
+  - `b` assigning a lane, when `a` holds `delivery`, gives `scope.not_held`,
+    naming `a`;
+  - `b` accepting its own lane's hand-off is applied.
+- **Scenarios, publishers.** The two machines keep separate state directories and
+  tracker ledgers, and share only a fake tracker and a fake hosted origin:
+  - before `delivery` moves, `a` posts entry X and `b` posts nothing;
+  - after it moves, `b` posts the next new entry Y with a `<seat>.<seq>` marker,
+    and posts nothing for X;
+  - the hosted publisher follows the same pair, with the public link unchanged
+    after the move;
+  - a delivery handover with a hosted publication pending gives
+    `scope.handover_busy`;
+  - a supervisor restart keeps its roles;
+  - a write on one machine reaches the peer's record within two
+    `collab.pollSeconds` ticks plus one push, with no explicit sync command.
 
 ### COLLAB-7. Planning, scopes and feedback in the views
 
 Lane 3, tier 4, after COLLAB-4 and COLLAB-5. Characterization-first. Files: `skills/delivery-views/`, `tests/fixtures/delivery-views/`, `tests/delivery_views_page/`, `tests/test_delivery_views_plan.py`, `tests/test_delivery_views_render.py` and `hosted/delivery-viewer/test/`.
 
-- **Plan schema:** `validate_plan` accepts `draft` as exclusive with `approved`
-  (D14).
 - **Line map:**
-  - the plan chapter shows a draft with its endorsements and whether each is still
-    current;
+  - the plan chapter shows a draft (accepted by COLLAB-4's `validate_plan`) with
+    its endorsements and whether each is still current;
   - a Scopes section lists who holds what;
   - feedback shows as threads on its anchors;
-  - each peer shows its freshness ("b as of 4s", "b held: generation differs").
+  - each peer shows its freshness ("b as of 4s", "b held: generation differs",
+    "b split");
+  - handovers in flight ("queue moving to b").
 - **Rendering placement:** additions go only behind new blocks, so existing
   goldens recapture to identical bytes. A test asserts that.
 - **New corpus cases:** `plan-draft-shared` and `colead`. Goldens are captured
@@ -727,16 +1008,17 @@ Lane 3, tier 4, after COLLAB-4 and COLLAB-5. Characterization-first. Files: `ski
   - a draft with one stale endorsement;
   - a section held by `b`;
   - open, blocking and resolved feedback;
-  - a held peer;
+  - a held peer and a split peer;
   - a queue moving between seats;
-  - hostile text in feedback.
+  - hostile text in feedback and labels.
 
 ### COLLAB-9. Two machines end to end, and the adopter guide
 
 Lane 2, tier 5, after COLLAB-7 and COLLAB-8. Sensor-only for docs, test-first for the end-to-end class. Files: `docs/collaboration.md`, `docs/host-adapters.md`, `README.md`, `tests/test_collab_two_machines.py` and `tests/suite-budget.json`.
 
 - **End-to-end class:** the finish line's two-machine scenario, as one
-  `run_quietly` class.
+  `run_quietly` class. It is driven only through user-facing commands and running
+  supervisors.
 - **Budget entry:** only if the class runs alone, added to `serial` with its
   reason. No ceiling is raised.
 - **`docs/collaboration.md`:**
@@ -744,8 +1026,9 @@ Lane 2, tier 5, after COLLAB-7 and COLLAB-8. Sensor-only for docs, test-first fo
     (D2, D19);
   - starting with `plan-open`;
   - following with `plan-watch` and `collab watch` under a host monitor;
-  - feedback, endorsement, co-leading, handover and hand-back;
-  - generation holds and how to clear them.
+  - feedback, endorsement, re-keying, co-leading, handovers and hand-back;
+  - the credentials each machine that may hold `delivery` needs;
+  - generation holds, seat splits, and how to clear each.
 - **`docs/host-adapters.md`:** one paragraph saying shared records add no host
   projection.
 - **Pins:** the docs' corpus pins in `tests/test_declared_mechanics_corpus.py`,
@@ -766,6 +1049,6 @@ Lenses: the repository's declared plan lenses. Each lens raises every finding it
 can state in round 1, ends its evidence with approval conditions, and in later
 rounds raises a new finding on unchanged text only at P0 or P1.
 
-The decisions D1-D19 and each story's pin inventory are where a lens checks
+The decisions D1-D20 and each story's pin inventory are where a lens checks
 completeness. A lens that finds an unlisted pin, integer-id reader or field
 without a scope raises it as a finding against the relevant decision or story.
