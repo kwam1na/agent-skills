@@ -614,9 +614,13 @@ Out of scope:
       neither baseline (`head` null) nor passthrough runs, the same exclusions
       `record` applies today;
     - **the one chosen** is the last eligible entry in the carried log's causal
-      order. Within one origin seat, that is its log order. Across seats, it is
-      the entry from the seat that held `lane:<L>` later in the record's lane
-      transfers. It needs no git object, so rebased, squash-merged or missing
+      order. Within one origin seat, that is its log order. Across seats, entries
+      are ordered by the lane tenure they were written in, which is the causal
+      order of their origins (D3): only the lane's holder writes them (D7), and
+      the lane passes only by `scope.transferred`. A seat that holds the lane
+      twice has two tenures, so an entry written after it gets the lane back
+      follows every entry written while the lane was away, and an entry from its
+      first tenure precedes them. It needs no git object, so rebased, squash-merged or missing
       heads do not matter, and it never compares `at`;
     - its `specValue` is the spec recorded.
   - **What counts:** on a shared record, `evidence_status` and `lead-evidence
@@ -1238,8 +1242,13 @@ Lane 2, tier 4, after COLLAB-5 and COLLAB-6. Test-first. Files: `skills/run-deli
     `a`'s clone, and runs a passing hold S5 on a clock set behind S4's. The hold
     recording uses S5;
   - after `lane:x` moves from `b` to `a`, both seats have an eligible hold for a
-    story at the same head; the recording uses `a`'s, the later lane holder's,
-    even with `a`'s clock behind `b`'s;
+    story at the same head; the recording uses `a`'s, written in the later
+    tenure, even with `a`'s clock behind `b`'s;
+  - **a lane that returns:** `a` holds `lane:x` and runs a passing hold Sa for a
+    story, then `lane:x` moves to `b`, and `b` runs a passing hold Sb on a clock
+    set behind Sa's. `lane:x` moves back to `a`, which runs no app-check. `a`,
+    holding `delivery`, runs `lead-evidence record`, and the hold recording uses
+    Sb;
   - `lead-evidence record`, `page` and `published` on `b` each give
     `scope.not_held`. Each leaves the D20 surfaces unchanged, as well as
     `evidence-page.json`, `evidence-notes.json`, the `--out` folder and `b`'s
