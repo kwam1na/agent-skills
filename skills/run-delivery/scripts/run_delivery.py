@@ -8056,6 +8056,11 @@ def lead_init(args) -> None:
         if args.replace:
             raise Stop(f"collab.record_shared: {c.state} is {c.delivery}'s planning record, shared with its seats; "
                        "lead-init takes it over in place, so run it without --replace")
+        tool, journal, seat = record_seat(c, c.delivery, c.state)
+        if not tool.holds(journal, seat, "delivery"):
+            # Before anything stops: this seat's planning supervisor keeps syncing.
+            raise Stop(f"scope.not_held: only the holder of delivery, seat {tool.holder(journal, 'delivery')}, takes "
+                       "the planning record over; scope request --scope delivery asks for it")
         joint_approval(c, adoptable)
     if adoptable:
         print(adopt_plan_review(c, adoptable, c.delivery))
@@ -16726,7 +16731,13 @@ def plan_rekey(args) -> None:
                    f"plan; scope request --scope delivery asks for it")
     committed_plan(c, plan)
     branch = plan_branch(c, plan)
-    plan_sync.checked_out(c.root, branch)
+    markdown = _region_ownership()
+    try:
+        # From the remote's plan, so the re-keying starts from the text peers and plan review have.
+        for line in plan_sync.sync(c.root, plan.as_posix(), branch, c.remote, markdown, scope=plan_scope(c, key, folder)):
+            print(line)
+    except plan_sync.Refused as error:
+        raise Stop(str(error)) from None
     before = git("rev-parse", "HEAD", cwd=c.root)
     text = (c.root / plan).read_text(encoding="utf-8")
     changed = plan_sync.rekeyed(text, mapping)
@@ -16736,15 +16747,20 @@ def plan_rekey(args) -> None:
     git("commit", "-q", "-m", "Re-key the plan's stories: " + ", ".join(f"{old} to {new}" for old, new in mapping.items()),
         "--", plan.as_posix(), cwd=c.root)
     after = git("rev-parse", "HEAD", cwd=c.root)
-    entry = state_tool_at(c, folder, "journal", "--kind", "plan.rekeyed",
-                          "--data", json.dumps({"from": before, "to": after, "map": mapping}))
-    print(f"re-keyed {plan} at {after[:12]} (entry {entry['id']})")
+    rekeying = {"from": before, "to": after, "map": mapping}
+    scope = plan_scope(c, key, folder)
+    scope.rekeys.append(rekeying)
     try:
-        for line in plan_sync.sync(c.root, plan.as_posix(), branch, c.remote, _region_ownership(),
-                                   scope=plan_scope(c, key, folder)):
-            print(line)
+        said = plan_sync.sync(c.root, plan.as_posix(), branch, c.remote, markdown, scope=scope)
     except plan_sync.Refused as error:
-        raise Stop(str(error)) from None
+        # Nothing landed: the branch goes back to where the re-keying started, and nothing is journalled.
+        git("reset", "-q", "--keep", before, cwd=c.root)
+        raise Stop(f"{error}; the re-keying was undone, so run plan-rekey again") from None
+    # Journalled once its commit has landed, so every entry names a re-keying peers have.
+    entry = state_tool_at(c, folder, "journal", "--kind", "plan.rekeyed", "--data", json.dumps(rekeying))
+    for line in said:
+        print(line)
+    print(f"re-keyed {plan} at {after[:12]} (entry {entry['id']})")
 
 
 def joint_approval(c, adoptable: Path | None) -> None:

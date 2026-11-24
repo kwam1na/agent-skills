@@ -203,6 +203,13 @@ class PlanningSupervisorTests(PlanningRecordCase):
 class AdoptionTests(PlanningRecordCase):
     """lead-setup and lead-init take the planning record over in place: one record from the first draft on."""
 
+    def refused(self, fx: Fixture, folder: Path, code: str, *argv: str) -> None:
+        """The command exits 2 with `code`, and the planning record's files are as they were."""
+        kept = files(folder)
+        done, out = self.flow(fx, *argv)
+        self.assertEqual((done, code in out), (2, True), out)
+        self.assertEqual(files(folder), kept)
+
     def test_lead_setup_and_lead_init_adopt_the_planning_record_keeping_its_journal_partitions_and_hosted_identity(
             self) -> None:
         fx = self.fixture()
@@ -215,14 +222,33 @@ class AdoptionTests(PlanningRecordCase):
         ref = f"refs/agent-skills/{KEY}/{seat}"
         partition = sh("git", "rev-parse", ref, cwd=fx.origin).stdout.strip()
         (folder / "hosted-identity.json").write_text('{"publicId": "a fixture\'s"}\n')
-        before, planning = journal(folder), (folder / "journal.jsonl").read_bytes()
-        path = self.delivered(fx)
+        # A delivery file keeping its record elsewhere would start a second record: refused.
+        path = plan_delivery(fx)
+        self.refused(fx, folder, "collab.record_elsewhere", "lead-init")
+        d = json.loads(path.read_text())
+        del d["stateDirectory"]
+        path.write_text(json.dumps(d, indent=2))
+        commit(fx.main, "FX-1: the record stays the planning record")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        # --replace would archive the shared record; and the plan's record keeps its key through approval.
+        self.refused(fx, folder, "collab.record_shared", "lead-init", "--replace")
+        setup = ("--plan", "docs/plan.md", "--base", "feature/FX-1", "--pattern", PATTERN, "--no-authority")
+        self.refused(fx, folder, "collab.key_differs", "lead-setup", "FX-7", *setup)
+        self.assertFalse((fx.main / ".agents/deliveries/FX-7.json").exists())
         # lead-setup says it adopts the record; drafted again here, then put back as the fixture completed it.
-        code, out = self.flow(fx, "lead-setup", KEY, "--plan", "docs/plan.md", "--base", "feature/FX-1", "--pattern",
-                              PATTERN, "--no-authority", "--force")
+        code, out = self.flow(fx, "lead-setup", KEY, *setup, "--force")
         self.assertEqual(code, 0, out)
         self.assertIn(f"adopting the planning record of {KEY} at {folder} in place", out)
         sh("git", "checkout", "-q", "--", str(path.relative_to(fx.main)), cwd=fx.main)
+        # A plan edited since its review aligned isn't approved, however freshly endorsed; put back, it is.
+        plan = fx.main / "docs/plan.md"
+        plan.write_text(plan.read_text() + "\nAn edit no review saw.\n")
+        commit(fx.main, "an unreviewed edit")
+        self.assertEqual(self.flow(fx, "lead-plan", "endorse", "--plan", "docs/plan.md")[0], 0)
+        self.refused(fx, folder, "plan.not_aligned", "lead-init")
+        sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "revert", "--no-edit", "HEAD", cwd=fx.main)
+        self.assertEqual(self.flow(fx, "lead-plan", "endorse", "--plan", "docs/plan.md")[0], 0)
+        before, planning = journal(folder), (folder / "journal.jsonl").read_bytes()
         code, out = self.flow(fx, "lead-init")
         self.assertEqual(code, 0, out)
         state, entries = record(folder), journal(folder)
@@ -371,7 +397,13 @@ class TwoSeatTests(PlanningRecordCase):
         self.assertEqual(files(a), kept)
         code, out = self.flow(fx, "lead-plan", "endorse", "--plan", "docs/plan.md", cwd=b_repo)
         self.assertEqual(code, 0, out)
-        self.exchange(b, a)
+        self.exchange(b, a, b)
+        # Approved, but b doesn't hold delivery: b's lead-init is refused before it stops anything or writes.
+        kept = files(b)
+        code, out = self.flow(fx, "lead-init", cwd=b_repo)
+        self.assertEqual(code, 2, out)
+        self.assertIn("scope.not_held", out)
+        self.assertEqual(files(b), kept)
         code, out = self.flow(fx, "lead-init")
         self.assertEqual(code, 0, out)
         self.assertEqual(record(a)["meta"]["phase"], "delivery")
@@ -392,7 +424,9 @@ class JointApprovalTests(unittest.TestCase):
         self.entries: list[dict] = []
         self.seats = {A: {"label": "Ann", "admitted": True, "approver": True},
                       B: {"label": "Ben", "admitted": True, "approver": True},
-                      C: {"label": "Cy", "admitted": True, "approver": False}}
+                      C: {"label": "Cy", "admitted": True, "approver": False},
+                      # Asked to join as an approver, not admitted yet: it holds nothing up either.
+                      "s-dddddddddddd": {"label": "Di", "admitted": False, "approver": True}}
 
     def add(self, seat: str, kind: str, data: dict, **links) -> dict:
         entry = {"id": len(self.entries) + 1, "kind": kind, "data": data,

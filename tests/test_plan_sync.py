@@ -578,12 +578,30 @@ class PlanSyncTests(unittest.TestCase):
         self.write(self.ours, path, PLAN_SYNC.rekeyed(text, mapping))
         git("commit", "-qam", "a re-keying", cwd=self.ours)
         named = git("rev-parse", "HEAD", cwd=self.ours)
+        # The map applied, but by a commit no entry names: checked as any commit is.
+        with self.assertRaises(PLAN_SYNC.Refused) as caught:
+            self.sync(self.ours, path, branch, scope=scope([{"from": remote, "to": remote, "map": mapping}]))
+        self.assertEqual(caught.exception.code, "plan.section_not_held")
         self.sync(self.ours, path, branch, scope=scope([{"from": remote, "to": named, "map": mapping}]))
         self.assertEqual(git("rev-parse", f"refs/heads/{branch}", cwd=self.remote), named)
         # An edit inside a held section lands.
         self.write(self.ours, path, (self.ours / path).read_text().replace("beta body", "ours beta"))
         self.sync(self.ours, path, branch, scope=scope([]))
         self.assertIn("ours beta", self.remote_text(branch, path))
+
+    def test_an_unpushed_composing_merge_is_not_this_clones_change(self) -> None:
+        """A merge that brings a peer's change to sections this seat doesn't hold, left unpushed, still syncs."""
+        slug, branch, path = self.start()
+        self.write(self.theirs, path, plan(slug, edited(BASE, "## Gamma", "theirs gamma")))
+        self.sync(self.theirs, path, branch)
+        git("fetch", "-q", "origin", cwd=self.ours)
+        git("-c", "user.name=Ann", "-c", "user.email=ann@example.com", "merge", "-q", "--no-ff", "-m", "compose",
+            f"origin/{branch}", cwd=self.ours)
+        self.assertEqual(len(git("log", "-1", "--format=%P", cwd=self.ours).split()), 2)
+        held = lambda text: [name for name in ("## Beta",) if name in text]
+        said = self.sync(self.ours, path, branch, scope=PLAN_SYNC.Held(held, [], lambda names: "ask"))
+        self.assertTrue(any("pushed" in line for line in said), said)
+        self.assertEqual(git("rev-parse", f"refs/heads/{branch}", cwd=self.remote), git("rev-parse", "HEAD", cwd=self.ours))
 
     def test_a_sync_lists_what_it_pushes_before_the_push_lands(self) -> None:
         """So a watch in this clone, ticking while the push lands, never reads it as a peer's."""
