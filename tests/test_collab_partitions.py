@@ -230,12 +230,22 @@ class Machine:
         return {**(files(self.directory) if self.directory.exists() else {}), **refs}
 
 
+def own_git_environment() -> dict[str, str]:
+    """The environment without git configuration or identity passed through it, as the merge queue passes its hooks
+    bypass: so each clone's own hooks, settings and identity are the ones its git reads."""
+    return {name: value for name, value in os.environ.items()
+            if not name.startswith(("GIT_CONFIG_", "GIT_AUTHOR_", "GIT_COMMITTER_")) and name != "GIT_CONFIG_PARAMETERS"}
+
+
 class SharedFixture(unittest.TestCase):
     """One bare remote and three clones, built once for the class and copied for each test, so a test costs only the
-    git processes its own exchange starts."""
+    git processes its own exchange starts. Every git they run reads only the clones' own configuration."""
 
     @classmethod
     def setUpClass(cls) -> None:
+        cleared = mock.patch.dict(os.environ, own_git_environment(), clear=True)
+        cleared.start()
+        cls.addClassCleanup(cleared.stop)
         folder = tempfile.TemporaryDirectory()
         cls.addClassCleanup(folder.cleanup)
         cls.template = Path(folder.name) / "template"
@@ -245,6 +255,9 @@ class SharedFixture(unittest.TestCase):
             clone(remote, cls.template / name, name=name.upper())
 
     def setUp(self) -> None:
+        cleared = mock.patch.dict(os.environ, own_git_environment(), clear=True)
+        cleared.start()
+        self.addCleanup(cleared.stop)
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.root = Path(folder.name) / "machines"
