@@ -7,20 +7,33 @@ never replaced, so whatever follows it keeps following it.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import types
 import unittest
 from pathlib import Path
 
+import re
+import signal
+import socket
+import urllib.request
+
+from tests import test_delivery_views_hosted as publisher_fixtures
+from tests.test_orchestration_render import INVENTORY, RUNS_PAGE, python_argv
 from tests.test_run_delivery import POSIX_ONLY, Fixture, commit, installed_release, sh
 from tests.test_run_delivery_plan_review import OC, finding, results, slug_store
 
+hosted = publisher_fixtures.hosted
+TOKEN = publisher_fixtures.TOKEN
+
 PREFIX = "Plan preview (agent review only): "
+PREVIEW_SECONDS = 120  # the handed finish's bound
 HOSTED = {"spec": "delivery-views-config/1", "hosted": {"origin": "https://deliveries.example.com",
                                                         "repositoryId": "repo_A", "tokenEnv": "FIXTURE_PUBLISH_TOKEN"}}
 UNPUBLISHED = "plan preview (hosted): not published: FIXTURE_PUBLISH_TOKEN is unset"
@@ -244,7 +257,8 @@ class PlanPreviewTests(unittest.TestCase):
         self.assertEqual((plan["requiredLenses"], plan["changes"], plan["evidence"]), ([], [], {}))
         self.assertEqual([kind["id"] for kind in plan["proofKinds"]], ["review", "handed", "merged"])
         self.assertNotIn("planReview", plan)
-        self.assertEqual(facts, {"slug": "addresses", "plan": "docs/plans/addresses.md", "commit": head})
+        self.assertEqual(facts, {"slug": "addresses", "plan": "docs/plans/addresses.md", "title": "Saved addresses",
+                                 "commit": head})
         self.assertFalse((here := folder(self.fx, "addresses") / "live.json").exists(), here)
 
     def test_a_plan_outside_the_delivery_layout_still_previews(self) -> None:
@@ -474,6 +488,384 @@ class PlanPreviewTests(unittest.TestCase):
         self.view(first)
         self.assertEqual([entry["kind"] for entry in journal(self.fx, slug)], ["plan.updated"])
         self.assertTrue((fresh / "plan.json").exists())
+
+
+LINE_MAP = {"id": "line-map", "argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/render.py",
+                                       "line-map", "--config", ".agents/delivery-views.json", "--binding",
+                                       ".agents/orchestration.json", "--state-dir", "{stateDirectory}"],
+            "output": "line-map.html", "timeoutSeconds": 30}
+# The fixture's HTTPS goes to the fake origin, and the handed finisher, alone, reads the case's clock.
+SHIM = """import http.client, pathlib, sys, time
+Real = http.client.HTTPConnection
+def fixture(host, port=None, timeout=None, context=None):
+    assert host == "deliveries.example.com"
+    return Real("127.0.0.1", {port}, timeout=timeout)
+http.client.HTTPSConnection = fixture
+if "--finish-handed" in sys.argv:
+    real, clock = time.time, pathlib.Path({clock!r})
+    time.time = lambda: real() + (float(clock.read_text()) if clock.exists() else 0.0)
+"""
+LOCAL = re.compile(r"^plan preview: (http://127\.0\.0\.1:([0-9]+)/)$", re.M)
+LINK = re.compile(r"^plan preview \(hosted\): (https://deliveries\.example\.com/d/[0-9a-f]{64})$", re.M)
+
+
+def plan_in(value):
+    """The delivery-plan/1 document inside a published cut or a page's plan block."""
+    if isinstance(value, dict):
+        if value.get("schemaVersion") == "delivery-plan/1":
+            return value
+        for item in value.values():
+            found = plan_in(item)
+            if found is not None:
+                return found
+    if isinstance(value, list):
+        for item in value:
+            found = plan_in(item)
+            if found is not None:
+                return found
+    return None
+
+
+def runs(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return sh("ps", "-o", "stat=", "-p", pid, check=False).stdout.strip()[:1] not in ("", "Z")
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class ServedPreviewTests(unittest.TestCase):
+    """plan-view and the plan-review commands serving and publishing the preview, end to end: one fixture repository,
+    a fake hosted origin that the publisher reaches through a shim, and real live servers and watchers, each stopped by
+    its recorded pid."""
+
+    run_quietly = True
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+        cls.fx = fx = Fixture(cls.generation, cls.receipt)
+        cls.addClassCleanup(fx.close)
+        cls.origin = publisher_fixtures.ReceiverTests("test_actual_lost_response_reconciles_and_confirmation_is_fresh_"
+                                                       "collection_only")
+        cls.origin.setUp()
+        cls.addClassCleanup(cls.origin.doCleanups)
+        shim = fx.tmp / "shim"
+        shim.mkdir()
+        cls.clock = fx.tmp / "finisher-clock"
+        (shim / "sitecustomize.py").write_text(SHIM.format(port=cls.origin.server.server_port, clock=str(cls.clock)))
+        cls.marker = fx.tmp / "tracker-publisher-ran"
+        cls.env = {**fx.env, "FIXTURE_PUBLISH_TOKEN": TOKEN, "PYTHONPATH": str(shim)}
+
+    def setUp(self) -> None:
+        self.clock.unlink(missing_ok=True)
+        self.origin.api.code = None
+        self.origin.api = publisher_fixtures.FakeAPI()
+
+    def configure(self, *, live: bool | str = True, publish: bool = True) -> None:
+        """The binding and delivery-views configuration: a liveHome naming the line map (or, with live="builtin", a
+        builtin renderer), and hosted publishing, each on or off; committed when they change."""
+        main = self.fx.main
+        binding = main / ".agents/orchestration.json"
+        views = main / ".agents/delivery-views.json"
+        renderers = [LINE_MAP, {"id": "page", "builtin": "static-page", "output": "delivery.html"}]
+        state = {"directory": ".orchestration/state", "renderers": renderers,
+                 "publishers": [{"id": "tracker", "argv": [sys.executable, "-c",
+                                                           f"open({str(self.marker)!r}, 'w').close()"]}]}
+        if live:
+            state["liveHome"] = "page" if live == "builtin" else "line-map"
+        for path, wanted in ((binding, {"base": {"ref": "feature/FX-1", "remote": "origin"}, "state": state}),
+                             (views, publisher_fixtures.CFG if publish else None)):
+            if wanted is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_text(json.dumps(wanted, indent=2) + "\n")
+        if sh("git", "status", "--porcelain", cwd=main).stdout.strip():
+            commit(main, "the preview's configuration")
+
+    def plan(self, slug: str, text: str | None = None) -> str:
+        path = f"docs/plans/{slug}.md"
+        target = self.fx.main / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text if text is not None else PLAN.format(slug=slug))
+        commit(self.fx.main, f"{slug}: the plan")
+        self.addCleanup(self.stop_all, slug)
+        return path
+
+    def stop_all(self, slug: str) -> None:
+        """What the case's preview started, stopped by the pids its folder records."""
+        here = folder(self.fx, slug)
+        with contextlib.suppress(OSError, hosted.PublishError):
+            hosted.stop(here)
+        live = json.loads((here / "live.json").read_text()) if (here / "live.json").exists() else {}
+        if live.get("pid") and runs(live["pid"]):
+            os.killpg(live["pid"], signal.SIGTERM)
+
+    def flow(self, *argv, env: dict | None = None, code: int = 0) -> str:
+        done, out = self.fx.flow(*argv, cwd=self.fx.main, env=env or self.env)
+        self.assertEqual(done, code, out)
+        return out
+
+    def page_plan(self, address: str) -> dict | None:
+        with urllib.request.urlopen(address, timeout=10) as answer:
+            page = answer.read().decode()
+        found = re.search(r'<script type="application/json" id="delivery-plan">(.*?)</script>', page, re.S)
+        return plan_in(json.loads(found.group(1))) if found else None
+
+    def cut_plan(self) -> dict | None:
+        cuts = [call for call in self.origin.api.calls if call[1] == "snapshots"]
+        return plan_in(json.loads(cuts[-1][2])) if cuts else None
+
+    def until(self, check, what: str, seconds: float = 60) -> None:
+        deadline = time.monotonic() + seconds
+        while not check():
+            self.assertLess(time.monotonic(), deadline, what)
+            time.sleep(0.2)
+
+    def pids(self, slug: str) -> tuple[int, int]:
+        here = folder(self.fx, slug)
+        return (json.loads((here / "live.json").read_text())["pid"],
+                json.loads((here / hosted.OWNER).read_text())["pid"])
+
+    def review_round(self, path: str, slug: str, n: int) -> str:
+        """One plan-review round, prepared and reduced: what reduce printed."""
+        store = slug_store(self.fx, slug)
+        if n > 1:
+            target = self.fx.main / path
+            target.write_text(target.read_text() + f"\nRound {n - 1} is answered.\n")
+            commit(self.fx.main, f"{slug}: round {n - 1} answered")
+        self.flow("plan-review", "prepare", "--plan", path, *(["--lenses", OC] if n == 1 else []))
+        given = {OC: {"findings": [finding(OC, n, 1)]}} if n == 1 else {
+            OC: {"resolved": [{"id": "outcome-correctness-r1-1", "state": "fixed", "resolution": "Answered."}]}}
+        results(self.fx, n, given, store, f"{slug}.plan")
+        return self.flow("plan-review", "reduce", "--plan", path)
+
+    def test_a_preview_is_served_published_and_followed_through_a_review_round(self) -> None:
+        self.configure()
+        path, slug = self.plan("served"), "served"
+        out = self.flow("plan-view", "--plan", path)
+        local, link = LOCAL.search(out), LINK.search(out)
+        self.assertEqual(out, f"plan preview: {local.group(1)}\nplan preview (hosted): {link.group(1)}\n")
+        here = folder(self.fx, slug)
+        built = json.loads((here / "plan.json").read_text())
+        shown = self.page_plan(local.group(1))
+        self.assertEqual((shown["preview"], shown["outcome"]), (built["preview"], built["outcome"]))
+        self.assertEqual([unit["subject"] for unit in shown["units"]], ["SHOP-91", "SHOP-92", "SHOP-93"])
+        self.until(lambda: self.cut_plan() is not None, "the origin holds a cut")
+        cut = self.cut_plan()
+        self.assertEqual(cut["preview"], built["preview"])
+        self.assertTrue(cut["outcome"]["summary"].startswith(PREFIX))
+        live_pid, watcher_pid = self.pids(slug)
+        inode = here.stat().st_ino
+        # The live server runs the derived configuration alone, so the binding's tracker publisher never runs.
+        argv = sh("ps", "-ww", "-o", "args=", "-p", live_pid).stdout
+        config = json.loads(re.search(r"--state-config (\{.*\}) --preview", argv).group(1))
+        self.assertEqual(config, {"directory": str(here), "renderers": [LINE_MAP], "liveHome": "line-map"})
+        # A round reduced reaches the page and the cut, with no restart of either process.
+        reduced = self.review_round(path, slug, 1)
+        self.assertEqual([line for line in reduced.splitlines() if line.startswith("plan preview")],
+                         [f"plan preview: {local.group(1)}", f"plan preview (hosted): {link.group(1)}"])
+        rounds = lambda plan: [entry["round"] for entry in (plan or {}).get("planReview", {}).get("rounds", [])]
+        self.until(lambda: rounds(self.page_plan(local.group(1))) == [1], "the page shows round 1")
+        self.until(lambda: rounds(self.cut_plan()) == [1], "the origin holds round 1")
+        self.assertEqual((self.pids(slug), here.stat().st_ino), ((live_pid, watcher_pid), inode))
+        self.assertFalse(self.marker.exists(), "the binding's tracker publisher never runs for a preview")
+        # Every sidecar is the preview folder's own: nothing lands beside it or in a delivery's record folder.
+        self.assertTrue({"live.json", "hosted-view-config.json", "hosted-view-binding.json", hosted.OWNER,
+                         hosted.IDENTITY} <= {item.name for item in here.iterdir()})
+        self.assertEqual(sorted(item.name for item in here.parent.iterdir()), [slug])
+        self.assertFalse((self.fx.main / ".orchestration/state").exists())
+        # The standing server's runs page lists the running preview, with both links.
+        standing = self.fx.tmp / "standing"
+        (standing / "runs-store").mkdir(parents=True)
+        (standing / "empty").mkdir()
+        tools = self.fx.tmp / "tools"
+        tools.mkdir(exist_ok=True)
+        config = {"directory": str(standing / "state"), "publishers": [],
+                  "renderers": [{"id": "runs", "output": "runs.html", "argv": [*python_argv(RUNS_PAGE, tools, "runs"),
+                                 str(standing / "runs-store"), str(standing / "runs.count")]}],
+                  "liveRuns": {"renderer": "runs", "inventory": {"argv": [*python_argv(INVENTORY, tools, "inventory"),
+                               str(standing / "runs-store"), str(standing / "inventory.count"), "ok"],
+                               "timeoutSeconds": 10}}}
+        server = subprocess.Popen([sys.executable, "-B", str(self.fx.release / "skills/orchestrate-work/scripts/"
+                                   "render_state.py"), "live", "--dir", str(standing / "empty"), "--repo",
+                                   str(self.fx.main), "--state-config", json.dumps(config)],
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(lambda: server.poll() is None and (os.killpg(server.pid, signal.SIGTERM), server.wait(10)))
+        address = "http://" + json.loads(server.stdout.readline())["live"] + "/view/runs.html"
+        row = {"live": f"127.0.0.1:{local.group(2)}", "plan": path, "title": "Saved addresses", "hosted": link.group(1)}
+
+        def listed() -> bool:
+            with urllib.request.urlopen(address, timeout=10) as answer:
+                said = re.search(r'id="said">(.*?)</script>', answer.read().decode(), re.S)
+            return said is not None and json.loads(json.loads(said.group(1))["previews"] or "[]") == [row]
+        self.until(listed, "the runs page lists the preview")
+        # --stop stops what the preview recorded, and only that.
+        bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: (bystander.kill(), bystander.wait()))
+        stopped = self.flow("plan-view", "--plan", path, "--stop")
+        self.assertIn("plan preview (hosted): stopped", stopped)
+        self.assertIn(f"stopped the live view (pid {live_pid})", stopped)
+        self.until(lambda: not runs(live_pid) and not runs(watcher_pid), "both preview processes stop", 15)
+        self.assertTrue(runs(bystander.pid) and server.poll() is None)
+
+    def test_adoption_hands_the_preview_over_and_its_processes_stop(self) -> None:
+        self.configure()
+        path, slug = self.plan("adopted"), "adopted"
+        self.flow("plan-view", "--plan", path)
+        for n in (1, 2):
+            self.review_round(path, slug, n)
+        live_pid, watcher_pid = self.pids(slug)
+        expected = f"adopted the plan review (2 rounds) from {slug_store(self.fx, slug)} into "
+        said = self.adopt(slug)
+        self.assertTrue(said.startswith(expected), said)
+        self.until(lambda: not runs(live_pid) and not runs(watcher_pid), "the handed finish stops both", 90)
+        here = folder(self.fx, slug)
+        built = json.loads((here / "plan.json").read_text())
+        self.assertEqual((built["preview"]["approval"], built["preview"]["delivery"]), ("handed", "FX-9"))
+        self.assertEqual([entry["round"] for entry in built["planReview"]["rounds"]], [1, 2])
+        self.assertEqual(self.cut_plan()["preview"]["approval"], "handed")
+        # A later plan-view on the adopted store changes nothing.
+        before = files_of(here)
+        out = self.flow("plan-view", "--plan", path)
+        self.assertEqual(out, f"plan preview: the review of {path} was adopted by delivery FX-9; its plan shows on that "
+                              "delivery's own views\n")
+        self.assertEqual(files_of(here), before)
+
+    def adopt(self, slug: str, delivery: str = "FX-9", env: dict | None = None) -> str:
+        """adopt_plan_review on the slug's store into `delivery`, as lead-setup and lead-init call it: what it
+        returned."""
+        probe = ("import json, sys\nfrom pathlib import Path\nsys.path.insert(0, sys.argv[1])\nimport run_delivery as flow\n"
+                 "c = flow.CFG = flow.Config(Path.cwd(), need_delivery=False, pick=False)\n"
+                 "print(json.dumps(flow.adopt_plan_review(c, Path(sys.argv[2]), sys.argv[3])))\n")
+        done = sh(sys.executable, "-B", "-c", probe, self.fx.tool.parent, slug_store(self.fx, slug), delivery,
+                  cwd=self.fx.main,
+                  env=env or self.env)
+        self.assertEqual(done.stdout.count("\n"), 1, done.stdout)
+        return json.loads(done.stdout)
+
+    def test_with_the_origin_silent_the_handed_finish_waits_its_bound_then_stops(self) -> None:
+        self.configure()
+        path, slug = self.plan("silent"), "silent"
+        self.flow("plan-view", "--plan", path)
+        self.until(lambda: self.cut_plan() is not None, "the origin holds a cut")
+        live_pid, watcher_pid = self.pids(slug)
+        # From here the origin takes no cut: every snapshot waits until the case ends.
+        released = threading.Event()
+        self.addCleanup(released.set)
+        answering = self.origin.api
+
+        def silent(method, operation, body=None, headers=None):
+            if operation == "snapshots":
+                released.wait(120)
+            return answering(method, operation, body, headers)
+        self.origin.api = silent
+        self.review_round(path, slug, 1)
+        self.adopt(slug, "FX-8")
+        here = folder(self.fx, slug)
+        self.until(lambda: json.loads((here / "plan.json").read_text())["preview"]["approval"] == "handed",
+                   "the finisher rebuilds the preview as handed")
+        log = here / "finish.log"
+        waiting = re.compile(r"waiting for the handed cut until ([0-9.]+)")
+        self.until(lambda: log.exists() and waiting.search(log.read_text()), "the finisher waits")
+        deadline = float(waiting.search(log.read_text()).group(1))
+        self.assertAlmostEqual(deadline - time.time(), PREVIEW_SECONDS, delta=30)
+        # Its clock moved to five seconds before its bound: it still waits two seconds on.
+        self.clock.write_text(str(deadline - 5 - time.time()))
+        time.sleep(2)
+        self.assertTrue(runs(live_pid) and runs(watcher_pid), "both still run just before the bound")
+        self.clock.write_text(str(deadline + 1 - time.time()))
+        self.until(lambda: not runs(live_pid) and not runs(watcher_pid), "both stop after the bound", 30)
+
+    def test_what_runs_follows_what_the_repository_configures(self) -> None:
+        cases = [  # (live, hosted, token, the lines printed, whether a record is built)
+            ("neither", False, False, True, [], False),
+            ("builtin", "builtin", False, True, [], False),
+            ("hosted only", False, True, True, ["hosted"], True),
+            ("live only", True, False, True, ["local"], True),
+            ("no token", True, True, False, ["local", "unpublished"], True),
+        ]
+        for name, live, publish, token, lines, built in cases:
+            with self.subTest(name):
+                self.configure(live=live, publish=publish)
+                slug = "configured-" + re.sub(r"[^a-z]+", "-", name)
+                path = self.plan(slug)
+                env = dict(self.env) if token else {k: v for k, v in self.env.items() if k != "FIXTURE_PUBLISH_TOKEN"}
+                out = self.flow("plan-view", "--plan", path, env=env)
+                said = [("local" if LOCAL.fullmatch(line) else "hosted" if LINK.fullmatch(line) else
+                         "unpublished" if line == UNPUBLISHED else line) for line in out.splitlines()]
+                self.assertEqual(said, lines)
+                here = folder(self.fx, slug)
+                self.assertEqual(here.exists(), built)
+                self.assertEqual((here / "live.json").exists(), "local" in lines)
+                self.assertEqual((here / hosted.OWNER).exists(), "hosted" in lines)
+                if not built:
+                    # The plan-review commands say nothing of a preview either, and build none.
+                    reduced = self.review_round(path, slug, 1)
+                    ended = self.flow("plan-review", "end", "--plan", path, "--reason", "The operator decided.")
+                    self.assertNotIn("plan preview", reduced + ended)
+                    self.assertFalse(here.exists())
+
+    def test_the_live_view_is_reused_from_its_generation_restarted_from_another_and_asks_for_its_derived_port(self):
+        self.configure(publish=False)
+        path, slug = self.plan("ported"), "ported"
+        top = str(self.fx.main.resolve())
+        derived = self.fx.call("derived_live_port", top, "plan-ported", cwd=self.fx.main)
+        env = {k: v for k, v in self.env.items() if k != "RUN_DELIVERY_LIVE_PORT"}
+        # The test holds the derived port, so the view binds a free one and records the one it asked for.
+        with socket.socket() as held:
+            held.bind(("127.0.0.1", derived))
+            held.listen()
+            first = self.flow("plan-view", "--plan", path, env=env)
+            live = json.loads((folder(self.fx, slug) / "live.json").read_text())
+        self.assertEqual(live["fallback"]["wanted"], derived)
+        self.assertEqual(first, f"plan preview: http://127.0.0.1:{live['port']}/\n")
+        # The same generation's view is reused.
+        self.assertEqual(self.flow("plan-view", "--plan", path, env=env), first)
+        self.assertEqual(json.loads((folder(self.fx, slug) / "live.json").read_text())["pid"], live["pid"])
+        # One from another generation's render_state.py is stopped by its pid and started again.
+        recorded = folder(self.fx, slug) / "live.json"
+        recorded.write_text(json.dumps({**live, "renderState": "/another/generation/render_state.py"}))
+        self.flow("plan-view", "--plan", path, env=env)
+        self.until(lambda: not runs(live["pid"]), "the other generation's view stops", 15)
+        again = json.loads(recorded.read_text())
+        self.assertNotEqual(again["pid"], live["pid"])
+        self.assertTrue(runs(again["pid"]))
+
+    def test_a_preview_that_fails_never_changes_a_plan_review_command_or_an_adoption(self) -> None:
+        self.configure(publish=False)
+        scenarios = "".join(f"  - {'S' * 590} {n};\n" for n in range(1, 1002))
+        slug = "broken"
+        path = self.plan(slug, f"---\nreviewSlug: {slug}\n---\n\n# Broken\n\n## Stories\n\n### BIG-1. Big\n\n"
+                               f"- Scenarios:\n{scenarios}")
+        out = self.flow("plan-view", "--plan", path, code=2)
+        self.assertIn(f"the preview of {path} holds", out)
+        refused = f"plan preview: not built: the preview of {path} holds"
+        for argv in (["prepare", "--lenses", OC], ["reduce"], ["end", "--reason", "The operator decided."]):
+            if argv[0] == "reduce":
+                results(self.fx, 1, {OC: {"findings": [finding(OC, 1, 1)]}}, slug_store(self.fx, slug), f"{slug}.plan")
+            said = self.flow("plan-review", *argv, "--plan", path)
+            self.assertEqual([line for line in said.splitlines() if line.startswith("plan preview")][0][:len(refused)],
+                             refused)
+        # Adoption: with no preview folder, or with a handed finish that fails, it says and does what it always did.
+        self.configure(live=False, publish=False)
+        for name in ("none", "failing"):
+            with self.subTest(name):
+                other = f"adopt-{name}"
+                path = self.plan(other)
+                self.review_round(path, other, 1)
+                here = folder(self.fx, other)
+                if name == "failing":
+                    here.mkdir(parents=True)
+                    (here / "preview.json").write_text(json.dumps({"slug": other, "plan": path}))
+                    (here / "finish.log").mkdir()  # the finisher's log can't be opened
+                before = files_of(self.fx.main / ".orchestration/plan-preview")
+                said = self.adopt(other, f"FX-{7 if name == 'none' else 6}")
+                self.assertTrue(said.startswith("adopted the plan review (1 round) from "), said)
+                # Neither writes a preview: none was there, and the failing one never marks itself handed.
+                self.assertEqual(files_of(self.fx.main / ".orchestration/plan-preview"), before)
 
 
 if __name__ == "__main__":

@@ -6747,7 +6747,8 @@ def rebuild_preview(c, plan: Path) -> tuple[Path, str | None]:
                 raise
             said.append("plan " + ("(" + ", ".join(changed) + ")" if changed else "(first build)"))
         kept = load_json(folder / PREVIEW_FILE) or {}
-        facts = {**kept, "slug": slug, "plan": plan.as_posix(), "commit": commit}
+        facts = {**kept, "slug": slug, "plan": plan.as_posix(), "title": built["outcome"]["summary"][len(PREVIEW_PREFIX):],
+                 "commit": commit}
         if facts != kept:
             replace_file(folder / PREVIEW_FILE, json.dumps(facts, indent=2) + "\n")
     return folder, ", ".join(said) or None
@@ -6866,11 +6867,12 @@ def preview_lines(c, plan: Path) -> list[str]:
 def preview_handed_finish(c, folder: Path, plan: Path, adopted: dict) -> str:
     """Once a delivery adopts the review: mark the preview handed and start one detached finisher, which rebuilds it as
     handed, waits for the hosted page to hold that cut, then stops the preview's processes. Returns at once."""
-    replace_file(folder / PREVIEW_HANDED, json.dumps({"delivery": adopted["delivery"], "at": now()}, indent=2) + "\n")
     with open(folder / PREVIEW_FINISH_LOG, "a") as out:
         subprocess.Popen([sys.executable, "-B", str(Path(__file__).resolve()), "plan-view", "--plan", plan.as_posix(),
                           "--finish-handed"], cwd=c.root, stdin=subprocess.DEVNULL, stdout=out,
                          stderr=subprocess.STDOUT, start_new_session=True)
+    # Marked once its finisher runs, so a finish that couldn't start is started again by the next plan-view.
+    replace_file(folder / PREVIEW_HANDED, json.dumps({"delivery": adopted["delivery"], "at": now()}, indent=2) + "\n")
     return f"plan preview: handed to delivery {adopted['delivery']}; its preview stops once the hosted page shows that"
 
 
@@ -6897,6 +6899,7 @@ def finish_handed(c, plan: Path) -> None:
     finally:
         if hosted:
             deadline = time.time() + PREVIEW_HANDED_SECONDS
+            print(f"{now()} hosted: waiting for the handed cut until {deadline}", flush=True)
             while time.time() < deadline:
                 status = hosted_call(c, "status", folder, key, archive=False)
                 if status.get("state") == "current" and status.get("receipt") and status["receipt"] != before:
