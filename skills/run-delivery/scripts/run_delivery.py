@@ -6871,11 +6871,13 @@ def preview_handed_finish(c, folder: Path, plan: Path, adopted: dict) -> str:
     """Once a delivery adopts the review: mark the preview handed and start one detached finisher, which rebuilds it as
     handed, waits for the hosted page to hold that cut, then stops the preview's processes. Returns at once."""
     with open(folder / PREVIEW_FINISH_LOG, "a") as out:
-        subprocess.Popen([sys.executable, "-B", str(Path(__file__).resolve()), "plan-view", "--plan", plan.as_posix(),
-                          "--finish-handed"], cwd=c.root, stdin=subprocess.DEVNULL, stdout=out,
-                         stderr=subprocess.STDOUT, start_new_session=True)
-    # Marked once its finisher runs, so a finish that couldn't start is started again by the next plan-view.
-    replace_file(folder / PREVIEW_HANDED, json.dumps({"delivery": adopted["delivery"], "at": now()}, indent=2) + "\n")
+        finisher = subprocess.Popen([sys.executable, "-B", str(Path(__file__).resolve()), "plan-view", "--plan",
+                                     plan.as_posix(), "--finish-handed"], cwd=c.root, stdin=subprocess.DEVNULL,
+                                    stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+    # Marked once its finisher runs, so a finish that couldn't start is started again by the next plan-view. The
+    # finisher's pid says when the finish is over: once it has gone, nothing more is written in the folder.
+    replace_file(folder / PREVIEW_HANDED, json.dumps({"delivery": adopted["delivery"], "at": now(),
+                                                       "finisher": finisher.pid}, indent=2) + "\n")
     return f"plan preview: handed to delivery {adopted['delivery']}; its preview stops once the hosted page shows that"
 
 
@@ -6898,7 +6900,9 @@ def preview_publisher_sequence(c, folder: Path) -> int:
 
 def finish_handed(c, plan: Path) -> None:
     """The detached finisher: rebuild the preview as handed, wait up to PREVIEW_HANDED_SECONDS for the hosted page to
-    hold a cut published after that rebuild, then stop the hosted publisher and the live view by their recorded pids."""
+    hold a cut published after that rebuild, then stop the hosted publisher and the live view by their recorded pids.
+    The live view stops last, and its log line is written before it is signalled: once the publisher and the view have
+    both gone, the finish writes nothing more in the preview's folder."""
     text, _, _ = plan_at_head(c, plan)
     slug = needed_review_slug(plan, text)
     folder = preview_folder(c, slug)
@@ -6919,7 +6923,15 @@ def finish_handed(c, plan: Path) -> None:
                     break
                 time.sleep(0.5)
             print(f"{now()} hosted: {json.dumps(hosted_call(c, 'stop', folder, key, archive=False))}", flush=True)
-        print(f"{now()} live: {stop_view(folder) or 'not running'}", flush=True)
+        live = recorded_live(folder)
+        if not live or not pid_runs(live["pid"]):
+            print(f"{now()} live: not running", flush=True)
+        elif not is_view(live["pid"]):
+            print(f"{now()} live: left pid {live['pid']} alone: live.json names it, but it no longer runs the live "
+                  "view", flush=True)
+        else:
+            print(f"{now()} live: stopping the live view (pid {live['pid']}) on port {live['port']}", flush=True)
+            stop_view_process(live["pid"], live["port"])
 
 
 def stop_preview(c, plan: Path) -> list[str]:

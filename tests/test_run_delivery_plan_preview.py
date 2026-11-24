@@ -372,14 +372,35 @@ class PlanPreviewTests(unittest.TestCase):
         store.rename(moved)
         store.mkdir()
         (store / "adopted.json").write_text(json.dumps({"delivery": "FX-9", "store": str(moved), "at": "now"}))
-        done, out = self.fx.flow("plan-view", "--plan", path, cwd=self.fx.main)
-        self.assertEqual((done, out), (0, "plan preview: handed to delivery FX-9; its preview stops once the hosted "
-                                          "page shows that\n"))
         here = folder(self.fx, slug)
-        deadline = time.monotonic() + 60
-        while "live: " not in ((here / "finish.log").read_text() if (here / "finish.log").exists() else ""):
-            self.assertLess(time.monotonic(), deadline, "the handed finish ends")
-            time.sleep(0.1)
+
+        def finish() -> str:
+            """A handed finish started by plan-view, through to its finisher's exit: its log's last line."""
+            done, out = self.fx.flow("plan-view", "--plan", path, cwd=self.fx.main)
+            self.assertEqual((done, out), (0, "plan preview: handed to delivery FX-9; its preview stops once the "
+                                              "hosted page shows that\n"))
+            finisher = json.loads((here / "handed.json").read_text())["finisher"]
+            deadline = time.monotonic() + 60
+            while runs(finisher):
+                self.assertLess(time.monotonic(), deadline, "the handed finish ends")
+                time.sleep(0.1)
+            return (here / "finish.log").read_text().splitlines()[-1]
+        # live.json names a pid that no longer runs the live view: the finisher says so and leaves it alone.
+        bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: (bystander.kill(), bystander.wait()))
+        (here / "live.json").write_text(json.dumps({"pid": bystander.pid, "port": 9}))
+        self.assertTrue(finish().endswith(f" live: left pid {bystander.pid} alone: live.json names it, but it no "
+                                          "longer runs the live view"))
+        self.assertTrue(runs(bystander.pid))
+        # Once that pid has gone, a finish started again says the view isn't running.
+        bystander.kill()
+        bystander.wait()
+        (here / "handed.json").unlink()
+        self.assertTrue(finish().endswith(" live: not running"))
+        # With no live view recorded at all, it says the same.
+        (here / "live.json").unlink()
+        (here / "handed.json").unlink()
+        self.assertTrue(finish().endswith(" live: not running"))
         plan, _, _ = self.built(slug)
         self.assertEqual((plan["preview"]["approval"], plan["preview"]["delivery"]), ("handed", "FX-9"))
         self.assertEqual(plan["planReview"], expected)
@@ -506,6 +527,11 @@ if "PREVIEW_SLOW_PUBLISHER" in __import__("os").environ and sys.argv[0].endswith
 if "--finish-handed" in sys.argv:
     real, clock = time.time, pathlib.Path({clock!r})
     time.time = lambda: real() + (float(clock.read_text()) if clock.exists() else 0.0)
+    if "PREVIEW_SLOW_STOP" in __import__("os").environ:  # the finisher dwells after each signal it sends
+        import os
+        def dwelling(send):
+            return lambda pid, sig: (send(pid, sig), time.sleep(1))[0]
+        os.kill, os.killpg = dwelling(os.kill), dwelling(os.killpg)
 """
 LOCAL = re.compile(r"^plan preview: (http://127\.0\.0\.1:([0-9]+)/)$", re.M)
 LINK = re.compile(r"^plan preview \(hosted\): (https://deliveries\.example\.com/d/[0-9a-f]{64})$", re.M)
@@ -724,10 +750,18 @@ class ServedPreviewTests(unittest.TestCase):
             self.review_round(path, slug, n)
         live_pid, watcher_pid = self.pids(slug)
         expected = f"adopted the plan review (2 rounds) from {slug_store(self.fx, slug)} into "
-        said = self.adopt(slug)
+        # The finisher dwells a second after each signal, so a write after the view has gone can't hide in the poll.
+        said = self.adopt(slug, env={**self.env, "PREVIEW_SLOW_STOP": "1"})
         self.assertTrue(said.startswith(expected), said)
         self.until(lambda: not runs(live_pid) and not runs(watcher_pid), "the handed finish stops both", 90)
         here = folder(self.fx, slug)
+        # Once both have gone, the finish writes nothing more in the folder, up to its finisher's exit.
+        stopped = files_of(here)
+        finisher = json.loads((here / "handed.json").read_text())["finisher"]
+        self.until(lambda: not runs(finisher), "the finisher exits", 30)
+        self.assertEqual(files_of(here), stopped)
+        self.assertRegex((here / "finish.log").read_text().splitlines()[-1],
+                         rf" live: stopping the live view \(pid {live_pid}\) on port [0-9]+$")
         built = json.loads((here / "plan.json").read_text())
         self.assertEqual((built["preview"]["approval"], built["preview"]["delivery"]), ("handed", "FX-9"))
         self.assertEqual([entry["round"] for entry in built["planReview"]["rounds"]], [1, 2])
