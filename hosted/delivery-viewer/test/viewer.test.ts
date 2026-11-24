@@ -227,6 +227,9 @@ describe("trusted corpus DOM bridge (behavior only)", () => {
       window.document.body.appendChild(node);
     }
     try {
+      // Every chapter on one page, the reader's other layout: paged, a click in the plan's fold opens the plan's page,
+      // and the stop on Now is rightly no longer where focus is. Pushes keep selection, folds and focus either way.
+      window.localStorage.setItem("hosted-delivery:layout", "scroll");
       window.eval(built.renderer);
       expect(window.document.querySelector("#plan")).toBeNull();
       const button =
@@ -1151,6 +1154,21 @@ describe("immutable tuple confirmations", () => {
   });
 });
 
+/**
+ * A delivery underway: one piece has landed. Only then does the line map draw its live line under the hero; a fresh
+ * delivery opens on what is about to land, and the hosting status is said on its own.
+ */
+function underway(body: PublicProjection): PublicProjection {
+  (body.document.state.queue as Record<string, unknown>[]).unshift({
+    subject: "APP-0",
+    title: "Landed first",
+    lane: "one",
+    stage: "merged",
+    head: "c".repeat(40),
+  });
+  return body;
+}
+
 describe("the hosting status in the hero's live line", () => {
   type Built = { renderer: string; viewer: string; shell: string };
   const built = () =>
@@ -1201,7 +1219,7 @@ describe("the hosting status in the hero's live line", () => {
   }
   it("draws no strip, and a current publication shows only as the live line, its times on hover or focus", async () => {
     expect(built().shell).not.toMatch(/hosting-strip|hosting-times|<aside/);
-    const served = { now: (await revision(1, auxiliaryProjection("old"))) as Served };
+    const served = { now: (await revision(1, underway(auxiliaryProjection("old")))) as Served };
     const { dom, document } = await hostedPage(served, false);
     try {
       await vi.waitFor(() =>
@@ -1243,7 +1261,7 @@ describe("the hosting status in the hero's live line", () => {
     ["unavailable", "Update unavailable · showing the last saved progress"],
     ["incompatible", "Incompatible update · showing the last saved progress"],
   ])("says a %s publication in the live line without interaction, and announces it", async (kind, words) => {
-    const body = auxiliaryProjection("old");
+    const body = underway(auxiliaryProjection("old"));
     const served = { now: (await revision(1, body)) as Served };
     const { dom, store, document } = await hostedPage(served);
     try {
@@ -1312,6 +1330,28 @@ describe("the hosting status in the hero's live line", () => {
         ),
       );
       expect(status(document).textContent).toBe("Saved completed delivery · connection unavailable");
+    } finally {
+      close(dom);
+    }
+  });
+  it("says the status on its own while a fresh delivery draws no live line", async () => {
+    const served = { now: (await revision(1, auxiliaryProjection("old"))) as Served };
+    const { dom, document } = await hostedPage(served, false);
+    try {
+      await vi.waitFor(() =>
+        expect(Reflect.get(dom.window, "deliveryStateStore")).toBeDefined(),
+      );
+      const store = Reflect.get(dom.window, "deliveryStateStore") as ReturnType<
+        typeof createViewStore
+      >;
+      dom.window.eval(built().renderer);
+      await store.poll();
+      expect(store.status().kind).toBe("current");
+      // Nothing has landed: the page looks ahead, with no live line under the hero.
+      expect(document.querySelector(".is-fresh")).not.toBeNull();
+      expect(document.querySelector(".fact.since")).toBeNull();
+      expect(status(document).textContent).toBe("Progress confirmed");
+      expect(status(document).classList.contains("hosted-announce")).toBe(false);
     } finally {
       close(dom);
     }
