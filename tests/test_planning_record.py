@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -165,6 +166,36 @@ class PlanOpenTests(PlanningRecordCase):
         for scope in ("delivery", "queue", "lane:lane-1", "plan:## Decisions", "plan:(preamble)"):
             self.assertEqual(state_tool.holder(entries, scope), seat, scope)
 
+
+
+class PlanningSupervisorTests(PlanningRecordCase):
+    """plan-open starts the planning record's supervisor: its live view and the sync loop, and no queue."""
+
+    def test_the_planning_supervisor_runs_the_view_and_the_sync_loop_and_passes_over_the_views_only(self) -> None:
+        fx = self.fixture()
+        env = {**fx.env, "RUN_DELIVERY_SUPERVISOR": "on"}
+        code, out = fx.flow("plan-open", "--plan", "docs/plan.md", "--key", KEY, cwd=fx.main, env=env)
+        self.assertEqual(code, 0, out)
+        self.assertIn("supervisor: running; live view http://", out)
+        folder = Path(re.search(r"planning record of \S+ at (\S+):", out).group(1))
+        lock = folder.parent / "flow-log" / f"{KEY}.supervisor.lock"
+        children = {child["name"] for child in json.loads(lock.read_text())["children"]}
+        self.assertEqual(children, {"live", "collab"})
+        # The sync loop pushes the first seat's partition, as nothing else does.
+        ref = f"refs/agent-skills/{KEY}/{state_tool.local_seat(folder, KEY)}"
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and not sh("git", "ls-remote", fx.origin, ref, cwd=fx.tmp).stdout:
+            time.sleep(0.5)
+        self.assertTrue(sh("git", "ls-remote", fx.origin, ref, cwd=fx.tmp).stdout, "the sync loop pushed nothing")
+        passes = []
+        while time.monotonic() < deadline and not passes:
+            log = folder.parent / "flow-log" / f"{KEY}.supervisor.jsonl"
+            passes = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+            time.sleep(0.5)
+        self.assertTrue(passes, "no pass was logged")
+        steps = set(passes[0]) - {"pass", "startedAt", "finishedAt", "at", "delivery", "laneWords"}
+        self.assertEqual(steps, {"needs", "render", "latest", "close"}, passes[0])
+        self.assertEqual(passes[0]["close"], "planning: nothing to close")
 
 
 class AdoptionTests(PlanningRecordCase):

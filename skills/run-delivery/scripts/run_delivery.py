@@ -1047,7 +1047,7 @@ class Config:
         self.test_files = (self.in_app or {}).get("testFilePattern", DEFAULT_TEST_FILES)
         if self.conflicts:
             raise Stop("the repository's configs disagree:\n  " + "\n  ".join(self.conflicts))
-        self.delivery = None
+        self.delivery, self.planning = None, False
         key = delivery or setting("RUN_DELIVERY_DELIVERY") or (self.pick_delivery(need_delivery) if pick else None)
         if key:
             self.load_delivery(key)
@@ -1210,16 +1210,36 @@ class Config:
                      else "; no delivery here is open")
         return said
 
+    def planning_delivery(self, key: str) -> dict | None:
+        """The planning record plan-open opened for `key`, read as a delivery with no stories yet, until lead-setup
+        writes its delivery file: its plan, its headline, no lanes. None when there is no such record."""
+        folder = self.record_apart(key)
+        meta = json_object(folder / "state.json").get("meta") or {}
+        if (meta.get("collab") or {}).get("key") != key or meta.get("phase") != "planning" \
+                or not isinstance(meta.get("planFile"), str):
+            return None
+        # Its base is the one its record started on, as plan-open named it.
+        with contextlib.suppress(OSError, ValueError, IndexError, KeyError, TypeError):
+            started = json.loads((folder / "journal.jsonl").read_text(encoding="utf-8").splitlines()[0])
+            base = started["data"]["base"]["ref"].removeprefix(f"{self.remote}/")
+        return {"schemaVersion": "delivery-flow-delivery/1", "delivery": key, "headline": meta.get("headline") or key,
+                "plan": meta["planFile"], "lanes": {}, "stories": {},
+                **({"baseBranch": base} if "base" in locals() else {})}
+
     def load_delivery(self, key: str) -> None:
         path = self.deliveries / f"{key}.json"
         d = self.shelf.json(f"{self.deliveries_rel}/{key}.json")
+        planned = self.planning_delivery(key) if d is None else None
+        self.planning = planned is not None
+        d = d if planned is None else planned
         if d is None:
             raise Stop(f"{self.shelf.where(f'{self.deliveries_rel}/{key}.json')} is missing (lead-setup writes it)"
                        f"{self.missing_delivery(key)}{self.base_hint()}")
         if d.get("schemaVersion") != "delivery-flow-delivery/1":
             raise Stop(f"{path}: schemaVersion must be delivery-flow-delivery/1")
         self.raw, self.delivery_path = d, path
-        self.delivery_where = self.shelf.where(f"{self.deliveries_rel}/{key}.json")
+        self.delivery_where = (f"the planning record {self.record_apart(key)}" if self.planning
+                               else self.shelf.where(f"{self.deliveries_rel}/{key}.json"))
         self.delivery = d["delivery"]
         base = d.get("baseBranch")
         if base and self.binding_base and not serves(self.binding, base):
@@ -8072,7 +8092,10 @@ def lead_init(args) -> None:
         print(line)
     if planning is not None:
         # Its journal, partitions and hosted identity carry on: the delivery's entries follow the planning ones.
-        state_tool("patch", "--writer", "lead", "--version", str(planning["version"]),
+        # The planning record's supervisor gives way to the delivery's, which lead-init starts below.
+        if (said := ask_supervisor_to_stop(c, why="held")):
+            print(said)
+        state_tool("patch", "--writer", "lead", "--version", str(json_object(c.state / "state.json")["version"]),
                    "--patch", json.dumps({**seed, "meta": {**seed["meta"], "phase": "delivery"}}))
     else:
         state_tool("init", "--headline", c.raw.get("headline", c.delivery), "--seed", json.dumps(seed))
@@ -14235,6 +14258,10 @@ class Supervisor:
 
     def child_argv(self, name: str) -> list[str] | None:
         c = self.c
+        if name == "collab":
+            # The sync loop of a shared record: pushes this seat's partition and ingests its peers'.
+            return [sys.executable, "-B", str(c.release / "skills/orchestrate-work/scripts/collab.py"), "serve",
+                    "--dir", str(c.state), "--remote", c.remote, "--poll", str(collab_settings(c)["pollSeconds"])]
         scripts = c.release / "skills/orchestrate-work/scripts"
         config = binding_state(c)
         if name == "live":
@@ -14485,6 +14512,7 @@ class Supervisor:
             entry["laneWords"] = lane_words(doc, remembered)
             return cleanup_merged(c, doc, entry["laneWords"])
 
+        planning = planning_phase(c)
         steps = (("reconcile", reconcile_once), ("regions", lambda: settle_landings(c)), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
                  ("peers", lambda: self.peer_merges(entry)),
                  ("lenses", lambda: journal_lens_returns(c)),
@@ -14494,6 +14522,9 @@ class Supervisor:
                  ("publish", lambda: render_views(c, only="publishers")),
                  ("blockers", self.blockers), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
+        if planning:
+            # While the plan is drafted: the views and the record's copy only; no queue, tracker or full health.
+            steps = tuple((name, step) for name, step in steps if name in PLANNING_STEPS)
         for name, step in steps:
             self.honour_signal()
             if self.lose():
@@ -14504,6 +14535,8 @@ class Supervisor:
                 entry[name] = f"failed: {error}"
         closed = False
         try:
+            if planning:
+                raise Planning
             doc = derived.get("doc") or load_state()
             needs = derived["needs"] if "needs" in derived else needs_you(c, doc, self.flapping())
             holds = close_holds(c, doc, needs)
@@ -14524,6 +14557,8 @@ class Supervisor:
             if not holds:
                 entry["closeOut"], closed = close_out(c, self.flapping(), self.once)
                 render_views(c)
+        except Planning:
+            entry["close"] = "planning: nothing to close"
         except (Stop, ValueError, OSError, subprocess.SubprocessError) as error:
             entry["close"] = f"failed: {error}"
         if self.lose():
@@ -14668,7 +14703,8 @@ class Supervisor:
                 with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
                     for line in clear_suite_checkouts(c)[0]:
                         self.say(line)
-                self.start("serve")
+                # A planning record has no queue yet: its one child beside the view is the sync loop.
+                self.start("collab" if planning_phase(c) else "serve")
                 print(self.address, flush=True)  # the first line: where the delivery is watched
                 lines, self.held_lines = self.held_lines or [], None
                 for line in lines:
@@ -14742,6 +14778,19 @@ class Supervisor:
                         print(f"{now()} supervisor: {said}", flush=True)
             fcntl.flock(self.handle, fcntl.LOCK_UN)
             self.handle.close()
+
+
+class Planning(Exception):
+    """A pass over a planning record, which has nothing to close."""
+
+
+# The pass steps a planning record runs.
+PLANNING_STEPS = ("needs", "render", "latest")
+
+
+def planning_phase(c) -> bool:
+    """Whether the delivery's record is a planning record: shared, not yet taken over by lead-init."""
+    return (c.record_state().get("meta") or {}).get("phase") == "planning"
 
 
 def lead_run(args) -> None:
@@ -16611,6 +16660,17 @@ def plan_open(args) -> None:
     label = tool.read_state(folder)["meta"]["collab"]["seats"][seat]["label"]
     print(f"opened the planning record of {args.key} at {folder}: seat {seat} ({label}) holds every scope; the plan "
           f"syncs on plan/{slug} with {flow_command()} plan-sync --plan {shlex.quote(plan.as_posix())}")
+    # The planning record's supervisor: its live view, the sync loop and hosted publishing, under the record's key.
+    c = CFG = Config(repo(), args.key)
+    start_hosted(c)
+    if (line := hosted_line(c)):
+        print(line)
+    if supervisor_off():
+        register_delivery(c, None)
+        print(f"supervisor: not started; start it with {flow_command()} --delivery {args.key} lead-run --resume")
+    else:
+        require_node(c.release, "plan-open")
+        print(f"supervisor: running; live view {start_supervisor(c)}{live_fallback(c.state)}")
 
 
 def lead_plan_endorse(args) -> None:
