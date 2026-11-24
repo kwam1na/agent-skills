@@ -8016,6 +8016,37 @@ def verify_integration_checkout(c, root: Path, key: str, base: str, target: str)
     raise Stop(f"{root} already exists and does not hold the integration setup for {key} on {base}")
 
 
+def setup_head(c, key: str, plan: str) -> str:
+    """HEAD of the standing checkout, for an integration setup, which drafts from the committed tree at it into a
+    checkout of its own. It refuses a tracked change, staged or not, and an untracked file at a path setup writes (the
+    delivery file, the lane brief and the binding) or reads from the working tree (the settings the standing
+    configuration takes, which the new checkout wouldn't have). Every other untracked file is named and left alone."""
+    guarded = {(Path(c.deliveries_rel) / f"{key}.json").as_posix(), f"{Path(plan).with_suffix('').as_posix()}.lane-brief.md",
+               ".agents/orchestration.json", CONFIG, *(old for old, new in LEGACY_NAMES if new == CONFIG),
+               ".agents/delivery-views.json", "harness.config.ts"}
+    changed, colliding, elsewhere = [], [], []
+    # Not stripped: the first line's leading space is its status column.
+    for line in run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=c.root).stdout.splitlines():
+        if not line.startswith("?? "):
+            changed.append(line)
+        elif line[3:] in guarded:
+            colliding.append(line)
+        else:
+            elsewhere.append(line[3:])
+    refused = []
+    if changed:
+        refused.append("the checkout has uncommitted changes; commit or remove them first:\n" + "\n".join(changed)[:800])
+    if colliding:
+        refused.append("the checkout has untracked files where setup reads or writes; commit or remove them first:\n"
+                       + "\n".join(colliding))
+    if refused:
+        raise Stop("\n".join(refused))
+    if elsewhere:
+        shown = elsewhere[:20] + ([f"and {len(elsewhere) - 20} more"] if len(elsewhere) > 20 else [])
+        print("left alone: untracked files setup doesn't read:\n  " + "\n  ".join(shown))
+    return git("rev-parse", "HEAD", cwd=c.root)
+
+
 def integration_checkout(c, key: str, base: str, plan: str) -> tuple[Path, str]:
     """Find or create the lead checkout, keeping the standing binding on its own branch."""
     if not c.binding_base or git("check-ref-format", "--branch", base, check=False) != base:
@@ -8062,7 +8093,7 @@ def integration_checkout(c, key: str, base: str, plan: str) -> tuple[Path, str]:
         else:
             git("worktree", "add", "-q", "--track", "-b", base, str(root), f"{c.remote}/{base}")
     else:
-        head = clean_head()
+        head = setup_head(c, key, plan)
         if Shelf(c.root, head).text(plan) is None:
             raise Stop("name a committed repository-relative plan")
         if Shelf(c.root, head).json(f"{c.deliveries_rel}/{key}.json") is not None:
