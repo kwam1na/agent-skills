@@ -396,11 +396,11 @@ delivery does not claim it.
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | PPV-1 | `skills/delivery-views/references/delivery-plan.schema.json`, `skills/delivery-views/scripts/views_common.py`, `skills/delivery-views/assets/line-map.js`, `skills/delivery-views/assets/line-map.css`, `skills/delivery-views/assets/run-summary.js`, `tests/test_delivery_views_plan.py`, `tests/test_delivery_views_plan_fixtures.py`, `tests/delivery_views_page/line-map-plan.test.mjs`, `tests/delivery_views_page/line-map-plan-review.test.mjs`, `tests/delivery_views_page/line-map-plan-changes.test.mjs`, `tests/delivery_views_page/plan-fixtures.mjs` |
-| 1 | 3 | PPV-3 | `skills/orchestrate-work/scripts/render_state.py`, `skills/delivery-views/scripts/render.py`, `skills/delivery-views/assets/runs.js`, `skills/delivery-views/assets/runs.css`, `tests/test_orchestration_render.py`, `tests/test_delivery_views_render.py`, `tests/delivery_views_page/runs.test.mjs` |
-| 2 | 2 | PPV-2 | `skills/run-delivery/scripts/run_delivery.py`, `tests/test_run_delivery_plan_preview.py` |
-| 3 | 2 | PPV-4 | `tests/test_run_delivery_plan_review.py`, `tests/test_run_delivery_hosted.py` |
-| 4 | 1 | PPV-5 | `skills/plan-work/SKILL.md`, `skills/run-delivery/SKILL.md`, `skills/delivery-views/SKILL.md`, `skills/orchestrate-work/SKILL.md`, `docs/hosted-deliveries.md`, `docs/own-deliveries.md` |
+| 1 | 1 | V26-3776 | `skills/delivery-views/references/delivery-plan.schema.json`, `skills/delivery-views/scripts/views_common.py`, `skills/delivery-views/assets/line-map.js`, `skills/delivery-views/assets/line-map.css`, `skills/delivery-views/assets/run-summary.js`, `tests/test_delivery_views_plan.py`, `tests/test_delivery_views_plan_fixtures.py`, `tests/delivery_views_page/line-map-plan.test.mjs`, `tests/delivery_views_page/line-map-plan-review.test.mjs`, `tests/delivery_views_page/line-map-plan-changes.test.mjs`, `tests/delivery_views_page/plan-fixtures.mjs` |
+| 1 | 3 | V26-3777 | `skills/orchestrate-work/scripts/render_state.py`, `skills/delivery-views/scripts/render.py`, `skills/delivery-views/assets/runs.js`, `skills/delivery-views/assets/runs.css`, `tests/test_orchestration_render.py`, `tests/test_delivery_views_render.py`, `tests/delivery_views_page/runs.test.mjs` |
+| 2 | 2 | V26-3778 | `skills/run-delivery/scripts/run_delivery.py`, `tests/test_run_delivery_plan_preview.py` |
+| 3 | 2 | V26-3779 | `tests/test_run_delivery_plan_review.py`, `tests/test_run_delivery_hosted.py` |
+| 4 | 1 | V26-3780 | `skills/plan-work/SKILL.md`, `skills/run-delivery/SKILL.md`, `skills/delivery-views/SKILL.md`, `skills/orchestrate-work/SKILL.md`, `docs/hosted-deliveries.md`, `docs/own-deliveries.md` |
 
 Every story that changes a releasable skill also refreshes `catalog.json`, the
 selected `profiles/` and `provenance.lock.json` in its own change, through
@@ -411,7 +411,7 @@ The stories are children of the epic V26-3775.
 
 ## Stories
 
-### PPV-1. Say "agent review only" and show decisions on a plan preview
+### V26-3776. Say "agent review only" and show decisions on a plan preview
 
 Lane 1, tier 1, not blocked. Test-first. Files:
 `skills/delivery-views/references/delivery-plan.schema.json`,
@@ -469,7 +469,7 @@ the files `line-map-plan.test.mjs`, `line-map-plan-review.test.mjs`,
     and by `validate_plan` alike;
   - every existing delivery plan fixture validates and renders unchanged.
 
-### PPV-3. Mark preview servers and list them on the runs page
+### V26-3777. Mark preview servers and list them on the runs page
 
 Lane 3, tier 1, not blocked. Test-first. Files:
 `skills/orchestrate-work/scripts/render_state.py`,
@@ -497,14 +497,14 @@ Lane 3, tier 1, not blocked. Test-first. Files:
     and the page lane's runs rows) are byte for byte unchanged;
   - `live --stop` on a preview folder stops only that folder's server.
 
-### PPV-2. Build a plan preview from a plan file and its review store
+### V26-3778. Build a plan preview from a plan file and its review store
 
-Lane 2, tier 2, after PPV-1. Test-first. Files:
+Lane 2, tier 2, after V26-3776. Test-first. Files:
 `skills/run-delivery/scripts/run_delivery.py` and
 `tests/test_run_delivery_plan_preview.py`.
 
 - Add `plan-view --plan <path>` (build and rebuild only in this story; serving and
-  publishing are PPV-4's). It needs no delivery file, tracker, forge or record.
+  publishing are V26-3779's). It needs no delivery file, tracker, forge or record.
 - Share `lead-setup`'s plan parsing; add the scenarios and finish-line readers.
 - Make the preview record as the decisions state: the folder, `init --seed`, then
   `patch` pinned to its version, `plan.json` by `os.replace`, `plan.updated`
@@ -539,16 +539,16 @@ Lane 2, tier 2, after PPV-1. Test-first. Files:
     `plan-review` gives;
   - nothing is written outside the preview folder.
 
-### PPV-4. Serve and publish the preview, unasked, from plan-review
+### V26-3779. Serve and publish the preview, unasked, from plan-review
 
-Lane 2, tier 3, after PPV-2 and PPV-3. Test-first. Files:
+Lane 2, tier 3, after V26-3778 and V26-3777. Test-first. Files:
 `skills/run-delivery/scripts/run_delivery.py`,
 `tests/test_run_delivery_plan_preview.py`,
 `tests/test_run_delivery_plan_review.py` and `tests/test_run_delivery_hosted.py`.
 
 Lane 2 already owns `run_delivery.py` and `tests/test_run_delivery_plan_preview.py`
 from its tier-2 row. Finish line 7's runs-page row runs here too, end to end, over
-PPV-3's code.
+V26-3777's code.
 
 - `plan-view` starts or reuses the preview's live server (`--preview`, derived
   state configuration, derived port, `live.json`) and the hosted publisher
@@ -591,9 +591,9 @@ PPV-3's code.
     the one `derived_live_port` gives for `plan-<reviewSlug>`;
   - `plan-view --stop` stops only processes the preview recorded.
 
-### PPV-5. Make the preview the default posture in the workflows' docs
+### V26-3780. Make the preview the default posture in the workflows' docs
 
-Lane 1, tier 4, after PPV-4. Sensor-only. Files: `skills/plan-work/SKILL.md`,
+Lane 1, tier 4, after V26-3779. Sensor-only. Files: `skills/plan-work/SKILL.md`,
 `skills/run-delivery/SKILL.md`, `skills/delivery-views/SKILL.md`,
 `skills/orchestrate-work/SKILL.md`, `docs/hosted-deliveries.md` and
 `docs/own-deliveries.md`.
@@ -618,7 +618,7 @@ Lane 1, tier 4, after PPV-4. Sensor-only. Files: `skills/plan-work/SKILL.md`,
   take either side and run `scripts/update-provenance.py`, as AGENTS.md says. The
   merge queue lands one story at a time, so each lands on a lock its predecessor
   already refreshed.
-- **`run_delivery.py`.** Only lane 2 edits it; PPV-4 follows PPV-2 in the same lane.
+- **`run_delivery.py`.** Only lane 2 edits it; V26-3779 follows V26-3778 in the same lane.
 - **Ports.** Live servers in tests bind port 0 or set `RUN_DELIVERY_LIVE_PORT=0`,
   never a derived port; the derived-port row checks the port asked for without
   binding it. The hosted fake origin takes a free loopback port.
@@ -650,8 +650,8 @@ Lane 1, tier 4, after PPV-4. Sensor-only. Files: `skills/plan-work/SKILL.md`,
 ## Approval handoffs
 
 1. The operator approves this plan, after plan review.
-2. Tracker items are created under V26-3775 for PPV-1 to PPV-5
-   (`create-linear-ticket`), and the plan's keys are renamed to them.
+2. Tracker items are created under V26-3775 for V26-3776 to V26-3780
+   (`create-linear-ticket`); done, and the plan's keys renamed to them.
 3. Release: the operator tags a candidate, it is applied in this repository, and the
    final is tagged on the same commit.
 4. Live acceptance: the operator watches one real plan's preview through at least
@@ -664,7 +664,7 @@ Lane 1, tier 4, after PPV-4. Sensor-only. Files: `skills/plan-work/SKILL.md`,
   criteria. The preview says so per story rather than guessing.
 - **Older origins.** A hosted origin not redeployed prints "Approved" beside the
   "Plan preview (agent review only)" headline until it is redeployed.
-- **Hook drift.** `build-assets.mjs` patches `line-map.js` by exact text; PPV-1
+- **Hook drift.** `build-assets.mjs` patches `line-map.js` by exact text; V26-3776
   keeps the hooked lines, and `hosted.build` refuses drift.
 - **Process count.** Each plan in review runs one live server and one hosted
   watcher. The handed finish stops them after adoption, and `--stop` at any time;
