@@ -48,7 +48,7 @@ SERVICE_IDS = ('hosted.install', 'hosted.typecheck', 'hosted.build', 'hosted.tes
                'hosted.browser-install', 'hosted.browser', 'hosted.conformance', 'hosted.node-test', 'hosted.conformance-node')
 GUARDS = ["tests.test_linear_qualification", "tests.test_registry"]
 SKILL_PROSE_READERS = ["tests.test_declared_mechanics_corpus", "tests.test_lane_ruling_corpus",
-                       "tests.test_review_bound_corpus", "tests.test_round_brief_template_corpus",
+                       "tests.test_live_address_corpus", "tests.test_review_bound_corpus", "tests.test_round_brief_template_corpus",
                        "tests.test_run_event_emission_corpus"]
 # Modules that run as scripts, holding no unittest case.
 SCRIPT_MODULES = ("tests.test_registry",)
@@ -565,7 +565,7 @@ class StandingBinding(unittest.TestCase):
         prose = binding["selection"]["readers"][2]
         self.assertEqual(prose, {"paths": ["skills/**/*.md"], "checks": SKILL_PROSE_READERS})
         text = " ".join((ROOT / "docs/own-deliveries.md").read_text(encoding="utf-8").split())
-        self.assertIn("A change to any Markdown file under `skills/` brings the five corpus tests that read the "
+        self.assertIn("A change to any Markdown file under `skills/` brings the six corpus tests that read the "
                       "shipped skill prose, `tests.test_run_event_emission_corpus` among them,", text)
         for changed, brought in ((["skills/run-delivery/SKILL.md"], True),
                                  (["README.md", "skills/orchestrate-work/references/orchestration-guide.md"], True),
