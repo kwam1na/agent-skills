@@ -987,7 +987,11 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 
 /* Pages: one chapter at a time. */
 body.paged .chapter + .chapter { border-top: 0; }
-body.paged .chapter { padding-top: 88px; }
+body.paged .chapter { padding-top: 88px; display: flex; flex-direction: column;
+  /* A short chapter still gets room: the page has a floor of about two thirds of the window, its foot at the bottom. */
+  min-height: max(560px, 68vh); min-height: max(560px, 68dvh); box-sizing: border-box; }
+body.paged .chapter > .inner { margin-bottom: 96px; }
+body.paged .chapter > .page-foot { margin-top: auto; }
 body.paged .chapter[hidden] { display: none; }
 body.paged .rail { display: none; }
 body:not(.paged) .page-foot { display: none; }
@@ -1071,7 +1075,8 @@ body:not(.paged) .page-foot { display: none; }
 .chapter-tab-hint kbd { font-family: var(--mono); font-size: 10.5px; padding: 0 4px; border: 1px solid var(--hair); border-radius: 4px; }
 body:not(.paged) .chapter-tab-hint { display: none; }
 @media (max-width: 720px) {
-  body.paged .chapter { padding-top: 72px; }
+  body.paged .chapter { padding-top: 72px; min-height: max(480px, 64dvh); }
+  body.paged .chapter > .inner { margin-bottom: 56px; }
   .chapter-tab-label { max-width: 9ch; overflow: hidden; text-overflow: ellipsis; }
   .page-where { display: none; }
   .page-foot { grid-template-columns: 1fr 1fr; grid-template-areas: "track track" "prev next"; gap: 22px 16px; margin-top: 56px; }
