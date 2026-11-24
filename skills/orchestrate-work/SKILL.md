@@ -469,7 +469,10 @@ Keeping the view current is the lead's job, never the operator's: the
 operator should never have to ask whether it is up to date.
 
 **The live view.** At the start of a delivery, start the live view and give
-the operator the address it prints:
+the operator the address it prints. Giving it means opening it in the same
+turn: in the host's in-app browser pane, with a card that opens it there where
+the host can show one; without such a pane, in the operator's own browser; and
+printing it only when it can be opened in neither:
 
 ```bash
 python3 -B scripts/render_state.py live --dir <state directory> --binding .agents/orchestration.json
