@@ -1226,3 +1226,13 @@ body.paged .chapter-now.is-fresh > .inner { margin-bottom: 0; }
 .aside li { align-items: flex-start; line-height: 1.45; }
 .aside li::before { content: ""; flex: none; width: 10px; height: 1px; margin-top: 0.72em; background: var(--faint); opacity: 0.6; }
 .aside-head { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+
+.aside-chevron { flex: none; width: 13px; height: 13px; margin-top: 0.2em; margin-left: auto; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; color: var(--faint); visibility: hidden; transition: transform .15s ease; }
+.aside li.clamps { cursor: pointer; border-radius: 0; }
+.aside li.clamps .aside-chevron { visibility: visible; }
+.aside li.clamps:hover, .aside li.clamps:focus-visible { color: var(--ink); }
+.aside li.clamps:hover .aside-chevron { color: var(--ink); }
+.aside li.clamps:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.aside li.open .aside-head { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.aside li.open .aside-chevron { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .aside-chevron { transition: none; } }

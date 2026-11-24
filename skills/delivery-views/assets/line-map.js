@@ -5019,6 +5019,47 @@
   }
 
   /* 6. Parked */
+  // Set-aside rows the reader opened, kept across live redraws.
+  var asideOpen = {};
+  function asideChevron() {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("class", "aside-chevron");
+    svg.innerHTML = '<path d="M6 9l6 6l6 -6"/>';
+    return svg;
+  }
+  function toggleAside(row, words) {
+    if (!row.classList.contains("clamps")) return;
+    var open = row.classList.toggle("open");
+    asideOpen[words] = open;
+    row.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  // Only rows whose text runs past two lines become openable.
+  function markClamped(listNode) {
+    Array.prototype.forEach.call(listNode.children, function (row) {
+      var head = row.firstChild;
+      var wasOpen = row.classList.contains("open");
+      if (wasOpen) row.classList.remove("open");
+      var clamps = head.scrollHeight > head.clientHeight + 1;
+      if (wasOpen) row.classList.add("open");
+      row.classList.toggle("clamps", clamps);
+      if (clamps) {
+        row.tabIndex = 0;
+        row.setAttribute("role", "button");
+        row.setAttribute("aria-expanded", wasOpen ? "true" : "false");
+      } else {
+        row.removeAttribute("tabindex");
+        row.removeAttribute("role");
+        row.removeAttribute("aria-expanded");
+        row.classList.remove("open");
+      }
+    });
+  }
+  window.addEventListener("resize", function () {
+    Array.prototype.forEach.call(document.querySelectorAll("ol.aside"), markClamped);
+  });
+
   function drawParked(doc) {
     var inner = parts.parked;
     var items = list(doc.state.followups).filter(isObject);
@@ -5044,12 +5085,18 @@
         label.setAttribute("href", "#plan");
         var asideList = el("ol", "aside");
         aside.forEach(function (words) {
-          var cut = words.search(/[.(;:]\s/);
-          var head = cut > 12 && cut < 90 ? words.slice(0, cut) : words;
-          var row = add(el("li"), el("span", "aside-head", head.replace(/[.;:]$/, "")));
-          row.title = words;
+          // The full text, clamped to two lines; a row that overflows opens in place to show all of it.
+          var row = add(el("li"), el("span", "aside-head", words), asideChevron());
+          if (asideOpen[words]) row.classList.add("open");
+          row.addEventListener("click", function () { toggleAside(row, words); });
+          row.addEventListener("keydown", function (event) {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            toggleAside(row, words);
+          });
           asideList.appendChild(row);
         });
+        requestAnimationFrame(function () { markClamped(asideList); });
         nodes.push(add(el("div", "aside-box"), add(el("div", "aside-top"), label, el("span", "aside-count", String(aside.length))), asideList));
       }
     }
