@@ -348,8 +348,9 @@ def push(directory: Path, *, remote: str = "origin") -> dict:
         raise _refuse("collab.seat_split", "this checkout's seat chain diverged from the remote's: it pushes nothing more")
     key, seat, tip, committed = commit_partition(directory)
     ref, mirror = partition_ref(key, seat), peer_ref(key, seat)
-    for _ in range(tool.RECONCILE_ATTEMPTS + 1):
-        if _revision(directory, mirror) == tip:
+    for attempt in range(tool.RECONCILE_ATTEMPTS + 1):
+        # The remote's chain as last read, from the fetch or from this seat's own last push.
+        if _git(directory, "for-each-ref", "--format=%(objectname)", mirror).stdout.strip() == tip:
             return {"ok": True, "seat": seat, "head": tip, "committed": committed, "pushed": False}
         pushed = _git(directory, "push", "--porcelain", "--quiet", "--no-verify", remote, f"{ref}:{ref}", check=False)
         if pushed.returncode == 0:

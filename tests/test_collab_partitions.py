@@ -242,10 +242,11 @@ class SharedFixture(unittest.TestCase):
         return machine.seat()
 
     def exchange(self, *machines: Machine) -> None:
-        """Every machine pushes and ingests, twice round, so each has every other's latest."""
-        for _ in range(2):
-            for machine in machines:
-                machine.sync()
+        """Every machine pushes, then every machine ingests, so each has every other's latest."""
+        for machine in machines:
+            machine.push()
+        for machine in machines:
+            machine.take()
 
     def assertConverged(self, *machines: Machine) -> None:
         first = machines[0]
