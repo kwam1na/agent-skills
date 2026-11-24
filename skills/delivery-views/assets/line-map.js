@@ -849,11 +849,7 @@
   var isMac = typeof navigator === "object" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
   launchButton.setAttribute("aria-label", "Go to… (" + (isMac ? "Command" : "Control") + " K)");
   launchButton.setAttribute("aria-keyshortcuts", isMac ? "Meta+K" : "Control+K");
-  var launchIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  launchIcon.setAttribute("viewBox", "0 0 24 24");
-  launchIcon.setAttribute("aria-hidden", "true");
-  launchIcon.innerHTML = '<path d="M10.5 18a7.5 7.5 0 1 0 0 -15a7.5 7.5 0 0 0 0 15z"/><path d="M21 21l-5.2 -5.2"/>';
-  add(launchButton, launchIcon, el("span", "launch-label", "Go to"), el("kbd", "launch-key", (isMac ? "⌘" : "Ctrl ") + "K"));
+  add(launchButton, el("span", "launch-label", "Go to"), el("kbd", "launch-key", (isMac ? "⌘" : "Ctrl ") + "K"));
   launchButton.addEventListener("click", function () { launcher.open(); });
   if (corner) { corner.insertBefore(launchButton, tab); }
 
