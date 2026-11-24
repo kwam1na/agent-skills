@@ -658,6 +658,8 @@
       section.hidden = PAGED && !on;
       if (on && PAGED) { footOf(section); }
     });
+    var landAtEnd = landNextAtEnd;
+    landNextAtEnd = false;
     Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
       link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + id));
     });
@@ -670,6 +672,8 @@
       (id === ids[0] ? "" : " · " + chapterName(id));
     if (target && target !== app.querySelector("#" + id) && typeof target.scrollIntoView === "function") {
       target.scrollIntoView({ block: "center" });
+    } else if (changed && PAGED && landAtEnd) {
+      window.scrollTo(0, document.documentElement.scrollHeight);
     } else if (changed && PAGED) {
       window.scrollTo(0, 0);
     } else if (!PAGED && target && typeof target.scrollIntoView === "function") {
@@ -691,6 +695,87 @@
     showPage(section ? section.id : hash, target);
   }
   window.addEventListener("hashchange", route);
+
+  // Scrolling on past a page's end turns to the next page, and on past its top back to the one before, landing at its
+  // end, so the pages still read as one scroll. A pull has to build past a threshold, counting starts only once the
+  // reader has rested at the edge (a fling that reaches the end doesn't turn the page), and a turn is followed by a
+  // short pause. A ring at that edge fills toward the page it would open, and the foot's ink leans toward it.
+  var landNextAtEnd = false;
+  var PULL_WHEEL = 280, PULL_TOUCH = 110, REST_MS = 220, PAUSE_MS = 700;
+  var pull = { dir: 0, amount: 0, idle: null, edgeSince: 0, pausedUntil: 0, touchY: null };
+  var pullEl = el("div", "page-pull");
+  pullEl.setAttribute("aria-hidden", "true");
+  var pullRing = el("span", "page-pull-ring");
+  var pullWords = el("span", "page-pull-words");
+  add(pullEl, pullRing, pullWords);
+  document.body.appendChild(pullEl);
+  function atEnd() { return window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2; }
+  function atTop() { return window.scrollY <= 1; }
+  function neighbour(dir) { var ids = chapterIds(); return ids[ids.indexOf(currentPage) + dir]; }
+  function drawPull() {
+    var to = pull.dir ? neighbour(pull.dir) : null;
+    var share = to ? Math.min(1, pull.amount) : 0;
+    pullEl.classList.toggle("is-on", share > 0.04);
+    pullEl.classList.toggle("is-up", pull.dir < 0);
+    pullEl.style.setProperty("--pull", String(share));
+    if (to) { pullWords.textContent = (share >= 1 ? "" : pull.dir > 0 ? "Keep scrolling for " : "Keep scrolling up for ") + chapterName(to); }
+    var foot = app.querySelector("#" + currentPage + " > .page-foot");
+    if (foot) {
+      foot.style.setProperty("--pull-next", String(pull.dir > 0 ? share : 0));
+      foot.style.setProperty("--pull-prev", String(pull.dir < 0 ? share : 0));
+      foot.classList.toggle("is-pulled", share > 0);
+    }
+  }
+  function resetPull() { pull.dir = 0; pull.amount = 0; drawPull(); }
+  function turn(dir) {
+    var to = neighbour(dir);
+    resetPull();
+    pull.pausedUntil = Date.now() + PAUSE_MS;
+    pull.edgeSince = 0;
+    if (!to) { return; }
+    landNextAtEnd = dir < 0;
+    location.hash = to;
+  }
+  function addPull(dir, amount, threshold) {
+    if (pull.dir !== dir) { pull.dir = dir; pull.amount = 0; }
+    pull.amount += amount / threshold;
+    drawPull();
+    clearTimeout(pull.idle);
+    // A pull let go fades back rather than staying armed.
+    pull.idle = setTimeout(resetPull, 260);
+    if (pull.amount >= 1) { turn(dir); }
+  }
+  function edgeOf(dir) { return dir > 0 ? atEnd() : atTop(); }
+  window.addEventListener("scroll", function () {
+    if (!PAGED) { return; }
+    if (atEnd() || atTop()) { if (!pull.edgeSince) { pull.edgeSince = Date.now(); } } else { pull.edgeSince = 0; if (pull.dir) { resetPull(); } }
+  }, { passive: true });
+  window.addEventListener("wheel", function (event) {
+    if (!PAGED || event.ctrlKey || !tabList.hidden || Math.abs(event.deltaX) > Math.abs(event.deltaY)) { return; }
+    var dir = event.deltaY > 0 ? 1 : event.deltaY < 0 ? -1 : 0;
+    if (!dir || !edgeOf(dir) || !neighbour(dir) || Date.now() < pull.pausedUntil) { return; }
+    if (!pull.edgeSince) { pull.edgeSince = Date.now(); }
+    if (Date.now() - pull.edgeSince < REST_MS) { return; }
+    var lines = event.deltaMode === 1 ? 32 : event.deltaMode === 2 ? window.innerHeight : 1;
+    addPull(dir, Math.min(Math.abs(event.deltaY) * lines, 120), PULL_WHEEL);
+  }, { passive: true });
+  window.addEventListener("touchstart", function (event) {
+    pull.touchY = event.touches.length === 1 ? event.touches[0].clientY : null;
+    pull.touchEdge = { end: atEnd(), top: atTop() };
+  }, { passive: true });
+  window.addEventListener("touchmove", function (event) {
+    if (!PAGED || pull.touchY === null || Date.now() < pull.pausedUntil) { return; }
+    var moved = pull.touchY - event.touches[0].clientY;
+    var dir = moved > 0 ? 1 : -1;
+    if (!(dir > 0 ? pull.touchEdge.end && atEnd() : pull.touchEdge.top && atTop()) || !neighbour(dir)) { return; }
+    pull.dir = dir;
+    pull.amount = Math.min(1, Math.abs(moved) / PULL_TOUCH);
+    drawPull();
+  }, { passive: true });
+  window.addEventListener("touchend", function () {
+    if (pull.touchY !== null && pull.dir && pull.amount >= 1) { turn(pull.dir); } else if (pull.dir) { resetPull(); }
+    pull.touchY = null;
+  }, { passive: true });
   /** In the one-page layout the tab names the chapter being read. */
   function followScroll(id) {
     if (id !== currentPage && history.replaceState) { history.replaceState(null, "", "#" + id); }
