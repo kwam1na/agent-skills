@@ -48,11 +48,14 @@ test("the facts row opens with the stories landed out of the total, a track in l
   expect(stories.querySelector(".fact-said").textContent).toBe("2 in the queue · 2 being built");
 });
 
-test("a delivery with nothing landed shows none of its total, and a closed one its final count", async () => {
+test("a delivery with nothing landed looks ahead to its total instead of counting zero, and a closed one shows its final count", async () => {
   const none = await facts(record({ queue: [item("A", "queued")], planned: [planned("B", "building"), planned("C", "building")] }));
-  expect(none.querySelector("#now .stories .fact-value").textContent).toBe("0 of 3 landed");
-  expect(track(none)).toEqual([["is-queued", 33], ["is-building", 67]]);
-  expect(none.querySelector("#now .stories .fact-said").textContent).toBe("1 in the queue · 2 being built");
+  // Before anything lands, Now draws no facts row: the total reads as large figures, and every piece as an open stop.
+  expect(none.querySelector("#now .facts")).toBeNull();
+  expect(none.querySelector("#now").classList.contains("is-fresh")).toBe(true);
+  expect([...none.querySelectorAll("#now .ready .ready-cell")].map((cell) => cell.textContent)).toEqual(["3pieces to land", "1lane"]);
+  expect([...none.querySelectorAll("#now .starting-stop")].map((stop) => stop.getAttribute("aria-label"))).toEqual(
+    ["A, Work A, not started", "B, Work B, not started", "C, Work C, not started"]);
   // The closed epic landed all nine: its final count, with nothing left in the queue or the build to count.
   const folder = path.join(CORPUS, "delivery-records-epic");
   const page = renderPage(readJson(path.join(folder, "document.json")), { config: readJson(path.join(CORPUS, "linked-config.json")),

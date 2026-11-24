@@ -37,7 +37,7 @@ test("outside work is listed in a collapsed Elsewhere fold, with its status, its
   expect(rows).toEqual(["APP-22[Backend] Login APIReady for QA · Backend", "APP-23Backend: token refreshIn QA · Backend · backend, api"]);
   expect(fold.querySelector('a.issue-link[data-ticket="APP-22"]').getAttribute("href")).toBe("https://tracker.example/issue/APP-22");
   // Parked's own count is the follow-ups alone: the work elsewhere was never set aside here.
-  expect(shown.app.querySelector("#parked .title").textContent).toBe("Nothing parked.");
+  expect(shown.app.querySelector("#parked .title").textContent).toBe("Nothing parked yet.");
   expect(opened.app.querySelector("#parked .elsewhere-fold").hasAttribute("open")).toBe(true);
 });
 

@@ -166,15 +166,19 @@ def validate_config(value: object) -> dict:
     forges = []
     for index, entry in enumerate(_list(config.get("forges", []), "forges")):
         where = f"forges[{index}]"
-        raw = _object(entry, where, {"name", "repository", "pullUrl", "commitUrl"},
+        raw = _object(entry, where, {"name", "repository", "pullUrl", "commitUrl", "fileUrl"},
                       {"name", "repository", "pullUrl", "commitUrl"})
         repository = _text(raw["repository"], f"{where}.repository", MAX_TEXT)
-        forges.append({
+        forge = {
             "name": _text(raw["name"], f"{where}.name", MAX_NAME),
             "repository": repository,
             "pullUrl": _template(raw["pullUrl"], f"{where}.pullUrl", {"repository", "number"}),
             "commitUrl": _template(raw["commitUrl"], f"{where}.commitUrl", {"repository", "sha"}),
-        })
+        }
+        # Optional: a file at a commit, opened at a line, for the references review notes make to a file's lines.
+        if "fileUrl" in raw:
+            forge["fileUrl"] = _template(raw["fileUrl"], f"{where}.fileUrl", {"repository", "sha", "path", "line"})
+        forges.append(forge)
     result["forges"] = forges
 
     runs = None
@@ -269,7 +273,9 @@ def validate_config(value: object) -> dict:
 
 
 def _segments(name: str, value: str) -> list[str]:
-    # A repository keeps its single slash: owner/name.
+    # A repository keeps its single slash: owner/name; a file's path keeps every one of its slashes.
+    if name == "path":
+        return value.split("/")
     return value.split("/", 1) if name == "repository" else [value]
 
 
@@ -310,6 +316,16 @@ def commit_link(sha: str, forge: dict | None) -> str | None:
     if forge is None or not re.fullmatch(r"[0-9a-f]{7,40}", sha):
         return None
     return link(forge["commitUrl"], {"repository": forge["repository"], "sha": sha})
+
+
+def file_link(sha: str, path: str, line: str, forge: dict | None) -> str | None:
+    """A file at a commit, opened at a line, by the forge's optional fileUrl; None without one or for a path that
+    climbs out of the repository."""
+    if forge is None or not forge.get("fileUrl") or not re.fullmatch(r"[0-9a-f]{7,40}", sha):
+        return None
+    if not path or path.startswith("/") or not re.fullmatch(r"[0-9]+", line):
+        return None
+    return link(forge["fileUrl"], {"repository": forge["repository"], "sha": sha, "path": path, "line": line})
 
 
 def _pull_path(template: str) -> re.Pattern:
@@ -723,7 +739,7 @@ PLAN_LIST = 100
 PLAN_RECORD_KINDS = ("handed", "merged", "review")
 PLAN_CHANGE_KINDS = ("added", "removed", "relaxed", "changed", "finish")
 PLAN_KEYS = ("schemaVersion", "updated", "outcome", "requiredLenses", "proofKinds", "units", "finish", "approved",
-             "changes", "evidence", "approvals", "outOfScope", "planReview", "closeOut")
+             "changes", "evidence", "approvals", "outOfScope", "planReview", "closeOut", "preview")
 PLAN_REQUIRED = ("schemaVersion", "updated", "outcome", "requiredLenses", "proofKinds", "units", "finish", "approved",
                  "changes", "evidence")
 PLAN_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
@@ -735,6 +751,11 @@ PLAN_REVIEW_VERDICTS = ("approve", "changes", "unavailable")
 PLAN_REVIEW_ENTRY = ("round", "fromRound", "candidateRef", "at", "outcome", "verdicts", "findings", "raised", "settled",
                      "clipped")
 SEVERITY_NAMES = ("P0", "P1", "P2", "P3")
+# A plan preview, written while a plan is under agent review: what `approved` means there, and the plan's decisions.
+PLAN_PREVIEW_KEYS = ("plan", "commit", "approval", "delivery", "layout", "decisions")
+PLAN_PREVIEW_APPROVALS = ("agents-only", "handed")
+PLAN_PREVIEW_LAYOUTS = ("delivery", "other")
+PLAN_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _plan_object(value: object, where: str, allowed: set[str], required: set[str] = frozenset()) -> dict:
@@ -1063,7 +1084,29 @@ def validate_plan(value: object) -> dict:
             raise ConfigError("closeOut.posture: must be focused")
         _text(close_out["source"], "closeOut.source", PLAN_LABEL)
         _text(close_out["reason"], "closeOut.reason", PLAN_TEXT)
+    if "preview" in plan:
+        _plan_preview(plan["preview"])
     return plan
+
+
+def _plan_preview(value: object) -> None:
+    """A preview member: the plan's path and commit, who has approved it so far, its layout and its decisions."""
+    preview = _plan_object(value, "preview", set(PLAN_PREVIEW_KEYS), set(PLAN_PREVIEW_KEYS) - {"delivery"})
+    _text(preview["plan"], "preview.plan", PLAN_TEXT)
+    if not isinstance(preview["commit"], str) or not PLAN_COMMIT.fullmatch(preview["commit"]):
+        raise ConfigError("preview.commit: must be a full 40-character commit id")
+    if preview["approval"] not in PLAN_PREVIEW_APPROVALS:
+        raise ConfigError(f"preview.approval: must be {' or '.join(PLAN_PREVIEW_APPROVALS)}")
+    if preview["approval"] == "handed" and "delivery" not in preview:
+        raise ConfigError("preview.delivery: is required when the approval is handed")
+    if preview["approval"] != "handed" and "delivery" in preview:
+        raise ConfigError("preview.delivery: is only given when the approval is handed")
+    if "delivery" in preview:
+        _plan_id(preview["delivery"], "preview.delivery")
+    if preview["layout"] not in PLAN_PREVIEW_LAYOUTS:
+        raise ConfigError(f"preview.layout: must be {' or '.join(PLAN_PREVIEW_LAYOUTS)}")
+    for i, text in enumerate(_bounded(preview["decisions"], "preview.decisions", PLAN_LIST)):
+        _text(text, f"preview.decisions[{i}]", PLAN_TEXT)
 
 
 def read_plan(path: Path) -> dict:

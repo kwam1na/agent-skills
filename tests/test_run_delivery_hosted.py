@@ -252,6 +252,10 @@ class LifecycleTests(unittest.TestCase):
             self.assertIn('start',command);self.assertIn('--resume',command)
             self.assertEqual(command[command.index('--generation')+1],str(ROOT))
             self.assertEqual(command[command.index('--generation-target')+1],str(ROOT.resolve()))
+            # A delivery publishes its own record folder under its key, with its archive root, as before previews.
+            self.assertEqual([command[command.index(flag)+1] for flag in ('--state-dir','--key','--archive-root','--record-root')],
+                             [str(self.state),'APP-1',str(flow.archive_root(self.c)),str(self.state)])
+            self.assertEqual(command[command.index('--config')+1],str(self.state/'hosted-view-config.json'))
             self.assertEqual(environment['FIXTURE_PUBLISH_TOKEN'],TOKEN)
             self.assertNotIn('FIXTURE_PUBLISH_TOKEN',os.environ)
             self.assertNotIn(TOKEN,''.join(p.read_text() for p in self.state.glob('*.json')))

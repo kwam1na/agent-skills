@@ -127,11 +127,22 @@ a.run-commit { text-decoration: underline; text-decoration-color: color-mix(in s
 .run-closures[open] .run-finding-text { display: block; }
 .run-closures .run-closure { margin: 4px 0 6px; overflow-wrap: anywhere; font: 400 11px/16px var(--mono, ui-monospace, monospace); color: var(--faint, #868f94); }
 /* A confirmed note leads with what was found and how serious it was, its mark the band's own; a note with an ending
-   other than fixed names it after that. Opened, the fix reads beneath, then the commit that shows it, then the id. */
+   other than fixed names it after that. Opened, the fix reads beneath on its own sheet. */
 .run-closure-sev { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font: 400 11px/16px var(--mono, ui-monospace, monospace); color: var(--faint, #868f94); }
 .run-closures.is-other > summary:has(.run-closure-sev) { grid-template-columns: minmax(0, 1fr) auto auto 10px; }
 .run-closure-resolution { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--ink, #161a1d); }
 .run-closure-evidence { margin: 2px 0 0; font-size: 12px; color: var(--faint, #868f94); }
+/* Opened, the fix sits on its own sheet beneath the finding: a quiet panel led by how it ended, so the two never run
+   together as one paragraph. */
+.run-closure-fix { margin: 14px 0 12px; padding: 12px 14px 13px; border-radius: 8px;
+  background: color-mix(in srgb, var(--ink, #161a1d) 4%, transparent); border: 1px solid color-mix(in srgb, var(--ink, #161a1d) 7%, transparent); }
+/* Opened, the finding reads as the question: a touch more weight above the fix's quieter answer. */
+.run-closures[open] > summary .run-finding-text { font-weight: 500; }
+.run-closure-fix .run-closure-evidence { margin: 0; font: 500 11px/16px var(--mono, ui-monospace, monospace); color: var(--soft, #4d545a); letter-spacing: .01em; }
+.run-closure-fix .run-closure-resolution { margin-top: 6px; color: var(--soft, #4d545a); }
+.run-closures.is-fixed .run-closure-fix .run-closure-evidence::before { content: ""; display: inline-block; width: 3.5px; height: 7px; margin: 0 8px 2px 2px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(40deg); vertical-align: middle; }
+.run-closures .run-closure-fix + .run-closure { margin-top: 0; }
 /* A lens whose notes were all fixed is one line, its count faint beside its name; a lens with any other ending folds
    only its fixed notes, beneath a count of their own. Both open with the chevron the notes use. */
 .run-closure-lens > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; }
@@ -170,3 +181,36 @@ a.run-commit { text-decoration: underline; text-decoration-color: color-mix(in s
 }
 @keyframes run-breathe { 0%, 100% { opacity: .2; transform: scale(.92); } 50% { opacity: .7; transform: scale(1); } }
 @keyframes run-settle { 0% { transform: scale(1); } 50% { transform: scale(1.12); } 100% { transform: scale(1); } }
+
+/* A confirmed note's head. Shut, one line: the finding, its severity, the chevron. Opened, the severity rises to a small
+   label over the finding with the chevron beside it on the same line, and the finding takes the full width beneath. The
+   chevron always sits on the first line, never floating beside a tall block. */
+.run-closures > summary { grid-template-areas: "text sev chev"; align-items: start; column-gap: 10px; }
+.run-closures > summary .run-finding-text { grid-area: text; }
+.run-closures > summary .run-closure-sev { grid-area: sev; line-height: 19.5px; }
+.run-closures > summary::after { grid-area: chev; align-self: start; margin-top: 6px; }
+.run-closures.is-other > summary:has(.run-closure-sev) { grid-template-areas: "text sev fate chev"; }
+.run-closures.is-other > summary .run-fate { grid-area: fate; line-height: 19.5px; }
+.run-closures[open] > summary { grid-template-columns: auto minmax(0, 1fr) 10px; grid-template-areas: "sev . chev" "text text text"; row-gap: 4px; }
+.run-closures.is-other[open] > summary:has(.run-closure-sev) { grid-template-columns: auto auto minmax(0, 1fr) 10px; grid-template-areas: "sev fate . chev" "text text text text"; }
+.run-closures[open] > summary .run-closure-sev, .run-closures[open] > summary .run-fate { line-height: 16px; }
+.run-closures[open] > summary::after { margin-top: 5px; }
+.run-closures.is-fixed[open] > summary::before { top: .3em; }
+/* Opened, the severity reads as the raised findings' band does: the same word, weight and tone, one vocabulary. */
+.run-closures[open] > summary .run-closure-sev { font: 500 12px/16px var(--text, system-ui, sans-serif); color: var(--faint, #646c71); text-transform: capitalize; }
+/* On a narrow screen a shut note keeps its severity's mark and gives the word's room to the finding; opened, the word is back. */
+@media (max-width: 560px) {
+  .run-closures:not([open]) > summary .run-closure-sev { font-size: 0; gap: 0; }
+}
+
+/* Reading a note opened: plain weight and a looser line for the finding, a measured line for the fix, and names and
+   references set so the sentence reads straight through. */
+.run-closures[open] > summary .run-finding-text { font-weight: 400; font-size: 13.5px; line-height: 1.6; max-width: 68ch; color: var(--ink, #161a1d); }
+.run-closure-fix .run-closure-resolution { font-size: 13px; line-height: 1.65; max-width: 68ch; margin-top: 8px; }
+.run-closure-verdict { font: 400 12px/16px var(--text, system-ui, sans-serif); letter-spacing: 0; color: var(--faint, #646c71); }
+.run-closure-verdict::before { content: "·"; margin: 0 7px; }
+.prose-code { font-family: var(--mono, ui-monospace, monospace); font-size: .9em; letter-spacing: -0.01em; padding: 1px 4px; border-radius: 4px;
+  background: color-mix(in srgb, var(--ink, #161a1d) 6%, transparent); }
+.prose-ref { font: 400 11px/1 var(--mono, ui-monospace, monospace); color: var(--faint, #868f94); white-space: nowrap; }
+a.prose-ref { color: inherit; color: var(--faint, #868f94); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 2px; }
+a.prose-ref:hover { color: var(--ink, #161a1d); }

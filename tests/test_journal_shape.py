@@ -96,6 +96,7 @@ INVENTORY = {
         _key("lead_authorize_base_merge", {"base.merge.authorized"}): 1,
         _key("base_merge", {"base.merge.authorized"}): 1,
         _key("rebuild_plan", {"plan.updated"}): 1,
+        _key("rebuild_preview", {"plan.updated"}): 1,
         _key("lead_plan", {"story.added"}): 1,
         _key("lead_plan", {"story.approved"}): 1,
         _key("lead_init", {"record.started"}): 1,
@@ -105,7 +106,8 @@ INVENTORY = {
         _key("collab_feedback", {"feedback.raised"}): 1,
         _key("collab_feedback", {"feedback.resolved"}): 1,
         _key("collab_join", {"plan.seen"}): 1,
-        _key("suite_run", {"integration.suite"}): 1,
+        _key("suite_run", {"integration.suite"}): 2,
+        _key("suite_started", {"integration.suite.started"}): 1,
         # A run that steps off the machine's wait with --now --why: claim's and lead-suite's.
         _key("journal_override", {"decision.recorded"}): 1,
         _key("lead_integrate", {"integration.merged"}): 1,

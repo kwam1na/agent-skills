@@ -18,6 +18,29 @@ const fixture = (name = "valid-dissent-markup.json") =>
       "utf8",
     ),
   );
+/**
+ * A delivery underway: one piece has landed. Only then does the line map draw its live line under the hero, where the
+ * hosting status sits; a fresh delivery opens on what is about to land and says the status on its own.
+ */
+function underway<T extends { document: { state: { queue: unknown[] } } }>(body: T): T {
+  body.document.state.queue.unshift({
+    subject: "APP-0",
+    title: "Landed first",
+    lane: "one",
+    stage: "merged",
+    head: "c".repeat(40),
+  });
+  return body;
+}
+/**
+ * Opens one chapter's page as a reader does with a chapter per page: from the corner's chapter tab, which a phone
+ * shows too, where the side rail is hidden.
+ */
+async function openChapter(page: import("@playwright/test").Page, id: string) {
+  await page.locator(".chapter-tab-button").click();
+  await page.locator(`#chapter-tab-list a[href="#${id}"]`).click();
+  await expect(page.locator(`section.chapter#${id}`)).toBeVisible();
+}
 let runtime: Awaited<ReturnType<typeof startServer>> | undefined, origin: string;
 test.beforeAll(async () => {
   runtime = await startServer();
@@ -217,9 +240,11 @@ test("signed-out data-only view enforces CSP, headers, no-referrer and no opener
   expect(
     await page.evaluate(() => Reflect.get(window, "__foreignRan")),
   ).toBeUndefined();
+  // The ticket opens from the line's page, where the stop names it.
+  await openChapter(page, "line");
   const popupPromise = page.waitForEvent("popup");
   await page
-    .locator('a[href="https://example.com/issue/APP-1"]')
+    .locator('#line a[href="https://example.com/issue/APP-1"]')
     .first()
     .click();
   const popup = await popupPromise;
@@ -249,6 +274,8 @@ test("polling preserves keyboard selection, folds, viewport and mobile line posi
   });
   await publish(id, body);
   await page.goto(`${origin}/d/${id}`);
+  // The stops are on the line's page; the plan's folds on the plan's.
+  await openChapter(page, "line");
   const second = page.locator('.stop-btn[data-subject="APP-2"]');
   await page.locator('.stop-btn[data-subject="APP-1"]').focus();
   await page.keyboard.press("Tab");
@@ -256,6 +283,7 @@ test("polling preserves keyboard selection, folds, viewport and mobile line posi
   await expect(second).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.locator("#detail")).toContainText("Second unit");
+  await openChapter(page, "plan");
   await page.locator("#plan summary").filter({ hasText: "All units" }).click();
   await expect(
     page.locator("#plan details").filter({
@@ -298,6 +326,7 @@ test("polling preserves keyboard selection, folds, viewport and mobile line posi
     2,
   );
   expect(after.width).toBeLessThanOrEqual(after.viewport);
+  await openChapter(page, "line");
   await page.locator('.stop-btn[data-subject="APP-1"]').focus();
   await page.keyboard.press("Enter");
   await expect(page.locator("#detail")).not.toContainText("Second unit");
@@ -325,7 +354,7 @@ test("renders in the local view's fonts from its own origin, with the hosting st
   context,
 }) => {
   const id = randomBytes(32).toString("hex");
-  await publish(id, fixture());
+  await publish(id, underway(fixture()));
   const requested: string[] = [];
   context.on("request", (request) => requested.push(request.url()));
   const response = await page.goto(`${origin}/d/${id}`);
@@ -352,6 +381,8 @@ test("renders in the local view's fonts from its own origin, with the hosting st
     ["#app", "Geist"],
     ["#app", "Geist Mono"],
   ] as const) {
+    // With a chapter per page, the line's page is where Now's neighbours set commit heads and stop codes in mono.
+    if (family === "Geist Mono") await openChapter(page, "line");
     const computed = await page.evaluate(
       ([within, family]) => {
         const nodes = [...document.querySelectorAll(`${within}, ${within} *`)];
@@ -402,7 +433,8 @@ test("renders in the local view's fonts from its own origin, with the hosting st
     if (family === "Geist")
       expect(fonts.some((font) => font.familyName.startsWith("Geist Mono"))).toBe(false);
   }
-  // No strip: the live line carries the times, on hover and on focus.
+  // No strip: the live line carries the times, on hover and on focus. The live line is under Now's hero.
+  await openChapter(page, "now");
   expect(await page.locator(".hosting-strip, aside").count()).toBe(0);
   await expect(page.locator("#hosting-status")).toHaveClass(/hosted-announce/);
   const handle = page.locator('.fact.since [data-tab="hosting"]');
@@ -424,7 +456,7 @@ test("retains readable progress on pointer loss, incompatibility and publisher d
   page,
 }) => {
   const id = randomBytes(32).toString("hex");
-  const body = fixture();
+  const body = underway(fixture());
   body.document.state.meta.headline = "Saved progress";
   await publish(id, body);
   await page.goto(`${origin}/d/${id}`);
@@ -539,7 +571,7 @@ test("first render uses the newest coherent projection after a delayed renderer 
   page,
 }) => {
   const id = randomBytes(32).toString("hex");
-  const body = fixture();
+  const body = underway(fixture());
   body.view.runs = true;
   body.plan = fixture("valid-plan-review.json").plan;
   body.document.state.meta.headline = "Old startup document";

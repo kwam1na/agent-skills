@@ -84,7 +84,17 @@ it loads only its three typefaces from Google Fonts. It
 opts in to the live stream, so `live` serves it at `/view/<output>` and the
 page follows every record write; opened as a file, it shows the record as it
 was rendered. A history renderer declared in the same binding (`render.py
-history`) is linked from its footer.
+history`) is linked from the chapters tab and the Go to launcher.
+
+Each chapter is its own page, addressed by the hash (`#now`, `#line`, ...); with
+no hash the page opens on Now. A reader steps between pages with the Left and
+Right arrow keys, by scrolling on past a page's end or top, from the rail, or
+from the chapters tab in the top corner, which lists every page and holds the
+switch to one page with every chapter and back, remembered per viewer. The arrow
+keys leave the page alone while the reader types in a field, holds a modifier,
+has the launcher open, or is in the chapters tab or a row that scrolls sideways.
+The Go to launcher, opened with Cmd-K or Ctrl-K, with `/` when not typing, or
+from the corner, reaches any page and anything else the page offers by name.
 A live page reads its run summaries again from the view the server renders
 three seconds after each pushed record, every 30 seconds, and at once on each
 `event: runs`, which the server sends only after the views are written.
@@ -107,6 +117,15 @@ the same shape at any delivery size:
   the step it is on, that step's status sentence under it, and the line bends
   into the target at the finish post, so the target is drawn once. A delivery
   straight to its base ends at the post, with no bar.
+- **A suite running.** From `lead-suite`'s start entry until its finish or a
+  later start, the suite's step is drawn wider with a moving stripe, still
+  under reduced motion, filling as the run nears its usual time, with a tick
+  at that time. The label reads "Rejoin main · suite running" (the target's
+  name in place of main), and the sentence under it "The full suite is
+  running at <commit>. <n> min, about <m> usual.", with ", so <k> over" once
+  past it. A timed suite's finish keeps the wider step: solid when it passed,
+  with a cap at its end when it went over its budget, and in the setback
+  colour when it failed. A record with no start draws the bar as before.
 - **The finish post** carries its label and, beside it, one square per finish
   line, filled once met, with how many are met.
 - **Naming and lighting.** Hovering or focusing a tick names its story and state
@@ -243,6 +262,10 @@ the run store and serves it as the front page while there is no record:
   decisions, blockers, change request, review rounds through the run summary,
   and result with its cost unit and coverage. A run bound to a piece of the
   record names that piece and links to the line map.
+- "Plans in review" lists the plan previews the live server serves, which it
+  names in the `DELIVERY_PLAN_PREVIEWS` environment variable: each plan's
+  title, its preview's live address and, where it is published, its hosted
+  page. With none, the section is absent and the page is as before.
 
 Each run is read with `runs show <id> --json` and `runs view <id> --json`, and
 cached in the state directory while the inventory shows it unchanged. A run
@@ -298,6 +321,7 @@ any value.
 | `outOfScope` | Optional list of texts. |
 | `planReview` | Optional: how the plan came to be approved. `{lenses, state, endedReason?, rounds}`, below. |
 | `closeOut` | Optional: `{fullHealth: "skipped", posture: "focused", source, reason}`, when the close-out's `fullHealth` run was skipped under the base's declared posture. It renders as skipped, and no approval state stands in for it. |
+| `preview` | Optional, written only by a plan's preview builder, never by a delivery's producer: `{plan, commit, approval: agents-only \| handed, delivery?, layout: delivery \| other, decisions}`. `delivery` is given exactly when `approval` is `handed`; `decisions` holds at most 100 texts. With it, the plan chapter says the review is agent-only and never reads as approved. |
 
 Texts are capped at 600 characters, `outcome.text` at 2,000 and labels at 200;
 lists at 200 units, 1,000 criteria, 500 changes and 30 finish lines. Ids match
@@ -381,6 +405,31 @@ remains left open at close rather than asking for anything. The close is journal
 before the supervisor stops, so its Needs you box still shows while a running,
 current list holds the close, and otherwise doesn't show.
 
+### A plan in review
+
+Before any delivery exists, `$run-delivery`'s `plan-view` builds a plan's
+preview: the same chapter, from a plan under agent review, with `preview` set.
+With it the chapter never reads as approved:
+
+- The approval line reads "Agent review only · not reviewed yet · not approved
+  by a person" before the first round, "Agent review only · N review rounds ·
+  <ending> · not approved by a person" after one, with the ending words above,
+  and "Handed to delivery <key> · N review rounds · <ending>" once a delivery
+  takes the review up.
+- There is no "as approved / as amended" switch and no changes fold, and the
+  plan review speaks of lenses aligning, never of approving.
+- A "Decisions" fold lists `preview.decisions`, and while the plan records none
+  it says they will show there once it does.
+- With `layout: other`, one line says the plan isn't in the delivery layout, so
+  it shows no stories.
+- A preview over its share says so at the chapter's end.
+
+A preview's outcome summary begins "Plan preview (agent review only): ", which
+any line map shows as the page's headline. A hosted viewer runs the line map it
+was built with, so one built before the release that carries previews ignores
+`preview` and draws the approval line as approved: redeploy the viewer from that
+release before publishing previews to it.
+
 ### Proofs from the record
 
 Record proofs are derived in the page from every record it draws, embedded or
@@ -442,8 +491,9 @@ you".
 2. **The base is broken**: the last base event in the record is `base.broken`.
    While it holds, the title can't read "Every criterion is proven".
 3. **Approvals are blocking work**: an `approvals` entry is `blocking` and
-   `waiting`. The flag names each. A waiting approval that isn't blocking
-   raises nothing and stays in "Approvals ahead".
+   `waiting`. The flag names each, in a list, and is headed with the count:
+   "An approval is blocking work" or "N approvals are blocking work". A waiting
+   approval that isn't blocking raises nothing and stays in "Approvals ahead".
 4. **Work in the record isn't in the plan**: a queue or planned subject has no
    unit. The flag names the subjects.
 5. **The plan and the record disagree on finish lines**: a finish line in the
@@ -495,7 +545,7 @@ rendered or reloaded after the change shows none.
 | `spec` | `delivery-views-config/1`. |
 | `title` | The pages' title, at most 80 characters; `Delivery` when absent. |
 | `tracker` | `{name, issueUrl, keyPattern?}`. `issueUrl` takes `{key}`; an item is linked only when `keyPattern`, at most 200 characters, matches the whole key. The host takes no placeholder. |
-| `forges` | Each `{name, repository, pullUrl, commitUrl}`. `pullUrl` takes `{repository}` and `{number}`; `commitUrl` takes `{repository}` and `{sha}`. |
+| `forges` | Each `{name, repository, pullUrl, commitUrl, fileUrl?}`. `pullUrl` takes `{repository}` and `{number}`; `commitUrl` takes `{repository}` and `{sha}`; the optional `fileUrl` takes `{repository}`, `{sha}`, `{path}` and `{line}`, as `https://github.com/{repository}/blob/{sha}/{path}#L{line}` or `https://bitbucket.org/{repository}/src/{sha}/{path}#lines-{line}`. With it, a review note's reference to a file's lines, written `(path:line)` or `(path:start-end)`, opens the file at the commit the note was written about, when the page is made in the repository and the path names exactly one file in that commit. The hosted page links the reference the same way when the forge names a `fileUrl`: the hosted cut carries each such file link, and a viewer deployed before that refuses such a cut, with `invalid_projection`, until it is redeployed. |
 | `runs` | `{argv, timeoutSeconds?}`: the command that prints a delivery run, `{root}` being the repository top level; `timeoutSeconds` is 10 when absent. Absent: no run section and no command run. |
 | `findings` | `{reportSpecs}`: the round report specs read, in preference order; `["review-round-report/1"]` when absent. |
 | `lenses` | `{"<lens id>": {name, icon?}}`. `icon` names a shipped icon (`bullseye`, `spy`, `shield`, `bug`, `gauge`, `lock`, `book`); a lens with none shows its initial. `lens.outcome-correctness` and `lens.adversarial-testing` have defaults. |

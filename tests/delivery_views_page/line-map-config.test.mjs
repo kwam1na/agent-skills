@@ -122,14 +122,21 @@ test("with no runs command configured, a stop that names a run shows no run sect
   expect(configured.app.querySelector("#detail .d-run-none").textContent).toBe("Run run-1 unavailable.");
 });
 
+// The history link lives in the chapters tab, in the corner outside the app, and is listed once the tab opens.
+async function historyLink(page, scenario) {
+  let href;
+  await openPage(page, { ...scenario, steps: [
+    { click: ".chapter-tab-button" },
+    { run: (window) => { href = window.document.querySelector(".chapter-tab-history")?.getAttribute("href") ?? null; } },
+  ] });
+  return href;
+}
+
 test("the history link opens the configured history page, live and as a file, and is absent without one", async () => {
   const page = pageWithRuns(record(), {}, { config: CONFIG, history: "delivery-history.html" });
-  const [file] = await openPage(page, { now: NOW });
-  expect(file.app.querySelector(".history-link").getAttribute("href")).toBe("delivery-history.html");
-  const [live] = await openPage(page, { now: NOW, rendered: page });
-  expect(live.app.querySelector(".history-link").getAttribute("href")).toBe("/view/delivery-history.html");
-  const [none] = await openPage(pageWithRuns(record(), {}, { config: CONFIG }), { now: NOW });
-  expect(none.app.querySelector(".history-link")).toBeNull();
+  expect(await historyLink(page, { now: NOW })).toBe("delivery-history.html");
+  expect(await historyLink(page, { now: NOW, rendered: page })).toBe("/view/delivery-history.html");
+  expect(await historyLink(pageWithRuns(record(), {}, { config: CONFIG }), { now: NOW })).toBeNull();
 });
 
 test("finding ids and lenses named like built-in properties draw as any other", async () => {
@@ -148,6 +155,5 @@ test("finding ids and lenses named like built-in properties draw as any other", 
 
 test("a history output in a folder keeps its slash in the link", async () => {
   const page = pageWithRuns(record(), {}, { config: CONFIG, history: "views/delivery history.html" });
-  const [live] = await openPage(page, { now: NOW, rendered: page });
-  expect(live.app.querySelector(".history-link").getAttribute("href")).toBe("/view/views/delivery%20history.html");
+  expect(await historyLink(page, { now: NOW, rendered: page })).toBe("/view/views/delivery%20history.html");
 });

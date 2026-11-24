@@ -168,7 +168,9 @@ function presentation(
     themeKey: "hosted-delivery:theme",
     history: null,
   };
-  for (const category of ["issues", "commits", "changes"]) {
+  for (const category of ["issues", "commits", "changes", "files"]) {
+    // Files are optional: a forge with no fileUrl links none.
+    if (body.links[category] === undefined) continue;
     const links = object(body.links[category]);
     for (const [key, target] of Object.entries(links)) {
       const href = category === "changes" ? object(target).href : target;
