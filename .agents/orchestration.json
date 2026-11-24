@@ -935,6 +935,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_live_address_corpus",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_live_address_corpus.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_live_address_corpus.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_machine",
         "argv": [
           ".venv/bin/python",
