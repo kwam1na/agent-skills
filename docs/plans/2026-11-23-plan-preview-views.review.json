@@ -1,0 +1,128 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-23-plan-preview-views.md",
+  "planSha256": "55870951068c3a50ab582470e02d6df0fa33ffed839c2221d32bce5cc3296107",
+  "planCommit": "3864dd33ecc072b4ecdff4b2cf049d8ac8844bda",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "7b87c63cfc5f55c4248c3c4cf88ee96833e64ac2",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T00:04:19.971121Z",
+      "finishedAt": "2026-11-24T00:09:38.123257Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "outcome-correctness-r1-5",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "926a697519823d3daf4b106d0d734753561053a3",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T00:11:53.064716Z",
+      "finishedAt": "2026-11-24T00:14:01.575457Z",
+      "open": [
+        "outcome-correctness-r2-1",
+        "adversarial-testing-r2-1"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "60de4bacbcdae689b0136a9ccd37dfd313ce3f3d",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-24T00:14:24.119569Z",
+      "finishedAt": "2026-11-24T00:15:27.601491Z",
+      "open": [
+        "outcome-correctness-r3-1",
+        "adversarial-testing-r3-1"
+      ]
+    },
+    {
+      "round": 4,
+      "candidate": "3864dd33ecc072b4ecdff4b2cf049d8ac8844bda",
+      "outcome": "aligned",
+      "startedAt": "2026-11-24T00:15:36.921890Z",
+      "finishedAt": "2026-11-24T00:16:04.832066Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "plan-preview-views.plan",
+        "candidateRef": "3864dd33ecc072b4ecdff4b2cf049d8ac8844bda",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "outcome-correctness-r3-1",
+            "state": "fixed",
+            "resolution": "The clipped-note decision now gives the preview overShare tail as 'The plan alone is over the page's share for it.', with the delivery wording unchanged, so it carries no 'approv'. The PPV-1 over-share scenario's fixture sets `overShare`, shows the preview tail, and is under the /approv/ check. Adopted as written."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree fe1f8b7f0a2ef0a065ea89b16802e6ec8526587c: the start and end identity checks (git rev-parse HEAD^{tree} equal to it, git status --porcelain empty) both passed in /Users/kwamina/code/agent-skills/.orchestration/plan-review/plan-preview-views/checkouts/lens.outcome-correctness. Delta derived with `git diff 60de4bacbcdae689b0136a9ccd37dfd313ce3f3d..3864dd33ecc072b4ecdff4b2cf049d8ac8844bda`, which changes only docs/plans/2026-11-23-plan-preview-views.md. No file was modified and no probe was made.",
+          "Carried finding re-checked: outcome-correctness-r3-1 is fixed (see resolvedFindings).",
+          "Delta reviewed. The literal scan's exemption names only the compared enum value \"approve\" (run-summary.js:208, 264, 773 compare against it and never display it), so every displayed /approv/i literal still needs a preview wording and a planted string still fails the row. The handed-finish timeout scenario now pins both sides of the 120-second wait, which strengthens it. No new defect found.",
+          "Model class: Claude Opus (claude-opus-5-5), run as a native subagent; no progress or permission signals are exposed to it. Realization basis: host-convention. Checks: none scoped for a plan review, and none was run.",
+          "Approval conditions: none; this round raises no finding."
+        ]
+      },
+      "resultSha256": "cc9c91e79d449f4450abfca9524dde85a1c8958438fd63a189ee1b994c2511b3"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "plan-preview-views.plan",
+        "candidateRef": "3864dd33ecc072b4ecdff4b2cf049d8ac8844bda",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r3-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. The decision at lines 202-205 gives the overShare tail the preview wording \"The plan alone is over the page's share for it.\" and leaves a delivery's wording unchanged. The PPV-1 row at lines 458-460 makes the clipped preview fixture set `overShare`, show the preview tail, and run under the /approv/ check."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA fe1f8b7f0a2ef0a065ea89b16802e6ec8526587c, HEAD 3864dd33ecc072b4ecdff4b2cf049d8ac8844bda. The start check passed: `git rev-parse HEAD^{tree}` equaled the tree and `git status --porcelain` was empty in /Users/kwamina/code/agent-skills/.orchestration/plan-review/plan-preview-views/checkouts/lens.adversarial-testing. The end check passed with the same tree and a clean status. No probe or mutant was written.",
+          "Delta derived with `git diff 60de4bacbcdae689b0136a9ccd37dfd313ce3f3d..3864dd33ecc072b4ecdff4b2cf049d8ac8844bda`, using the resolutions supplied (each reference resolves to the git commit of the same text). The delta touches only docs/plans/2026-11-23-plan-preview-views.md, in three places: the literal-scan enum exclusion, the overShare preview wording and its fixture row, and the finisher's pre-deadline liveness assertion. All three were reviewed.",
+          "Carried finding re-checked: adversarial-testing-r3-1 is fixed (see resolvedFindings). r1-1, r1-2, r1-3 and r2-1 were closed earlier and are not relisted.",
+          "Delta review: the scan's exclusion is a named list of exact enum values (`\"approve\"`) that the code compares against and never displays, so the scan is not loosened beyond that one value. A displayed literal added later still fails the row, and the row's planted-literal proof (line 457) still holds. This addresses the round-3 P3 note. The finisher row now asserts that both pids are alive just before 120 seconds, so a finisher that stops at once fails it. This addresses the carried P2 note. No surviving mutation was found in the delta.",
+          "Remaining P3 note (unchanged lines, carried from round 2): the caps other than finish lines (200 units, 100 approvals, out-of-scope items and decisions, and 20 DELIVERY_PLAN_PREVIEWS entries) are unpinned. Marginal, and deferrable.",
+          "Model class: Claude Opus (claude-opus-5-5), running as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals to this lens. Run ID: none.",
+          "Scope: a plan review, so per the brief no sensors or test files were run and no mutants were planted.",
+          "Result file not written: in round 1 the host's PreToolUse hook refused writes to the .orchestration result path outside this session's worktree. The lens did not try to get around it. This JSON reply is the result.",
+          "Approval conditions: this round raises no findings. Every carried finding (r1-1, r1-2, r1-3, r2-1 and r3-1) was adopted as its proposed change was written and is resolved."
+        ]
+      },
+      "resultSha256": "dbabca450169b5ad32ebc909ddbd3a1e23bbe4efc829a4341c1750e0940dd71f"
+    }
+  ],
+  "residualRisks": [
+    "4 review rounds; findings open after each round: 8, 2, 2, 0."
+  ]
+}
