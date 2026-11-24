@@ -1261,7 +1261,7 @@ def scope_violations(directory: Path, before: dict, after: dict, writer: str = "
         # new head.
         was, now = before_element(before, element) or {}, before_element(after, element) or {}
         ends = was.get("stage") == "checking" and now.get("head") != was.get("head") and any(
-            check.get("state") == "failed" for check in was.get("checks", []))
+            check.get("state") in ("failed", "timed_out") for check in was.get("checks", []))
         reset = runner and at_start and (was.get("stage") in ("stopped", "queued") or ends)
         if element in made and (not runner or field == "order" or at_start) or reset:
             # Set by the write that makes the element, or put back to its starting value by a re-hand-off: judged as

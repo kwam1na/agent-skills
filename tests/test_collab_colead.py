@@ -200,10 +200,17 @@ class LaneAndRunnerTests(LaneScopeFixture):
                 self.assertEqual(self.element(self.a, "queue", "subject", "APP-1")["stage"], stage)
 
     def test_a_hand_off_that_ends_a_failed_run_puts_the_queue_holders_checking_row_back_at_its_start(self) -> None:
+        for failing in ("failed", "timed_out"):
+            with self.subTest(failing=failing):
+                if failing != "failed":
+                    self.setUp()
+                self.superseded_over(failing)
+
+    def superseded_over(self, failing: str) -> None:
         state_tool.handoff(self.b.directory, lane="lane-1", subject="APP-1", head=HEAD, change_request="cr-1")
         self.b.push()
         self.a.take()
-        running = [{"id": "always", "state": "failed"}, {"id": "full", "state": "running"}]
+        running = [{"id": "always", "state": failing}, {"id": "full", "state": "running"}]
         state_tool.patch(self.a.directory, writer="runner", version=self.a.state()["version"],
                          selector="queue[subject=APP-1]", changes={"stage": "checking", "checks": running})
         self.a.push()
@@ -219,7 +226,7 @@ class LaneAndRunnerTests(LaneScopeFixture):
             {"path": "queue[subject=APP-1]/stage", "value": "queued", "origin": origin,
              "replaces": {"seat": held["seat"], "seq": held["seq"], "digest": state_tool.value_digest("checking")}},
             {"path": "queue[subject=APP-1]/checks", "origin": origin,
-             "value": [{"id": "always", "state": "failed"}, {"id": "full", "state": "superseded"}],
+             "value": [{"id": "always", "state": failing}, {"id": "full", "state": "superseded"}],
              "replaces": {"seat": origins["queue[subject=APP-1]/checks"]["seat"],
                           "seq": origins["queue[subject=APP-1]/checks"]["seq"], "digest": state_tool.value_digest(running)}}])
         self.a.take()
@@ -242,6 +249,8 @@ class LaneAndRunnerTests(LaneScopeFixture):
                 self.a.take()
                 self.assertEqual(self.element(self.a, "queue", "subject", "APP-1")["stage"], "checking")
         # Marking a finished check, or one the run never had, is not the run ending: it is the queue's to write.
+        if failing != "failed":
+            return
         self.assertFalse(collab._superseding({"checks": running}, [{"id": "always", "state": "passed"},
                                                                   {"id": "full", "state": "superseded"}]))
         self.assertFalse(collab._superseding({"checks": running}, [*running, {"id": "lint", "state": "superseded"}]))

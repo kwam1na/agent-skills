@@ -60,6 +60,8 @@ FETCHED_REFRESH_SECONDS = 60.0
 GIT_TIMEOUT_SECONDS = 120
 # How long a queue handover waits for the queue to be idle before it refuses.
 HANDOVER_WAIT_SECONDS = 60.0
+# A finished check's states that fail its run, as the queue journals check.failed for them.
+FAILING = ("failed", "timed_out")
 ZERO = "0" * 40
 
 state_tool = None
@@ -635,7 +637,7 @@ def _apply_slice(state: dict, origins: dict, journal: list[dict], seat: str, par
         moved = next((entry for entry in entries if entry["path"] == f"{selector}/head"
                       and entry.get("value") != item.get("head")), None)
         if item.get("stage") == "checking" and not (
-                moved is not None and any(check.get("state") == "failed" for check in item.get("checks", []))):
+                moved is not None and any(check.get("state") in FAILING for check in item.get("checks", []))):
             stages[selector] = "running"
     # The seq of the write that made each element this slice makes.
     created = {item["path"]: item["origin"]["seq"] for item in entries
