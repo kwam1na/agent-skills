@@ -7529,7 +7529,9 @@ def candidate_ownership(c, lane: str, base: str, head: str, state: dict) -> tupl
             raise Stop(f"writer_not_owned: {error}") from error
         regional_paths = {claim["path"] for claim in regions}
     else:
-        changed = list(filter(None, run(["git", "diff", "--no-renames", "--name-only", "-z", base, head]).stdout.split("\0")))
+        # Read as file-system bytes, as the region helper reads them, so a name that isn't UTF-8 is still judged.
+        changed = list(filter(None, run(["git", "diff", "--no-renames", "--name-only", "-z", base, head],
+                                        errors="surrogateescape").stdout.split("\0")))
         outside, regional_paths = {}, set()
     ownership = c.effective_ownership(state)
     if "laneOwnership" not in state:
@@ -13117,6 +13119,12 @@ ENCLOSING_KINDS = {".py": "python", ".js": "javascript", ".mjs": "javascript", "
 LANE_FILES_LIMIT = 400
 
 
+def shown_path(path: str) -> str:
+    """A path as the views show it: one read as file-system bytes (`surrogateescape`), so git can be handed it back, with
+    each byte that isn't UTF-8 shown as a replacement character. A UTF-8 path is unchanged."""
+    return path.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+
+
 def enclosing_name(path: str, lines: list[str], line: int) -> str | None:
     """The name of the block line `line` (one-based) sits in, on the new side: the line itself when it names one, else
     the nearest one above it. In Python and JavaScript, the nearest one indented less than the code it holds, so a
@@ -13164,8 +13172,10 @@ def read_lane_branch(c, story: str, base: str) -> dict | None:
         run(["git", "fetch", "-q", "--no-write-fetch-head", c.remote, f"+refs/heads/{branch}:refs/remotes/{c.remote}/{branch}"],
             cwd=c.root)
         merge_base = git("merge-base", base, head, cwd=c.root)
+        # Read as file-system bytes: a name that isn't UTF-8 is handed back to git as it is, and shown with
+        # replacement characters.
         paths = list(filter(None, run(["git", "diff", "--name-only", "--no-renames", "-z", merge_base, head],
-                                      cwd=c.root).stdout.split("\0")))
+                                      cwd=c.root, errors="surrogateescape").stdout.split("\0")))
         files = []
         for path in paths:
             # Not strictly decoded: a binary or non-UTF-8 file is still a change the read reports, by its hunks.
@@ -13192,11 +13202,13 @@ def lane_holdings(c, lane: str, read: dict, state: dict) -> dict:
         return read
     helper = _region_ownership()
     _, outside = candidate_ownership(c, lane, read["mergeBase"], read["head"], state)
+    # Judged by the shown path, so a kept read, whose paths were written shown, is judged as a fresh one.
+    outside = [shown_path(item) for item in outside]
     regions = state.get("laneRegions", [])
     shared = shared_outputs(c) if "laneOwnership" in state else set()
     files = []
     for entry in read["files"]:
-        path = entry["path"]
+        path = shown_path(entry["path"])  # a fresh read's name that isn't UTF-8 is judged, and written, as shown
         refused = path in outside or any(item.startswith(f"{path}: ") for item in outside)
         changes = [dict(change, inside=not refused) for change in entry["changes"]]
         holds = "shared" if path in shared else "span" if any(claim["path"] == path for claim in regions) else "file"
@@ -13251,7 +13263,8 @@ def claimed_files(c, state: dict, base: str) -> dict:
     for path in regional + whole:
         if len(files) >= LANE_FILES_LIMIT:
             break
-        shown = run(["git", "show", f"{base}:{path}"], cwd=c.root, check=False)
+        # Not strictly decoded: a claimed binary file is counted as a UTF-8 file's lines are, not a failed step.
+        shown = run(["git", "show", f"{base}:{path}"], cwd=c.root, check=False, errors="replace")
         length = len(shown.stdout.splitlines()) if shown.returncode == 0 else 0
         if path in regional:
             spans = []
