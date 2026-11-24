@@ -298,7 +298,7 @@ KEY_CHARACTERS = r"[A-Za-z0-9_]"
 
 def rekeyed(text: str, mapping: dict[str, str]) -> str:
     """The plan with each placeholder story key replaced by its tracker key, all at once, as whole keys only: `COLLAB-4`
-    becomes `V26-3798` in `COLLAB-4:` and `COLLAB-4-1`, never in `COLLAB-40` or `XCOLLAB-4`."""
+    becomes `WORK-12` in `COLLAB-4:` and `COLLAB-4-1`, never in `COLLAB-40` or `XCOLLAB-4`."""
     if not mapping:
         return text
     keys = sorted(mapping, key=len, reverse=True)

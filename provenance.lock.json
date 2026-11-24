@@ -1139,7 +1139,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/plan_sync.py",
-          "sha256": "5cfdd2681388df32d1ec9d0ac3376979ff247ca43d5f95a154ce3468f4dc9925"
+          "sha256": "d92c622080dda4cd2cfd44291ccf9c6f9819edd7eb2d7846dd1afba73d5b4dfd"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
