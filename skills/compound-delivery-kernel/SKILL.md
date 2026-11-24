@@ -129,7 +129,11 @@ waiting party otherwise.
 Where the repository declares a live view command, a workflow that starts a run
 as the operator's invocation runs it with `--if-absent` in the background and
 gives the operator the address. A workflow that joins a run, and an epic lane,
-does neither.
+does neither. Giving the operator an
+address means opening it in the same turn: in the host's in-app browser pane,
+with a card that opens it there where the host can show one; without such a
+pane, in the operator's own browser; and printing it only when it can be opened
+in neither.
 
 ## Handoff
 

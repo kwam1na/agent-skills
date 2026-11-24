@@ -10832,7 +10832,8 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
     def test_every_command_the_guide_names_exists(self) -> None:
         text = GUIDE.read_text(encoding="utf-8") + (SKILL / "SKILL.md").read_text(encoding="utf-8")
         named = set(re.findall(r"run_delivery\.py (?:--delivery \S+ )?([a-z][a-z-]+)", text))
-        named |= set(re.findall(r"^\| (?:Lane|Lead|Setup) \| `([a-z][a-z-]+)", text, re.MULTILINE))
+        # Every row of the commands table, whoever runs it.
+        named |= set(re.findall(r"^\| (?:Lane|Lead|Setup|Any|Host) \| `([a-z][a-z-]+)", text, re.MULTILINE))
         # Commands named in prose, in backticks.
         skills = {s["id"] for s in json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))["skills"]}
         named |= set(re.findall(r"`((?:lead|app|review|pr)-[a-z-]+|adapter-test|handoff|doctor|ship)(?: [^`]*)?`", text)) - skills
@@ -10845,6 +10846,17 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
             with self.subTest(script=script, command=command):
                 usage = sh(sys.executable, "-B", self.generation / "skills/orchestrate-work/scripts" / script, "--help").stdout
                 self.assertIn(command, usage)
+
+    def test_plan_work_hands_over_the_plans_preview_unasked(self) -> None:
+        # The default posture: a plan is previewed from its first commit, and its links reach the operator unasked.
+        text = " ".join((ROOT / "skills/plan-work/SKILL.md").read_text(encoding="utf-8").split())
+        for phrase in ("run `plan-view --plan <path>` after each commit of the plan, and hand the operator both links it "
+                       "prints, the local preview and the hosted one, without being asked",
+                       "Where a command prints no preview line at all, the repository has no live view or hosted page "
+                       "for it: say nothing about a preview.",
+                       "A line saying the preview wasn't built or published is passed on as printed."):
+            with self.subTest(phrase=phrase[:40]):
+                self.assertIn(phrase, text)
 
     def test_the_walk_through_is_the_leads_own_steps(self) -> None:
         text = GUIDE.read_text(encoding="utf-8")

@@ -106,6 +106,20 @@ review. The rounds are kept in the work directory's `plan-review/<slug>/` store,
 and when the plan becomes a delivery, its `lead-setup` or `lead-init` adopts that
 store, so the delivery's plan chapter shows every round.
 
+Where the run-delivery tool is installed, run `plan-view --plan <path>` after
+each commit of the plan, and hand the operator both links it prints, the local
+preview and the hosted one, without being asked. Each `plan-review prepare`,
+`reduce` and `end` with `--plan` rebuilds the same preview and prints the same
+links; hand those over too. The preview shows the plan as the line map's plan
+chapter, with every review round, and says the review is agent-only until a
+person approves the plan. Where a command prints no preview line at all, the
+repository has no live view or hosted page for it: say nothing about a preview.
+A line saying the preview wasn't built or published is passed on as printed.
+Handing over a link means opening it in the same turn: in the host's in-app
+browser pane, with a card that opens it there where the host can show one;
+without such a pane, in the operator's own browser; and printing it only when it
+can be opened in neither.
+
 ## Plan Extension Pins and Shared Resources
 
 For each unit that extends a registry, enum, or counted collection, search the
