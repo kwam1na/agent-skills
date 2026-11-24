@@ -347,6 +347,17 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .mg-step.danger { fill: var(--held); }
 .mg-step.warning { fill: var(--wait); }
 .mg-step.next { fill: var(--l1); }
+/* A suite running at the integration's head: a stripe that moves across its track, still under reduced motion, with a
+   tick at its usual time; one that went over its budget ends in a cap. */
+.mg-step.running { fill: color-mix(in oklab, var(--ink) 8%, transparent); }
+.mg-suite-run { pointer-events: none; }
+.mg-stripe-ground { fill: var(--ink); }
+.mg-stripe { fill: color-mix(in oklab, var(--ink) 66%, var(--paper)); }
+.mg-stripes { animation: mg-crawl 1.2s linear infinite; }
+@keyframes mg-crawl { from { transform: translateX(0); } to { transform: translateX(8px); } }
+@media (prefers-reduced-motion: reduce) { .mg-stripes { animation: none; } }
+.mg-suite-usual { stroke: var(--held); stroke-width: 1.5; pointer-events: none; }
+.mg-suite-over { fill: var(--held); pointer-events: none; }
 .mg-step:focus-visible, .mg-square:focus-visible { stroke: var(--ink); stroke-width: 2; }
 .mg-step-label { font: 500 10px var(--text); fill: var(--soft); }
 .mg-target-label { font-size: 11px; fill: var(--soft); }
