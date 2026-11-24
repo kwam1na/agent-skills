@@ -160,6 +160,46 @@
     return item;
   }
 
+  // The plans being reviewed before any delivery, each served by a preview server of its own: one sentence, then one
+  // sheet listing each plan by its title, its plan file, and its local and hosted links. Drawn only when the live
+  // server named one.
+  function previewsNode(previews) {
+    var box = add(el("section", "previews"), el("h2", null, "Plans in review"),
+      el("p", "say", previews.length === 1 ? "A plan is being reviewed by agents before any delivery takes it up; it has its own live view."
+        : "These plans are being reviewed by agents before any delivery takes them up; each has its own live view."));
+    box.setAttribute("id", "previews");
+    var sheet = el("ul", "preview-sheet");
+    previews.forEach(function (preview) {
+      var row = el("li", "preview");
+      row.setAttribute("data-plan", text(preview.plan));
+      var name = text(preview.title) || text(preview.plan);
+      var title = el("b");
+      (typeof richWords === "function" ? richWords(name) : [document.createTextNode(name)]).forEach(function (node) { title.appendChild(node); });
+      add(row, add(el("span", "preview-name"), title, text(preview.title) ? el("small", null, text(preview.plan)) : null));
+      // Named as the reader sees the title, without the marks that set its code apart.
+      var said = title.textContent;
+      var links = el("span", "preview-links");
+      var live = safeHref(text(preview.live));
+      if (live) {
+        var local = el("a", "preview-live", "Live view");
+        local.setAttribute("href", live);
+        local.setAttribute("aria-label", "Live view of " + said);
+        links.appendChild(local);
+      }
+      var hosted = /^https:\/\//.test(text(preview.hosted)) ? preview.hosted : null;
+      if (hosted) {
+        var away = el("a", "preview-hosted", "Hosted view");
+        away.setAttribute("href", hosted);
+        away.setAttribute("aria-label", "Hosted view of " + said);
+        links.appendChild(away);
+      }
+      row.appendChild(links);
+      sheet.appendChild(row);
+    });
+    box.appendChild(sheet);
+    return box;
+  }
+
   function draw() {
     var kicker = add(el("div", "kicker"), el("span", null, "Runs"),
       text(VIEW.lineMap) ? link("The line map", VIEW.lineMap) : null, text(VIEW.history) ? link("The delivery history", VIEW.history) : null);
@@ -171,6 +211,8 @@
     }
     var notes = list(page.notes);
     if (notes.length) { top.appendChild(add.apply(null, [el("ul", "notes")].concat(notes.map(function (note) { return el("li", null, text(note)); })))); }
+    var previews = list(VIEW.previews).filter(isObject);
+    if (previews.length) { top.appendChild(previewsNode(previews)); }
     var runs = list(page.runs).filter(isObject);
     var now = runs.filter(function (run) { return run.section === "now"; });
     var ended = runs.filter(function (run) { return run.section !== "now"; });

@@ -112,6 +112,12 @@ STAGES = ("route", "plan", "diagnose", "execute", "review", "compound")
 ENDED_STATES = frozenset({"completed", "failed", "interrupted"})
 # What the live server tells its views of the run store, when the binding names liveRuns.
 RUNS_FLAG = "DELIVERY_LIVE_RUNS"
+# The plan previews the live server serves, as JSON, which the runs page lists under "Plans in review".
+PREVIEWS_FLAG = "DELIVERY_PLAN_PREVIEWS"
+PREVIEW_LIMIT = 20
+PREVIEW_TEXT_LIMIT = 2000
+# A preview server's address as the live server names it: a host name or a bracketed IPv6 address, and a port.
+PREVIEW_ADDRESS = re.compile(r"(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\]):[0-9]{1,5}")
 SAFE_INTEGER = 2 ** 53 - 1
 
 
@@ -697,7 +703,77 @@ def _facts_named(value: object, commits: list, changes: list) -> None:
         commits.extend(SHORT_COMMIT.findall(value))
 
 
-def page_links(document: object, runs: dict, config: dict, reviews: dict | None = None) -> dict:
+# A review note's reference to a file's lines, as the words mark it: in parentheses, one or several, "(path:12-18)".
+FILE_REFS = re.compile(r"\(([\w./-]+:\d+(?:-\d+)?(?:,\s*[\w./-]+:\d+(?:-\d+)?)*)\)")
+FILE_REF = re.compile(r"([\w./-]+):(\d+)(?:-\d+)?")
+FILE_LINKS_MAX = 2000
+TREE_TIMEOUT_SECONDS = 5
+
+
+def _review_words(runs: dict, reviews: dict | None, plan: dict | None):
+    """Each review note's words with the commit they were written about: a raised finding's at the round's reviewed
+    commit, a settled note's resolution at its fix."""
+    summaries = [*runs.values(), *(reviews.values() if isinstance(reviews, dict) else ())]
+    planned = plan.get("plan") if _is_object(plan) and _is_object(plan.get("plan")) else None
+    review = planned.get("planReview") if planned and _is_object(planned.get("planReview")) else None
+    rounds = [entry for summary in summaries if _is_object(summary) for entry in summary.get("roundDetail") or []]
+    rounds += list(review.get("rounds") or []) if review else []
+    for entry in rounds:
+        if not _is_object(entry):
+            continue
+        for note in entry.get("raised") if isinstance(entry.get("raised"), list) else ():
+            if _is_object(note):
+                yield entry.get("candidateRef"), note.get("summary")
+        for note in entry.get("settled") if isinstance(entry.get("settled"), list) else ():
+            if _is_object(note):
+                yield note.get("fixCommit"), note.get("resolution")
+
+
+def file_links(runs: dict, reviews: dict | None, plan: dict | None, forge: dict | None,
+               repository: Path | None) -> dict:
+    """The files review notes refer to, each opened at its line in the commit the words were written about, by
+    "<commit> <reference as written>". A reference names a file the commit holds, by its path from the repository's
+    root or, failing that, by a path only one of its files ends with; a reference that names no file, or several,
+    stays words. Nothing is linked without a forge fileUrl or the repository to read the commits from."""
+    if repository is None or forge is None or not forge.get("fileUrl"):
+        return {}
+    trees: dict[str, list[str] | None] = {}
+
+    def tree(sha: str) -> list[str] | None:
+        if sha not in trees:
+            try:
+                listed = subprocess.run(["git", "ls-tree", "-r", "-z", "--name-only", sha, "--"], cwd=repository,
+                                        capture_output=True, timeout=TREE_TIMEOUT_SECONDS)
+                trees[sha] = (listed.stdout.decode("utf-8", "replace").split("\0")
+                              if listed.returncode == 0 else None)
+            except (OSError, subprocess.SubprocessError):
+                trees[sha] = None
+        return trees[sha]
+
+    links: dict[str, str] = {}
+    for sha, words in _review_words(runs, reviews, plan):
+        if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{7,40}", sha) or not isinstance(words, str):
+            continue
+        for group in FILE_REFS.findall(words):
+            for ref in re.split(r",\s*", group):
+                key = f"{sha} {ref}"
+                found = FILE_REF.fullmatch(ref)
+                if key in links or not found or len(links) >= FILE_LINKS_MAX:
+                    continue
+                paths = tree(sha)
+                if paths is None:
+                    continue
+                path = found.group(1).removeprefix("./")
+                named = [path] if path in paths else [each for each in paths if each.endswith("/" + path)]
+                if len(named) == 1:
+                    href = views_common.file_link(sha, named[0], found.group(2), forge)
+                    if href:
+                        links[key] = href
+    return links
+
+
+def page_links(document: object, runs: dict, config: dict, reviews: dict | None = None, *,
+               plan: dict | None = None, repository: Path | None = None) -> dict:
     """The links the page may open, worked out here so the page holds no link rules of its own:
     ticket ids by key, change requests by value, and by hash the fix commits, the commits a round reviewed and those the
     journal's facts name."""
@@ -747,7 +823,12 @@ def page_links(document: object, runs: dict, config: dict, reviews: dict | None 
                                 "repository": identity["repository"]}
     fixes = {sha: href for sha in commits if isinstance(sha, str)
              for href in [views_common.commit_link(sha, forges[0] if forges else None)] if href}
-    return {"issues": issues, "changes": pulls, "commits": fixes}
+    links = {"issues": issues, "changes": pulls, "commits": fixes}
+    # Only a page made where the commits can be read links files; the key is left out otherwise.
+    files = file_links(runs, reviews, plan, forges[0] if forges else None, repository)
+    if files:
+        links["files"] = files
+    return links
 
 
 def _renderer_output(binding: dict, subcommand: str) -> str | None:
@@ -1123,15 +1204,49 @@ def _page_head(title: str, styles: str) -> list[str]:
             f"<style>\n{styles}</style>", "</head>", "<body>"]
 
 
+def plan_previews(given: str | None) -> list[dict]:
+    """The plan previews the live server named, as the runs page lists them: at most PREVIEW_LIMIT objects, each with
+    a ``live`` link to its server's address and a ``plan``, and a ``title`` and an https ``hosted`` link where given.
+    Anything else, or a value that isn't such a list, is left out."""
+    try:
+        named = json.loads(given) if given else []
+    except (ValueError, RecursionError):
+        return []
+    if not isinstance(named, list):
+        return []
+
+    def said(entry: dict, name: str) -> str | None:
+        value = entry.get(name)
+        return value if isinstance(value, str) and value.strip() and len(value) <= PREVIEW_TEXT_LIMIT else None
+
+    previews = []
+    for entry in named[:PREVIEW_LIMIT]:
+        if not _is_object(entry):
+            continue
+        live, plan = said(entry, "live"), said(entry, "plan")
+        if not (live and plan and PREVIEW_ADDRESS.fullmatch(live)):
+            continue
+        row = {"live": f"http://{live}/", "plan": plan}
+        if said(entry, "title"):
+            row["title"] = said(entry, "title")
+        if (said(entry, "hosted") or "").startswith("https://"):
+            row["hosted"] = said(entry, "hosted")
+        previews.append(row)
+    return previews
+
+
 def render_runs(page: dict, config: dict, *, line_map: str | None, history: str | None, watched: str | None,
-                as_of: str, own: str | None = None) -> str:
+                as_of: str, own: str | None = None, previews: list[dict] | None = None) -> str:
     """The runs page. ``watched`` is what the live server said of the run store: watched, unwatched, or None. ``own``
-    is this page's own output, which a live page reads itself again from, wherever it was opened."""
+    is this page's own output, which a live page reads itself again from, wherever it was opened. ``previews``, the
+    plan previews being served, are left out of the page's view while there is none."""
     view = {"lineMap": line_map, "history": history, "own": own, "runs": config["runs"] is not None, "asOf": as_of,
             "watched": watched if watched in ("watched", "unwatched") else None, "lenses": config["lenses"],
             "links": page_links({}, {}, config) | {"changes": {
                 entry["changeRequest"]: link for entry in page["runs"] if _text(entry.get("changeRequest"))
                 for link in [views_common.change_request_identity(entry["changeRequest"], config["forges"])] if link}}}
+    if previews:
+        view["previews"] = previews
     return "\n".join([
         *_page_head("Runs", _asset("runs.css") + _asset("run-summary.css")),
         '<main id="app"></main>',
@@ -1635,7 +1750,8 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
         "lenses": config["lenses"],
     }
     data = {"document": document, "runs": runs, "reviews": reviews, "view": view,
-            "links": page_links(document, runs, config, reviews), "plan": plan, "needs": needs}
+            "links": page_links(document, runs, config, reviews, plan=plan, repository=repository), "plan": plan,
+            "needs": needs}
     if files is not None:
         # The lanes' branches, as the supervisor's pass read them beside the record: a cut made without them has none.
         data["files"] = files
@@ -1651,9 +1767,9 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
 
 def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
                     plan: dict | None = None, needs: dict | None = None, files: dict | None = None,
-                    operator: str | None = None) -> str:
+                    operator: str | None = None, repository: Path | None = None) -> str:
     data = line_map_data(document, runs, config, theme_key=theme_key, history=history, plan=plan, needs=needs,
-                         files=files)
+                         files=files, repository=repository)
     document, runs, reviews, view = (data[key] for key in ("document", "runs", "reviews", "view"))
     return "\n".join([
         "<!doctype html>",
@@ -1764,7 +1880,7 @@ def line_map(arguments: argparse.Namespace) -> int:
                            plan=read_plan_block(inputs.state_directory, document),
                            needs=read_needs_block(inputs.state_directory),
                            files=read_lane_changes_block(inputs.state_directory),
-                           operator=checkout_operator(inputs.root))
+                           operator=checkout_operator(inputs.root), repository=inputs.root)
     sys.stdout.write(page)
     return 0
 
@@ -1806,7 +1922,8 @@ def runs(arguments: argparse.Namespace) -> int:
                                  line_map=_renderer_output(inputs.binding, "line-map"),
                                  history=_renderer_output(inputs.binding, "history"),
                                  watched=os.environ.get(RUNS_FLAG), as_of=as_of,
-                                 own=_renderer_output(inputs.binding, "runs")))
+                                 own=_renderer_output(inputs.binding, "runs"),
+                                 previews=plan_previews(os.environ.get(PREVIEWS_FLAG))))
     return 0
 
 

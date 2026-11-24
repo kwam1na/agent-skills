@@ -1,10 +1,12 @@
 // A delivery that rejoins its target after its pieces land: the count's two beats under the name, the line past the
 // integration base with its four stops and the target beneath, the ledger of proofs pinned to their heads, and the
 // journey's share. Each is read from the record's meta.integration and its integration facts alone.
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
 
-import { REPLAYED_RUNS, expect, openPage, pageWithRuns, withAcross } from "./support.mjs";
-import { LENSES, headOf, item, journal, record } from "./plan-fixtures.mjs";
+import { REPLAYED_RUNS, ROOT, expect, openPage, pageWithRuns, withAcross } from "./support.mjs";
+import { LENSES, headOf, item, journal, minute, record } from "./plan-fixtures.mjs";
 
 const NOW = "2026-10-30T12:00:00Z";
 const CONFIG = { spec: "delivery-views-config/1", runs: REPLAYED_RUNS };
@@ -195,6 +197,28 @@ test("what stands at the current head rings its stop and says what the rejoin st
   expect(said(moved, "rejoin")).toBe("Needs a passing suite at the current head and an approving round at it.");
 });
 
+test("the pre-merge rejoin labels stack below the bar while a stopped tally stays above", async () => {
+  const app = await shown(record({
+    queue: [item("A", "stopped"), item("B", "queued")],
+    finish: [{ id: "finish", text: "Finish the delivery", met: false }],
+    meta: { trackerParent: KEY, baseHead: headOf("base"), integration: INTEGRATION },
+  }));
+  const line = app.querySelector("#line .line-merge");
+  const tally = line.querySelector(".mg-tally");
+  const bar = line.querySelector(".mg-step");
+  const label = line.querySelector(".mg-bar-label");
+  const next = line.querySelector(".mg-next");
+  const status = line.querySelector(".mg-step-said");
+  const y = (node) => Number(node.getAttribute("y"));
+  expect(tally.textContent).toBe("0 of 2 landed· 1 stopped");
+  expect(label.textContent).toBe("Rejoin main · main in");
+  expect(y(tally) < y(bar)).toBe(true);
+  expect(y(label) >= y(bar) + Number(bar.getAttribute("height")) + 12).toBe(true);
+  expect(y(next) - y(label) >= 12).toBe(true);
+  expect(y(status) - y(next) >= 12).toBe(true);
+  expect(Number(line.getAttribute("height")) > y(status)).toBe(true);
+});
+
 test("a step with no fact yet says what will make it, and the bar's own status is the current step's", async () => {
   const app = await shown(delivery([]));
   expect(["caught", "suite", "review", "rejoin"].map((name) => said(app, name))).toEqual([
@@ -255,4 +279,95 @@ test("a delivery with a same-epic sibling draws the rejoin while it rejoins, and
   expect(width(closed)).toBe(closed.querySelector("#line .line-merge").getAttribute("width") + "px");
   expect(closed.querySelector("#line .mg-epic-post") !== null).toBe(true);
   expect(closed.querySelectorAll("#line .line.sibling").length).toBe(1);
+});
+
+// A suite's start, as lead-suite journals it: its head, when it began and, from the last finished run under the same
+// budget, how long it usually takes. NOW is minute 360, so a start at minute 326 has run 34 minutes.
+const started = (at, head, extra = {}) => [at, "integration.suite.started", KEY,
+  { data: { head, startedAt: minute(at), expectedSeconds: 31 * 60, budgetSeconds: 29 * 60, ...extra } }];
+const label = (app) => app.querySelector("#line .mg-bar-label").textContent;
+const box = (node) => ["x", "width"].map((name) => Number(node.getAttribute(name)));
+const usualAt = (app) => Number(app.querySelector("#line .mg-suite-usual").getAttribute("d").match(/^M([\d.]+)/)[1]);
+const filledTo = (app) => Number(app.querySelector("#line #mg-suite-clip rect").getAttribute("width"));
+
+test("a suite running at the integration's head draws its step wide and striped, with a tick at its usual time", async () => {
+  const app = await shown(delivery([merged(30, M), started(326, M)]));
+  expect(label(app)).toBe("Rejoin main · suite running");
+  expect(under(app)).toBe(`The full suite is running at ${short(M)}. 34 min, about 31 usual, so 3 over.`);
+  // Nothing else is drawn as next while the suite runs.
+  expect(states(app)).toEqual(["filled", "running", "hollow", "hollow"]);
+  expect(said(app, "suite")).toBe(`running at ${short(M)} for 34 min, about 31 usual, so 3 over`);
+  const [suiteX, suiteWidth] = box(segment(app, "suite"));
+  const [, caughtWidth] = box(segment(app, "caught"));
+  // As the study draws it: the suite takes 104 of the 236 the four steps share, the other three 44 each.
+  near(suiteWidth / (suiteWidth + 3 * caughtWidth), 104 / 236);
+  expect(app.querySelector("#line .mg-suite-run .mg-stripes .mg-stripe") !== null).toBe(true);
+  expect(app.querySelector("#line .mg-suite-run").getAttribute("aria-hidden")).toBe("true");
+  // Past its usual time the stripe fills the step, and the tick sits where 31 of 34 minutes falls.
+  near(filledTo(app), suiteWidth);
+  near(usualAt(app), suiteX + suiteWidth * 31 / 34);
+  // The four steps still add up to the bar.
+  const last = box(segment(app, "rejoin"));
+  near(last[0] + last[1] - box(segment(app, "caught"))[0], 140);
+});
+
+test("before its usual time the stripe fills the step as the run nears it, and the sentence names no overrun", async () => {
+  const early = await shown(delivery([merged(30, M), started(350, M)]));
+  expect(under(early)).toBe(`The full suite is running at ${short(M)}. 10 min, about 31 usual.`);
+  const [x, width] = box(segment(early, "suite"));
+  near(filledTo(early), width * 10 / 31);
+  near(usualAt(early), x + width);
+  // Within a minute of the usual time nothing is over yet.
+  expect(under(await shown(delivery([merged(30, M), started(329, M)])))).toBe(`The full suite is running at ${short(M)}. 31 min, about 31 usual.`);
+  // With no earlier run to go by, it says how long it has run, and draws no tick.
+  const first = await shown(delivery([merged(30, M), started(326, M, { expectedSeconds: undefined })]));
+  expect(under(first)).toBe(`The full suite is running at ${short(M)}. 34 min.`);
+  expect(first.querySelector("#line .mg-suite-usual")).toBe(null);
+  near(filledTo(first), box(segment(first, "suite"))[1]);
+});
+
+test("a timed suite's finish draws passed solid, over its budget with a cap, and failed in the setback colour", async () => {
+  const passed = await shown(delivery([merged(30, M), started(326, M), suite(355, M)]));
+  expect(states(passed)).toEqual(["filled", "filled", "next", "hollow"]);
+  expect(label(passed)).toBe("Rejoin main · review");
+  expect(passed.querySelector("#line .mg-suite-run, #line .mg-suite-usual, #line .mg-suite-over")).toBe(null);
+  expect(box(segment(passed, "suite"))[1] > 2 * box(segment(passed, "caught"))[1]).toBe(true);
+  const over = await shown(delivery([merged(30, M), started(326, M), suite(355, M, "over-budget", { budgetSeconds: 29 * 60 })]));
+  expect(states(over)).toEqual(["filled", "filled", "next", "hollow"]);
+  const [x, width] = box(segment(over, "suite"));
+  const cap = box(over.querySelector("#line .mg-suite-over"));
+  near(cap[0] + cap[1], x + width);
+  near(cap[1], width * 10 / 104);
+  const failed = await shown(delivery([merged(30, M), started(326, M), suite(355, M, "failed")]));
+  expect(states(failed)).toEqual(["filled", "danger", "next", "hollow"]);
+  expect(failed.querySelector("#line .mg-suite-run, #line .mg-suite-over")).toBe(null);
+  // A suite with no start keeps the even bar, and an untimed run over its budget draws no cap.
+  // Once rejoined the bar is done, and draws its four steps even, whatever its last suite was.
+  const approved = Object.fromEntries(LENSES.map((lens) => [lens, "approve"]));
+  const done = await shown(delivery([merged(30, M), started(326, M), suite(355, M), round(356, M, approved), requested(357, M), rejoined(358)]));
+  expect(new Set(["caught", "suite", "review", "rejoin"].map((name) => box(segment(done, name))[1])).size).toBe(1);
+  const untimed = await shown(delivery([merged(30, M), suite(355, M, "over-budget", { budgetSeconds: 29 * 60 })]));
+  expect(box(segment(untimed, "suite"))[1]).toBe(box(segment(untimed, "caught"))[1]);
+  expect(untimed.querySelector("#line .mg-suite-over")).toBe(null);
+});
+
+test("a later start or finish supersedes an unfinished start, and a newer head leaves it behind", async () => {
+  const again = await shown(delivery([merged(30, M), started(300, M), merged(320, H1), started(326, H1)]));
+  expect(under(again)).toBe(`The full suite is running at ${short(H1)}. 34 min, about 31 usual, so 3 over.`);
+  const finished = await shown(delivery([merged(30, M), started(326, M), suite(340, M)]));
+  expect(finished.querySelector("#line .mg-suite-run")).toBe(null);
+  // The target merged in again while the suite ran: that run is of a head the integration moved on from.
+  const movedOn = await shown(delivery([merged(30, M), started(326, M), merged(340, H1)]));
+  expect(states(movedOn)).toEqual(["filled", "next", "hollow", "hollow"]);
+  expect(label(movedOn)).toBe("Rejoin main · suite");
+  expect(box(segment(movedOn, "suite"))[1]).toBe(box(segment(movedOn, "caught"))[1]);
+  // A finish at another head than the start's draws no timed step.
+  const elsewhere = await shown(delivery([merged(30, M), started(326, M), suite(340, H1)]));
+  expect(box(segment(elsewhere, "suite"))[1]).toBe(box(segment(elsewhere, "caught"))[1]);
+});
+
+test("the running stripe stands still under reduced motion", () => {
+  const css = readFileSync(path.join(ROOT, "skills", "delivery-views", "assets", "line-map.css"), "utf8");
+  expect(css).toContain("@media (prefers-reduced-motion: reduce) { .mg-stripes { animation: none; } }");
+  expect(css).toContain(".mg-stripes { animation: mg-crawl 1.2s linear infinite; }");
 });

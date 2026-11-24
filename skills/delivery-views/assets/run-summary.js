@@ -90,7 +90,93 @@ function runDrawParts(svg, parts) {
     svg.appendChild(shape);
   });
 }
+/**
+ * Words made readable without changing what they say: the one formatter every view's prose goes through, the run
+ * summary's findings and fixes and the story's beats alike. It reads only what the words mark themselves, never a guess
+ * from a word's shape:
+ * - a `quoted` name reads as code;
+ * - a parenthesised reference to a file's lines, "(path:12)" or "(path:12-18, other:3)", steps back to a faint aside,
+ *   linked to the file at the reviewed commit when the page was given that link;
+ * - a commit id, a change request's address and a ticket id the page knows open where they live.
+ * `hooks` says what the host can link, each optional: `tickets` (the ids it knows) with `ticket(id)` making the node,
+ * `commit(sha)` and `change(address)` each a node or null, and `file(ref)` an href or null. It returns the nodes in order.
+ */
+var RICH_REF = "[\\w./-]+:\\d+(?:-\\d+)?";
+function richWords(words, hooks) {
+  var said = words === undefined || words === null ? "" : String(words);
+  hooks = hooks || {};
+  var ids = (Array.isArray(hooks.tickets) ? hooks.tickets : []).filter(function (id) { return typeof id === "string" && id && said.indexOf(id) >= 0; })
+    .sort(function (a, b) { return b.length - a.length; });
+  var tickets = ids.length && typeof hooks.ticket === "function"
+    ? "|(?:^|[^\\w-])(" + ids.map(function (id) { return id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }).join("|") + ")(?![\\w-])" : "";
+  var pattern = new RegExp("`([^`\\n]+)`|\\((" + RICH_REF + "(?:,\\s*" + RICH_REF + ")*)\\)|(\\b[0-9a-f]{7,40}\\b)|(https?:\\/\\/[^\\s)]+)" + tickets, "g");
+  var nodes = [], last = 0, found;
+  function made(tag, className, value) {
+    var element = document.createElement(tag);
+    element.className = className;
+    element.textContent = value;
+    return element;
+  }
+  while ((found = pattern.exec(said))) {
+    var match = found[1] !== undefined ? found[0] : found[2] !== undefined ? found[0] : found[3] || found[4] || found[5];
+    var at = found.index + found[0].indexOf(match);
+    if (at > last) { nodes.push(document.createTextNode(said.slice(last, at))); }
+    if (found[1] !== undefined) {
+      nodes.push(made("code", "prose-code", found[1]));
+    } else if (found[2] !== undefined) {
+      // Each reference in the parentheses on its own, so each can open its own file.
+      var aside = made("span", "prose-refs", "");
+      found[2].split(/,\s*/).forEach(function (ref, index) {
+        if (index) { aside.appendChild(document.createTextNode(", ")); }
+        var href = typeof hooks.file === "function" ? hooks.file(ref) : null;
+        var node = made(typeof href === "string" && /^https:\/\//.test(href) ? "a" : "span", "prose-ref", ref);
+        if (node.tagName === "A") {
+          node.setAttribute("href", href);
+          node.setAttribute("target", "_blank");
+          node.setAttribute("rel", "noopener noreferrer");
+          node.addEventListener("click", function (event) { event.stopPropagation(); });
+        }
+        aside.appendChild(node);
+      });
+      nodes.push(aside);
+    } else if (found[3]) {
+      var commit = typeof hooks.commit === "function" ? hooks.commit(found[3]) : null;
+      nodes.push(commit || document.createTextNode(found[3]));
+    } else if (found[4]) {
+      // Punctuation that ends the sentence is not part of the address.
+      var address = found[4].replace(/[.,;:]+$/, "");
+      var change = typeof hooks.change === "function" ? hooks.change(address) : null;
+      nodes.push(change || document.createTextNode(address));
+      if (address.length < found[4].length) { nodes.push(document.createTextNode(found[4].slice(address.length))); }
+    } else {
+      nodes.push(hooks.ticket(found[5]));
+    }
+    last = at + match.length;
+  }
+  if (last < said.length) { nodes.push(document.createTextNode(said.slice(last))); }
+  return nodes;
+}
+// A plan preview's words for every approving string below: a plan under agent review has had its lenses align, and no
+// person has approved it. Under `options.preview` each string takes its wording here; without it, none changes. Every
+// string literal in this file that matches /approv/i is a key here, but the enum values it compares and never shows.
+var RUN_PREVIEW_WORDS = {
+  "Approved on the first round": "Lenses aligned on the first round",
+  "Approved on round ": "Lenses aligned on round ",
+  " approved, notes open": " aligned, notes open",
+  "approved": "aligned",
+  "approved, notes open": "aligned, notes open",
+  "Approved": "Aligned",
+  "Approved with ": "Aligned with ",
+  "Approved, notes open": "Aligned, notes open",
+  "The plan's review has no round bound: it runs until every lens approves or the operator ends it.":
+    "The plan's review has no round bound: it runs until every lens aligns or the operator ends it.",
+};
+// The values compared against and never displayed.
+var RUN_PREVIEW_ENUMS = ["approve"];
 function runSummaryNode(summary, options) {
+  var preview = Boolean(options && options.preview === true);
+  // A string as it reads here: a preview's wording for it, or the string itself.
+  function say(words) { return preview && Object.prototype.hasOwnProperty.call(RUN_PREVIEW_WORDS, words) ? RUN_PREVIEW_WORDS[words] : words; }
   var SEVERITIES = ["P0", "P1", "P2", "P3"];
   var WORDS = { P0: "critical", P1: "serious", P2: "moderate", P3: "minor" };
   var PIPS_SHOWN = 8;
@@ -98,6 +184,17 @@ function runSummaryNode(summary, options) {
     var made = document.createElement(tag);
     if (className) { made.className = className; }
     if (value !== undefined && value !== null) { made.textContent = String(value); }
+    return made;
+  }
+  // A finding's or a fix's words through the shared formatter, its file references read at `sha`, the commit the
+  // words were written about.
+  function prose(className, words, sha) {
+    var made = node("span", className);
+    richWords(words, {
+      file: function (ref) { return sha && options && typeof options.fileHref === "function" ? options.fileHref(sha, ref) : null; },
+      tickets: options && Array.isArray(options.tickets) ? options.tickets : null,
+      ticket: options && typeof options.ticket === "function" ? options.ticket : null,
+    }).forEach(function (part) { made.appendChild(part); });
     return made;
   }
   function counted(findings) {
@@ -197,9 +294,9 @@ function runSummaryNode(summary, options) {
     });
     var head;
     var number = numberOf(last, rounds.length - 1);
-    if (last.outcome === "approve") { head = number === 1 ? "Approved on the first round" : "Approved on round " + number; }
+    if (last.outcome === "approve") { head = number === 1 ? say("Approved on the first round") : say("Approved on round ") + number; }
     else if (last.outcome === "changes") { head = "Round " + number + " asked for changes"; }
-    else if (last.outcome === "notes-open") { head = "Round " + number + " approved, notes open"; }
+    else if (last.outcome === "notes-open") { head = "Round " + number + say(" approved, notes open"); }
     else { head = rounds.length + (rounds.length === 1 ? " review round" : " review rounds"); }
     var raised = noteWords(total);
     var tail = !reported ? "findings not reported" : raised ? raised + " raised" : "nothing raised";
@@ -209,9 +306,9 @@ function runSummaryNode(summary, options) {
   // "approved", "asked for changes", "approved, notes open", "reported as <outcome>" for any other outcome, or "outcome not reported".
   function outcomeWords(round) {
     var outcome = outcomeOf(round);
-    if (outcome === "approve") { return "approved"; }
+    if (outcome === "approve") { return say("approved"); }
     if (outcome === "changes") { return "asked for changes"; }
-    if (outcome === "notes-open") { return "approved, notes open"; }
+    if (outcome === "notes-open") { return say("approved, notes open"); }
     return typeof round.outcome === "string" && round.outcome !== "" ? "reported as " + round.outcome : "outcome not reported";
   }
   function numberOf(round, index) { return round.round === null || round.round === undefined ? index + 1 : round.round; }
@@ -262,7 +359,7 @@ function runSummaryNode(summary, options) {
   // A lens's own verdict, never an inherited property for a lens named like one.
   function verdictOf(verdicts, lens) { return Object.prototype.hasOwnProperty.call(verdicts, lens) ? verdicts[lens] : undefined; }
   function verdictKind(verdict) { return verdict === "approve" || verdict === "changes" ? verdict : "unknown"; }
-  function verdictWords(kind, verdict) { return kind === "approve" ? "approved" : kind === "changes" ? "asked for changes" : String(verdict); }
+  function verdictWords(kind, verdict) { return kind === "approve" ? say("approved") : kind === "changes" ? "asked for changes" : String(verdict); }
   // A lens's icon and name; its verdict is said only where it differs from the round's, which the header gives.
   function reviewerHead(className, lens, verdict, outcome) {
     var kind = verdict === undefined ? "unknown" : verdictKind(verdict);
@@ -544,7 +641,7 @@ function runSummaryNode(summary, options) {
     toggle.type = "button";
     toggle.setAttribute("aria-expanded", String(open));
     var said = node("span", "run-finding-line");
-    said.appendChild(node("span", "run-finding-text", sentenceOf(entry.summary)));
+    said.appendChild(prose("run-finding-text", sentenceOf(entry.summary), round.candidateRef));
     toggle.appendChild(said);
     item.appendChild(toggle);
     var meta = node("p", "run-deferral-said");
@@ -603,22 +700,23 @@ function runSummaryNode(summary, options) {
   function raisedBefore(round, id) {
     var found = null;
     rounds.slice(0, Math.max(0, rounds.indexOf(round))).forEach(function (earlier) {
-      (Array.isArray(earlier.raised) ? earlier.raised : []).forEach(function (entry) { if (isNote(entry) && entry.id === id) { found = entry; } });
+      (Array.isArray(earlier.raised) ? earlier.raised : []).forEach(function (entry) { if (isNote(entry) && entry.id === id) { found = { entry: entry, round: earlier }; } });
     });
     return found;
   }
   // One confirmed note, a fold of its own. It leads with what its lens found and how serious it was, from the round
-  // that raised it; opened, it shows how it was settled, the commit or follow-up that shows it, and the note's id. A
+  // that raised it; opened, it shows how it was settled, and the commit or follow-up that shows it. A
   // note whose finding no round on the page holds leads with its resolution, as before. A tick stands for "fixed",
   // said in words only for a screen reader, and any other ending is named.
   function closureRow(round, entry) {
     var item = node("li", "");
-    var finding = raisedBefore(round, entry.id);
+    var raised = raisedBefore(round, entry.id);
+    var finding = raised ? raised.entry : null;
     var disclosure = node("details", "run-closures is-" + (entry.state === "fixed" ? "fixed" : "other"));
     var preview = node("summary", "run-finding");
     if (finding) {
       var severity = SEVERITIES.indexOf(finding.severity) < 0 ? "P3" : finding.severity;
-      preview.appendChild(node("span", "run-finding-text", sentenceOf(finding.summary)));
+      preview.appendChild(prose("run-finding-text", sentenceOf(finding.summary), raised.round.candidateRef));
       preview.appendChild(node("span", "run-closure-sev is-" + severity.toLowerCase(), WORDS[severity]));
     } else {
       preview.appendChild(node("span", "run-finding-text", entry.resolution));
@@ -626,11 +724,30 @@ function runSummaryNode(summary, options) {
     preview.appendChild(node("span", "run-fate", endingOf(entry)));
     disclosure.appendChild(preview);
     if (finding) {
-      disclosure.appendChild(node("p", "run-closure-resolution", entry.resolution));
-      if (typeof entry.fixCommit === "string") { disclosure.appendChild(line("run-closure-evidence", ["Fixed in ", [entry.fixCommit]])); }
-      if (typeof entry.deferredIssue === "string" && entry.deferredIssue) { disclosure.appendChild(followUpNode(entry.deferredIssue)); }
+      // What was done about it, set apart from the finding above: a sheet that leads with how it ended and the commit
+      // that shows it, then the resolution in its own words, then any follow-up.
+      var ending = endingOf(entry);
+      var fix = node("div", "run-closure-fix");
+      var head = typeof entry.fixCommit === "string"
+        ? line("run-closure-evidence", [ending.charAt(0).toUpperCase() + ending.slice(1) + " in ", [entry.fixCommit]])
+        : node("p", "run-closure-evidence", ending.charAt(0).toUpperCase() + ending.slice(1));
+      // A short opening verdict ("Adopted as written.") joins the head, so the body starts with what changed.
+      var resolution = String(entry.resolution);
+      var verdict = /^([^.;:()]{3,40})\.\s+(?=\S)/.exec(resolution);
+      if (verdict && verdict[1].split(/\s+/).length <= 5) {
+        head.appendChild(node("span", "run-closure-verdict", verdict[1]));
+        resolution = resolution.slice(verdict[0].length);
+      }
+      fix.appendChild(head);
+      var body = node("p", "run-closure-resolution");
+      body.appendChild(prose("", resolution, entry.fixCommit));
+      fix.appendChild(body);
+      if (typeof entry.deferredIssue === "string" && entry.deferredIssue) { fix.appendChild(followUpNode(entry.deferredIssue)); }
+      disclosure.appendChild(fix);
+    } else {
+      // With no finding to lead with, the note's id is all the fold has to add.
+      disclosure.appendChild(node("p", "run-closure", entry.id));
     }
-    disclosure.appendChild(node("p", "run-closure", entry.id));
     item.appendChild(runFold(disclosure, { key: "closure:" + (summary.observationKey || summary.runId || "") + ":" + round.round + ":" + entry.id, oneLine: true }));
     return item;
   }
@@ -770,8 +887,8 @@ function runSummaryNode(summary, options) {
     // An approval that came with findings its lenses filed as deferred counts them, whatever later rounds made of them.
     var deferrable = Array.isArray(round.raised) && !isFold(round)
       ? round.raised.filter(function (entry) { return isNote(entry) && entry.filed === "deferred"; }).length : 0;
-    var pill = outcome === "approve" ? (deferrable ? "Approved with " + deferrable + (deferrable === 1 ? " deferrable note" : " deferrable notes") : "Approved")
-      : outcome === "changes" ? "Changes requested" : outcome === "notes-open" ? "Approved, notes open" : outcomeWords(round);
+    var pill = outcome === "approve" ? (deferrable ? say("Approved with ") + deferrable + (deferrable === 1 ? " deferrable note" : " deferrable notes") : say("Approved"))
+      : outcome === "changes" ? "Changes requested" : outcome === "notes-open" ? say("Approved, notes open") : outcomeWords(round);
     head.appendChild(node("span", "run-card-outcome", pill.charAt(0).toUpperCase() + pill.slice(1)));
     box.appendChild(head);
     var verdicts = round.verdicts && typeof round.verdicts === "object" ? round.verdicts : {};
@@ -829,7 +946,7 @@ function runSummaryNode(summary, options) {
             var item = node("li", "run-finding is-" + severity.toLowerCase());
             // Summaries are sentences; one stored without its full stop gets one here.
             var said = node("span", "run-finding-line");
-            said.appendChild(node("span", "run-finding-text", sentenceOf(entry.summary)));
+            said.appendChild(prose("run-finding-text", sentenceOf(entry.summary), round.candidateRef));
             if (!uniform && fate.band !== shared) {
               said.appendChild(document.createTextNode(" "));
               said.appendChild(node("span", "run-fate is-" + fate.kind, fate.words));
@@ -884,7 +1001,7 @@ function runSummaryNode(summary, options) {
   var planReview = summary.planReview && typeof summary.planReview === "object" ? summary.planReview : null;
   if (planReview) {
     // A plan's review is unbounded: it ends when every lens approves, or when the operator ends it, with a reason.
-    box.appendChild(node("p", "run-quiet", "The plan's review has no round bound: it runs until every lens approves or the operator ends it."));
+    box.appendChild(node("p", "run-quiet", say("The plan's review has no round bound: it runs until every lens approves or the operator ends it.")));
     if (planReview.state === "ended") { box.appendChild(node("p", "run-ended", "Ended without alignment: " + (planReview.endedReason || "no reason recorded."))); }
   }
   else if (summary.observational) { box.appendChild(node("p", "run-quiet", "Recorded reviewer reports · display only")); }

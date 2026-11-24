@@ -27,8 +27,11 @@ test('closure explanations start collapsed and expand without hiding the settlem
   expect(closed.app.querySelector('.run-closures > summary').textContent).toContain('</script><img');
   expect(closed.app.querySelector('.run-settled').closest('details')).toBeNull();
   expect(opened.app.querySelector('.run-closures').hasAttribute('open')).toBe(true);
-  // Opened, the fix and the note's id show beneath the finding, which stays whole in place rather than said twice.
-  expect(opened.app.querySelector('.run-closure').textContent).toBe('F1');
+  // Opened, the fix shows on its own sheet beneath the finding, which stays whole in place rather than said twice: how it
+  // ended and the commit, then the resolution. A note whose finding is known no longer repeats its id.
+  expect(opened.app.querySelector('.run-closure-fix .run-closure-evidence').textContent).toBe('Fixed in bbbbbbb');
+  expect(opened.app.querySelector('.run-closure-fix .run-closure-verdict')).toBeNull();
+  expect(opened.app.querySelector('.run-closure')).toBeNull();
   expect(opened.app.querySelector('.run-closure-resolution').textContent).toBe('Original reviewer confirmed <b>the fix</b>.');
   expect(first.app.querySelector('.run-closures')).toBeNull();
   expect(last.app.querySelector('.run-closures').hasAttribute('open')).toBe(false);

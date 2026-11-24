@@ -10832,7 +10832,8 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
     def test_every_command_the_guide_names_exists(self) -> None:
         text = GUIDE.read_text(encoding="utf-8") + (SKILL / "SKILL.md").read_text(encoding="utf-8")
         named = set(re.findall(r"run_delivery\.py (?:--delivery \S+ )?([a-z][a-z-]+)", text))
-        named |= set(re.findall(r"^\| (?:Lane|Lead|Setup) \| `([a-z][a-z-]+)", text, re.MULTILINE))
+        # Every row of the commands table, whoever runs it.
+        named |= set(re.findall(r"^\| (?:Lane|Lead|Setup|Any|Host) \| `([a-z][a-z-]+)", text, re.MULTILINE))
         # Commands named in prose, in backticks.
         skills = {s["id"] for s in json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))["skills"]}
         named |= set(re.findall(r"`((?:lead|app|review|pr)-[a-z-]+|adapter-test|handoff|doctor|ship)(?: [^`]*)?`", text)) - skills
@@ -10845,6 +10846,17 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
             with self.subTest(script=script, command=command):
                 usage = sh(sys.executable, "-B", self.generation / "skills/orchestrate-work/scripts" / script, "--help").stdout
                 self.assertIn(command, usage)
+
+    def test_plan_work_hands_over_the_plans_preview_unasked(self) -> None:
+        # The default posture: a plan is previewed from its first commit, and its links reach the operator unasked.
+        text = " ".join((ROOT / "skills/plan-work/SKILL.md").read_text(encoding="utf-8").split())
+        for phrase in ("run `plan-view --plan <path>` after each commit of the plan, and hand the operator both links it "
+                       "prints, the local preview and the hosted one, without being asked",
+                       "Where a command prints no preview line at all, the repository has no live view or hosted page "
+                       "for it: say nothing about a preview.",
+                       "A line saying the preview wasn't built or published is passed on as printed."):
+            with self.subTest(phrase=phrase[:40]):
+                self.assertIn(phrase, text)
 
     def test_the_walk_through_is_the_leads_own_steps(self) -> None:
         text = GUIDE.read_text(encoding="utf-8")
@@ -13696,11 +13708,24 @@ class IntegrationStepTests(unittest.TestCase):
                 ("budget", ("--", "--budget=missing.json"), 3, "failed", None),
                 ("budget", ("--", "--budget=budget.json"), 3, "over-budget", 1260), ("fail", (), 1, "failed", None),
                 ("pass", ("--", "--budget", "budget.json"), 0, "passed", 1260), ("slow", (), 0, "passed", None)]
+        finished: list[tuple[float | None, float]] = []
         for mode, argv, exit_code, result, budget in runs:
             with self.subTest(mode=mode, argv=argv):
                 code, out = self.suite(fx, mode, *argv)
                 self.assertEqual(code, exit_code, out)
                 entry = self.journal(fx, "integration.suite")[-1]
+                # Its start came first: the head, when it began, the budget the commit holds, and how long the last
+                # run that finished under that same budget took.
+                start = self.journal(fx, "integration.suite.started")[-1]
+                usual = next((seconds for under, seconds in reversed(finished) if under == budget), None)
+                self.assertEqual(start["data"], {"head": at, "startedAt": start["data"]["startedAt"],
+                                                 **({"expectedSeconds": usual} if usual is not None else {}),
+                                                 **({"budgetSeconds": budget} if budget is not None else {})})
+                self.assertEqual((start["subject"], start["lane"]), ("FX-1", None), start)
+                self.assertLess(start["id"], entry["id"])
+                self.assertLessEqual(start["data"]["startedAt"], entry["at"])
+                self.validates(fx, start)
+                finished.append((budget, entry["data"]["seconds"]))
                 self.assertEqual((entry["subject"], entry["lane"]), ("FX-1", None), entry)
                 self.assertEqual(entry["data"], {"head": at, "result": result, "seconds": entry["data"]["seconds"],
                                                  **({"budgetSeconds": budget} if budget is not None else {})})
@@ -13724,12 +13749,20 @@ class IntegrationStepTests(unittest.TestCase):
         self.assertNotIn("budgetSeconds", entry["data"])
         self.validates(fx, entry)
         self.assertEqual(len(self.journal(fx, "integration.suite")), len(runs) + 1)
+        # Its start was journalled before the checkout failed; a run that never started sets no usual time.
+        self.assertEqual(len(self.journal(fx, "integration.suite.started")), len(runs) + 1)
         (fx.tmp / "prep-mode").unlink()
+        # The run after it takes its usual time from the last run that finished with no budget, never the unreadable one.
+        code, out = self.suite(fx, "pass")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.journal(fx, "integration.suite.started")[-1]["data"].get("expectedSeconds"),
+                         next(seconds for under, seconds in reversed(finished) if under is None))
         # Without an integration step the run journals nothing, and its line keeps every field it had.
         self.without_integration(fx)
         before = self.record(fx)["journal"]
         code, out = self.suite(fx, "budget", "--", "--budget", "budget.json")
         self.assertEqual(code, 3, out)
+        # Neither its start nor its finish.
         self.assertEqual(self.record(fx)["journal"], before)
         line = self.lines(fx)[-1]
         self.assertEqual(sorted(line), sorted(["commit", "result", "exit", "argv", "seconds", "output", "platform",
@@ -13765,6 +13798,50 @@ class IntegrationStepTests(unittest.TestCase):
         target = sh("git", "rev-parse", "origin/main", cwd=m).stdout.strip()
         sh("git", "merge", "-q", "--no-ff", "-m", "FX-1: merge main", "origin/main", cwd=m)
         return sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip(), target
+
+    def test_a_lead_suite_stopped_while_it_runs_ends_its_start_as_a_failure(self) -> None:
+        from tests.test_run_delivery_supervisor import alive, wait_for
+        fx = self.fixture()
+        (fx.tmp / "suite-mode").write_text("wait")
+        proc = subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-suite"], cwd=fx.main, env=fx.env,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.addCleanup(lambda: proc.poll() is None and (proc.kill(), proc.wait()))
+        gate = fx.tmp / "suite-gate"
+        for name in ("started", "worker"):
+            pid = int(wait_for(lambda: Path(f"{gate}.{name}").exists() and Path(f"{gate}.{name}").read_text(),
+                               f"the suite's {name} pid"))
+            self.addCleanup(lambda pid=pid: alive(pid) and os.kill(pid, signal.SIGKILL))
+        start = self.journal(fx, "integration.suite.started")[-1]
+        self.assertEqual(self.journal(fx, "integration.suite"), [])
+        os.kill(proc.pid, signal.SIGTERM)
+        proc.communicate(timeout=60)
+        self.assertNotEqual(proc.returncode, 0)
+        # The record never shows it running on: its finish, a failure at the same head, follows its start.
+        finish = self.journal(fx, "integration.suite")[-1]
+        self.assertEqual((finish["data"]["head"], finish["data"]["result"]), (start["data"]["head"], "failed"), finish)
+        self.assertGreater(finish["id"], start["id"])
+        self.assertIs(finish["data"].get("stopped"), True, finish)
+        self.validates(fx, finish)
+        # A stopped run did not finish, so the next run has no usual time to go by.
+        code, out = self.suite(fx, "pass")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("expectedSeconds", self.journal(fx, "integration.suite.started")[-1]["data"])
+
+    def test_a_start_the_journal_refuses_never_holds_the_run(self) -> None:
+        fx = self.fixture()
+        # A release whose registry lacks the start's kind: the state tool refuses it, and accepts the finish.
+        kinds = fx.release / "skills/orchestrate-work/references/journal-kinds.json"
+        held = kinds.read_bytes()
+        self.addCleanup(kinds.write_bytes, held)
+        registry = json.loads(held)
+        del registry["kinds"]["integration.suite.started"]
+        kinds.write_text(json.dumps(registry, indent=2) + "\n")
+        code, out = self.suite(fx, "pass")
+        self.assertEqual(code, 0, out)
+        self.assertIn("lead-suite: the journal refused the run's start", out)
+        kinds.write_bytes(held)
+        self.assertEqual(self.journal(fx, "integration.suite.started"), [])
+        self.assertEqual([entry["data"]["result"] for entry in self.journal(fx, "integration.suite")], ["passed"])
 
     def test_lead_integrate_journals_each_fact_under_the_delivery_s_key(self) -> None:
         fx = self.fixture()
