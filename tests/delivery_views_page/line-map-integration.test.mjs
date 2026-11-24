@@ -277,7 +277,8 @@ test("a suite running at the integration's head draws its step wide and striped,
   expect(said(app, "suite")).toBe(`running at ${short(M)} for 34 min, about 31 usual, so 3 over`);
   const [suiteX, suiteWidth] = box(segment(app, "suite"));
   const [, caughtWidth] = box(segment(app, "caught"));
-  expect(suiteWidth > 2 * caughtWidth).toBe(true);
+  // As the study draws it: the suite takes 104 of the 236 the four steps share, the other three 44 each.
+  near(suiteWidth / (suiteWidth + 3 * caughtWidth), 104 / 236);
   expect(app.querySelector("#line .mg-suite-run .mg-stripes .mg-stripe") !== null).toBe(true);
   expect(app.querySelector("#line .mg-suite-run").getAttribute("aria-hidden")).toBe("true");
   // Past its usual time the stripe fills the step, and the tick sits where 31 of 34 minutes falls.
@@ -314,10 +315,15 @@ test("a timed suite's finish draws passed solid, over its budget with a cap, and
   const [x, width] = box(segment(over, "suite"));
   const cap = box(over.querySelector("#line .mg-suite-over"));
   near(cap[0] + cap[1], x + width);
+  near(cap[1], width * 10 / 104);
   const failed = await shown(delivery([merged(30, M), started(326, M), suite(355, M, "failed")]));
   expect(states(failed)).toEqual(["filled", "danger", "next", "hollow"]);
   expect(failed.querySelector("#line .mg-suite-run, #line .mg-suite-over")).toBe(null);
   // A suite with no start keeps the even bar, and an untimed run over its budget draws no cap.
+  // Once rejoined the bar is done, and draws its four steps even, whatever its last suite was.
+  const approved = Object.fromEntries(LENSES.map((lens) => [lens, "approve"]));
+  const done = await shown(delivery([merged(30, M), started(326, M), suite(355, M), round(356, M, approved), requested(357, M), rejoined(358)]));
+  expect(new Set(["caught", "suite", "review", "rejoin"].map((name) => box(segment(done, name))[1])).size).toBe(1);
   const untimed = await shown(delivery([merged(30, M), suite(355, M, "over-budget", { budgetSeconds: 29 * 60 })]));
   expect(box(segment(untimed, "suite"))[1]).toBe(box(segment(untimed, "caught"))[1]);
   expect(untimed.querySelector("#line .mg-suite-over")).toBe(null);

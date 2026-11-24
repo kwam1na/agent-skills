@@ -751,7 +751,7 @@ three steps, with the supervisor or without it:
    checkout is made it journals the run's start as `integration.suite.started`,
    with the commit, when it began and how long the last finished run under the
    same budget took, so the live view shows the suite running; its finish, a
-   later start, or a `failed` finish when the run is stopped, supersedes it. Record each merge of the target
+   later start, or a `failed` finish marked `stopped` when the run is stopped, supersedes it. Record each merge of the target
    into the integration with `lead-integrate merged --head <merge>`, adding
    `--conflict <path>` for each path whose conflict you resolved by hand.
 2. **Review the integration.** Run `$review-work` with the delivery's lenses and

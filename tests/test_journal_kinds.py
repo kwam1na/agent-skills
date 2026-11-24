@@ -90,7 +90,7 @@ TABLE = {
     "base.flaky": ("S", "problem", "source head after? failing", "", "-"),
     "base.moved": ("S", "note", "from to merged *why*", "", "epic: Delivery base updated"),
     "integration.merged": ("S", "note", "target targetHead head conflicts", "", "-"),
-    "integration.suite": ("S", "note", "head result seconds budgetSeconds?", "", "-"),
+    "integration.suite": ("S", "note", "head result seconds budgetSeconds? stopped?", "", "-"),
     "integration.suite.started": ("S", "note", "head startedAt expectedSeconds? budgetSeconds?", "", "-"),
     "integration.requested": ("S", "ready", "changeRequest head", "", "-"),
     "integration.landed": ("S", "landed", "target head", "", "-"),

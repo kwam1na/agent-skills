@@ -1816,6 +1816,10 @@
         "budgetSeconds": {
           "type": "seconds",
           "optional": true
+        },
+        "stopped": {
+          "type": "flag",
+          "optional": true
         }
       },
       "because": {

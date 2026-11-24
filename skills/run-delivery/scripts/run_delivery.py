@@ -15392,7 +15392,8 @@ def suite_run(c, binding: dict, commit: str, argv: list[str]) -> int:
         # A run stopped part way ends its start entry as a failure, so the record never shows it running on.
         if integration:
             state_tool("journal", "--kind", "integration.suite", "--subject", c.delivery, "--data", json.dumps(
-                {"head": commit, "result": "failed", "seconds": round(time.monotonic() - began, 1)}), check=False)
+                {"head": commit, "result": "failed", "seconds": round(time.monotonic() - began, 1), "stopped": True}),
+                       check=False)
         raise
     seconds = round(time.monotonic() - began, 1)
     # Exit 3 is over its budget only where the run itself was held to a suite-budget/1 file; elsewhere it is a failure.
@@ -15434,7 +15435,8 @@ def budget_seconds(text: str) -> float | None:
     wall = budget.get("wallSeconds")
     return wall if isinstance(wall, (int, float)) and not isinstance(wall, bool) and wall >= 0 else None
 # The start of lead-suite's run at commit, journalled before its checkout is made: when it began and, from the last
-# run of the integration suite that finished under the same budget, how long it usually takes. The budget is read
+# run of the integration suite that finished under the same budget, how long it usually takes. A run that never
+# started, or one stopped part way, did not finish. The budget is read
 # from the commit itself, as the run will read it in its checkout. A start the journal refuses never holds the run.
 SUITE_FINISHED = ("passed", "over-budget", "failed")
 
@@ -15448,7 +15450,8 @@ def suite_started(c, commit: str, argv: list[str]) -> None:
     except (Stop, OSError, ValueError, KeyError):
         earlier = []
     usual = next((entry["data"]["seconds"] for entry in reversed(earlier) if isinstance(entry.get("data"), dict)
-                  and entry["data"].get("result") in SUITE_FINISHED and entry["data"].get("budgetSeconds") == budget
+                  and entry["data"].get("result") in SUITE_FINISHED and not entry["data"].get("stopped")
+                  and entry["data"].get("budgetSeconds") == budget
                   and isinstance(entry["data"].get("seconds"), (int, float))
                   and not isinstance(entry["data"].get("seconds"), bool)), None)
     done = state_tool("journal", "--kind", "integration.suite.started", "--subject", c.delivery, "--data", json.dumps(

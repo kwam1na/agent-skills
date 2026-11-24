@@ -13748,6 +13748,11 @@ class IntegrationStepTests(unittest.TestCase):
         # Its start was journalled before the checkout failed; a run that never started sets no usual time.
         self.assertEqual(len(self.journal(fx, "integration.suite.started")), len(runs) + 1)
         (fx.tmp / "prep-mode").unlink()
+        # The run after it takes its usual time from the last run that finished with no budget, never the unreadable one.
+        code, out = self.suite(fx, "pass")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.journal(fx, "integration.suite.started")[-1]["data"].get("expectedSeconds"),
+                         next(seconds for under, seconds in reversed(finished) if under is None))
         # Without an integration step the run journals nothing, and its line keeps every field it had.
         self.without_integration(fx)
         before = self.record(fx)["journal"]
@@ -13811,7 +13816,28 @@ class IntegrationStepTests(unittest.TestCase):
         finish = self.journal(fx, "integration.suite")[-1]
         self.assertEqual((finish["data"]["head"], finish["data"]["result"]), (start["data"]["head"], "failed"), finish)
         self.assertGreater(finish["id"], start["id"])
+        self.assertIs(finish["data"].get("stopped"), True, finish)
         self.validates(fx, finish)
+        # A stopped run did not finish, so the next run has no usual time to go by.
+        code, out = self.suite(fx, "pass")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("expectedSeconds", self.journal(fx, "integration.suite.started")[-1]["data"])
+
+    def test_a_start_the_journal_refuses_never_holds_the_run(self) -> None:
+        fx = self.fixture()
+        # A release whose registry lacks the start's kind: the state tool refuses it, and accepts the finish.
+        kinds = fx.release / "skills/orchestrate-work/references/journal-kinds.json"
+        held = kinds.read_bytes()
+        self.addCleanup(kinds.write_bytes, held)
+        registry = json.loads(held)
+        del registry["kinds"]["integration.suite.started"]
+        kinds.write_text(json.dumps(registry, indent=2) + "\n")
+        code, out = self.suite(fx, "pass")
+        self.assertEqual(code, 0, out)
+        self.assertIn("lead-suite: the journal refused the run's start", out)
+        kinds.write_bytes(held)
+        self.assertEqual(self.journal(fx, "integration.suite.started"), [])
+        self.assertEqual([entry["data"]["result"] for entry in self.journal(fx, "integration.suite")], ["passed"])
 
     def test_lead_integrate_journals_each_fact_under_the_delivery_s_key(self) -> None:
         fx = self.fixture()
