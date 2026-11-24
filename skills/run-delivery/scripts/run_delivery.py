@@ -14803,8 +14803,11 @@ PLANNING_STEPS = ("needs", "render", "latest")
 
 
 def planning_phase(c) -> bool:
-    """Whether the delivery's record is a planning record: shared, not yet taken over by lead-init."""
-    return (c.record_state().get("meta") or {}).get("phase") == "planning"
+    """Whether the delivery's record is a planning record: shared, not yet taken over by lead-init. It reads the record's
+    state.json in its folder, as the pass's steps do, so a config with no record, or none shared, reads as not planning."""
+    state = getattr(c, "state", None)
+    record = load_json(Path(state) / "state.json") if state else None
+    return isinstance(record, dict) and (record.get("meta") or {}).get("phase") == "planning"
 
 
 def lead_run(args) -> None:
@@ -16753,7 +16756,7 @@ def plan_rekey(args) -> None:
     if changed == text:
         raise Stop(f"plan.rekey_unchanged: {plan} names none of {', '.join(mapping)}")
     (c.root / plan).write_text(changed, encoding="utf-8")
-    git("commit", "-q", "-m", "Re-key the plan's stories: " + ", ".join(f"{old} to {new}" for old, new in mapping.items()),
+    tool_commit("commit", "-q", "-m", "Re-key the plan's stories: " + ", ".join(f"{old} to {new}" for old, new in mapping.items()),
         "--", plan.as_posix(), cwd=c.root)
     after = git("rev-parse", "HEAD", cwd=c.root)
     rekeying = {"from": before, "to": after, "map": mapping}
