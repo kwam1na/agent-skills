@@ -819,6 +819,18 @@ class RecoveryTests(SharedFixture):
         self.assertEqual(refused.exception.code, "collab.seat_split")
         self.assertEqual(self.a.surfaces(self.remote), before)
 
+    def test_a_partition_push_runs_the_checkouts_own_pre_push_hook(self) -> None:
+        self.open()
+        second = self.join(self.b)
+        marker = self.root / "pre-push-ran"
+        hook = self.b.repo / ".git" / "hooks" / "pre-push"
+        hook.parent.mkdir(exist_ok=True)
+        hook.write_text(f"#!/bin/sh\ncat > '{marker}'\n", encoding="utf-8")
+        hook.chmod(0o755)
+        self.b.decide("Pushed through the hook.")
+        self.assertTrue(self.b.push()["pushed"])
+        self.assertIn(f"refs/agent-skills/{KEY}/{second}", marker.read_text(encoding="utf-8"))
+
     def test_a_push_the_remote_refuses_still_fetches_and_ingests_the_peers(self) -> None:
         self.open()
         second = self.join(self.b)

@@ -154,6 +154,9 @@ INVENTORY = {
         _key("admit_seat", {"seat.admitted"}): 1,
         _key("label_seat", {"seat.labeled"}): 1,
         _key("_journal_hold", {"partition.held", "partition.resumed"}): 1,
+        _key("give_scope", {"scope.transferred"}): 1,
+        _key("request_scope", {"scope.requested"}): 1,
+        _key("decline_request", {"scope.declined"}): 1,
     }),
 }
 
