@@ -195,11 +195,14 @@ Out of scope:
 
     The wordings sit in one table in `run-summary.js`, and a page-lane row scans
     the file's string literals: every literal matching `/approv/i` must have a
-    preview wording in that table, so a string added later fails the row until it
+    preview wording in that table, apart from a named list of the exact enum
+    values it compares against and never displays (`"approve"`), so a string added later fails the row until it
     has one. Without the option, run summaries read exactly as today;
   - the plan's clipped note ("The plan was too large to show whole …"), which
     sits in the changes fold, is drawn at the end of the plan chapter instead, so
-    a preview over its share still says so;
+    a preview over its share still says so. Its `overShare` tail, "The approved
+    plan alone is over the page's share for it.", reads for a preview "The plan
+    alone is over the page's share for it."; a delivery's wording is unchanged;
   - a "Decisions" fold shows `preview.decisions`, and for `layout: other` one line
     says the plan is not in the delivery layout and so shows no stories.
 
@@ -452,7 +455,9 @@ the files `line-map-plan.test.mjs`, `line-map-plan-review.test.mjs`,
     per-lens verdict is drawn);
   - the string-literal scan finds a preview wording for every `/approv/i` literal
     in `run-summary.js`, and fails when one is planted without a wording;
-  - a preview over its page share shows the clipped note;
+  - a preview over its page share shows the clipped note: its fixture sets
+    `overShare`, shows the preview tail, and is among the fixtures the `/approv/`
+    check runs over;
   - the aligned preview's review fold says "Lenses aligned on round N", while the
     existing plan-review row pinning "Approved on round 3" for a delivery plan
     stays green;
@@ -576,7 +581,8 @@ PPV-3's code.
   - after `adopt_plan_review` on a store with two rounds, the handed `plan.json`
     carries those two rounds, the fake origin's last cut carries `approval:
     handed`, and both recorded pids exit; with the origin never answering, both
-    are stopped after the 120-second wait (on an injected clock);
+    pids still run just before 120 seconds and are stopped after the wait (on an
+    injected clock);
   - adoption with no preview folder writes nothing and prints nothing new; a
     failing handed finish leaves adoption's output and exit code unchanged;
   - a later `plan-view` on the adopted store changes nothing;
