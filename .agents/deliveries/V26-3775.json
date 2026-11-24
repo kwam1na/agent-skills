@@ -39,16 +39,16 @@
         "skills/run-delivery/scripts/run_delivery.py",
         "tests/test_run_delivery_plan_preview.py",
         "tests/test_run_delivery_plan_review.py",
-        "tests/test_run_delivery_hosted.py"
+        "tests/test_run_delivery_hosted.py",
+        "skills/orchestrate-work/scripts/render_state.py",
+        "tests/test_orchestration_render.py"
       ]
     },
     "lane-3": {
       "owns": [
-        "skills/orchestrate-work/scripts/render_state.py",
         "skills/delivery-views/scripts/render.py",
         "skills/delivery-views/assets/runs.js",
         "skills/delivery-views/assets/runs.css",
-        "tests/test_orchestration_render.py",
         "tests/test_delivery_views_render.py",
         "tests/delivery_views_page/runs.test.mjs",
         "skills/delivery-views/scripts/public_projection.py",
