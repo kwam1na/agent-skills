@@ -630,6 +630,7 @@ class NeedsYouRowTests(unittest.TestCase):
             "report": ({"about": "APP-3", "detail": "moved"}, {}, "A report for the lead on APP-3"),
             "stale": ({"name": "tracker", "reason": "timed out"}, {}, "The tracker is not answering"),
             "compounding": ({"stub": "flow-log/APP.friction.md"}, {}, "The compound-learning decision is not recorded"),
+            "feedback": ({"entry": 9, "anchor": "## Decisions", "detail": "Not yet."}, {}, "Feedback on ## Decisions stops approval"),
         }
         self.assertEqual(set(given), kinds)
         items = [{"holding": False, "source": "s", "text": "t", "clears": "c", "kind": kind, "who": "lead", "fields": fields, **facts}
