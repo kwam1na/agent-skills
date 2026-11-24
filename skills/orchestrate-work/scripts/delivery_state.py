@@ -922,6 +922,8 @@ def complete_base_move_locked(directory: Path, *, from_head: str, to_head: str, 
             "archiveSha256": running["archiveSha256"]}
     with file_lock(directory / WRITER_LOCK), file_lock(directory / STATE_LOCK):
         current = read_state(directory)
+        # Its writer pin moves here, so only the seat is checked: an unseated, unadmitted or split checkout moves nothing.
+        require_seat(directory, current)
         entries = read_journal(directory)
         facts = {"from": from_head, "to": to_head, "merged": default_head, "why": reason}
         entry = {"id": len(entries) + 1, "at": now(), "kind": "base.moved", "subject": None,

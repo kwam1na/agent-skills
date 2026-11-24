@@ -452,7 +452,6 @@ def _apply_slice(state: dict, origins: dict, journal: list[dict], seat: str, par
     tool = _state_tool()
     if not permitted(journal, seat):
         return False
-    may_create = permitted(journal, seat)
     local_ids = {(origin["seat"], origin["seq"]): local for local, origin in tool.journal_origins(journal).items()}
     origins_of = tool.journal_origins(journal)
     removed_digest = tool.value_digest(tool.REMOVED_VALUE)
@@ -513,7 +512,7 @@ def _apply_slice(state: dict, origins: dict, journal: list[dict], seat: str, par
                 if local is not None and local.get("removed"):
                     # A removal wins over every write that does not follow it; a later write by a seat that may
                     # create the element makes it again.
-                    if not may_create or not (local["seat"] == seat or _matches(item.get("replaces"), local, removed_digest)):
+                    if not (local["seat"] == seat or _matches(item.get("replaces"), local, removed_digest)):
                         continue
                 elif local is not None and element is not None and not supersedes(incoming, digest, local, held_digest(path)):
                     continue
@@ -602,11 +601,13 @@ def ingest(directory: Path, *, key: str | None = None) -> dict:
         _new_record(directory, key)
     key = _key_of(directory)
     own = tool.local_seat(directory, key)
+    # This seat's own chain is read only by a record that holds none of it, such as one rebuilt after it was lost.
+    own_held = own is not None and tool.seat_counts(tool._raw_journal(directory)).get(own, 0) > 0
     loaded: dict[str, tuple[dict, list[dict]]] = {}
     held: dict[str, str] = {}
     for name in _git(directory, "for-each-ref", "--format=%(refname)", f"{PEER_REFS}/{key}/").stdout.split():
         seat = name.rsplit("/", 1)[1]
-        if seat == own:
+        if seat == own and own_held:
             continue
         try:
             loaded[seat] = read_partition(directory, name)
@@ -672,7 +673,7 @@ def ingest(directory: Path, *, key: str | None = None) -> dict:
         peers = updated["meta"]["collab"]["peers"]
         before = copy.deepcopy(peers)
         at = tool.now()
-        for seat in sorted(set(loaded) | set(held)):
+        for seat in sorted((set(loaded) | set(held)) - {own}):
             previous = before.get(seat) or {}
             through = counts.get(seat, 0)
             stale = True
@@ -702,7 +703,15 @@ def sync_once(directory: Path, *, remote: str = "origin") -> dict:
     if seat is not None and (collab["seats"].get(seat) or {}).get("admitted") or \
             seat is not None and any(entry["kind"] == "seat.requested" and entry["data"]["seat"] == seat
                                      for entry in tool.read_journal(directory)):
-        pushed = push(directory, remote=remote)
+        try:
+            pushed = push(directory, remote=remote)
+        except tool.StateError as error:
+            if error.code == "collab.seat_split":
+                raise
+            # A remote that refuses this seat's push may still serve its peers': they are still read.
+            fetch(directory, remote=remote)
+            ingest(directory)
+            raise
     fetch(directory, remote=remote)
     return {"ok": True, "pushed": pushed, **ingest(directory)}
 

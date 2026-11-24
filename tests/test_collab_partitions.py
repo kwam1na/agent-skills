@@ -312,6 +312,29 @@ class SharedFixture(unittest.TestCase):
             machine.take()
         return machine.seat()
 
+    def plant(self, seat: str, held: list[dict], *, through: int | None = None) -> None:
+        """Push a partition for ``seat`` by hand: its journal as the remote holds it, the slice ``held`` and, given, another
+        ``through``. Anyone who can push may."""
+        ref = f"refs/agent-skills/{KEY}/{seat}"
+        tip = git(self.remote, "rev-parse", ref)
+        partition = json.loads(git(self.remote, "cat-file", "blob", f"{tip}:partition.json"))
+        partition["slice"] = held
+        if through is not None:
+            partition["through"] = through
+        work = self.root / "planter"
+        if not work.exists():
+            clone(self.remote, work, name="Planter")
+        blobs = {}
+        for name, text in (("journal.jsonl", git(self.remote, "cat-file", "blob", f"{tip}:journal.jsonl") + "\n"),
+                           ("partition.json", state_tool.dumps(partition))):
+            blobs[name] = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=work, input=text, text=True,
+                                         capture_output=True, check=True).stdout.strip()
+        git(work, "fetch", "--quiet", str(self.remote), f"{ref}:{ref}")
+        tree = subprocess.run(["git", "mktree"], cwd=work, capture_output=True, text=True, check=True,
+                              input="".join(f"100644 blob {blobs[name]}\t{name}\n" for name in sorted(blobs))).stdout.strip()
+        commit = git(work, "commit-tree", tree, "-p", tip, "-m", "Planted")
+        git(work, "push", "--quiet", str(self.remote), f"{commit}:{ref}")
+
     def exchange(self, *machines: Machine) -> None:
         """Every machine pushes, then every machine ingests, so each has every other's latest."""
         for machine in machines:
@@ -467,26 +490,6 @@ class ExchangeTests(SharedFixture):
         self.assertConverged(self.a, self.b)
         self.assertEqual(sorted(item["subject"] for item in self.b.state()["planned"]), ["APP-1", "APP-2"])
         self.assertEqual(next(item for item in self.b.state()["planned"] if item["subject"] == "APP-1")["title"], "Back")
-
-    def plant(self, seat: str, held: list[dict]) -> None:
-        """Push a partition for ``seat`` by hand: a request, then the slice ``held``. Anyone who can push may."""
-        ref = f"refs/agent-skills/{KEY}/{seat}"
-        tip = git(self.remote, "rev-parse", ref)
-        partition = json.loads(git(self.remote, "cat-file", "blob", f"{tip}:partition.json"))
-        partition["slice"] = held
-        work = self.root / "planter"
-        if not work.exists():
-            clone(self.remote, work, name="Planter")
-        blobs = {}
-        for name, text in (("journal.jsonl", git(self.remote, "cat-file", "blob", f"{tip}:journal.jsonl") + "\n"),
-                           ("partition.json", state_tool.dumps(partition))):
-            blobs[name] = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=work, input=text, text=True,
-                                         capture_output=True, check=True).stdout.strip()
-        git(work, "fetch", "--quiet", str(self.remote), f"{ref}:{ref}")
-        tree = subprocess.run(["git", "mktree"], cwd=work, capture_output=True, text=True, check=True,
-                              input="".join(f"100644 blob {blobs[name]}\t{name}\n" for name in sorted(blobs))).stdout.strip()
-        commit = git(work, "commit-tree", tree, "-p", tip, "-m", "Planted")
-        git(work, "push", "--quiet", str(self.remote), f"{commit}:{ref}")
 
     def test_an_element_removed_on_one_machine_is_gone_on_both_and_an_unpermitted_removal_is_ignored(self) -> None:
         self.open()
@@ -807,6 +810,178 @@ class RefusalTests(SharedFixture):
         with self.assertRaises(state_tool.StateError) as refused:
             self.a.patch({"meta": {"collab": {"seats": {self.a.seat(): {"label": "Renamed"}}}}})
         self.assertEqual(refused.exception.code, "field_not_owned")
+
+
+class RecoveryTests(SharedFixture):
+    """The base-move writer checks the seat, a refused push still reads the peers, and a lost record comes back whole."""
+
+    def move(self, machine: Machine) -> dict:
+        generation = {"releaseId": "test-1", "archiveSha256": "a" * 64}
+        with mock.patch.object(state_tool, "writer_generation", return_value=generation):
+            return state_tool.complete_base_move_locked(
+                machine.directory, from_head=HEAD, to_head="b" * 40, default_head="c" * 40, expected_base=None,
+                expected_writer="unpinned", reason="The base moved")
+
+    def test_a_base_move_from_an_unadmitted_or_split_checkout_is_refused_and_an_admitted_seat_moves_it(self) -> None:
+        self.open()
+        self.join(self.c, admit=False)
+        before = self.c.surfaces(self.remote)
+        with self.assertRaises(state_tool.StateError) as refused:
+            self.move(self.c)
+        self.assertEqual(refused.exception.code, "collab.seat_not_admitted")
+        self.assertEqual(self.c.surfaces(self.remote), before)
+        moved = self.move(self.a)
+        self.assertEqual(moved["meta"]["baseHead"], "b" * 40)
+        self.assertEqual(self.a.journal()[-1]["kind"], "base.moved")
+        with mock.patch.object(state_tool, "writer_generation", return_value=moved["meta"]["writerGeneration"]):
+            collab._mark_split(self.a.directory)
+        before = self.a.surfaces(self.remote)
+        with self.assertRaises(state_tool.StateError) as refused:
+            self.move(self.a)
+        self.assertEqual(refused.exception.code, "collab.seat_split")
+        self.assertEqual(self.a.surfaces(self.remote), before)
+
+    def test_a_push_the_remote_refuses_still_fetches_and_ingests_the_peers(self) -> None:
+        self.open()
+        second = self.join(self.b)
+        hook = self.remote / "hooks" / "pre-receive"
+        hook.parent.mkdir(exist_ok=True)
+        hook.write_text(f"#!/bin/sh\nif grep -q '{second}'; then echo refused >&2; exit 1; fi\n", encoding="utf-8")
+        hook.chmod(0o755)
+        told = self.a.decide("For b to read.")
+        self.a.push()
+        self.b.decide("b's own, which the remote refuses.")
+        with self.assertRaises(state_tool.StateError) as refused:
+            collab.sync_once(self.b.directory)
+        self.assertEqual(refused.exception.code, "collab.push_failed")
+        self.assertIn(told["origin"], [entry["origin"] for entry in self.b.journal()])
+
+    def test_a_lost_record_is_rebuilt_from_the_remote_with_its_own_seats_chain(self) -> None:
+        self.open()
+        second = self.join(self.b)
+        own = self.b.decide("b's own, before the loss.")
+        self.b.push()
+        origins = sorted(self.b.origins())
+        shutil.rmtree(self.b.directory)
+        rebuilt = self.b.take()
+        self.assertEqual(sorted(self.b.origins()), origins, rebuilt)
+        self.assertNotIn(second, self.b.state()["meta"]["collab"]["peers"])
+        after = self.b.decide("b's own, after the rebuild.")
+        self.assertEqual(after["origin"]["seq"], own["origin"]["seq"] + 1)
+        self.b.push()
+        self.a.take()
+        self.assertIn(after["origin"], [entry["origin"] for entry in self.a.journal()])
+
+
+class ConcurrentValueTests(SharedFixture):
+    """Which of two values seats wrote to one path every machine keeps: the write that replaced the other, and
+    between concurrent writes, the higher seat id. The seat ids are fixed so a tie names its winner."""
+
+    HIGH, LOW = "s-bbbbbbbbbbbb", "s-aaaaaaaaaaaa"
+
+    def setUp(self) -> None:
+        super().setUp()
+        for machine, seat in ((self.a, self.HIGH), (self.b, self.LOW)):
+            git(machine.repo, "config", "--local", f"agent-skills.seat.{KEY}", seat)
+        self.open()
+        self.join(self.b)
+
+    def headlines(self) -> list[str]:
+        return [machine.state()["meta"]["headline"] for machine in (self.a, self.b)]
+
+    def test_the_lower_seats_overwrite_of_the_higher_seats_value_stands_on_both_machines(self) -> None:
+        self.a.patch({"meta": {"headline": "a's"}})
+        self.exchange(self.a, self.b)
+        self.b.patch({"meta": {"headline": "b's, over a's"}})
+        self.exchange(self.a, self.b)
+        self.assertEqual(self.headlines(), ["b's, over a's"] * 2)
+        self.assertConverged(self.a, self.b)
+
+    def test_concurrent_values_go_to_the_higher_seat_on_both_machines(self) -> None:
+        self.a.patch({"meta": {"headline": "a's"}})
+        self.b.patch({"meta": {"headline": "b's"}})
+        self.exchange(self.a, self.b)
+        self.assertEqual(self.headlines(), ["a's"] * 2)
+        self.assertConverged(self.a, self.b)
+
+    def test_an_overwrite_follows_only_the_value_it_replaced_not_a_later_one_at_the_same_seq(self) -> None:
+        self.a.patch({"meta": {"headline": "a's first"}})
+        self.exchange(self.a, self.b)
+        seq = self.a.journal()[-1]["origin"]["seq"]
+        self.b.patch({"meta": {"headline": "b's, over a's first"}})
+        self.b.push()
+        # a writes again at the same seq before it reads b's: b's write replaced a's first value, not this one.
+        self.a.patch({"meta": {"headline": "a's second"}})
+        self.assertEqual(self.a.journal()[-1]["origin"]["seq"], seq)
+        self.exchange(self.a, self.b)
+        self.assertEqual(self.headlines(), ["a's second"] * 2)
+        self.assertConverged(self.a, self.b)
+
+
+class ShapeAndHoldTests(SharedFixture):
+    """A shared journal's origins are checked, a partition that would break the record is held, an idle ingest
+    writes nothing, and the sync loop pushes a local write."""
+
+    def test_journal_errors_refuse_a_shared_journals_tampered_origins(self) -> None:
+        first = self.open()
+        self.a.decide("One.")
+        self.a.decide("Two.")
+        journal = self.a.journal()
+        self.assertEqual(state_tool.journal_errors(journal), [])
+        tampered = {
+            "a skipped seq": (2, {"seq": 4}, "entry 3/origin/seq: seat {first}'s entries run in sequence from 1"),
+            "seen names its own seat": (2, {"seen": {first: 1}}, "entry 3/origin/seen: a seat's seen names only other seats, not {first}"),
+            "seen names a later entry": (2, {"seen": {"s-000000000000": 1}},
+                                         "entry 3/origin/seen: names entry 1 of seat s-000000000000, which is not an earlier entry of this journal"),
+        }
+        for name, (index, change, said) in tampered.items():
+            with self.subTest(tampered=name):
+                copy = json.loads(json.dumps(journal))
+                copy[index]["origin"].update(change)
+                self.assertIn(said.format(first=first), state_tool.journal_errors(copy))
+        mixed = json.loads(json.dumps(journal))
+        del mixed[3]["origin"]
+        self.assertIn("entry 4: every entry of a shared record carries its origin, and no entry of an unshared one does",
+                      state_tool.journal_errors(mixed))
+
+    def test_a_partition_that_would_break_the_record_is_held_as_invalid_and_journalled_once(self) -> None:
+        for case, held, through in (
+                ("an invalid value", [{"path": "meta/headline", "value": 5}], None),
+                ("a through its journal lacks", [], 3)):
+            with self.subTest(case=case):
+                self.setUp()
+                self.open()
+                second = self.join(self.b)
+                before = composed(self.a)
+                self.plant(second, [{**item, "origin": {"seat": second, "seq": 1}} for item in held], through=through)
+                taken = self.a.take()
+                self.assertEqual(taken["held"], {second: "slice_invalid"})
+                self.assertEqual(self.a.state()["meta"]["collab"]["peers"][second]["heldReason"], "slice_invalid")
+                self.assertEqual([entry["data"] for entry in self.a.journal() if entry["kind"] == "partition.held"],
+                                 [{"seat": second, "reason": "slice_invalid"}])
+                self.assertEqual(composed(self.a), before)
+                version = self.a.state()["version"]
+                self.a.take()
+                self.assertEqual(self.a.state()["version"], version)
+                self.assertEqual(len([entry for entry in self.a.journal() if entry["kind"] == "partition.held"]), 1)
+
+    def test_an_ingest_with_nothing_new_leaves_the_record_as_it_is(self) -> None:
+        self.open()
+        self.join(self.b)
+        self.a.take()
+        before = files(self.a.directory)
+        self.a.take()
+        self.assertEqual(files(self.a.directory), before)
+
+    def test_one_pass_of_the_sync_loop_pushes_a_local_write(self) -> None:
+        self.open()
+        self.join(self.b)
+        told = self.b.decide("Written before the loop runs.")
+        loop = subprocess.run([sys.executable, "-B", str(SCRIPTS / "collab.py"), "serve", "--dir", str(self.b.directory),
+                               "--passes", "1"], capture_output=True, text=True, timeout=120)
+        self.assertEqual(loop.returncode, 0, loop.stderr)
+        self.a.take()
+        self.assertIn(told["origin"], [entry["origin"] for entry in self.a.journal()])
 
 
 if __name__ == "__main__":
