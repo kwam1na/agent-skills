@@ -199,6 +199,10 @@
         {
           "id": "v26-3807-1",
           "text": "run-delivery's Host behaviour says that for each live view or hosted address a command prints (lead-init, lead-run, doctor/view, status lines, plan-view's links), the agent in the same turn must open it in the host's in-app browser pane where the host offers one, and must also present it as a card that opens in that pane where the host can; where there is no such pane, it opens the address in the operator's own browser, and prints it only when it can open neither."
+        },
+        {
+          "id": "v26-3807-2",
+          "text": "The text names no host, product or host tool; no command calls a host's interface; each other skill that hands a live address says the same in one sentence; catalog, profiles and provenance are refreshed and the corpus pins stay green."
         }
       ],
       "after": [
