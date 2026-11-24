@@ -186,11 +186,18 @@ test("Plans in review lists one row per preview, before Now, with its local and,
   assert.ok(section.compareDocumentPosition(shown.app.querySelector("#now")) & 4, "Plans in review comes before Now");
   assert.deepEqual(previewRows(shown.app), [
     { plan: "docs/plans/2026-11-23-a.md", name: "Plan A",
-      links: [["Live preview", "http://127.0.0.1:4100/"], ["Hosted preview", "https://views.example/d/" + "a".repeat(64)]] },
-    { plan: "b-slug", name: "b-slug", links: [["Live preview", "http://127.0.0.1:4101/"]] },
+      links: [["Live view", "http://127.0.0.1:4100/"], ["Hosted view", "https://views.example/d/" + "a".repeat(64)]] },
+    { plan: "b-slug", name: "b-slug", links: [["Live view", "http://127.0.0.1:4101/"]] },
   ]);
   // The plan file is shown under a title, never twice.
   assert.equal(section.querySelectorAll(".preview-name small").length, 1);
+  // One sentence, then one sheet; links are named for a reader, and nothing carries a native tooltip.
+  assert.equal(section.querySelector(".say").textContent,
+    "These plans are being reviewed by agents before any delivery takes them up; each has its own live view.");
+  assert.equal(section.querySelectorAll(".preview-sheet").length, 1);
+  assert.deepEqual([...section.querySelectorAll("a")].map((link) => link.getAttribute("aria-label")),
+    ["Live view of Plan A", "Hosted view of Plan A", "Live view of b-slug"]);
+  assert.equal(section.querySelector("[title]"), null);
   // The runs are listed as without a preview.
   assert.deepEqual([...shown.app.querySelectorAll("#now [data-run]")].map((node) => node.getAttribute("data-run")),
     [INSIDE_PLAN, EXECUTE_AGAIN, REVIEW_AGAIN, AGENT]);
@@ -202,5 +209,16 @@ test("a runs event that brings a preview draws Plans in review without a reload"
   const [before, after] = result;
   assert.equal(before.app.querySelector("#previews"), null);
   assert.deepEqual(previewRows(after.app).map((row) => row.name), ["Plan A"]);
+  assert.equal(after.app.querySelector("#previews .say").textContent,
+    "A plan is being reviewed by agents before any delivery takes it up; it has its own live view.");
   assert.equal(result.navigations.length, 0);
+});
+
+test("a preview's title reads as the line map's prose: a quoted name is code", async () => {
+  const [shown] = await openPage(renderWithPreviews([{ live: "127.0.0.1:4102", plan: "c.md", title: "Serve `plan-view` links" }]));
+  const title = shown.app.querySelector("#previews .preview-name b");
+  assert.equal(title.textContent, "Serve plan-view links");
+  assert.equal(title.querySelector("code.prose-code").textContent, "plan-view");
+  assert.equal(title.querySelector("a[aria-label]"), null);
+  assert.equal(shown.app.querySelector("#previews .preview-live").getAttribute("aria-label"), "Live view of Serve plan-view links");
 });

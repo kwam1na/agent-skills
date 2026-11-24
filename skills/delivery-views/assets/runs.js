@@ -160,24 +160,43 @@
     return item;
   }
 
-  // The plans being reviewed before any delivery, each served by a preview server of its own: its title, its plan
-  // file, and its local and hosted links. Drawn only when the live server named one.
+  // The plans being reviewed before any delivery, each served by a preview server of its own: one sentence, then one
+  // sheet listing each plan by its title, its plan file, and its local and hosted links. Drawn only when the live
+  // server named one.
   function previewsNode(previews) {
-    var box = add(el("section", "previews"), el("h2", null, "Plans in review"));
+    var box = add(el("section", "previews"), el("h2", null, "Plans in review"),
+      el("p", "say", previews.length === 1 ? "A plan is being reviewed by agents before any delivery takes it up; it has its own live view."
+        : "These plans are being reviewed by agents before any delivery takes them up; each has its own live view."));
     box.setAttribute("id", "previews");
+    var sheet = el("ul", "preview-sheet");
     previews.forEach(function (preview) {
-      var row = el("article", "preview");
+      var row = el("li", "preview");
       row.setAttribute("data-plan", text(preview.plan));
-      add(row, add(el("span", "preview-name"), el("b", null, text(preview.title) || text(preview.plan)),
-        text(preview.title) ? el("small", null, text(preview.plan)) : null));
+      var name = text(preview.title) || text(preview.plan);
+      var title = el("b");
+      (typeof richWords === "function" ? richWords(name) : [document.createTextNode(name)]).forEach(function (node) { title.appendChild(node); });
+      add(row, add(el("span", "preview-name"), title, text(preview.title) ? el("small", null, text(preview.plan)) : null));
+      // Named as the reader sees the title, without the marks that set its code apart.
+      var said = title.textContent;
       var links = el("span", "preview-links");
       var live = safeHref(text(preview.live));
-      if (live) { var local = el("a", "preview-live", "Live preview"); local.setAttribute("href", live); links.appendChild(local); }
+      if (live) {
+        var local = el("a", "preview-live", "Live view");
+        local.setAttribute("href", live);
+        local.setAttribute("aria-label", "Live view of " + said);
+        links.appendChild(local);
+      }
       var hosted = /^https:\/\//.test(text(preview.hosted)) ? preview.hosted : null;
-      if (hosted) { var away = el("a", "preview-hosted", "Hosted preview"); away.setAttribute("href", hosted); links.appendChild(away); }
+      if (hosted) {
+        var away = el("a", "preview-hosted", "Hosted view");
+        away.setAttribute("href", hosted);
+        away.setAttribute("aria-label", "Hosted view of " + said);
+        links.appendChild(away);
+      }
       row.appendChild(links);
-      box.appendChild(row);
+      sheet.appendChild(row);
     });
+    box.appendChild(sheet);
     return box;
   }
 
