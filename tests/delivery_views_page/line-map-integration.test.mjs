@@ -197,6 +197,28 @@ test("what stands at the current head rings its stop and says what the rejoin st
   expect(said(moved, "rejoin")).toBe("Needs a passing suite at the current head and an approving round at it.");
 });
 
+test("the pre-merge rejoin labels stack below the bar while a stopped tally stays above", async () => {
+  const app = await shown(record({
+    queue: [item("A", "stopped"), item("B", "queued")],
+    finish: [{ id: "finish", text: "Finish the delivery", met: false }],
+    meta: { trackerParent: KEY, baseHead: headOf("base"), integration: INTEGRATION },
+  }));
+  const line = app.querySelector("#line .line-merge");
+  const tally = line.querySelector(".mg-tally");
+  const bar = line.querySelector(".mg-step");
+  const label = line.querySelector(".mg-bar-label");
+  const next = line.querySelector(".mg-next");
+  const status = line.querySelector(".mg-step-said");
+  const y = (node) => Number(node.getAttribute("y"));
+  expect(tally.textContent).toBe("0 of 2 landed· 1 stopped");
+  expect(label.textContent).toBe("Rejoin main · main in");
+  expect(y(tally) < y(bar)).toBe(true);
+  expect(y(label) >= y(bar) + Number(bar.getAttribute("height")) + 12).toBe(true);
+  expect(y(next) - y(label) >= 12).toBe(true);
+  expect(y(status) - y(next) >= 12).toBe(true);
+  expect(Number(line.getAttribute("height")) > y(status)).toBe(true);
+});
+
 test("a step with no fact yet says what will make it, and the bar's own status is the current step's", async () => {
   const app = await shown(delivery([]));
   expect(["caught", "suite", "review", "rejoin"].map((name) => said(app, name))).toEqual([

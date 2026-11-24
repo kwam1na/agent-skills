@@ -2580,13 +2580,13 @@
     // How far below the main line the drawing reaches: the ticks' own boxes, the caret's words, the bar's status and the target.
     var below = trunkY + (next ? 36 : 16);
     if (step) {
-      // The bar: the four steps, the one in progress named over it, and that step's status under it.
+      // The bar: the four steps, the current step and its status beneath it.
       var said = rejoinSaid(doc) || [];
       var current = -1;
       stops.forEach(function (state, i) { if (current < 0 && state !== "filled") { current = i; } });
       // Every step in but not yet rejoined: it waits on its last step, the change request, and says so.
       if (current < 0 && !rejoined) { current = stops.length - 1; }
-      shape(svg, "text", { class: "mg-step-label mg-bar-label", x: barX, y: trunkY - 22 },
+      shape(svg, "text", { class: "mg-step-label mg-bar-label", x: barX, y: trunkY + 18 },
         "Rejoin " + step.target + (rejoined ? " · done" : " · " + STEP_TITLES[current].toLowerCase() + (stops[current] === "running" ? " running" : "")));
       var segment = (BAR_WIDTH - 6) / 4;
       // A timed suite's step is drawn wider, so the time it fills reads at a glance; the other three share the rest.
@@ -2608,16 +2608,17 @@
       var sentence = rejoined ? "Rejoined " + step.target + "."
         : running && stops[current] === "running" ? "The full suite is running at " + short(running.data.head) + "." + (runFor ? " " + runFor + "." : "")
         : STEP_TITLES[current] + ". " + (said[current] || "");
+      var statusY = trunkY + (next ? 46 : 34), statusLineHeight = 14;
       var saidLines = wrapWords(sentence, 34).slice(0, 3);
       saidLines.forEach(function (line, k) {
-        shape(svg, "text", { class: "mg-why mg-step-said", x: barX, y: trunkY + 22 + k * 12 }, line);
-        below = Math.max(below, trunkY + 26 + k * 12);
+        shape(svg, "text", { class: "mg-why mg-step-said", x: barX, y: statusY + k * statusLineHeight }, line);
+        below = Math.max(below, statusY + 4 + k * statusLineHeight);
       });
       // The open change request into the target, the operator's to merge, opens from under the bar.
       var request = !rejoined && standing(step, "requested") ? step.latest.requested : null;
       if (request && text(request.data.changeRequest)) {
         var target = changeTarget(request.data.changeRequest);
-        var y = trunkY + 22 + saidLines.length * 12 + 2;
+        var y = statusY + saidLines.length * statusLineHeight + 2;
         var holder = target ? shape(svg, "a", { class: "mg-change", href: target.href, target: "_blank", rel: "noopener noreferrer",
           "aria-label": "Open the change request into " + step.target + " " + target.label }) : svg;
         shape(holder, "text", { class: "mg-why mg-change-label", x: barX, y: y },
