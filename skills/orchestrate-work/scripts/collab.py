@@ -273,14 +273,36 @@ def _keep_carried(directory: Path, **changes: object) -> None:
     _state_tool()._write_atomically(directory / CARRIED_FILE, _state_tool().dumps({**_carried(directory), **changes}))
 
 
-def peer_carried(directory: Path, seat: str) -> dict | None:
-    """What ``seat``'s fetched partition carries for the seat it passed delivery to: its hosted identity and tracker
-    position, each null or empty where it carried none; None when its partition can't be read."""
+def keep_inputs(directory: Path, inputs: dict) -> bool:
+    """What this seat's machine-local inputs carry (D21), kept for its next partition: written only when it changed,
+    so the sync loop pushes once for each change. Whether it changed."""
+    if _carried(directory).get("inputs") == inputs:
+        return False
+    _keep_carried(directory, inputs=inputs)
+    return True
+
+
+def peer_inputs(directory: Path, seat: str) -> dict | None:
+    """The machine-local inputs ``seat``'s fetched partition carries, empty where it carries none; None when its
+    partition can't be read."""
     try:
         partition, _ = read_partition(directory, peer_ref(_key_of(directory), seat))
     except (ValueError, OSError, subprocess.SubprocessError):
         return None
-    return partition.get("carried") or {"hostedIdentity": None, "trackerThrough": {}}
+    return (partition.get("carried") or {}).get("inputs") or {}
+
+
+def peer_carried(directory: Path, seat: str) -> dict | None:
+    """What ``seat``'s fetched partition carries for the seat it passed delivery to: its hosted identity, tracker
+    position, evidence notes and friction stub, each null or empty where it carried none; None when its partition
+    can't be read."""
+    try:
+        partition, _ = read_partition(directory, peer_ref(_key_of(directory), seat))
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return None
+    carried = partition.get("carried") or {}
+    return {"hostedIdentity": carried.get("hostedIdentity"), "trackerThrough": carried.get("trackerThrough") or {},
+            "evidenceNotes": carried.get("evidenceNotes"), "friction": carried.get("friction")}
 
 
 def delivery_transfer(journal: list[dict], seat: str) -> dict | None:
@@ -485,9 +507,10 @@ def build_partition(directory: Path) -> tuple[dict, str]:
                          **({"replaces": origin["replaces"]} if "replaces" in origin else {})})
     partition = {"schemaVersion": PARTITION, "seat": seat, "generation": state["meta"].get("writerGeneration"),
                  "through": len(lines), "slice": held}
-    given = _carried(directory).get("given")
-    if given is not None:
-        partition["carried"] = given
+    kept = _carried(directory)
+    carried = {**(kept.get("given") or {}), **({"inputs": kept["inputs"]} if kept.get("inputs") else {})}
+    if carried:
+        partition["carried"] = carried
     errors = tool.validate(partition, tool.load_schema(PARTITION))
     if errors:
         raise _refuse("collab.partition_invalid", "; ".join(errors))
@@ -976,11 +999,14 @@ def sync_once(directory: Path, *, remote: str) -> dict:
     return {"ok": True, "pushed": pushed, **ingest(directory)}
 
 
-def _changes_mark(directory: Path) -> tuple[int, int] | None:
-    with contextlib.suppress(OSError):
-        stat = (directory / _state_tool().CHANGES_FILE).stat()
-        return stat.st_mtime_ns, stat.st_size
-    return None
+def _changes_mark(directory: Path) -> tuple | None:
+    """What a push follows: the record's change log, and what this seat's machine-local inputs carry."""
+    marks = []
+    for name in (_state_tool().CHANGES_FILE, CARRIED_FILE):
+        with contextlib.suppress(OSError):
+            stat = (directory / name).stat()
+            marks.append((name, stat.st_mtime_ns, stat.st_size))
+    return tuple(marks) or None
 
 
 def serve(directory: Path, *, remote: str, poll: float = POLL_SECONDS, stop: Path | None = None,

@@ -2601,6 +2601,10 @@
         },
         "why": {
           "type": "prose"
+        },
+        "at": {
+          "type": "instant",
+          "optional": true
         }
       },
       "because": {

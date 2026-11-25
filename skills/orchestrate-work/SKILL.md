@@ -991,6 +991,10 @@ read them.
   no turn holding the queue lock. Busy past that, it refuses with
   `scope.handover_busy`, naming the check or merge. Idle, holding the queue
   lock, it journals `queue.stopped` and then `scope.transferred`.
+- **Delivery's handover.** `scope give --scope delivery` here refuses with
+  `scope.handover_unparked` and writes nothing: delivery moves only through
+  run-delivery's `collab give --scope delivery`, which parks this machine's
+  tracker and hosted publishers first.
 - **Requests.** Any seat may ask for a scope with `scope.requested`. Its
   holder passes it on, or keeps it with `scope.declined`. With
   `collab.autoGrant` on, the `delivery` holder passes a requested plan section
@@ -1019,11 +1023,12 @@ an unshared record every step runs, as before. run-delivery's
 
 | Step | Runs on |
 | --- | --- |
-| `reconcile`, `regions`, `peers`, `finish`, `publish`, `cleanupBeforeClose`, `friction`, `closeOut` | the machine whose seat holds `delivery` |
+| `reconcile`, `regions`, `peers`, `grants`, `planView`, `finish`, `publish`, `cleanupBeforeClose`, `friction`, `closeOut`, `carried` | the machine whose seat holds `delivery` |
 | `fullHealth` | the machine whose seat holds `queue` |
 | `lenses`, `cleanup`, `deferrals` | every machine, for the stories of the lanes its seat holds, whose checkouts and review rounds are there |
 | `blockers` | every machine, journalling only blockers about its own supervisor's children |
 | `peerWaits`, `laneChanges`, `needs`, `render`, `latest` | every machine, writing only files beside its own record |
+| `inputs` | every machine: what its seat carries kept for its partition, and its peers' carried inputs taken in |
 
 - **Lead commands.** `lead-assign`, `lead-own` and `lead-add-lane` need
   `delivery`, which arbitrates files and lanes, and `lead-accept` needs the
@@ -1062,12 +1067,14 @@ replaced, by the journal.
 | `state.lock`, `lane-ownership.lock`, `plan.lock`, `queue.lock`, `supervisor.lock` | local |
 | flow logs `supervisor`, `prepares`, `suite`, `ship-gates`; `sessions.json`, `needs-you.json`, `lane-changes.json`, `peer-waits.json`, `live.json` and `supervisor.json` with their writes' temporary `.live.json.{pid}` and `.supervisor.json.{pid}`, `snapshots`; the peer registry and the machine ledger | local |
 | `flow-log` | local: the folder holding the flow logs, each by its own row here |
-| flow logs `acceptance`, `app-checks`, `lane-starts` | carried by the lane's holder: `acceptance` keyed by subject and head, `lane-starts` by subject, `app-checks` keeping every entry in its seat's order |
+| flow logs `acceptance`, `app-checks`, `lane-starts` | carried by the lane's holder: `acceptance` keyed by subject and head, `lane-starts` by subject and the assignment it follows, `app-checks` keeping every entry. Every seat's entries are read in the order of the lane tenure each was written in, then its writer's own order |
+| flow logs `{name}.peers` | local: each carried log's peers' entries as this machine took them from their partitions, with journal ids translated to its own |
+| lane checkouts and `evidence_dir` | local to the lane's holder, whose partition carries `checkoutsLeft`, its lanes' merged or settled stories whose checkout is still there, and which journals each merged story's deferred findings once as `deferral.held` for the close's follow-ups |
 | flow log `videos` | carried by the seat that recorded each entry, keyed by subject, clip and head; a lane's recordings never count for the close |
 | flow log `tracker-marks`, and the tracker ledger | carried by `delivery`'s holder, keyed by `<seat>.<seq>` |
 | flow log `full-health` | its `result` entries carried by `queue`'s holder, keyed by head; a rerun replaced by a `fullhealth.rerun` entry naming the result it reruns; `note_posture`'s dedupe replaced by the record's `posture.changed` and `fullhealth.skipped` entries |
-| `closed.json` | local to the closer, whose partition carries the closing entry's origin |
-| `evidence-page.json`, `evidence-notes.json` | written only by `delivery`'s holder, whose partition carries the notes |
+| `closed.json` | local to the closer, whose partition carries the closing entry's origin once its archive lands; a peer counts the delivery closed only then |
+| `evidence-page.json`, `evidence-notes.json` | written only by `delivery`'s holder, which carries the notes when it passes delivery on; the seat taking it sets its own earlier page and merged-base recordings aside |
 | `friction.md` | carried by `delivery`'s holder |
 | `full-health.lock`, `full-health.log`, `supervisor.blockers.json`, `supervisor.jsonl`, `supervisor.live.log`, `supervisor.log`, `supervisor.{name}.log`, `supervisor.stop`, `wait.json`, `lead-wait.json` | local |
 | flow log `resolutions` | carried by the resolving seat, keyed by the resolved entry's origin |
