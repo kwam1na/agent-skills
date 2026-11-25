@@ -151,6 +151,51 @@ class HandoffListingTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("**Hand-off: FX-3**", out)
 
+    def test_a_listing_declared_shared_still_needs_its_owner_for_an_added_output_and_a_digest_refresh_hands_off(self) -> None:
+        # The listing is a shared output too, and its regenerator reproduces it from the sources: verification passes,
+        # and the listing's own guard still holds an added output to the listing's owner.
+        fx = self.delivery()
+        m = fx.main
+        generator = ("import json, pathlib\n"
+                     "sources = sorted(pathlib.Path('src').glob('*.txt'))\n"
+                     "pathlib.Path('build').mkdir(exist_ok=True)\n"
+                     f"pathlib.Path({LISTING!r}).write_text(json.dumps({{'outputs': sorted(p.stem for p in sources), "
+                     "'digest': ','.join(p.read_text().strip() for p in sources)}) + '\\n')\n")
+        (m / "tools").mkdir(exist_ok=True)
+        (m / "tools/listing.py").write_text(generator)
+        for name in ("one", "two"):
+            (m / f"src/{name}.txt").write_text(f"{name}\n")
+        binding = json.loads((m / ".agents/orchestration.json").read_text())
+        binding["regenerable"].update(regenerators=[[sys.executable, "tools/listing.py"]], shared=[LISTING])
+        (m / ".agents/orchestration.json").write_text(json.dumps(binding, indent=2))
+        sh(sys.executable, "tools/listing.py", cwd=m)
+        commit(m, "FX-1: the listing is shared, and generated")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+
+        def regenerated(key: str, lane: str, own: str, text: str) -> tuple[Path, str]:
+            code, out = fx.flow("lead-assign", key, "--lane", lane, "--title", lane, cwd=m)
+            self.assertEqual(code, 0, out)
+            wt = fx.lane(key)
+            (wt / own).write_text(text)
+            sh(sys.executable, "tools/listing.py", cwd=wt)
+            commit(wt, f"{key}: its change, regenerated")
+            (wt / f".orchestration/review/{key}").mkdir(parents=True)
+            (wt / f".orchestration/review/{key}/context.md").write_text("- evidence")
+            self.reviewed(fx, key, wt, 1)
+            body = fx.tmp / f"{key}.md"
+            body.write_text("x\n")
+            code, out = fx.flow("open-pr", key, "--title", f"{key}: change", "--body-file", body, cwd=wt)
+            self.assertEqual(code, 0, out)
+            return wt, out.strip().splitlines()[-1]
+
+        wt, url = regenerated("FX-2", "lane-1", "src/one-b.txt", "b\n")
+        self.handoff(fx, "FX-2", wt, url, f"{LISTING} (added one-b): ask the lead to grant it, with ",
+                     f"lead-own --lane lane-1 --grant {LISTING}")
+        wt, url = regenerated("FX-3", "lane-2", "src/two.txt", "two changed\n")
+        code, out = fx.flow("handoff", "FX-3", "--pr", url, cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("**Hand-off: FX-3**", out)
+
     def test_a_listing_that_conflicts_with_a_digest_only_base_change_reads_as_the_queue_reads_it(self) -> None:
         # The base-conflict check reads each version of a conflicted listing with the queue's own values, so a listing
         # that names `{head}` resolves here as in the queue's sync, which takes the candidate's side: no refusal.

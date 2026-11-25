@@ -589,6 +589,95 @@ def test_a_corpus_without_the_dispatcher_checks_no_manifest() -> None:
     print("verified acceptance: no hook rule checked without the dispatcher")
 
 
+def _sentence_fields(root: Path) -> list[tuple[str, object]]:
+    """Every catalog `degradedBehavior` and profile `description` the source holds, by where it is."""
+    catalog = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
+    fields = [(f"catalog.json {skill['id']}", skill["degradedBehavior"])
+              for skill in catalog["skills"] if "degradedBehavior" in skill]
+    for path in sorted((root / "profiles").glob("*.json")):
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if "description" in document:
+            fields.append((f"profiles/{path.name}", document["description"]))
+    return fields
+
+
+def test_every_source_sentence_field_is_a_list() -> None:
+    fields = _sentence_fields(ROOT)
+    require(len(fields) >= 20, f"too few sentence fields read: {len(fields)}")
+    strings = [where for where, value in fields if not isinstance(value, list)]
+    require(not strings, f"still a string, not a list of sentences: {strings}")
+    print("verified: every catalog degradedBehavior and profile description is a list")
+
+
+def test_sentence_lists_validate_and_bad_items_reject() -> None:
+    def mutate(root: Path) -> None:
+        catalog_path = root / "catalog.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        skills = {skill["id"]: skill for skill in catalog["skills"]}
+        skills["deliver-work"]["degradedBehavior"] = " ".join(skills["deliver-work"]["degradedBehavior"])
+        skills["plan-work"]["degradedBehavior"] = []
+        skills["review-work"]["degradedBehavior"] = ["A sentence.", ""]
+        skills["execute-work"]["degradedBehavior"] = ["A sentence. ", "Another."]
+        skills["obtain-review"]["degradedBehavior"] = ["One sentence.\nTwo sentences."]
+        write_json(catalog_path, catalog)
+        for name, value in (("bootstrap", " ".join), ("core", lambda _: [" Leading space."]),
+                            ("jira", lambda _: ["Carriage\rreturn."])):
+            path = root / "profiles" / f"{name}.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            document["description"] = value(document["description"])
+            write_json(path, document)
+
+    result = with_copy(mutate)
+    require(result.returncode == 1, result.stdout)
+    findings = {(finding["artifact"], finding["message"])
+                for finding in json.loads(result.stdout)["findings"] if finding["ruleId"] == "schema.supported"}
+    expected = {
+        ("plan-work", "catalog degradedBehavior sentence list must not be empty"),
+        ("review-work", "catalog degradedBehavior sentence 1 must not be empty"),
+        ("execute-work", "catalog degradedBehavior sentence 0 has leading or trailing whitespace"),
+        ("obtain-review", "catalog degradedBehavior sentence 0 holds a line break"),
+        ("core", "profile description sentence 0 has leading or trailing whitespace"),
+        ("jira", "profile description sentence 0 holds a line break"),
+    }
+    require(findings == expected, f"sentence findings differ: {sorted(findings ^ expected)}\n{result.stdout}")
+    print("verified: the string and list forms validate; an empty list or a bad item rejects")
+
+
+def test_two_branches_adding_sentences_to_one_entry_merge_cleanly() -> None:
+    from quiet_git import quieten
+
+    def git(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                               "-c", "core.hooksPath=/dev/null", *args],
+                              cwd=repository, capture_output=True, text=True, check=False)
+
+    def add(repository: Path, branch: str, sentence: str, at_start: bool) -> None:
+        git(repository, "checkout", "--quiet", "-b", branch, "main")
+        path = repository / "catalog.json"
+        catalog = json.loads(path.read_text(encoding="utf-8"))
+        entry = next(skill for skill in catalog["skills"] if skill["id"] == "run-delivery")
+        entry["degradedBehavior"].insert(0 if at_start else len(entry["degradedBehavior"]), sentence)
+        path.write_text(json.dumps(catalog, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+        git(repository, "commit", "--quiet", "-am", branch)
+
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = Path(temporary)
+        git(repository, "init", "--quiet", "--initial-branch=main")
+        quieten(repository)
+        (repository / "catalog.json").write_bytes((ROOT / "catalog.json").read_bytes())
+        git(repository, "add", "catalog.json")
+        git(repository, "commit", "--quiet", "-m", "base")
+        add(repository, "first", "The first story's sentence.", at_start=True)
+        add(repository, "second", "The second story's sentence.", at_start=False)
+        merged = git(repository, "merge", "--no-edit", "first")
+        require(merged.returncode == 0, f"the two sentences conflicted: {merged.stdout}{merged.stderr}")
+        catalog = json.loads((repository / "catalog.json").read_text(encoding="utf-8"))
+        sentences = next(skill for skill in catalog["skills"] if skill["id"] == "run-delivery")["degradedBehavior"]
+        require(sentences[0] == "The first story's sentence." and sentences[-1] == "The second story's sentence.",
+                f"merged list lost a sentence: {sentences[:1]} ... {sentences[-1:]}")
+    print("verified: two branches adding sentences to one entry merge without a conflict")
+
+
 def main() -> int:
     tests = [
         test_missing_provenance_rejects,
@@ -620,6 +709,9 @@ def main() -> int:
         test_a_retained_corpus_without_the_dispatcher_keeps_its_closure,
         test_a_corpus_without_the_dispatcher_may_not_claim_the_hook_rules,
         test_a_corpus_without_the_dispatcher_checks_no_manifest,
+        test_every_source_sentence_field_is_a_list,
+        test_sentence_lists_validate_and_bad_items_reject,
+        test_two_branches_adding_sentences_to_one_entry_merge_cleanly,
     ]
     for test in tests:
         test()

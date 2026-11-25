@@ -70,5 +70,9 @@ visible, because it returns the wrong value instead of the wrong shape.
 
 ## Related Issues
 
+- [A new Config attribute breaks the namespaces that stand in for Config](a-new-config-attribute-breaks-the-namespaces-that-stand-in-for-config-2026-11-25.md):
+  the same mismatch the other way round. There, the stand-in lacked a field every real `Config` has, so a correct
+  change failed the tests. Here, the real constructor lacked a field the stand-in had, so a broken command passed
+  them. Both come from a namespace that copies some of the fields `Config` sets instead of being the real thing.
 - [A recipe test that normalizes its fixture hides the real input's drift](a-recipe-test-that-normalizes-its-fixture-hides-the-real-inputs-drift-2026-11-23.md):
   the same family, a test whose input is cleaner than what the code meets in use.

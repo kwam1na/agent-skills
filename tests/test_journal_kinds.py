@@ -134,6 +134,7 @@ TABLE = {
     "compounding.recorded": ("H", "decision", "outcome reference? *why?*", "", "epic: Compounding decided"),
     "hook.held": ("S", "note", "hook verdict lanes? pieces?", "", "-"),
     "peer.merged": ("S", "note", "peer head files", "", "-"),
+    "target.settled": ("S", "note", "target peers stories seconds", "", "-"),
     "seat.requested": ("B", "note", "seat label", "", "-"),
     "seat.admitted": ("B", "decision", "seat label approver", "answers:seat.requested", "-"),
     "seat.labeled": ("B", "note", "seat label", "", "-"),

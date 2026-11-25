@@ -146,6 +146,7 @@ INVENTORY = {
         _key("note_gap", {"gap.noted"}): 1,
         _key("closed_step", {"delivery.closed"}): 1,
         _key("Supervisor.peer_merges", {"peer.merged"}): 1,
+        _key("Supervisor.target_settles", {"target.settled"}): 1,
         _key("Supervisor.blockers", {"blocker.recorded"}): 1,
         _key("Supervisor.blockers", {"blocker.resolved"}): 1,
         _key("lead_decide", {"decision.recorded"}): 1,
