@@ -6778,19 +6778,19 @@ class ServeTests(MergeQueueTestCase):
     def test_a_refusal_whose_cause_cannot_be_checked_stops_nothing(self) -> None:
         adopter = self.adopter()
         adopter.enqueue("first", adopter.lane_commit("first", {"src/lib.txt": "lib two\n"}), lead_inputs=["nope"])
-        held = contextlib.ExitStack()
-        self.addCleanup(held.close)
-        real = queue.Runner.run_command
+        real = queue._setup_stop
 
-        def lock_after_the_turn(runner, *args, **kwargs):
-            taken = real(runner, *args, **kwargs)
-            held.enter_context(state_tool.file_lock(adopter.state / state_tool.QUEUE_LOCK))
-            return taken
+        def unknown_after_the_turn(*args, held: bool = False, **kwargs):
+            # The turn's own check of its setup, under its lock, finding the queue held: the cause can't be checked.
+            result, binding, candidate = real(*args, held=held, **kwargs)
+            if held:
+                result.stop = {"reason": "queue_locked", "detail": "another runner holds the queue", "paths": [],
+                               "queueStopped": False}
+            return result, binding, candidate
 
-        with mock.patch.object(queue.Runner, "run_command", lock_after_the_turn):
+        with mock.patch.object(queue, "_setup_stop", unknown_after_the_turn):
             self.serve(adopter)
-        held.close()
-        # Another runner held the queue, so the cause is unknown: the candidate waits for the next turn.
+        # The cause is unknown: the candidate waits for the next turn.
         self.assertEqual(adopter.item("first")["stage"], "queued")
         self.assertIsNone(state_tool.read_state(adopter.state)["meta"].get("hold"))
 
@@ -6851,18 +6851,19 @@ class ServeTests(MergeQueueTestCase):
     def test_a_candidate_handed_off_again_after_its_refusal_keeps_its_new_head(self) -> None:
         adopter = self.adopter()
         adopter.enqueue("first", adopter.lane_commit("first", {"src/lib.txt": "lib two\n"}), lead_inputs=["nope"])
-        real = queue.Runner.run_command
+        real = queue.Runner._run_locked
         newer: list[str] = []
 
         def refused_then_handed_again(runner, *args, **kwargs):
             taken = real(runner, *args, **kwargs)
             if not newer:
-                # The lane hands it off again, at a new head, between the refusal and serve's stop.
+                # The lane hands it off again, at a new head, between the refusal and serve's stop: a lane's write
+                # takes no queue lock.
                 newer.append(adopter.lane_commit("first", {"src/lib.txt": "lib three\n"}))
                 adopter.lead_set("first", head=newer[0], leadInputs=[])
             return taken
 
-        with mock.patch.object(queue.Runner, "run_command", refused_then_handed_again):
+        with mock.patch.object(queue.Runner, "_run_locked", refused_then_handed_again):
             results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True,
                                   sleep=lambda seconds: None)
         self.assertEqual(results[0].document()["stop"]["reason"], "binding_invalid")
