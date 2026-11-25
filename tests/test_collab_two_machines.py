@@ -202,6 +202,9 @@ class TwoMachinesTests(PlanningRecordCase):
         self.run_at(fx.main, "lead-init")
         self.assertEqual(record(self.a)["meta"]["phase"], "delivery")
         self.assertEqual((self.a / "hosted-identity.json").read_bytes() if hosted is not None else None, hosted)
+        # lead-init writes the delivery's seed over the record in place; b's record shows it, as a delivery.
+        self.converged("after lead-init")
+        self.assertEqual(record(self.b)["meta"]["phase"], "delivery")
         # The plan's branch and both seats' chains only ever moved forward on the remote.
         for ref in ("refs/heads/lead/FX-1", f"refs/agent-skills/{KEY}/{seat_a}", f"refs/agent-skills/{KEY}/{seat_b}"):
             assert_fast_forwards_only(fx.origin, ref)
