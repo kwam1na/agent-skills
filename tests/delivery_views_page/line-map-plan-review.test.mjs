@@ -10,7 +10,7 @@ import vm from "node:vm";
 import { JSDOM } from "jsdom";
 
 import { REPLAYED_RUNS, ROOT, block, expect, openPage, pageWithRuns } from "./support.mjs";
-import { LENSES, PREVIEW_CASES, planReviewDelivery, previewDelivery, recordOnlyDelivery, threeRoundReview } from "./plan-fixtures.mjs";
+import { LENSES, PLANNING_CASES, PREVIEW_CASES, planReviewDelivery, previewDelivery, recordOnlyDelivery, threeRoundReview } from "./plan-fixtures.mjs";
 
 const NOW = "2026-10-30T12:00:00Z";
 const CONFIG = { spec: "delivery-views-config/1", runs: REPLAYED_RUNS,
@@ -211,6 +211,21 @@ test("a preview's line says agent review only, how far it went, and that no pers
   const handed = await previewShown("preview-handed");
   expect(line(handed)).toBe("Handed to delivery SHOP-90 · 3 review rounds · every lens aligned");
   expect(handed.querySelector("#plan").textContent).not.toContain("not approved by a person");
+});
+
+test("a planning record's line names its endorsements, says a stale one, and reads as endorsed only once all are in", async () => {
+  const shown = async (name) => {
+    const { document, plan } = PLANNING_CASES[name]();
+    return (await openPage(render(document, plan), { now: NOW, store: false })).at(-1).app;
+  };
+  const none = await shown("planning-none");
+  expect(line(none)).toBe("Agent review only · 2 review rounds · every lens aligned · not approved by a person");
+  expect(line(await shown("planning-partial"))).toBe(
+    "Agent review only · 2 review rounds · every lens aligned · endorsed by Ama · stale endorsement by Ben · not approved by a person");
+  const endorsed = await shown("planning-endorsed");
+  expect(line(endorsed)).toBe("Endorsed by Ama and Ben · 2 review rounds · every lens aligned");
+  // Endorsed is no person's approval of the delivery: the chapter never says a form of "approve".
+  assert.doesNotMatch(unapprovedText(endorsed), /approv/i);
 });
 
 test("no preview chapter reads as approved, at any round's ending, and none draws the switcher or the changes fold", async () => {

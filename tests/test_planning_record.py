@@ -231,6 +231,8 @@ class PlanningSupervisorTests(PlanningRecordCase):
         steps = set(passes[0]) - {"pass", "startedAt", "finishedAt", "at", "delivery", "laneWords", "needsYou"}
         self.assertEqual(steps, {"needs", "render", "latest", "close"}, passes[0])
         self.assertEqual(passes[0]["close"], "planning: nothing to close")
+        # A planning record has no close, so it owes no compound-learning decision.
+        self.assertEqual([item["kind"] for item in passes[0]["needsYou"] if item.get("kind") == "compounding"], [])
 
 
 class AdoptionTests(PlanningRecordCase):
@@ -602,14 +604,18 @@ class PlanViewTests(PlanningRecordCase):
         head = sh("git", "rev-list", "-1", "HEAD", "--", "docs/plan.md", cwd=fx.main).stdout.strip()
         code, out = self.flow(fx, "lead-plan", "endorse", "--plan", "docs/plan.md")
         self.assertEqual(code, 0, out)
-        code, out = self.flow(fx, "plan-view", "--plan", "docs/plan.md")
-        self.assertEqual(code, 0, out)
-        self.assertIn(f"plan: the planning record of {KEY}: ", out)
+        self.assertIn(f"plan view: the planning record of {KEY}: plan (preview)", out)
         seat = state_tool.local_seat(folder, KEY)
         label = record(folder)["meta"]["collab"]["seats"][seat]["label"]
         endorsed = self.plan_json(folder)["preview"]
         self.assertEqual((endorsed["approval"], endorsed["endorsements"]),
                          ("endorsed", [{"seat": seat, "label": label, "commit": head}]))
+        # plan-view with nothing new leaves it, and prints the planning record's links.
+        before = files(folder)
+        code, out = self.flow(fx, "plan-view", "--plan", "docs/plan.md")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"plan: the planning record of {KEY}: ", out)
+        self.assertEqual(files(folder)["plan.json"], before["plan.json"])
         # A later commit leaves that endorsement stale: shown, of the older commit, and the plan agents-only again.
         later = self.edit(fx, "- Scenarios: it renders, edited twice.", "- Scenarios: it renders, edited again.")
         stale = self.plan_json(folder)["preview"]

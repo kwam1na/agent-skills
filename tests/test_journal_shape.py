@@ -106,6 +106,7 @@ INVENTORY = {
         _key("collab_feedback", {"feedback.raised"}): 1,
         _key("collab_feedback", {"feedback.resolved"}): 1,
         _key("collab_join", {"plan.seen"}): 1,
+        _key("rebuild_planning_plan", {"plan.updated"}): 1,
         _key("suite_run", {"integration.suite"}): 2,
         _key("suite_started", {"integration.suite.started"}): 1,
         # A run that steps off the machine's wait with --now --why: claim's and lead-suite's.

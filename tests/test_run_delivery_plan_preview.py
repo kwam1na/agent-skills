@@ -773,6 +773,41 @@ class ServedPreviewTests(unittest.TestCase):
                               "delivery's own views\n")
         self.assertEqual(files_of(here), before)
 
+    def test_plan_open_takes_the_preview_over_and_only_the_planning_record_is_rebuilt(self) -> None:
+        self.configure()
+        path, slug = self.plan("opened"), "opened"
+        self.flow("plan-view", "--plan", path)
+        self.until(lambda: self.cut_plan() is not None, "the origin holds a cut")
+        live_pid, watcher_pid = self.pids(slug)
+        env = {**self.env, "RUN_DELIVERY_SUPERVISOR": "off"}
+        out = self.flow("plan-open", "--plan", path, "--key", "FX-7", env=env)
+        record = Path(re.search(r"planning record of FX-7 at (\S+):", out).group(1))
+        self.addCleanup(self.stop_record, record)
+        self.assertIn("plan preview: handed to the planning record of FX-7", out)
+        # The handed finish leaves the preview's last cut handed to the key, with its server and publisher gone.
+        self.until(lambda: not runs(live_pid) and not runs(watcher_pid), "the handed finish stops both", 90)
+        here = folder(self.fx, slug)
+        finisher = json.loads((here / "handed.json").read_text())["finisher"]
+        self.until(lambda: not runs(finisher), "the finisher exits", 30)
+        handed = json.loads((here / "plan.json").read_text())["preview"]
+        self.assertEqual((handed["approval"], handed["delivery"]), ("handed", "FX-7"))
+        cuts = [plan_in(json.loads(call[2])) for call in self.origin.api.calls if call[1] == "snapshots"]
+        own = [cut for cut in cuts if cut and "endorsements" not in cut["preview"]]
+        self.assertEqual((own[-1]["preview"]["approval"], own[-1]["preview"]["delivery"]), ("handed", "FX-7"))
+        # A plan-review round from here rebuilds the planning record's plan, and no preview folder is touched.
+        before = files_of(here)
+        reduced = self.review_round(path, slug, 1)
+        self.assertIn("plan: the planning record of FX-7: ", reduced)
+        built = json.loads((record / "plan.json").read_text())
+        self.assertEqual(([entry["round"] for entry in built["planReview"]["rounds"]], built["preview"]["endorsements"]),
+                         ([1], []))
+        self.assertEqual(files_of(here), before)
+
+    def stop_record(self, record: Path) -> None:
+        """The planning record's hosted publisher, which plan-open started, stopped by the pid its folder records."""
+        with contextlib.suppress(OSError, hosted.PublishError):
+            hosted.stop(record)
+
     def adopt(self, slug: str, delivery: str = "FX-9", env: dict | None = None) -> str:
         """adopt_plan_review on the slug's store into `delivery`, as lead-setup and lead-init call it: what it
         returned."""

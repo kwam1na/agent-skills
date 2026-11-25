@@ -14388,7 +14388,9 @@ def close_finished(c, doc: dict) -> bool:
 
 def decision_owed(c, doc: dict) -> bool:
     """Whether the close waits on the compound-learning decision: none recorded since the latest reopening, and no
-    finished close to exempt it."""
+    finished close to exempt it. A planning record has no close, so it owes none."""
+    if (doc["state"].get("meta") or {}).get("phase") == "planning":
+        return False
     return compounding_decision(doc["journal"]) is None and not close_finished(c, doc)
 
 
@@ -17399,6 +17401,14 @@ def lead_plan_endorse(args) -> None:
     commit = plan_commit(c, plan)
     entry = state_tool_at(c, shared[1], "journal", "--kind", "plan.endorsed", "--data", json.dumps({"commit": commit}))
     print(f"endorsed {plan} at {commit[:12]} (entry {entry['id']})")
+    # The planning record's plan shows the endorsement at once; one that can't be rebuilt never undoes it.
+    if planning_record_of(c, plan) == shared:
+        try:
+            said = rebuild_planning_plan(c, plan, *shared)
+        except (Stop, OSError, ValueError, subprocess.SubprocessError) as error:
+            said = f"not rebuilt: {error}"
+        if said:
+            print(f"plan view: the planning record of {shared[0]}: {said}")
 
 
 def state_tool_at(c, folder: Path, *args: str) -> dict:
