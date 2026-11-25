@@ -8,6 +8,7 @@ payload, never from the process. Each case builds its own delivery in a temporar
 from __future__ import annotations
 
 import datetime
+import fcntl
 import importlib.util
 import json
 import os
@@ -658,6 +659,25 @@ class DeliveryOrientTests(HookCase):
         context = self.orient(fx)["context"]
         self.assertIn(f"- lead-wait: listening (pid {os.getpid()})", context)
         self.assertNotIn("lead-wait --after", context)
+
+    def test_the_lead_is_told_the_live_view_to_open_only_while_a_supervisor_serves_one(self) -> None:
+        fx = self.fixture()
+        self.assign(fx)
+        self.assertNotIn("- live view:", self.orient(fx)["context"])  # lead-init started no supervisor
+        address = "http://127.0.0.1:4417/"
+        lock = self.state(fx).parent / "flow-log" / "FX-1.supervisor.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text(json.dumps({"pid": os.getpid(), "address": address}))
+        self.assertNotIn("- live view:", self.orient(fx)["context"])  # a lock nobody holds is no running view
+        with open(lock, "a+") as holder:
+            fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            context = self.orient(fx)["context"]
+            fcntl.flock(holder, fcntl.LOCK_UN)
+        self.assertIn(f"- live view: open {address} in the host's browser pane, unasked", context)
+        lane = self.lane(fx, fx.main / "lanes/FX-2")
+        with open(lock, "a+") as holder:
+            fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertNotIn("live view", self.orient(fx, lane)["context"])  # lanes never open the view
 
     def test_a_cwd_reached_through_a_symlink_is_its_target(self) -> None:
         fx = self.fixture()
