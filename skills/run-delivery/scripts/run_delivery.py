@@ -6847,7 +6847,7 @@ def planning_plan_lines(c, plan: Path, key: str, folder: Path) -> list[str]:
 def rebuild_plan_view(c, plan: Path) -> str | None:
     """After plan-sync lands: the planning record's plan.json when one holds the plan, else the preview's when it is
     still the plan's own; what was rebuilt, or None."""
-    planning = planning_record_of(c, plan)
+    planning = open_planning_record(c, plan)
     if planning:
         said = rebuild_planning_plan(c, plan, *planning)
         return f"the planning record of {planning[0]}: {said}" if said else None
@@ -6946,7 +6946,7 @@ def start_preview_hosted(c, folder: Path, slug: str) -> str:
 def preview_lines(c, plan: Path) -> list[str]:
     """Build the plan's preview, serve and publish it, and say where: nothing at all where the repository has no
     live view and no hosted configuration. After a delivery adopted the review, the handed finish instead."""
-    planning = planning_record_of(c, plan)
+    planning = open_planning_record(c, plan)
     if planning:
         return planning_plan_lines(c, plan, *planning)
     live_on = preview_live_config(c, Path(".")) is not None
@@ -17274,6 +17274,15 @@ def planning_record_of(c, plan: Path) -> tuple[str, Path] | None:
                  if os.path.normpath(str(record["meta"].get("planFile") or "")) == named), None)
 
 
+def open_planning_record(c, plan: Path) -> tuple[str, Path] | None:
+    """The planning record opened for `plan` while it is still planning: once lead-init has taken it over, its plan is
+    the delivery's, which the delivery builds, and nothing rebuilds it as a preview."""
+    named = os.path.normpath(plan)
+    return next(((key, folder) for key, folder, record in planning_records(c)
+                 if os.path.normpath(str(record["meta"].get("planFile") or "")) == named
+                 and record["meta"].get("phase") == "planning"), None)
+
+
 def shared_record(c, plan: Path) -> tuple[str, Path] | None:
     """The key and folder of the shared record a plan is edited and approved under: that of the delivery whose file
     names the plan, else the planning record opened for it; None when neither is shared."""
@@ -17402,7 +17411,7 @@ def lead_plan_endorse(args) -> None:
     entry = state_tool_at(c, shared[1], "journal", "--kind", "plan.endorsed", "--data", json.dumps({"commit": commit}))
     print(f"endorsed {plan} at {commit[:12]} (entry {entry['id']})")
     # The planning record's plan shows the endorsement at once; one that can't be rebuilt never undoes it.
-    if planning_record_of(c, plan) == shared:
+    if open_planning_record(c, plan) == shared:
         try:
             said = rebuild_planning_plan(c, plan, *shared)
         except (Stop, OSError, ValueError, subprocess.SubprocessError) as error:

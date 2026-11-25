@@ -304,6 +304,11 @@ class AdoptionTests(PlanningRecordCase):
         self.assertEqual(code, 2, out)
         self.assertIn("already holds a record", out)
         self.assertEqual(files(folder), kept)
+        # Adopted, the plan is the delivery's: plan-view no longer builds the planning record's preview over it.
+        code, out = self.flow(fx, "plan-view", "--plan", "docs/plan.md")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("planning record", out)
+        self.assertEqual(files(folder), kept)
 
 
 
