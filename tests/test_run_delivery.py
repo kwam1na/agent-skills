@@ -11400,9 +11400,18 @@ class OpenTheLiveViewTests(unittest.TestCase):
                 self.assertEqual(lines, ["The lead's wake: lane-1 works"])
 
     def test_other_lead_commands_name_no_open_step(self) -> None:
-        with mock.patch.object(self.tool, "supervisor_line", lambda _: None):
-            lines = self.said(["lead-run", "--once"], held=True, hosted={"state": "disabled"})
-        self.assertFalse(any(line.startswith("Next step: open") for line in lines), lines)
+        # lead-assign and lead-accept end with the same listener lines as the two starts, but name no view to open.
+        others = (["lead-run", "--once"], ["lead-assign", "FX-2", "--lane", "lane-1", "--title", "lane-1"],
+                  ["lead-accept", "FX-2"])
+        for argv in others:
+            with self.subTest(command=argv[0]), mock.patch.object(self.tool, "supervisor_line", lambda _: None), \
+                    mock.patch.object(self.tool, "lead_assign", lambda args: None), \
+                    mock.patch.object(self.tool, "lead_accept", lambda args: None), \
+                    mock.patch.object(self.tool, "hosted_line", lambda *a, **k: None):
+                lines = self.said(argv, held=True, hosted={"state": "published", "url": self.HOSTED})
+                self.assertFalse(any(line.startswith("Next step: open") for line in lines), lines)
+                if argv[0] != "lead-run":
+                    self.assertIn("The lead's wake: lane-1 works", lines)
 
 
 class SupervisorLineListenerTests(unittest.TestCase):
