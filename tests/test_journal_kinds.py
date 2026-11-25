@@ -115,7 +115,7 @@ TABLE = {
     "evidence.published": ("S", "note", "url clips", "", "epic: Evidence published"),
     "flake.declared": ("S", "decision", "flake check head", "", "epic: Flake declared"),
     "fullhealth.skipped": ("H", "decision", "head posture source *why*", "", "epic: Full run skipped"),
-    "fullhealth.rerun": ("S", "decision", "head *why*", "", "-"),
+    "fullhealth.rerun": ("S", "decision", "head *why* at?", "", "-"),
     "posture.changed": ("H", "decision", "from to source *why*", "", "epic: Posture changed"),
     "serving.held": ("H", "problem", "*why*", "", "epic: Serving is held"),
     "deferral.breached": ("H", "problem", "finding *title*", "", "ticket: Deferred note still open"),

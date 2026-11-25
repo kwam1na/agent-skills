@@ -141,6 +141,7 @@ INVENTORY = {
         _key("record_focused", {"fullhealth.skipped"}): 1,
         _key("record_full_health", {"base.broken", "base.flaky", "base.repaired", "base.verified"}): 1,
         _key("deferral_breaches", {"deferral.breached"}): 1,
+        _key("journal_deferrals", {"deferral.held"}): 1,
         _key("followups_step", {"followup.filed"}): 1,
         _key("note_gap", {"gap.noted"}): 1,
         _key("closed_step", {"delivery.closed"}): 1,
