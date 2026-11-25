@@ -379,6 +379,21 @@ class TwoSeatTests(PlanningRecordCase):
             link.ingest(folder, key=KEY))]
         return fx, a, b_repo, b, aligned
 
+    def test_collab_give_of_delivery_on_the_command_line_parks_and_moves_it_to_b(self) -> None:
+        fx, a, b_repo, b, _ = self.two_seats()
+        seat_a, seat_b = state_tool.local_seat(a, KEY), state_tool.local_seat(b, KEY)
+        code, out = self.flow(fx, "collab", "give", "--key", KEY, "--scope", "delivery", "--to", seat_b, "--wait", "5",
+                              cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("scope.transferred", out)
+        self.assertNotIn("Traceback", out)
+        # The transfer was kept with what a carried as it parked, and reaches b.
+        self.assertEqual(state_tool.holder(journal(a), "delivery"), seat_b)
+        self.exchange(a, b)
+        self.assertEqual(state_tool.holder(journal(b), "delivery"), seat_b)
+        carried = generation_tools(self.generation)[1].peer_carried(b, seat_a)
+        self.assertEqual(sorted(carried), ["evidenceNotes", "friction", "hostedIdentity", "trackerThrough"])
+
     def test_sections_rekeying_and_joint_approval_across_two_seats(self) -> None:
         fx, a, b_repo, b, aligned = self.two_seats()
         seat_b = state_tool.local_seat(b, KEY)

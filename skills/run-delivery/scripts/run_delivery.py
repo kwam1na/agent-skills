@@ -18189,9 +18189,15 @@ def collab_record(c, key: str | None) -> tuple[str, Path]:
 
 
 def collab_config(args) -> tuple[object, str, Path]:
+    """The config a collab command acts with: the shared record's own delivery, or planning record, loaded, so what
+    the record's machine-local files are (its flow log, its stories, its lead files) is known, and its folder the one
+    the command acts on."""
     global CFG
     c = CFG = Config(repo(), need_delivery=False, pick=False)
-    return (c, *collab_record(c, args.key))
+    key, folder = collab_record(c, args.key)
+    c.load_delivery(key)
+    c.state, c.flow_log = folder, folder.parent / "flow-log"
+    return c, key, folder
 
 
 def record_plan(c, key: str, folder: Path) -> Path | None:
