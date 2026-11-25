@@ -12515,6 +12515,27 @@ def listener_lines(c) -> list[str]:
             f"  {lead_wait_command(c, doc)}"]
 
 
+def live_view_to_open(c) -> str | None:
+    """The one live view the lead opens in the host's browser pane, unasked, when a delivery begins or resumes: the
+    hosted view's URL when `.agents/delivery-views.json` enables hosted and the watcher has one, else the address of the
+    local view the running supervisor serves. None while no supervisor holds its lock, so there is no view to open."""
+    with contextlib.suppress(OSError, ValueError):
+        held, recorded = read_lock(supervisor_lock_path(c))
+        address = recorded.get("address") if held else None
+        if not isinstance(address, str) or not address:
+            return None
+        info = hosted_info(c)
+        url = info.get("url") if info.get("state") != "disabled" else None
+        return url if isinstance(url, str) and url else address
+    return None
+
+
+def open_view_lines(c) -> list[str]:
+    """What lead-init and lead-run --resume end with: the one next step the host takes, opening the live view."""
+    url = live_view_to_open(c)
+    return [f"Next step: open {url} in the host's browser pane now, unasked."] if url else []
+
+
 def listener_words(c) -> str:
     """The status line's word on the listener: empty while one listens or nothing needs one."""
     if lead_listener(c.state) is not None:
@@ -12878,6 +12899,8 @@ def orientation(seat: Seat) -> str:
                          f"you end your turn: {lead_wait_command(c, doc)}")
         elif needed:
             lines.append(f"- lead-wait: listening (pid {lease['pid']})")
+        if (url := live_view_to_open(c)):
+            lines.append(f"- live view: open {url} in the host's browser pane, unasked")
     return "\n".join(lines)[:ORIENT_LIMIT]
 
 
@@ -17734,6 +17757,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.command in ("lead-init", "lead-assign", "lead-accept") or (args.command == "lead-run" and args.resume):
         with contextlib.suppress(Stop, ValueError, OSError):
             for line in listener_lines(cfg()):
+                print(line)
+    if args.command == "lead-init" or (args.command == "lead-run" and args.resume):
+        with contextlib.suppress(Stop, ValueError, OSError):
+            for line in open_view_lines(cfg()):
                 print(line)
     if args.command.startswith("lead-") and args.command not in ("lead-setup", "lead-init", "lead-run", "lead-wait"):
         with contextlib.suppress(Stop, ValueError, OSError):
