@@ -360,6 +360,22 @@ def endorsements(journal: list[dict]) -> dict[str, list[str]]:
     return found
 
 
+def latest_endorsements(journal: list[dict], seats: dict) -> list[dict]:
+    """Each seat's latest endorsement, in the order the seats first endorsed, `{seat, label, commit}` by its seat's
+    label from `seats` (the record's derived seats)."""
+    latest = {seat: commits[-1] for seat, commits in endorsements(journal).items()}
+    return [{"seat": seat, "label": (seats.get(seat) or {}).get("label", seat), "commit": commit}
+            for seat, commit in latest.items()]
+
+
+def preview_approval(journal: list[dict], seats: dict, commit: str) -> str:
+    """A planning record's plan approval: endorsed once every admitted approver seat's latest endorsement names
+    `commit`, agents-only until then. A seat admitted without approving, or not admitted, holds nothing up."""
+    approvers = [seat for seat, held in seats.items() if held.get("admitted") and held.get("approver")]
+    latest = {seat: commits[-1] for seat, commits in endorsements(journal).items()}
+    return "endorsed" if approvers and all(latest.get(seat) == commit for seat in approvers) else "agents-only"
+
+
 def open_feedback(journal: list[dict]) -> list[dict]:
     """Every `feedback.raised` no `feedback.resolved` answers."""
     answered = {target for entry in journal if entry["kind"] == "feedback.resolved"

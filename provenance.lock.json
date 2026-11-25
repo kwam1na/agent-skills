@@ -1139,7 +1139,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/plan_sync.py",
-          "sha256": "312fa34e6abbf4b91d2c96d963bf106bcd85050f5b8a0ab96d7658840a21e640"
+          "sha256": "d0dd2299c57d7c7b12fbc484e18bbe9a3a9f2c63d1440be54fbf0c2b9459aa68"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
@@ -1147,7 +1147,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "1e459f6956ba0641975b0947bbeb3e013f0f5deb1669309e325e471655bc3f1c"
+          "sha256": "eda2d4788925504c8c1ad1006e28872053d23bff48dcb54d518bf027d4cafc48"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

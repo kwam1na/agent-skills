@@ -526,6 +526,27 @@ class JointApprovalTests(unittest.TestCase):
         self.assertIsNone(self.refused())
         self.assertEqual(self.refused(aligned=None), "plan.not_aligned")
 
+    def test_the_plan_view_reads_endorsed_once_every_admitted_approver_s_latest_names_the_commit(self) -> None:
+        approval = lambda: plan_sync.preview_approval(self.entries, self.seats, Y)
+        self.assertEqual(approval(), "agents-only")
+        self.endorse((A, Y))
+        self.assertEqual(approval(), "agents-only", "one approver of two")
+        # A seat's latest endorsement is the one that counts: Ben's first, of X, is stale until Ben endorses Y.
+        self.endorse((B, X))
+        self.assertEqual(approval(), "agents-only")
+        self.assertEqual(plan_sync.latest_endorsements(self.entries, self.seats),
+                         [{"seat": A, "label": "Ann", "commit": Y}, {"seat": B, "label": "Ben", "commit": X}])
+        self.endorse((B, Y))
+        # Cy writes but doesn't approve, and Di isn't admitted: neither holds it up.
+        self.assertEqual(approval(), "endorsed")
+        self.assertEqual(plan_sync.latest_endorsements(self.entries, self.seats),
+                         [{"seat": A, "label": "Ann", "commit": Y}, {"seat": B, "label": "Ben", "commit": Y}])
+        # Ann endorsing an older commit again takes Ann's endorsement back to it.
+        self.endorse((A, X))
+        self.assertEqual(approval(), "agents-only")
+        # A record with no approver seat at all is never endorsed.
+        self.assertEqual(plan_sync.preview_approval(self.entries, {C: self.seats[C]}, Y), "agents-only")
+
     def test_an_unrecorded_text_edit_at_the_endorsed_commit_is_not_aligned(self) -> None:
         self.rekey()
         self.endorse((A, Z), (B, Z))
@@ -568,6 +589,20 @@ class PlanViewTests(PlanningRecordCase):
         self.assertEqual(code, 0, out)
         self.synced = out
         return sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip()
+
+    def test_plan_sync_leaves_a_preview_handed_to_a_delivery_alone(self) -> None:
+        fx = self.fixture()
+        sh("git", "switch", "-q", "-c", "plan/fixture-plan", cwd=fx.main)
+        sh("git", "push", "-q", "-u", "origin", "plan/fixture-plan", cwd=fx.main)
+        done = sh(sys.executable, "-B", "-c", PREVIEW_PROBE, fx.tool.parent, "docs/plan.md", cwd=fx.main, env=fx.env)
+        preview = Path(done.stdout.strip().splitlines()[-1])
+        # Handed, as a delivery's adoption marks it once its finish runs.
+        (preview / "handed.json").write_text(json.dumps({"delivery": "FX-9", "at": "2026-11-24T00:00:00Z",
+                                                         "finisher": 0}) + "\n")
+        kept = files(preview)
+        self.edit(fx, "- Scenarios: it renders.", "- Scenarios: it renders, after the hand-over.")
+        self.assertNotIn("plan view:", self.synced)
+        self.assertEqual(files(preview), kept)
 
     def test_a_preview_until_plan_open_then_the_planning_record_with_its_endorsements(self) -> None:
         fx = self.fixture()

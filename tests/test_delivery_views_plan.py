@@ -741,6 +741,27 @@ class PlanPreviewContractTests(unittest.TestCase):
         plain = preview_plan()
         self.assertEqual(views.validate_plan(copy.deepcopy(plain), planning=False), plain)
 
+    def test_the_page_reads_endorsements_only_on_a_shared_record(self) -> None:
+        # The reader derives the flag from the record: one with no meta.collab is no planning record.
+        path = PRODUCT_ROOT / "skills/delivery-views/scripts/render.py"
+        spec = importlib.util.spec_from_file_location("render_for_the_plan_reader", path)
+        render = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(path.parent))
+        previous, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+        try:
+            spec.loader.exec_module(render)
+        finally:
+            sys.dont_write_bytecode = previous
+            sys.path.remove(str(path.parent))
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / "plan.json").write_text(json.dumps(preview_plan(endorsements=[
+                {"seat": SEAT_A, "label": "Ama", "commit": HEAD}])))
+            alone = render.read_plan_block(folder, {"state": {"meta": {"headline": "A preview"}}})
+            self.assertEqual(alone, {"unreadable": "preview.endorsements: is only given on a planning record"})
+            shared = render.read_plan_block(folder, {"state": {"meta": {"collab": {"key": "FX-1"}}}})
+            self.assertEqual(shared["plan"]["preview"]["endorsements"][0]["label"], "Ama")
+
     def test_the_schema_names_the_validators_preview_fields(self) -> None:
         member = json.loads(SCHEMA.read_text(encoding="utf-8"))["properties"]["preview"]
         self.assertIs(member["additionalProperties"], False)

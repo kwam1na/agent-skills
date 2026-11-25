@@ -6777,25 +6777,8 @@ def rebuild_preview(c, plan: Path) -> tuple[Path, str | None]:
     return folder, ", ".join(said) or None
 
 
-def planning_endorsements(journal: list[dict]) -> list[dict]:
-    """Each seat's latest plan.endorsed, in the order the seats first endorsed, by its seat's label."""
-    labels = {seat: held["label"] for seat, held in _validator().derived_seats(journal).items()}
-    latest: dict[str, str] = {}
-    for entry in journal:
-        if entry["kind"] == "plan.endorsed" and entry.get("origin"):
-            latest[entry["origin"]["seat"]] = entry["data"]["commit"]
-    return [{"seat": seat, "label": labels.get(seat, seat)[:200], "commit": commit}
-            for seat, commit in latest.items()][:PLAN_ENDORSEMENTS]
-
-
+# A planning record's plan names at most this many endorsements, as delivery-plan/1 caps them.
 PLAN_ENDORSEMENTS = 20
-
-
-def planning_approval(journal: list[dict], commit: str) -> str:
-    """endorsed once every admitted approver seat's latest endorsement names `commit`; agents-only until then."""
-    approvers = [seat for seat, held in _validator().derived_seats(journal).items() if held["admitted"] and held["approver"]]
-    latest = {item["seat"]: item["commit"] for item in planning_endorsements(journal)}
-    return "endorsed" if approvers and all(latest.get(seat) == commit for seat in approvers) else "agents-only"
 
 
 def rebuild_planning_plan(c, plan: Path, key: str, folder: Path) -> str | None:
@@ -6808,8 +6791,12 @@ def rebuild_planning_plan(c, plan: Path, key: str, folder: Path) -> str | None:
         fcntl.flock(held, fcntl.LOCK_EX)
         store, _ = preview_store(c, slug)
         built, _ = build_preview(c, plan, text, commit, at, store, None)
-        journal = _validator().read_journal(folder)
-        built["preview"].update(approval=planning_approval(journal, commit), endorsements=planning_endorsements(journal))
+        tool = _validator()
+        journal = tool.read_journal(folder)
+        seats = tool.derived_seats(journal)
+        built["preview"].update(approval=plan_sync.preview_approval(journal, seats, commit),
+                                endorsements=[{**item, "label": item["label"][:200]} for item in
+                                              plan_sync.latest_endorsements(journal, seats)][:PLAN_ENDORSEMENTS])
         check_plan(built, c, f"the planning record's plan of {plan}", planning=True)
         path = folder / PLAN_FILE
         old = load_json(path)
