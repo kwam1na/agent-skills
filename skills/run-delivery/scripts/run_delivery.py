@@ -17264,14 +17264,16 @@ def take_delivery(c) -> str | None:
         return None
     giver = transfer["data"]["from"]
     carried = link.peer_carried(c.state, giver)
+    if carried is None:
+        return None  # the giver's partition can't be read yet: taken on a later pass
     with tracker_publisher.ledger_lock(c.state, wait=True):
         if carried.get("hostedIdentity"):
             take_hosted(c, carried["hostedIdentity"])
         posted = tracker_publisher.take_through(c.state, sorted(journal, key=lambda e: e["id"]),
                                                 carried.get("trackerThrough") or {}, giver)
         link.take_delivery(c.state, transfer)
-    if carried.get("hostedIdentity"):
-        start_hosted(c, resume=True)
+    # With an identity, its session resumes; without one, this machine's publisher starts its own.
+    start_hosted(c, resume=bool(carried.get("hostedIdentity")))
     return (f"took delivery from seat {giver}: {posted} tracker update(s) it had posted, "
             + ("its hosted identity" if carried.get("hostedIdentity") else "no hosted identity"))
 
@@ -17325,7 +17327,7 @@ def give_delivery(c, key: str, folder: Path, to: str, wait: float) -> dict:
                                    journal, tracker_publisher.read_ledger(folder))}
                         return
                     with contextlib.suppress(Stop, OSError, ValueError, subprocess.SubprocessError):
-                        hosted_call(c, "start", folder, key)  # stopped mid-publication: it finishes it first
+                        hosted_call(c, "start", folder, key, archive=False)  # stopped mid-publication: it finishes it first
             if time.monotonic() >= deadline:
                 raise Stop(f"scope.handover_busy: delivery is not idle on this machine: {busy}; hand it over once it "
                            "is, or wait longer")
@@ -17885,7 +17887,7 @@ def collab_scope(args) -> None:
     c, key, folder = collab_config(args)
     if args.collab_action == "give" and args.scope.startswith("lane:"):
         left = lane_checkouts_left(c, folder, args.scope[len("lane:"):])
-        tool = _validator()
+        tool = _validator(c.release)
         if left and tool.holds(tool.read_journal(folder), tool.local_seat(folder, key), args.scope):
             raise Stop(f"scope.handover_busy: {args.scope} still has the checkout of {', '.join(left)} on this machine, "
                        f"merged or settled; {flow_command()} lead-cleanup removes it, then hand the lane over")

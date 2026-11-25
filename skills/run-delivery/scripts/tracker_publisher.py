@@ -942,11 +942,14 @@ def main(argv: list[str] | None = None) -> int:
               "(meta.trackerParent); pass --delivery"), file=sys.stderr)
         return 2
     state_dir = args.state_dir
-    if doc["state"].get("meta", {}).get("collab") and not ready_to_publish(state_dir):
-        return 0  # A shared record's updates are posted only by the seat holding delivery, once it has taken it.
+    shared = bool(doc["state"].get("meta", {}).get("collab"))
     with ledger_lock(state_dir, wait=False) as taken:
         if not taken:
             return 0  # Another run holds the ledger: it, or the next pass, posts these.
+        if shared and not ready_to_publish(state_dir):
+            # Under the lock, which a delivery handover holds while it journals the transfer: a shared record's updates
+            # are posted only by the seat holding delivery, once it has taken it.
+            return 0
         publisher = Publisher(doc, state_dir, conf, Adapter(conf, root), delivery, state_dir.parent / "flow-log")
         code, error = publisher.run()
         write_error(state_dir, error)

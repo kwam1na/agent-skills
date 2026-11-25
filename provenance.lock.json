@@ -542,7 +542,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/collab.py",
-          "sha256": "7914c925cdb695128cbf88af8d47da6117f7088e840989ff0eadb7ecf34fda96"
+          "sha256": "2d4667cb30e903df4760e991727cbfa2f4753d55d2da604cf9b0190ceec155e0"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
@@ -1147,11 +1147,11 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "094082026f7ee8522f5147dc3bf66ee374b06b5610415c384003091ea2976d0a"
+          "sha256": "1c48f18b38ee100e33eff5c14b453b29bb138610ce28bfaee8fb495a0d5197ff"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
-          "sha256": "6e3d5f74305cab72c60042f7c98aeba921e7aa11658427331defcbb9081971bd"
+          "sha256": "aecb185e28b317922790947413f1eec966793180118f5fb7c84d450aaa7ffae4"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",

@@ -273,13 +273,13 @@ def _keep_carried(directory: Path, **changes: object) -> None:
     _state_tool()._write_atomically(directory / CARRIED_FILE, _state_tool().dumps({**_carried(directory), **changes}))
 
 
-def peer_carried(directory: Path, seat: str) -> dict:
+def peer_carried(directory: Path, seat: str) -> dict | None:
     """What ``seat``'s fetched partition carries for the seat it passed delivery to: its hosted identity and tracker
-    position, each null or empty where it carried none."""
+    position, each null or empty where it carried none; None when its partition can't be read."""
     try:
         partition, _ = read_partition(directory, peer_ref(_key_of(directory), seat))
-    except (ValueError, subprocess.SubprocessError):
-        partition = {}
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return None
     return partition.get("carried") or {"hostedIdentity": None, "trackerThrough": {}}
 
 

@@ -337,11 +337,15 @@ class CoLeadFixture(partitions.SharedFixture):
         self.give("lane:lane-1", self.b)
         # Neither machine runs a hosted publisher process here: what each command asks of one is recorded.
         self.hosted_calls: list[tuple[str, str]] = []
-        for name, answer in (("hosted_call", {"state": "disabled"}),):
-            patcher = mock.patch.object(rd, name, side_effect=lambda c, operation, folder, key, **_: (
-                self.hosted_calls.append((operation, str(folder))) or {"state": "disabled"}))
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        self.hosted_options: list[dict] = []
+
+        def hosted_call(c, operation, folder, key, **options) -> dict:
+            self.hosted_calls.append((operation, str(folder)))
+            self.hosted_options.append(options)
+            return {"state": "disabled"}
+        patcher = mock.patch.object(rd, "hosted_call", side_effect=hosted_call)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def config(self, machine, **extra) -> types.SimpleNamespace:
         """The few settings the runtime reads, for ``machine``'s record."""
@@ -412,6 +416,26 @@ class LeadCommandScopeTests(CoLeadFixture):
                                        if entry["subject"] == key else entry for entry in entries]})
             machine.push()
         self.exchange(self.a, self.b)
+
+    def test_b_accepting_its_own_lanes_queued_hand_off_passes_and_as_lane_is_refused_on_b(self) -> None:
+        # Each lane's story handed off with a change and queued, as the lead accepts most hand-offs.
+        def doc(machine) -> dict:
+            state = machine.state()
+            queued = [{"subject": key, "lane": lane, "stage": "queued", "pending": True, "head": HEAD}
+                      for key, lane in (("APP-1", "lane-1"), ("APP-2", "lane-2"))]
+            return {"state": {**state, "queue": queued, "planned": []}, "journal": machine.journal()}
+        with mock.patch.object(rd, "pr_review_config", return_value={}):
+            for machine, own, other, holder in ((self.b, "APP-1", "APP-2", self.first),
+                                                (self.a, "APP-2", "APP-1", self.second)):
+                with self.subTest(seat=machine.repo.name), \
+                        mock.patch.object(rd, "load_state", side_effect=lambda: doc(machine)), \
+                        mock.patch.object(rd._validator(ROOT), "handed_item", lambda state, journal, key: None), \
+                        mock.patch.object(rd, "lead_selects", return_value=True):
+                    # Past the check, the acceptance reads what the lane handed: stopped there.
+                    self.assertIsNone(self.run_command(machine, accept, self.accept_args(own), "handed_additions"))
+                    said = self.run_command(machine, accept, self.accept_args(other), "handed_additions")
+                    self.assertTrue(said.startswith(f"scope.not_held: only the holder of lane:"), said)
+                    self.assertIn(f"seat {holder}", said)
 
     def test_b_accepting_its_own_lanes_hand_off_passes_and_as_lane_is_refused_on_b(self) -> None:
         self.no_change()
@@ -536,14 +560,31 @@ class SupervisorRoleTests(CoLeadFixture):
         self.assertIn("fullHealth", self.one_pass(self.b)[0])
         self.assertNotIn("fullHealth", self.one_pass(self.a)[0])
 
+    def test_the_first_pass_of_the_seat_given_delivery_takes_what_was_carried_and_runs_its_steps(self) -> None:
+        rd.give_delivery(self.config(self.a), KEY, self.a.directory, self.second, 1.0)
+        self.a.push()
+        self.b.take()
+        ran, entry = self.one_pass(self.b)
+        self.assertTrue(entry["delivery"].startswith(f"took delivery from seat {self.first}"), entry)
+        self.assertTrue(collab.delivery_taken(self.b.directory))
+        self.assertIn("publish", ran)
+        self.assertIn(("start", str(self.b.directory)), self.hosted_calls)
+        # Taken once: the next pass takes nothing.
+        ran, entry = self.one_pass(self.b)
+        self.assertNotIn("delivery", entry)
+        self.assertNotIn("publish", self.one_pass(self.a)[0])
+
     def test_cleanup_lens_returns_and_deferrals_take_only_the_stories_of_the_lanes_this_seat_holds(self) -> None:
         doc = lambda machine: {"state": {**machine.state(), "queue": [
             {"subject": "APP-1", "lane": "lane-1", "stage": "merged"},
-            {"subject": "APP-2", "lane": "lane-2", "stage": "merged"}], "planned": []},
+            {"subject": "APP-2", "lane": "lane-2", "stage": "merged"}], "planned": [
+            {"subject": "APP-3", "lane": "lane-1", "stage": "settled"},
+            {"subject": "APP-4", "lane": "lane-2", "stage": "settled"}]},
             "journal": [{"kind": "review.started", "subject": key} for key in ("APP-1", "APP-2")]}
-        for machine, mine in ((self.a, "APP-2"), (self.b, "APP-1")):
+        for machine, mine, settled in ((self.a, "APP-2", "APP-4"), (self.b, "APP-1", "APP-3")):
             with self.subTest(seat=machine.repo.name):
                 c = self.config(machine)
+                c.stories.update({"APP-3": {"lane": "lane-1"}, "APP-4": {"lane": "lane-2"}})
                 cleaned, read, breached = [], [], []
                 (machine.repo / "lanes" / "APP-1" / "work/review/APP-1").mkdir(parents=True, exist_ok=True)
                 (machine.repo / "lanes" / "APP-2" / "work/review/APP-2").mkdir(parents=True, exist_ok=True)
@@ -559,12 +600,11 @@ class SupervisorRoleTests(CoLeadFixture):
                     rd.cleanup_merged(c, doc(machine))
                     rd.journal_lens_returns(c)
                     rd.deferral_breaches(c, doc(machine))
-                self.assertEqual((cleaned, read, breached), ([mine], [mine], [mine]))
+                self.assertEqual((cleaned, read, breached), ([mine, settled], [mine], [mine]))
 
 
-class HandoverTests(CoLeadFixture):
-    """Handing delivery over keeps the public link and posts nothing twice; handing it over, or a lane, while this
-    machine still has something of it in flight is refused with scope.handover_busy, naming it."""
+class PublisherFixture(CoLeadFixture):
+    """Both machines' publishers, and a fake tracker and hosted origin they share."""
 
     CONF = {"mode": "publisher", "problems": [], "transitions": {}}
 
@@ -592,11 +632,28 @@ class HandoverTests(CoLeadFixture):
         init = tp.init_id(machine.journal())
         return tp.marker(KEY, init, f"{origin['seat']}.{origin['seq']}", "comment")
 
+    def give_command(self, wait: float) -> str:
+        """`collab give --scope delivery --to b` on a, through the command the skill pages name: its printed line."""
+        args = types.SimpleNamespace(collab_action="give", scope="delivery", to=self.second, wait=wait, key=KEY)
+        out = io.StringIO()
+        with mock.patch.object(rd, "collab_config", return_value=(self.config(self.a), KEY, self.a.directory)), \
+                mock.patch.object(rd, "cfg", side_effect=AssertionError("the global config was read")), \
+                contextlib.redirect_stdout(out):
+            rd.collab_scope(args)
+        return out.getvalue()
+
     def hand_over(self, wait: float = 5.0) -> dict:
-        entry = rd.give_delivery(self.config(self.a), KEY, self.a.directory, self.second, wait)
+        said = self.give_command(wait)
+        self.assertTrue(said.startswith("scope.transferred (entry "), said)
         self.a.push()
         self.b.take()
-        return entry
+        return next(entry for entry in reversed(self.a.journal()) if entry["kind"] == "scope.transferred")
+
+
+
+class HandoverTests(PublisherFixture):
+    """Handing delivery over keeps the public link and posts nothing twice; handing it over, or a lane, while this
+    machine still has something of it in flight is refused with scope.handover_busy, naming it."""
 
     def test_delivery_moves_to_b_keeping_the_public_link_and_each_update_is_posted_once_by_its_holder(self) -> None:
         x = self.decide(self.a, "X")
@@ -609,26 +666,42 @@ class HandoverTests(CoLeadFixture):
         published = hosted.Publisher(self.a.directory, self.hosted, KEY, self.api)
         published.step(lambda: json.loads(json.dumps(VALID)))
         link = published.identity["publicId"]
+        # Z, journalled after a's last post, is a's not yet posted when delivery moves.
+        z = self.decide(self.a, "Z")
+        seq = lambda machine, entry: next(e["origin"]["seq"] for e in machine.journal() if e["id"] == entry["id"])
+        # Before the move, b publishes no hosted view: its start is refused without a call.
+        self.assertEqual(rd.start_hosted(self.config(self.b)), {"state": "held_elsewhere"})
+        self.assertEqual(self.hosted_calls, [])
         self.hand_over()
         self.assertIn(("stop", str(self.a.directory)), self.hosted_calls)
+        self.assertEqual(rd.start_hosted(self.config(self.a)), {"state": "held_elsewhere"})
+        self.assertNotIn(("start", str(self.a.directory)), self.hosted_calls)
         carried = collab.read_partition(self.b.directory, collab.peer_ref(KEY, self.first))[0]["carried"]
         self.assertEqual(carried["hostedIdentity"]["publicId"], link)
-        self.assertEqual(carried["trackerThrough"][self.first],
-                         max(e["origin"]["seq"] for e in self.a.journal() if e["origin"]["seat"] == self.first
-                             and e["id"] <= x["id"]))
-        # Moved, before b takes it: neither machine posts.
+        # The position a carried covers X and stops below Z, which it never posted.
+        self.assertGreaterEqual(carried["trackerThrough"][self.first], seq(self.a, x))
+        self.assertLess(carried["trackerThrough"][self.first], seq(self.a, z))
+        # Moved, before b takes it: neither machine posts, and b starts no hosted view.
         self.publish(self.a)
         self.publish(self.b)
         self.assertEqual(len(self.tracker.posted), 1)
-        # b takes it: a's identity is b's own, and X is covered by the position a carried, posting nothing.
+        self.assertEqual(rd.start_hosted(self.config(self.b)), {"state": "held_elsewhere"})
+        # b takes it: a's identity is b's own, its own stale status and retry files go, its session is resumed, and X
+        # is covered by the position a carried, posting nothing.
+        for name in (hosted.STATUS, hosted.RETRY):
+            (self.b.directory / name).write_text("{}\n")
         taken = rd.take_delivery(self.config(self.b))
         self.assertIn(f"took delivery from seat {self.first}", taken)
         self.assertIsNone(rd.take_delivery(self.config(self.b)))
-        self.assertIn(("start", str(self.b.directory)), self.hosted_calls)
+        starts = [options for (operation, folder), options in zip(self.hosted_calls, self.hosted_options)
+                  if (operation, folder) == ("start", str(self.b.directory))]
+        self.assertEqual([options.get("resume") for options in starts], [True])
         self.assertEqual(json.loads((self.b.directory / hosted.IDENTITY).read_text())["publicId"], link)
-        x_on_b = next(e for e in self.b.journal() if e["kind"] == "decision.recorded")
-        self.assertEqual([line["reason"] for line in tp.read_ledger(self.b.directory) if line["journal"] == x_on_b["id"]],
-                         [tp.TAKEN])
+        self.assertFalse((self.b.directory / hosted.STATUS).exists() or (self.b.directory / hosted.RETRY).exists())
+        on_b = {e["data"]["text"]: e for e in self.b.journal() if e["kind"] == "decision.recorded"}
+        reasons = lambda entry: [line.get("reason") for line in tp.read_ledger(self.b.directory)
+                                 if line["journal"] == entry["id"]]
+        self.assertEqual((reasons(on_b["X"]), reasons(on_b["Z"])), ([tp.TAKEN], []))
         # b's next update, written on a clock an hour behind a's, is posted once by b, with its origin's marker.
         behind = "2026-11-23T23:00:00.000000Z"
         with mock.patch.object(state_tool, "now", return_value=behind):
@@ -636,8 +709,11 @@ class HandoverTests(CoLeadFixture):
         self.publish(self.b)
         self.publish(self.b)
         self.publish(self.a)
-        self.assertEqual(self.tracker.posted, [("APP-1", self.stamp(self.a, x)), ("APP-1", self.stamp(self.b, y))])
-        self.assertIn(f":{self.second}.", self.stamp(self.b, y))
+        # Z once, by b, under a's origin; Y once, under b's; X never again.
+        self.assertEqual(self.tracker.posted, [("APP-1", self.stamp(self.a, x)), ("APP-1", self.stamp(self.a, z)),
+                                               ("APP-1", self.stamp(self.b, y))])
+        self.assertIn(f":{self.first}.{seq(self.a, z)}:comment", self.tracker.posted[1][1])
+        self.assertIn(f":{self.second}.", self.tracker.posted[2][1])
         # The hosted session resumes on b with the same identity, so the link stays, and a is fenced off it.
         self.api.session_value["leaseUntil"] = 1
         moved = hosted.Publisher(self.b.directory, self.hosted, KEY, self.api)
@@ -660,7 +736,7 @@ class HandoverTests(CoLeadFixture):
         self.addCleanup(release.set)
         held.wait(5)
         with self.assertRaisesRegex(rd.Stop, "^scope.handover_busy: .*a tracker post is in flight"):
-            rd.give_delivery(self.config(self.a), KEY, self.a.directory, self.second, 0.3)
+            self.give_command(0.3)
         self.assertEqual(self.a.surfaces(self.remote), before)
         release.set()
         thread.join()
@@ -677,8 +753,11 @@ class HandoverTests(CoLeadFixture):
         # the handover keeps waiting.
         caught = {**identity, "pending": {"epoch": 1, "sequence": 3, "digest": "d" * 64, "sourceFingerprint": "e" * 64}}
 
-        def stopped_mid_publication(c, operation, folder, key, **_) -> dict:
+        archives = []
+
+        def stopped_mid_publication(c, operation, folder, key, **options) -> dict:
             self.hosted_calls.append((operation, str(folder)))
+            archives.append(options.get("archive", True))
             if operation == "stop":
                 (self.a.directory / hosted.IDENTITY).write_text(json.dumps(caught))
             return {"state": "stopped"}
@@ -686,6 +765,8 @@ class HandoverTests(CoLeadFixture):
             with self.assertRaisesRegex(rd.Stop, "^scope.handover_busy: .*hosted snapshot 3 is pending"):
                 rd.give_delivery(self.config(self.a), KEY, self.a.directory, self.second, 0.3)
         self.assertEqual([operation for operation, _ in self.hosted_calls][:2], ["stop", "start"])
+        # The handover's config names no delivery to archive under: neither call takes an archive root.
+        self.assertEqual(archives[:2], [False, False])
         self.assertEqual(self.a.surfaces(self.remote), before)
         (self.a.directory / hosted.IDENTITY).write_text(json.dumps(identity))
         self.assertEqual(self.hand_over(0.3)["data"], {"scope": "delivery", "from": self.first, "to": self.second})
@@ -700,7 +781,9 @@ class HandoverTests(CoLeadFixture):
         args = types.SimpleNamespace(collab_action="give", scope="lane:lane-1", to=self.first, wait=0.1, key=KEY)
         c = self.config(self.b)
         before = self.b.surfaces(self.remote)
+        # collab_config's own config is the one it acts with: nothing reads the global one, whatever the checkout.
         with mock.patch.object(rd, "collab_config", return_value=(c, KEY, self.b.directory)), \
+                mock.patch.object(rd, "cfg", side_effect=AssertionError("the global config was read")), \
                 contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(rd.Stop, "^scope.handover_busy: lane:lane-1 still has the checkout of APP-1"):
                 rd.collab_scope(args)
@@ -708,6 +791,20 @@ class HandoverTests(CoLeadFixture):
             shutil.rmtree(checkout)
             rd.collab_scope(args)
         self.assertTrue(state_tool.holds(self.b.journal(), self.first, "lane:lane-1"))
+
+
+class SharedMarkerTests(unittest.TestCase):
+    def test_a_shared_records_init_id_is_its_record_started_whatever_each_seat_ingested_first(self) -> None:
+        opener = {"seat": "s-aaaaaaaaaaaa", "seq": 1}
+        started = {"id": 1, "kind": "record.started", "at": "2026-11-24T00:00:00.000000Z", "origin": opener}
+        earlier = {"id": 1, "kind": "seat.requested", "at": "2026-11-23T00:00:00.000000Z",
+                   "origin": {"seat": "s-bbbbbbbbbbbb", "seq": 1}}
+        self.assertEqual(tp.init_id([started]), tp.init_id([earlier, {**started, "id": 2}]))
+        self.assertEqual(tp.init_id([started]), "20261124T000000000000Z")
+        # An unshared record's is still its first entry's, as before.
+        self.assertEqual(tp.init_id([{k: v for k, v in earlier.items() if k != "origin"}]), "20261123T000000000000Z")
+        self.assertEqual(tp.entry_ref({"id": 7, "origin": {"seat": "s-aaaaaaaaaaaa", "seq": 3}}), "s-aaaaaaaaaaaa.3")
+        self.assertEqual(tp.entry_ref({"id": 7}), 7)
 
 
 class SyncTimingTests(partitions.SharedFixture):
@@ -825,3 +922,60 @@ class ServeSettlesUnderTheLockTests(colead.mq.MergeQueueTestCase):
         self.assertEqual(self.item(self.a)["stage"], "stopped")
         # Once the turn is over, the queue is idle and passes on.
         self.assertEqual(collab.give_scope(self.a.directory, "queue", self.second, wait=1)["kind"], "scope.transferred")
+
+
+class TakingDeliveryTests(PublisherFixture):
+    """The seat given delivery takes what was carried once, retries a partition it can't read yet, and starts its
+    hosted publisher either way; a publisher run that began before the handover posts nothing after it."""
+
+    def test_delivery_passed_with_no_hosted_identity_still_starts_the_takers_publisher(self) -> None:
+        self.hand_over()
+        rd.take_delivery(self.config(self.b))
+        self.assertIn(("start", str(self.b.directory)), self.hosted_calls)
+        self.assertFalse((self.b.directory / hosted.IDENTITY).exists())
+
+    def test_a_givers_partition_that_cant_be_read_is_taken_on_a_later_pass(self) -> None:
+        x = self.decide(self.a, "X")
+        self.exchange(self.a, self.b)
+        self.publish(self.a)
+        self.hand_over()
+        tool = rd._validator(ROOT)  # the state tool run-delivery reads with, which loads collab afresh each time
+        loaded = tool._collab
+
+        def unreadable():
+            module = loaded()
+            module.peer_carried = lambda directory, seat: None
+            return module
+        with mock.patch.object(tool, "_collab", unreadable):
+            self.assertIsNone(rd.take_delivery(self.config(self.b)))
+        self.assertFalse(collab.delivery_taken(self.b.directory))
+        self.assertEqual(tp.read_ledger(self.b.directory), [])
+        self.assertIn("tracker update(s) it had posted", rd.take_delivery(self.config(self.b)))
+        self.assertTrue(collab.delivery_taken(self.b.directory))
+        self.assertEqual(self.tracker.posted, [("APP-1", self.stamp(self.a, x))])
+
+    def test_a_publisher_run_that_passed_before_the_handover_takes_the_lock_after_it_and_posts_nothing(self) -> None:
+        x = self.decide(self.a, "X")
+        handed, real = [], tp.ledger_lock
+
+        @contextlib.contextmanager
+        def handed_over_first(state_dir, wait):
+            # The publisher's run on a reaches the ledger's lock just after a handover took and released it.
+            if not handed and Path(state_dir) == self.a.directory and not wait:
+                handed.append(True)
+                with mock.patch.object(tp, "ledger_lock", real):
+                    rd.give_delivery(self.config(self.a), KEY, self.a.directory, self.second, 1.0)
+            with real(state_dir, wait) as taken:
+                yield taken
+
+        with mock.patch.object(tp, "ledger_lock", handed_over_first):
+            self.publish(self.a)
+        self.assertEqual(handed, [True])
+        self.assertEqual(self.tracker.posted, [])
+        self.a.push()
+        self.b.take()
+        rd.take_delivery(self.config(self.b))
+        self.publish(self.b)
+        self.assertEqual(self.tracker.posted, [("APP-1", self.stamp(self.b, next(
+            e for e in self.b.journal() if e["kind"] == "decision.recorded")))])
+        self.assertIn(f":{self.first}.", self.tracker.posted[0][1])
