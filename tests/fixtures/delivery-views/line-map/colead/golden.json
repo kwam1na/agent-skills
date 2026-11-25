@@ -24,6 +24,11 @@
                 "label": "Cy",
                 "admitted": true,
                 "approver": false
+              },
+              "s-dddddddddddd": {
+                "label": "Di",
+                "admitted": false,
+                "approver": false
               }
             },
             "peers": {
@@ -310,6 +315,45 @@
               "s-cccccccccccc": 1
             }
           }
+        },
+        {
+          "id": 12,
+          "at": "2026-10-30T06:12:00Z",
+          "kind": "seat.labeled",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "seat": "s-cccccccccccc",
+            "label": "Cyrus"
+          },
+          "origin": {
+            "seat": "s-cccccccccccc",
+            "seq": 2,
+            "seen": {
+              "s-aaaaaaaaaaaa": 8,
+              "s-bbbbbbbbbbbb": 2
+            }
+          }
+        },
+        {
+          "id": 13,
+          "at": "2026-10-30T06:13:00Z",
+          "kind": "seat.requested",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "seat": "s-dddddddddddd",
+            "label": "Di"
+          },
+          "origin": {
+            "seat": "s-dddddddddddd",
+            "seq": 1,
+            "seen": {
+              "s-aaaaaaaaaaaa": 8,
+              "s-bbbbbbbbbbbb": 2,
+              "s-cccccccccccc": 2
+            }
+          }
         }
       ],
       "stats": {},
@@ -357,7 +401,9 @@
               8,
               9,
               10,
-              11
+              11,
+              12,
+              13
             ],
             "beats": [
               "b1",
@@ -366,7 +412,8 @@
               "b4",
               "b5",
               "b6",
-              "b7"
+              "b7",
+              "b8"
             ],
             "standing": [],
             "notLanded": [],
@@ -581,6 +628,44 @@
             },
             "explain": "A scope's holder gave it to another seat, which alone writes its fields now.",
             "items": []
+          },
+          {
+            "id": "b8",
+            "chapter": "c1",
+            "form": "bookkeeping",
+            "altitudes": [
+              "everything"
+            ],
+            "at": "2026-10-30T06:12:00Z",
+            "entries": [
+              12,
+              13
+            ],
+            "thread": null,
+            "kind": null,
+            "tone": "note",
+            "label": "Bookkeeping",
+            "words": {
+              "head": "Bookkeeping",
+              "line": "Seat renamed (1) and Seat asked (1)"
+            },
+            "explain": null,
+            "items": [
+              {
+                "entry": 12,
+                "words": {
+                  "head": "Seat s-cccccccccccc is now shown as Cyrus",
+                  "line": "A label is only shown, never read to decide anything"
+                }
+              },
+              {
+                "entry": 13,
+                "words": {
+                  "head": "Di asked to join the delivery",
+                  "line": "As seat s-dddddddddddd"
+                }
+              }
+            ]
           }
         ],
         "threads": [],
@@ -872,12 +957,12 @@
       }
     }
   },
-  "initialText": "NowThe lineWhoSeatsWhat's leftThe planWhat happenedParkedStarted 5 h 59 min ago · Updated a minute agoPlan preview (agent review only): Saved addresses3pieces to land1lane3criteria to prove1finish lineReady to startSHOP-91 · Work SHOP-91SHOP-91 · Saved addressesSHOP-92 · Address book exportFinish lineReady to be checkedWork SHOP-91Handed over; each is checked and merged in turn, in this order.The lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Lane one0 of 3 landed9191920 of 3 landednext: SHOP-91Finish line0/1Lane 1Work SHOP-91SHOP-91 · Ready, waiting to be checked · Handed over · time unknownBeing checked before it landsSee in the planLandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedWho's doing what1 of 2 lanes are working right now.Each lane is a separate session working in parallel on its own part of the work.Lane oneBuildingfor 6hLane twoStanding byfor 6hSeats3 seats write this delivery, and its queue is moving to Ben.This checkout's seat split from its chain: it writes nothing more here.Who writess-aaaaaaaaaaaaAmaendorses the plans-bbbbbbbbbbbbBenendorses the plans-ccccccccccccCywrites, doesn't endorseWho holds whatdeliveryAmaqueueBenqueue moving to Benlane:lane-1Amalane:lane-2BenEvery other plan section is Ama's, as the delivery's holder.PeersBen held: its updates don't fit this recordCy as of 4mWhat's left3pieces to go0 of 3 pieces have landed.SHOP-91Work SHOP-91Ready, waiting to be checkedSHOP-91Saved addressesNot startedSHOP-92Address book exportNot startedThe finish lineFinish 1Not yetThe lead marks this oneThe plan0 of 3 criteria proven.Plan preview (agent review only): Saved addressesEndorsed by Ama and Ben · 3 review rounds · every lens alignedNothing in the plan needs attention right now.SHOP-91Saved addresses2 proofs left · No review is recorded for it.SHOP-92Address book export3 proofs left · No review is recorded for it. It hasn't been handed off yet.All units2UnitCriteriaStatusSHOP-91Saved addressesCriterion 1 of SHOP-91 SHOP-91.1Criterion 2 of SHOP-91 SHOP-91.22 proofs leftNo review is recorded for it.It still has to merge.Done: handed offSHOP-92Address book exportCriterion 1 of SHOP-92 SHOP-92.13 proofs leftNo review is recorded for it.It hasn't been handed off yet.It still has to merge.Plan review (3 rounds)The plan's review has no round bound: it runs until every lens aligns or the operator ends it.Lenses aligned on round 3 · 2 serious notes raised113:00 am211 h later31 h laterReviewed at 3333333Round 3AlignedTestingCorrectnessNothing new raisedThis round confirmed 1 earlier note: 1 fixed in 3333333.Correctness · 1 fixedRound 2 found a gap in the plan.seriousfixedFixed in 3333333Fixed in round 3.Decisions2Addresses are kept per account, never per device.No new renderer version.Waived proofs0No proof was waived.Approvals ahead2Waiting Product Owner signs off the copyWaiting The operator approves the planOut of scope1Importing addressesThe full outcomeShoppers keep their addresses between visits.What happenedNothing has landed yet.No setbacks.DecisionOther updateHeadlinesStoryEverythingAllDecisionsLandingsSetbacksGetting started6:01 am6:11 amqueue passed to BenFrom AmaScope passed6:10 amSeat Ama's queue takes no more workIts queue is being handed to another seatQueue stopped6:09 amAma endorsed the planAt 01c58f1Plan endorsed6:08 amBen endorsed the planAt 01c58f1Plan endorsed6:07 amlane:lane-2 passed to BenFrom AmaScope passed6:01 amThe delivery startedBy Ama. On origin/main at 01c0fecStarted",
+  "initialText": "NowThe lineWhoSeatsWhat's leftThe planWhat happenedParkedStarted 5 h 59 min ago · Updated a minute agoPlan preview (agent review only): Saved addresses3pieces to land1lane3criteria to prove1finish lineReady to startSHOP-91 · Work SHOP-91SHOP-91 · Saved addressesSHOP-92 · Address book exportFinish lineReady to be checkedWork SHOP-91Handed over; each is checked and merged in turn, in this order.The lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Lane one0 of 3 landed9191920 of 3 landednext: SHOP-91Finish line0/1Lane 1Work SHOP-91SHOP-91 · Ready, waiting to be checked · Handed over · time unknownBeing checked before it landsSee in the planLandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedWho's doing what1 of 2 lanes are working right now.Each lane is a separate session working in parallel on its own part of the work.Lane oneBuildingfor 6hLane twoStanding byfor 6hSeats3 seats write this delivery, and its queue is moving to Ben.This checkout's seat split from its chain: it writes nothing more here.Who writess-aaaaaaaaaaaaAmaendorses the plans-bbbbbbbbbbbbBenendorses the plans-ccccccccccccCyruswrites, doesn't endorses-ddddddddddddDiwaiting to be admittedWho holds whatdeliveryAmaqueueBenqueue moving to Benlane:lane-1Amalane:lane-2BenEvery other plan section is Ama's, as the delivery's holder.PeersBen held: its updates don't fit this recordCyrus as of 4mWhat's left3pieces to go0 of 3 pieces have landed.SHOP-91Work SHOP-91Ready, waiting to be checkedSHOP-91Saved addressesNot startedSHOP-92Address book exportNot startedThe finish lineFinish 1Not yetThe lead marks this oneThe plan0 of 3 criteria proven.Plan preview (agent review only): Saved addressesEndorsed by Ama and Ben · 3 review rounds · every lens alignedNothing in the plan needs attention right now.SHOP-91Saved addresses2 proofs left · No review is recorded for it.SHOP-92Address book export3 proofs left · No review is recorded for it. It hasn't been handed off yet.All units2UnitCriteriaStatusSHOP-91Saved addressesCriterion 1 of SHOP-91 SHOP-91.1Criterion 2 of SHOP-91 SHOP-91.22 proofs leftNo review is recorded for it.It still has to merge.Done: handed offSHOP-92Address book exportCriterion 1 of SHOP-92 SHOP-92.13 proofs leftNo review is recorded for it.It hasn't been handed off yet.It still has to merge.Plan review (3 rounds)The plan's review has no round bound: it runs until every lens aligns or the operator ends it.Lenses aligned on round 3 · 2 serious notes raised113:00 am211 h later31 h laterReviewed at 3333333Round 3AlignedTestingCorrectnessNothing new raisedThis round confirmed 1 earlier note: 1 fixed in 3333333.Correctness · 1 fixedRound 2 found a gap in the plan.seriousfixedFixed in 3333333Fixed in round 3.Decisions2Addresses are kept per account, never per device.No new renderer version.Waived proofs0No proof was waived.Approvals ahead2Waiting Product Owner signs off the copyWaiting The operator approves the planOut of scope1Importing addressesThe full outcomeShoppers keep their addresses between visits.What happenedNothing has landed yet.No setbacks.DecisionOther updateHeadlinesStoryEverythingAllDecisionsLandingsSetbacksGetting started6:01 am6:11 amqueue passed to BenFrom AmaScope passed6:10 amSeat Ama's queue takes no more workIts queue is being handed to another seatQueue stopped6:09 amAma endorsed the planAt 01c58f1Plan endorsed6:08 amBen endorsed the planAt 01c58f1Plan endorsed6:07 amlane:lane-2 passed to BenFrom AmaScope passed6:01 amThe delivery startedBy Ama. On origin/main at 01c0fecStarted",
   "folds": {
     "units": "All units2UnitCriteriaStatusSHOP-91Saved addressesCriterion 1 of SHOP-91 SHOP-91.1Criterion 2 of SHOP-91 SHOP-91.22 proofs leftNo review is recorded for it.It still has to merge.Done: handed offSHOP-92Address book exportCriterion 1 of SHOP-92 SHOP-92.13 proofs leftNo review is recorded for it.It hasn't been handed off yet.It still has to merge."
   },
   "chapters": {
-    "seats": "Seats3 seats write this delivery, and its queue is moving to Ben.This checkout's seat split from its chain: it writes nothing more here.Who writess-aaaaaaaaaaaaAmaendorses the plans-bbbbbbbbbbbbBenendorses the plans-ccccccccccccCywrites, doesn't endorseWho holds whatdeliveryAmaqueueBenqueue moving to Benlane:lane-1Amalane:lane-2BenEvery other plan section is Ama's, as the delivery's holder.PeersBen held: its updates don't fit this recordCy as of 4m",
+    "seats": "Seats3 seats write this delivery, and its queue is moving to Ben.This checkout's seat split from its chain: it writes nothing more here.Who writess-aaaaaaaaaaaaAmaendorses the plans-bbbbbbbbbbbbBenendorses the plans-ccccccccccccCyruswrites, doesn't endorses-ddddddddddddDiwaiting to be admittedWho holds whatdeliveryAmaqueueBenqueue moving to Benlane:lane-1Amalane:lane-2BenEvery other plan section is Ama's, as the delivery's holder.PeersBen held: its updates don't fit this recordCyrus as of 4m",
     "plan": "The plan0 of 3 criteria proven.Plan preview (agent review only): Saved addressesEndorsed by Ama and Ben · 3 review rounds · every lens alignedNothing in the plan needs attention right now.SHOP-91Saved addresses2 proofs left · No review is recorded for it.SHOP-92Address book export3 proofs left · No review is recorded for it. It hasn't been handed off yet.All units2UnitCriteriaStatusSHOP-91Saved addressesCriterion 1 of SHOP-91 SHOP-91.1Criterion 2 of SHOP-91 SHOP-91.22 proofs leftNo review is recorded for it.It still has to merge.Done: handed offSHOP-92Address book exportCriterion 1 of SHOP-92 SHOP-92.13 proofs leftNo review is recorded for it.It hasn't been handed off yet.It still has to merge.Plan review (3 rounds)The plan's review has no round bound: it runs until every lens aligns or the operator ends it.Lenses aligned on round 3 · 2 serious notes raised113:00 am211 h later31 h laterReviewed at 3333333Round 3AlignedTestingCorrectnessNothing new raisedThis round confirmed 1 earlier note: 1 fixed in 3333333.Correctness · 1 fixedRound 2 found a gap in the plan.seriousfixedFixed in 3333333Fixed in round 3.Decisions2Addresses are kept per account, never per device.No new renderer version.Waived proofs0No proof was waived.Approvals ahead2Waiting Product Owner signs off the copyWaiting The operator approves the planOut of scope1Importing addressesThe full outcomeShoppers keep their addresses between visits."
   },
   "details": {}
