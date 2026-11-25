@@ -100,6 +100,40 @@ def canonical_json(value: object) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
 
 
+def sentence_text(value: object) -> object:
+    """A catalog `degradedBehavior` or profile `description` as one string.
+
+    The source may keep either field as a list of sentences, one item per line, so
+    two changes that add sentences at different points of the list merge cleanly.
+    The list's rendered text is its items joined with single spaces; a string, or
+    anything else, is returned unchanged.
+    """
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return " ".join(value)
+    return value
+
+
+def sentence_findings(value: object) -> list[str]:
+    """Why a `degradedBehavior` or `description` value is not a string or a valid sentence list."""
+    if isinstance(value, str):
+        return []
+    if not isinstance(value, list):
+        return ["must be a string or a list of sentences"]
+    if not value:
+        return ["sentence list must not be empty"]
+    problems: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            problems.append(f"sentence {index} must be a string")
+        elif not item:
+            problems.append(f"sentence {index} must not be empty")
+        elif item != item.strip():
+            problems.append(f"sentence {index} has leading or trailing whitespace")
+        elif "\n" in item or "\r" in item:
+            problems.append(f"sentence {index} holds a line break")
+    return problems
+
+
 def sha256_bytes(contents: bytes) -> str:
     return hashlib.sha256(contents).hexdigest()
 
@@ -1073,6 +1107,9 @@ def validate_corpus(root: Path) -> ValidationResult:
                     f"missing provenance record for skill: {skill_id}",
                 )
             )
+        if "degradedBehavior" in skill:
+            for problem in sentence_findings(skill["degradedBehavior"]):
+                findings.append(Finding("schema.supported", skill_id, f"catalog degradedBehavior {problem}"))
         declared_profiles = skill.get("profiles")
         if not isinstance(declared_profiles, list):
             findings.append(Finding("schema.supported", skill_id, "catalog profiles must be a list"))
@@ -1092,6 +1129,9 @@ def validate_corpus(root: Path) -> ValidationResult:
     for profile_id, profile in sorted(profiles.items()):
         if profile.get("schemaVersion") != "agent-skills-profile/1":
             findings.append(Finding("schema.supported", f"profiles/{profile_id}.json", "unsupported schema version"))
+        if "description" in profile:
+            for problem in sentence_findings(profile["description"]):
+                findings.append(Finding("schema.supported", profile_id, f"profile description {problem}"))
         includes = profile.get("includes")
         members = profile.get("members")
         if not isinstance(includes, list) or not isinstance(members, list):

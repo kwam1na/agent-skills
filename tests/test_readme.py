@@ -5,6 +5,8 @@ import re
 import unittest
 from pathlib import Path
 
+from agent_skills.validate import sentence_text
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILES = ("bootstrap", "core", "jira", "linear", "run-delivery")
@@ -124,7 +126,7 @@ class ReadmeKnowledgeLibraryTests(unittest.TestCase):
     )
 
     def test_the_core_paragraph_carries_the_core_profiles_sentence(self) -> None:
-        self.assertIn(self.CORE_SENTENCE, " ".join(_profile("core")["description"].split()))
+        self.assertIn(self.CORE_SENTENCE, " ".join(sentence_text(_profile("core")["description"]).split()))
         intro = _intro()
         self.assertIn(self.CORE_SENTENCE, intro)
         # It sits in the core paragraph, after the compounding decision and before bootstrap guidance.

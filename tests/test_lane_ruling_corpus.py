@@ -7,6 +7,8 @@ import re
 import unittest
 from pathlib import Path
 
+from agent_skills.validate import sentence_text
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = "skills/orchestrate-work/SKILL.md"
@@ -52,7 +54,7 @@ def _document(relative: str) -> str:
 def _degraded_behavior() -> str:
     catalog = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
     entry = next(skill for skill in catalog["skills"] if skill["id"] == "orchestrate-work")
-    return _normalized(entry["degradedBehavior"])
+    return _normalized(sentence_text(entry["degradedBehavior"]))
 
 
 def _operator_list(text: str) -> str:
