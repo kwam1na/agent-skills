@@ -7065,6 +7065,8 @@ def planning_plan_step(c) -> str:
 
 def auto_grant_step(c) -> str:
     """With `collab.autoGrant` on, the delivery holder answers each open request for a plan section nobody holds."""
+    if shared_seat(c) is None:
+        return "unshared"
     given = _validator(c.release)._collab().auto_grants(Path(c.state), enabled=collab_settings(c)["autoGrant"])
     return f"gave {len(given)} plan section(s)" if given else "none asked"
 

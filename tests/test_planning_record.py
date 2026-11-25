@@ -229,7 +229,7 @@ class PlanningSupervisorTests(PlanningRecordCase):
         self.assertTrue(passes, "no pass was logged")
         # A planning pass logs the list it found, needsYou, as a delivery's pass does; it has no close to hold.
         steps = set(passes[0]) - {"pass", "startedAt", "finishedAt", "at", "delivery", "laneWords", "needsYou"}
-        self.assertEqual(steps, {"needs", "render", "latest", "close"}, passes[0])
+        self.assertEqual(steps, {"inputs", "grants", "planView", "needs", "render", "latest", "close"}, passes[0])
         self.assertEqual(passes[0]["close"], "planning: nothing to close")
         # A planning record has no close, so it owes no compound-learning decision.
         self.assertEqual([item["kind"] for item in passes[0]["needsYou"] if item.get("kind") == "compounding"], [])
