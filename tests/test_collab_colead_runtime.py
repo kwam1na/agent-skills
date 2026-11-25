@@ -795,7 +795,9 @@ class CarriedInputsTests(CoLeadFixture):
                                           data={"title": "First"})
         self.exchange(self.a, self.b)
         c = self.config(self.b)
-        rd.record_start(c, "APP-1", "lane-1", self.b.journal())
+        # b's clock is behind a's: its start reads as before the assignment, and still follows it.
+        with mock.patch.object(tp, "now", return_value="2000-01-01T00:00:00.000000Z"):
+            rd.record_start(c, "APP-1", "lane-1", self.b.journal())
         self.assertEqual(len(rd.recorded_starts(c, "APP-1", self.b.journal())), 1)
         self.carry()
         decide = lambda entry: tp.Publisher({"state": self.a.state(), "journal": self.a.journal()}, self.a.directory,
@@ -952,6 +954,27 @@ class CloseAcrossSeatsTests(AcrossSeatsFixture):
                 self.archive(self.a, closed), ([], True))[1]):
             self.assertTrue(supervisor.one_pass(1))
         # No pass runs on a after its close: what it pushed as it closed is all b has.
+        self.b.take()
+        self.assertTrue(rd.closed_by_holder(self.config(self.b)))
+
+    def test_lead_close_on_the_holder_pushes_the_archived_close_and_b_counts_it_closed(self) -> None:
+        state_tool.append_journal(self.a.directory, kind="delivery.closed", data={})
+        self.exchange(self.a, self.b)
+        extra = {"binding_path": self.a.repo / ".agents/orchestration.json"}
+        # What lead-close does after the views' second render isn't this test's: it stops there.
+        with self.on(self.a, **extra), mock.patch.object(rd, "git", return_value=""), \
+                mock.patch.object(rd, "decision_owed", return_value=False), \
+                mock.patch.object(rd, "ask_supervisor_to_stop", return_value=""), \
+                mock.patch.object(rd, "stop_full_health_run", return_value=None), \
+                mock.patch.object(rd, "delivery_posture", return_value={"posture": "gate"}), \
+                mock.patch.object(rd, "note_posture"), mock.patch.object(rd, "plan_lock", lambda c: contextlib.nullcontext()), \
+                mock.patch.object(rd, "clean_story", return_value=("nothing", [], [])), \
+                mock.patch.object(rd, "tracker_owed", return_value=None), \
+                mock.patch.object(rd, "archive_delivery", return_value=(self.a.repo / "archive", [])), \
+                mock.patch.object(rd, "finish_close", return_value=[]), \
+                mock.patch.object(rd, "closed_full_health", return_value={}), \
+                mock.patch.object(rd, "recorded_live", side_effect=Sentinel), self.assertRaises(Sentinel):
+            rd.lead_close(types.SimpleNamespace(without_compounding=None))
         self.b.take()
         self.assertTrue(rd.closed_by_holder(self.config(self.b)))
 
@@ -1186,8 +1209,20 @@ class EvidenceAcrossSeatsTests(AcrossSeatsFixture):
                         [e["kind"] for e in self.b.journal()].count("deferral.held")) or ("removed", True, [])):
                 rd.cleanup_merged(self.config(self.b), {"state": self.b.state(), "journal": self.b.journal()})
         self.assertEqual(cleaned, [1, 1])
+        # lead-cleanup by hand journals them first too, once.
+        with self.on(self.b), mock.patch.object(rd, "deferred_findings", return_value=[
+                    finding, {**finding, "finding": "f-2", "title": "Also later"}]), \
+                mock.patch.object(rd, "unaccepted_merge", return_value=False), \
+                mock.patch.object(rd, "clean_story", lambda key: cleaned.append(
+                    [e["kind"] for e in self.b.journal()].count("deferral.held")) or ("nothing", [], [])), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rd.lead_cleanup(types.SimpleNamespace(keys=["APP-1"]))
+        self.assertEqual(cleaned, [1, 1, 2])
+        rd_finding = [e for e in self.b.journal() if e["kind"] == "deferral.held"]
+        self.assertEqual([e["data"]["finding"] for e in rd_finding], ["f-1", "f-2"])
+        finding2 = {**finding, "finding": "f-2", "title": "Also later"}
         self.exchange(self.b, self.a)
-        self.assertEqual(rd.held_deferrals(self.a.journal()), [finding])
+        self.assertEqual(rd.held_deferrals(self.a.journal()), [finding, finding2])
 
         @contextlib.contextmanager
         def marked(c, followup=None):
@@ -1201,7 +1236,18 @@ class EvidenceAcrossSeatsTests(AcrossSeatsFixture):
             rd.followups_step(self.config(self.a, no_deferrals=False),
                               {"state": self.a.state(), "journal": self.a.journal()})
         self.assertEqual([e["data"]["followup"] for e in self.a.journal() if e["kind"] == "followup.filed"],
-                         ["APP-1-f-1"])
+                         ["APP-1-f-1", "APP-1-f-2"])
+
+    def test_a_shared_records_round_notes_are_read_from_the_lane_checkout(self) -> None:
+        folder = self.config(self.a).lane_checkout("APP-1") / "work/review/APP-1"
+        folder.mkdir(parents=True)
+        (folder / "round-1.json").write_text(json.dumps({"entries": []}))
+        out = io.StringIO()
+        with self.on(self.a), mock.patch.object(rd, "evidence_dir", return_value=self.a.repo / "kept/APP-1"), \
+                mock.patch.object(rd, "evidence_notes", return_value=[("lens.x", "A note.")]), \
+                contextlib.redirect_stdout(out):
+            rd.print_evidence_notes("APP-1", 1)
+        self.assertIn("lens.x: A note.", out.getvalue())
 
 
 class PublisherFixture(CoLeadFixture):
