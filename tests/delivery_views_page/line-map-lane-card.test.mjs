@@ -64,9 +64,9 @@ test("a lane's next story is named once, with one pill per blocker, nearest to l
   expect(row.map((pill) => pill.style.getPropertyValue("--c"))).toEqual(["var(--l1)", "var(--l3)", "var(--l4)"]);
   expect(row.map((pill) => Boolean(pill.querySelector(".lock")))).toEqual([false, true, true]);
   expect(row.map((pill) => pill.getAttribute("title"))).toEqual([
-    "Pages · in the merge queue",
-    `Notices · in the merge queue · holds ${PATH}`,
-    `Ratchet · still with its lane · holds ${PATH}`,
+    "Lane 1 · in the merge queue",
+    `Lane 3 · in the merge queue · holds ${PATH}`,
+    `Lane 4 · still with its lane · holds ${PATH}`,
   ]);
   const legend = card.querySelector(".next .legend");
   expect([...legend.children].map((item) => item.textContent)).toEqual([
@@ -122,4 +122,28 @@ test("a wait the record gives without its blocker is said in its own sentence, a
   const card = person(first.app, "Pages");
   expect([...card.querySelectorAll(".wait")].map((line) => line.textContent)).toEqual(document.waits.map((wait) => wait.words));
   expect(card.querySelectorAll(".next")).toHaveLength(0);
+});
+
+test("a lane standing handed over draws its next story's blockers, and a pending hand-off names its new head", async () => {
+  const document = record();
+  document.state.lanes[0].state = "handed";
+  document.state.queue[0].pending = true;
+  document.journal.push({ id: 5, at: "2026-11-17T11:58:00Z", kind: "review.round", lane: "lane-1", subject: "APP-1", data: { round: 4 } },
+    { id: 6, at: "2026-11-17T11:59:00Z", kind: "candidate.handed", lane: "lane-1", subject: "APP-1", data: { head: "9abcdef" + "1".repeat(33) } });
+  const [first] = await openPage(pageWithRuns(waited(document), {}, { config: CONFIG }), { now: NOW });
+  const card = person(first.app, "Pages");
+  expect(card.querySelector(".doing").textContent).toBe("APP-1 · handed off at 9abcdef after review round 4");
+  // Waiting for the lead to accept it is not the merge queue: the lane's own chip stands.
+  expect(card.querySelector(".st .chip").textContent).toBe("Handed over");
+  expect(pills(card).map((pill) => pill.querySelector(".issue-link").getAttribute("data-ticket"))).toEqual(["APP-2", "APP-1", "APP-3"]);
+  expect(pills(card)[1].querySelector(".phase").textContent).toBe("handed");
+});
+
+test("each lane card names its lane above its title", async () => {
+  const [first] = await openPage(pageWithRuns(waited(record()), {}, { config: CONFIG }), { now: NOW });
+  expect([...first.app.querySelectorAll(".person")].map((card) => [card.querySelector(".lane-name").textContent, card.querySelector("h3").textContent]))
+    .toEqual([["Lane 1", "Pages"], ["Lane 3", "Notices"], ["Lane 4", "Ratchet"]]);
+  // The name sits above the title, in the card's own column.
+  const card = person(first.app, "Pages");
+  expect(card.querySelector(".lane-name").nextElementSibling).toBe(card.querySelector("h3"));
 });

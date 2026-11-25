@@ -209,7 +209,8 @@ over and what they cost, then the lead's decisions. The Setbacks filter shows th
 ledger and the chapters' setback lines; the others show neither. A story told before
 the ledger keeps its own summary and standing lines.
 
-In "Who's doing what", an idle lane whose next story waits names that story once,
+In "Who's doing what", an idle or handed-over lane whose next story waits names that
+story once,
 then a "Waiting on" row of one pill per story it waits on, nearest to landing first,
 from the waits the state tool gives it: each pill is in its lane's colour, filled
 while the story is in the merge queue and hollow while it is still with its lane,

@@ -5527,8 +5527,8 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
     (``files``); and for the lead, while the lead's ``story.held`` stands
     (``held``). A story in review waits on the round its lane is running
     (``review``), from its latest ``review.started`` until that round is
-    reduced, restarted or abandoned. An idle lane waits for the same reasons as
-    its next planned story. ``needing`` names what "Needs you" already lists,
+    reduced, restarted or abandoned. An idle lane, or one handed over, waits for
+    the same reasons as its next planned story. ``needing`` names what "Needs you" already lists,
     so a wait on it says that someone has to act.
 
     It reads the record it is given and the table of sentences, nothing else:
@@ -5651,7 +5651,8 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
                            "frees": "ended", "since": start["at"], "needsSomeone": False,
                            "words": wait_said(table, "waits", "review", fields)})
     for row in state["lanes"]:
-        if row.get("state") != "idle":
+        # A lane handed over is as free as an idle one until its story merges or the lead accepts it.
+        if row.get("state") not in ("idle", "handed"):
             continue
         following = next((entry for entry in planned if entry["lane"] == row["id"] and entry["stage"] == "planned"), None)
         for wait, fields in told.get(following["subject"], []) if following else []:

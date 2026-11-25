@@ -374,6 +374,15 @@ class LaneTests(unittest.TestCase):
         [wait] = of(document, "lane-1")
         self.assertEqual(wait["phase"], "building")
 
+    def test_a_lane_standing_handed_over_says_what_its_next_story_waits_on_as_an_idle_one_does(self) -> None:
+        # A hand-off leaves the lane handed over until its story merges or the lead accepts it: it is free all the
+        # same, and its next story waits for the same reasons.
+        document = record()
+        row(document, "lane-1")["state"] = "handed"
+        [wait] = of(document, "lane-1")
+        self.assertEqual((wait["cause"], wait["blocker"], wait["words"]),
+                         ("order", "APP-1", "Lane 1 is next on APP-2, which waits for APP-1 to land."))
+
     def test_a_waiting_lane_with_no_story_of_its_own_left_says_only_what_it_waits_for(self) -> None:
         document = record()
         row(document, "lane-3").update(state="waiting", waitingOn="APP-1")

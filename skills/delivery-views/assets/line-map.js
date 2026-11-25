@@ -2640,6 +2640,8 @@
   // Without one the post stands this far past the last tick. With sibling repositories drawn, the epic's line runs on past
   // the post to a join where the siblings turn in, and a post of its own.
   var POST_GAP = 40, EPIC_JOIN_GAP = 66, EPIC_POST_GAP = 128, MERGE_TOP = 16, MOST_DRAWN = 2;
+  // Half of "Finish line" at the label's 13px, with a little room; the tally's 11px mono advances 0.6em a character.
+  var LABEL_HALF = 36, TALLY_CHAR = 6.6;
   // The merge's texts' sizes, as the stylesheet sets them, so the room above the line holds every line of the epic's words.
   var TEXT_SIZE = { "mg-label": 13, "mg-count": 11, "mg-step-label": 10, "mg-why": 10 };
   /**
@@ -2749,7 +2751,8 @@
     var postX = step ? barEnd + BAR_TO_POST : ticks.end + POST_GAP;
     var postY = step ? trunkY + TARGET_DROP : trunkY;
     var epicJoinX = postX + EPIC_JOIN_GAP, epicPostX = postX + EPIC_POST_GAP;
-    var width = step ? postX + TARGET_RUN + 8 : epic ? epicPostX + 14 : postX + 14;
+    // The post's label is centred on it, so the drawing reaches past the post far enough to hold it whole.
+    var width = step ? postX + TARGET_RUN + 8 : epic ? epicPostX + 14 : postX + LABEL_HALF;
     var svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("class", "line-merge");
     var landed = all.filter(isLanded).length;
@@ -2877,8 +2880,11 @@
     }
     // The finish post, its label, and the finish lines as squares beside the label, with how many are met.
     shape(svg, "path", { class: "mg-post", d: "M" + postX + " " + (postY - 20) + "V" + (postY + 20) });
-    // Over the post, the label sits higher only to leave the squares room.
-    shape(svg, "text", { class: "mg-label", x: postX, y: postY - (finish.length ? 52 : 30), "text-anchor": "middle" }, "Finish line");
+    // Over the post, the label sits higher to leave the squares room, or to stand clear of a tally that reaches under it.
+    var tallyNode = svg.querySelector("text.mg-tally");
+    var tallyEnd = tallyNode ? Number(tallyNode.getAttribute("x")) + tallyNode.textContent.length * TALLY_CHAR : -Infinity;
+    var raised = finish.length || (!step && tallyEnd > postX - LABEL_HALF);
+    shape(svg, "text", { class: "mg-label", x: postX, y: postY - (raised ? 52 : 30), "text-anchor": "middle" }, "Finish line");
     if (finish.length) {
       var squaresX = postX - (finish.length * 11) / 2 - 12;
       finish.forEach(function (line, k) {
@@ -3851,8 +3857,10 @@
    */
   var LANDING = ["merging", "checked", "checking", "synced", "syncing", "queued", "handed", "review", "building", "planned", "stopped"];
   function blockerStage(doc, subject) {
-    var item = queueItem(doc, subject);
-    if (item) { return item.pending === true ? "handed" : text(item.stage); }
+    // The last queue row for the story, as the state tool reads it.
+    var rows = list(doc.state.queue).filter(function (item) { return isObject(item) && subjectOf(item) === subject; });
+    var item = rows[rows.length - 1];
+    if (item) { return item.pending === true || item.noChange ? "handed" : text(item.stage); }
     var entry = list(doc.state.planned).filter(function (planned) { return isObject(planned) && subjectOf(planned) === subject; })[0];
     return !entry ? "" : entry.noChange ? "handed" : text(entry.stage);
   }
@@ -3882,7 +3890,7 @@
     return mark;
   }
   /** The block under a lane card: its next story once, a "Waiting on" row of one pill per blocker, and a legend. */
-  function nextBlock(doc, found, names, colours) {
+  function nextBlock(doc, found, colours) {
     var item = list(doc.state.planned).filter(function (entry) { return isObject(entry) && subjectOf(entry) === found.next; })[0];
     var head = add(el("p", "next-head"), el("span", "k", "Next"), " ", issue(found.next));
     if (item && titleOf(doc, item) !== found.next) { add(head, " \u00b7 " + titleOf(doc, item)); }
@@ -3891,7 +3899,7 @@
     found.blockers.forEach(function (pill) {
       var node = el("span", "dep" + (pill.queued ? " queued" : ""));
       node.style.setProperty("--c", colours[pill.lane] || laneColour(pill.lane));
-      var said = [names[pill.lane] || pill.lane || "No lane", pill.queued ? "in the merge queue" : "still with its lane"];
+      var said = [pill.lane ? laneLabel(pill.lane) : "No lane", pill.queued ? "in the merge queue" : "still with its lane"];
       if (pill.files.length) { said.push("holds " + pill.files.join(", ")); }
       node.setAttribute("title", said.join(" \u00b7 "));
       add(node, el("span", "dot"), issue(pill.key), el("span", "phase", pill.phase));
@@ -3933,7 +3941,10 @@
   }
   function handedLine(doc, item) {
     var rounds = roundsOf(doc, item);
-    return add(el("p", "doing"), issue(subjectOf(item)), " \u00b7 handed off at ", el("code", null, short(item.head)),
+    // A hand-off the lead hasn't accepted yet leaves the queue row at its earlier head: the journal has the new one.
+    var latest = journalFor(doc, subjectOf(item), { "candidate.handed": true }).pop();
+    var head = latest && isObject(latest.data) && typeof latest.data.head === "string" && latest.data.head ? latest.data.head : item.head;
+    return add(el("p", "doing"), issue(subjectOf(item)), " \u00b7 handed off at ", el("code", null, short(head)),
       rounds ? " after review round " + rounds : "");
   }
   /** The chip of a lane whose story is in the merge queue, with the runner's phase and how long it has been there. */
@@ -3968,7 +3979,7 @@
         var changed = prev.lanes && prev.lanes[lane.id] !== undefined && prev.lanes[lane.id] !== mark && !reduced();
         var row = el("div", "person" + (changed ? " changed" : ""));
         row.style.setProperty("--c", colours[lane.id] || "var(--soft)");
-        var who = add(el("div"), el("h3", null, text(lane.title) || text(lane.id)));
+        var who = add(el("div"), el("p", "lane-name", laneLabel(text(lane.id))), el("h3", null, text(lane.title) || text(lane.id)));
         var doing = text(lane.focus) || text(focus[lane.id]);
         var handed = closed ? null : handedOf(doc, lane);
         if (handed) { who.appendChild(handedLine(doc, handed)); }
@@ -3986,7 +3997,7 @@
           else if (heldFor(lane.since)) { st.appendChild(el("span", "on", heldFor(lane.since))); }
         }
         add(row, add(el("span", "swatch"), persona("lane")), who, st);
-        if (next && next.blockers.length) { row.appendChild(nextBlock(doc, next, laneNames(doc), colours)); }
+        if (next && next.blockers.length) { row.appendChild(nextBlock(doc, next, colours)); }
         people.appendChild(row);
       });
       nodes.push(people);

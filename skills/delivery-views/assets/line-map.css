@@ -605,6 +605,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .person .swatch { display: grid; align-self: start; margin-top: 1px; width: 20px; height: 20px; color: var(--c); }
 .person .swatch .persona { width: 20px; height: 20px; }
 .person h3 { margin: 0; font-weight: 550; font-size: 15px; line-height: 22px; }
+.person .lane-name { margin: 0; color: var(--faint); font-size: 12px; line-height: 16px; }
 .person .doing { margin: 2px 0 0; color: var(--soft); font-size: 14px; overflow-wrap: anywhere; }
 .person .said { margin: 2px 0 0; color: var(--faint); font-size: 12px; }
 .person .said.old { color: var(--wait); }
@@ -1241,7 +1242,8 @@ body.paged .chapter-now.is-fresh > .inner { margin-bottom: 0; }
 .chapter-now.is-fresh .title { max-width: 18ch; }
 .chapter-now.is-fresh .kicker { display: flex; align-items: center; gap: 6px; }
 .chapter-now.is-fresh .plan-now { max-width: 56ch; font-size: 19px; }
-.ready { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0; margin: 12px 0 0; max-width: 980px;
+/* The Now page's ready figures, by element: a bare .ready would also take in the line's stops ready to be checked. */
+dl.ready { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0; margin: 12px 0 0; max-width: 980px;
   border-top: 1px solid var(--hair); }
 .ready-cell { display: grid; gap: 4px; padding: 18px 20px 4px 0; color: var(--ink); text-decoration: none; }
 .ready-cell + .ready-cell { padding-left: 20px; border-left: 1px solid var(--hair); }
@@ -1271,7 +1273,7 @@ body.paged .chapter-now.is-fresh > .inner { margin-bottom: 0; }
 .starting-post-mark { width: 3px; height: 26px; border-radius: 2px; background: var(--ink); }
 @keyframes starting-in { from { opacity: 0; transform: scale(.4); } }
 @media (max-width: 720px) {
-  .ready { grid-template-columns: 1fr 1fr; }
+  dl.ready { grid-template-columns: 1fr 1fr; }
   .ready-cell:nth-child(3) { padding-left: 0; border-left: 0; }
   .ready-cell:nth-child(n + 3) { border-top: 1px solid var(--hair); }
   .starting { grid-template-columns: minmax(0, 1fr) auto; row-gap: 8px; }
