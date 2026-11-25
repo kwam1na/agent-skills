@@ -1674,6 +1674,13 @@
     var status = /^(.*\S)\s*\(([^()]{1,80})\)$/.exec(name);
     if (status) { name = status[1]; }
     var title = add(el("h1", "title"), name);
+    // A name past three lines is cut with an ellipsis: pointing at it shows it whole on the page's own card.
+    title.addEventListener("mouseenter", function () {
+      if (title.scrollHeight <= title.clientHeight + 1) { return; }
+      card.replaceChildren(el("div", "title-whole", name));
+      placeCard(title);
+    });
+    title.addEventListener("mouseleave", hideCard);
     // The kicker is one line: the tracker item the delivery's work is listed under, linked when the renderer linked it,
     // then how long it has run.
     var kicker = el("div", "kicker");

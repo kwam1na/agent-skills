@@ -91,3 +91,25 @@ test("the chapter tab holds every chapter's name in one cell, so stepping betwee
   expect(seen.aria).toBe("Chapters: What's left");
   expect(seen.sizers).toEqual(seen.chapters.map((name) => [name, "true"]));
 });
+
+test("a long name on Now is cut to three lines and shown whole on the page's card when pointed at", async () => {
+  const name = "Several engineers run one delivery together, with shared context, co-authored plans, joint approval, scoped lanes and handovers that survive a machine going away";
+  const document = record();
+  document.state.meta.headline = name;
+  let seen = null;
+  await openPage(pageWithRuns(waited(document), {}, { config: CONFIG }), { now: NOW, steps: [{ run(window) {
+    const title = window.document.querySelector("#now h1.title");
+    const style = window.getComputedStyle(title);
+    // jsdom lays nothing out, so the name reads as cut: its full height past the clamped one.
+    Object.defineProperty(title, "scrollHeight", { configurable: true, value: 150 });
+    Object.defineProperty(title, "clientHeight", { configurable: true, value: 93 });
+    title.dispatchEvent(new window.MouseEvent("mouseenter"));
+    const card = window.document.querySelector(".issue-card");
+    seen = { text: title.textContent, clamp: style.getPropertyValue("-webkit-line-clamp"), overflow: style.overflow,
+      card: card.hidden ? null : card.textContent };
+  } }] });
+  // The whole name stays in the heading, for a screen reader; the page cuts it to three lines and its card shows it.
+  expect(seen.text).toBe(name);
+  expect([seen.clamp, seen.overflow]).toEqual(["3", "hidden"]);
+  expect(seen.card).toBe(name);
+});

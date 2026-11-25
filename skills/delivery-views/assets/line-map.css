@@ -103,7 +103,10 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .kicker { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .title { margin: 0; font-family: var(--display); font-weight: 500; font-size: clamp(28px, 4.2vw, 44px); line-height: 1.1; letter-spacing: -0.02em; max-width: 24ch; }
 /* On Now the delivery's name steps back to a quiet second line under its kicker: the sentence beneath it leads. */
-.chapter-now .title { font-size: clamp(20px, 2.4vw, 26px); font-weight: 400; line-height: 1.2; max-width: 40ch; color: var(--soft); text-wrap: balance; }
+.chapter-now .title { font-size: clamp(20px, 2.4vw, 26px); font-weight: 400; line-height: 1.2; max-width: 40ch; color: var(--soft); text-wrap: balance;
+  /* At most three lines, so the sentence under it sits at one height however long the name is; the whole name is
+     read out, and shown on the page's card when the name is cut. */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
 /* Now's lead, as direction D draws it: one sentence in the display face, the four marks on one thread, the one fact quiet
    beneath. A mark's shape is its state: done is filled ink, live a ring with a halo, stop the stop colour, todo a faint
    ring. The thread is solid where the work has passed and dashed ahead of it. Trouble alone is coloured. */
@@ -591,6 +594,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .issue-card b { display: block; font: 450 12px/16px var(--mono); color: var(--soft); margin-bottom: 4px; }
 .issue-card .ic-t { font-size: 14px; font-weight: 550; margin-bottom: 4px; }
 .issue-card .ic-s { color: var(--soft); }
+.issue-card .title-whole { font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
 /* A delivery's span, from the kicker: its two ends on a short line, a hollow mark for the start and a solid one for the
    close, as the line map's own stops are drawn; the run sits on the line between them. */
 .when { position: relative; display: grid; grid-template-columns: 9px auto; column-gap: 12px; min-width: 196px; }
@@ -1251,7 +1255,6 @@ body:not(.paged) .chapter-tab-hint { display: none; }
 /* On its own page, the opening sits in the middle of the window. */
 body.paged .chapter-now.is-fresh { min-height: 100vh; min-height: 100dvh; justify-content: center; padding-bottom: 88px; }
 body.paged .chapter-now.is-fresh > .inner { margin-bottom: 0; }
-.chapter-now.is-fresh .title { max-width: 18ch; }
 .chapter-now.is-fresh .kicker { display: flex; align-items: center; gap: 6px; }
 .chapter-now.is-fresh .plan-now { max-width: 56ch; font-size: 19px; }
 /* The starting line: every piece waiting, in its lane's colour, the line dotted until something runs on it. */
