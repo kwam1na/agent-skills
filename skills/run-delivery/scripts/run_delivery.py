@@ -6819,6 +6819,35 @@ def rebuild_preview(c, plan: Path) -> tuple[Path, str | None]:
 PLAN_ENDORSEMENTS = 20
 
 
+def planning_endorsements(journal: list[dict], seats: dict) -> list[dict]:
+    """The endorsements a planning record's plan shows: each seat's latest, capped as delivery-plan/1 caps them."""
+    return [{**item, "label": item["label"][:200]} for item in
+            plan_sync.latest_endorsements(journal, seats)][:PLAN_ENDORSEMENTS]
+
+
+def planning_plan_step(c) -> str:
+    """The supervisor's pass on a planning record: its plan.json rebuilt when the endorsements or approval its journal
+    gives differ from those it shows, as an endorsement ingested from a peer changes them with no command run here."""
+    plan = ((load_json(Path(c.state) / "state.json") or {}).get("meta") or {}).get("planFile")
+    if not isinstance(plan, str):
+        return "no plan file"
+    tool = _validator(c.release)
+    journal = tool.read_journal(c.state)
+    seats = tool.derived_seats(journal)
+    shown = (load_json(Path(c.state) / PLAN_FILE) or {}).get("preview") or {}
+    _, commit, _ = plan_at_head(c, Path(plan))
+    if shown.get("endorsements") == planning_endorsements(journal, seats) \
+            and shown.get("approval") == plan_sync.preview_approval(journal, seats, commit):
+        return "current"
+    return rebuild_planning_plan(c, Path(plan), c.delivery, Path(c.state)) or "current"
+
+
+def auto_grant_step(c) -> str:
+    """With `collab.autoGrant` on, the delivery holder answers each open request for a plan section nobody holds."""
+    given = _validator(c.release)._collab().auto_grants(Path(c.state), enabled=collab_settings(c)["autoGrant"])
+    return f"gave {len(given)} plan section(s)" if given else "none asked"
+
+
 def rebuild_planning_plan(c, plan: Path, key: str, folder: Path) -> str | None:
     """The planning record's plan.json, from the plan at HEAD and its review store by the preview builder, with its
     endorsements and approval from the record's journal: written, and journalled as plan.updated, when it changed.
@@ -6833,8 +6862,7 @@ def rebuild_planning_plan(c, plan: Path, key: str, folder: Path) -> str | None:
         journal = tool.read_journal(folder)
         seats = tool.derived_seats(journal)
         built["preview"].update(approval=plan_sync.preview_approval(journal, seats, commit),
-                                endorsements=[{**item, "label": item["label"][:200]} for item in
-                                              plan_sync.latest_endorsements(journal, seats)][:PLAN_ENDORSEMENTS])
+                                endorsements=planning_endorsements(journal, seats))
         check_plan(built, c, f"the planning record's plan of {plan}", planning=True)
         path = folder / PLAN_FILE
         old = load_json(path)
@@ -15230,7 +15258,8 @@ class Supervisor:
                 if taken:
                     entry["delivery"] = taken
         steps = (("reconcile", reconcile_once), ("regions", lambda: settle_landings(c)), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
-                 ("peers", lambda: self.peer_merges(entry)),
+                 ("peers", lambda: self.peer_merges(entry)), ("grants", lambda: auto_grant_step(c)),
+                 ("planView", lambda: planning_plan_step(c)),
                  ("lenses", lambda: journal_lens_returns(c)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
@@ -15239,8 +15268,12 @@ class Supervisor:
                  ("blockers", self.blockers), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         if planning:
-            # While the plan is drafted: the views and the record's copy only; no queue, tracker or full health.
+            # While the plan is drafted: its plan, section grants, the views and the record's copy only; no queue,
+            # tracker or full health.
             steps = tuple((name, step) for name, step in steps if name in PLANNING_STEPS)
+        else:
+            # A delivery's plan is built by the commands that change it.
+            steps = tuple((name, step) for name, step in steps if name != "planView")
         for name, _ in steps:
             if not step_runs(roles, name):
                 entry[name] = f"held by another seat: {SHARED_STEPS[name]}"
@@ -15519,7 +15552,7 @@ class HeldElsewhere(Exception):
 
 
 # The pass steps a planning record runs.
-PLANNING_STEPS = ("needs", "render", "latest")
+PLANNING_STEPS = ("grants", "planView", "needs", "render", "latest")
 
 
 def planning_phase(c) -> bool:
@@ -17270,7 +17303,8 @@ COLLAB_POLL_FLOOR = 2
 # record: "delivery" and "queue" run only where the seat holds that scope; "lane" runs on every seat, for the stories of
 # the lanes it holds, whose checkouts and review rounds are on its machine; "every" runs on every seat. The
 # orchestration guide's "Which machine runs what" table says the same.
-SHARED_STEPS = {"reconcile": "delivery", "regions": "delivery", "peers": "delivery", "finish": "delivery",
+SHARED_STEPS = {"reconcile": "delivery", "regions": "delivery", "peers": "delivery", "grants": "delivery", "planView": "delivery",
+                "finish": "delivery",
                 "publish": "delivery", "cleanupBeforeClose": "delivery", "friction": "delivery", "closeOut": "delivery",
                 "fullHealth": "queue", "lenses": "lane", "cleanup": "lane", "deferrals": "lane", "blockers": "every",
                 "peerWaits": "every", "laneChanges": "every", "needs": "every", "render": "every", "latest": "every"}

@@ -352,7 +352,7 @@ class CoLeadFixture(partitions.SharedFixture):
         lanes = {"APP-1": "lane-1", "APP-2": "lane-2"}
         return types.SimpleNamespace(
             state=machine.directory, root=machine.repo, main=machine.repo, release=ROOT, remote=REMOTE,
-            base_branch="main", delivery=KEY, flow_raw={}, flow_log=machine.repo / "flow-log",
+            base_branch="main", delivery=KEY, flow_raw=extra.pop("flow_raw", {}), flow_log=machine.repo / "flow-log",
             shelf=types.SimpleNamespace(json=lambda name: {"state": {}} if "delivery-views" not in name else None),
             lane_checkout=lambda key: machine.repo / "lanes" / key, stories={key: {"lane": lane} for key, lane in lanes.items()},
             lane_of=lambda key, state=None: lanes[key], require=lambda key: key, no_deferrals=True, work=Path("work"),
@@ -489,9 +489,10 @@ class LeadCommandScopeTests(CoLeadFixture):
         self.assertLess(printed.index(line), printed.index("Your stories, in order"))
 
 
-class SupervisorRoleTests(CoLeadFixture):
-    """Each seat's supervisor serves the sync loop, the queue only where it holds it, and runs each pass step by the
-    step table."""
+class PassFixture(CoLeadFixture):
+    """A supervisor on either seat, and one pass of it with its steps recorded; ``PLANNING`` says which phase."""
+
+    PLANNING = False
 
     def supervisor(self, machine) -> "rd.Supervisor":
         supervisor = rd.Supervisor(self.config(machine), once=True)
@@ -500,10 +501,48 @@ class SupervisorRoleTests(CoLeadFixture):
 
     def setUp(self) -> None:
         super().setUp()
-        # These records are shared deliveries, past planning.
-        patcher = mock.patch.object(rd, "planning_phase", return_value=False)
+        patcher = mock.patch.object(rd, "planning_phase", return_value=self.PLANNING)
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    def one_pass(self, machine, real: tuple[str, ...] = (), **extra) -> tuple[list[str], dict]:
+        """One supervisor pass on ``machine``, every step but those named ``real`` recorded instead of run: the steps
+        it ran, and its entry."""
+        ran: list[str] = []
+        record = lambda name, value=None: (lambda *args, **kwargs: ran.append(name) or value)
+        c = self.config(machine, load_delivery=lambda key: None, **extra)
+        supervisor = rd.Supervisor(c, once=True)
+        doc = {"state": machine.state(), "journal": machine.journal()}
+        logged: list[dict] = []
+        patches = [mock.patch.object(rd, name, record(step, value)) for name, step, value in (
+            ("reconcile_once", "reconcile", []), ("settle_landings", "regions", ""), ("cleanup_merged", "cleanup", []),
+            ("post_merge_step", "fullHealth", ""), ("journal_lens_returns", "lenses", []),
+            ("journal_finish_met", "finish", []), ("deferral_breaches", "deferrals", []),
+            ("write_peer_waits", "peerWaits", ""), ("write_lane_changes", "laneChanges", ""),
+            ("copy_latest", "latest", ""), ("write_needs", "needs", None), ("close_out", "closeOut", ([], False)),
+            ("write_friction_stub", "friction", ""), ("auto_grant_step", "grants", ""),
+            ("planning_plan_step", "planView", "")) if step not in real]
+        patches += [mock.patch.object(rd, "render_views", lambda c, only=None: ran.append(
+                        "publish" if only == "publishers" else "render") or ""),
+                    mock.patch.object(rd, "needs_you", return_value=[]), mock.patch.object(rd, "close_holds",
+                                                                                         return_value=[]),
+                    mock.patch.object(rd, "load_state", return_value=doc),
+                    mock.patch.object(rd, "read_log", return_value=[]),
+                    mock.patch.object(rd, "append_log", lambda name, key, entry: logged.append(entry)),
+                    mock.patch.object(rd.Supervisor, "peer_merges", lambda this, entry: ran.append("peers") or ""),
+                    mock.patch.object(rd.Supervisor, "blockers", lambda this: ran.append("blockers") or ""),
+                    mock.patch.object(rd.Supervisor, "lose", lambda this: False)]
+        with contextlib.ExitStack() as stack:
+            for patch in patches:
+                stack.enter_context(patch)
+            supervisor.one_pass(1)
+        return ran, logged[-1]
+
+
+class SupervisorRoleTests(PassFixture):
+    """Each seat's supervisor serves the sync loop, the queue only where it holds it, and runs each pass step by the
+    step table. These records are shared deliveries, past planning."""
+
 
     def test_every_seat_serves_the_sync_loop_and_only_the_queue_holder_serves_the_queue(self) -> None:
         self.assertEqual(self.supervisor(self.a).wanted_children(), ["collab", "serve"])
@@ -575,43 +614,12 @@ class SupervisorRoleTests(CoLeadFixture):
         self.assertEqual(passes, [1, 2, 3])
         self.assertEqual(started, [(0, "collab"), (1, "serve")])
 
-    def one_pass(self, machine) -> tuple[list[str], dict]:
-        """One supervisor pass on ``machine``, every step recorded instead of run: the steps it ran, and its entry."""
-        ran: list[str] = []
-        record = lambda name, value=None: (lambda *args, **kwargs: ran.append(name) or value)
-        c = self.config(machine, load_delivery=lambda key: None)
-        supervisor = rd.Supervisor(c, once=True)
-        doc = {"state": machine.state(), "journal": machine.journal()}
-        logged: list[dict] = []
-        patches = [mock.patch.object(rd, name, record(step, value)) for name, step, value in (
-            ("reconcile_once", "reconcile", []), ("settle_landings", "regions", ""), ("cleanup_merged", "cleanup", []),
-            ("post_merge_step", "fullHealth", ""), ("journal_lens_returns", "lenses", []),
-            ("journal_finish_met", "finish", []), ("deferral_breaches", "deferrals", []),
-            ("write_peer_waits", "peerWaits", ""), ("write_lane_changes", "laneChanges", ""),
-            ("copy_latest", "latest", ""), ("write_needs", "needs", None), ("close_out", "closeOut", ([], False)),
-            ("write_friction_stub", "friction", ""))]
-        patches += [mock.patch.object(rd, "render_views", lambda c, only=None: ran.append(
-                        "publish" if only == "publishers" else "render") or ""),
-                    mock.patch.object(rd, "needs_you", return_value=[]), mock.patch.object(rd, "close_holds",
-                                                                                         return_value=[]),
-                    mock.patch.object(rd, "load_state", return_value=doc),
-                    mock.patch.object(rd, "read_log", return_value=[]),
-                    mock.patch.object(rd, "append_log", lambda name, key, entry: logged.append(entry)),
-                    mock.patch.object(rd.Supervisor, "peer_merges", lambda this, entry: ran.append("peers") or ""),
-                    mock.patch.object(rd.Supervisor, "blockers", lambda this: ran.append("blockers") or ""),
-                    mock.patch.object(rd.Supervisor, "lose", lambda this: False)]
-        with contextlib.ExitStack() as stack:
-            for patch in patches:
-                stack.enter_context(patch)
-            supervisor.one_pass(1)
-        return ran, logged[-1]
-
     def test_each_pass_step_runs_on_the_machine_the_table_names(self) -> None:
         everywhere = ["cleanup", "lenses", "deferrals", "peerWaits", "laneChanges", "blockers", "needs", "render",
                       "latest"]
         ran, entry = self.one_pass(self.a)
         # With nothing holding it, a's close cleans up once more before it closes, and draws the views after.
-        self.assertEqual(sorted(ran), sorted(["reconcile", "regions", "fullHealth", "peers", "finish", "publish",
+        self.assertEqual(sorted(ran), sorted(["reconcile", "regions", "fullHealth", "peers", "grants", "finish", "publish",
                                               "cleanup", "closeOut", "render", *everywhere]))
         ran, entry = self.one_pass(self.b)
         self.assertEqual(sorted(ran), sorted(everywhere))
@@ -663,6 +671,57 @@ class SupervisorRoleTests(CoLeadFixture):
                     rd.journal_lens_returns(c)
                     rd.deferral_breaches(c, doc(machine))
                 self.assertEqual((cleaned, read, breached), ([mine, settled], [mine], [mine]))
+
+
+class PlanningPassTests(PassFixture):
+    """On a planning record the delivery holder's pass answers section requests and rebuilds the plan when an ingested
+    endorsement changes it; every seat draws its own views."""
+
+    PLANNING = True
+    SECTION = "plan:## Decisions"
+
+    def test_the_planning_pass_runs_grants_and_the_plan_on_the_delivery_holder_only(self) -> None:
+        self.assertEqual(sorted(self.one_pass(self.a)[0]), sorted(["grants", "planView", "needs", "render", "latest"]))
+        ran, entry = self.one_pass(self.b)
+        self.assertEqual(sorted(ran), ["latest", "needs", "render"])
+        self.assertEqual((entry["grants"], entry["planView"]), ("held by another seat: delivery",) * 2)
+
+    def test_bs_section_request_is_granted_within_one_pass_of_a_with_auto_grant_on_and_kept_with_it_off(self) -> None:
+        collab.request_scope(self.b.directory, self.SECTION, "I'm writing the decisions.")
+        self.exchange(self.b, self.a)
+        ran, entry = self.one_pass(self.a, real=("grants",), flow_raw={"collab": {"autoGrant": False}})
+        self.assertEqual(entry["grants"], "none asked")
+        self.assertFalse(state_tool.holds(self.a.journal(), self.second, self.SECTION))
+        ran, entry = self.one_pass(self.a, real=("grants",), flow_raw={"collab": {"autoGrant": True}})
+        self.assertEqual(entry["grants"], "gave 1 plan section(s)")
+        self.exchange(self.a, self.b)
+        self.assertTrue(state_tool.holds(self.b.journal(), self.second, self.SECTION))
+        # Answered once: the next pass gives nothing.
+        self.assertEqual(self.one_pass(self.a, real=("grants",), flow_raw={"collab": {"autoGrant": True}})[1]["grants"],
+                         "none asked")
+
+    def test_an_endorsement_ingested_from_b_rebuilds_as_plan_on_the_next_pass_and_a_current_plan_is_left(self) -> None:
+        commit = HEAD
+        self.a.patch({"meta": {"planFile": "docs/plan.md"}})
+        rebuilt: list[tuple] = []
+        c = self.config(self.a)
+
+        def shown() -> None:
+            journal = self.a.journal()
+            seats = state_tool.derived_seats(journal)
+            (self.a.directory / rd.PLAN_FILE).write_text(json.dumps({"preview": {
+                "endorsements": rd.planning_endorsements(journal, seats),
+                "approval": rd.plan_sync.preview_approval(journal, seats, commit)}}))
+        with mock.patch.object(rd, "plan_at_head", return_value=("text", commit, "2026-11-25T00:00:00Z")), \
+                mock.patch.object(rd, "rebuild_planning_plan",
+                                  lambda c, plan, key, folder: rebuilt.append((plan, key, folder)) or "plan (preview)"):
+            shown()
+            self.assertEqual(rd.planning_plan_step(c), "current")
+            self.assertEqual(rebuilt, [])
+            state_tool.append_journal(self.b.directory, kind="plan.endorsed", data={"commit": commit})
+            self.exchange(self.b, self.a)
+            self.assertEqual(rd.planning_plan_step(c), "plan (preview)")
+            self.assertEqual(rebuilt, [(Path("docs/plan.md"), KEY, self.a.directory)])
 
 
 class PublisherFixture(CoLeadFixture):
@@ -853,6 +912,28 @@ class HandoverTests(PublisherFixture):
             shutil.rmtree(checkout)
             rd.collab_scope(args)
         self.assertTrue(state_tool.holds(self.b.journal(), self.first, "lane:lane-1"))
+
+
+class StateToolDeliveryGiveTests(CoLeadFixture):
+    """Delivery never moves unparked: the state tool's own `scope give --scope delivery` is refused, naming
+    run-delivery's `collab give`, and leaves the record as it was; it still gives every other scope."""
+
+    def cli(self, machine, *arguments: str) -> tuple[int, dict]:
+        ran = subprocess.run([sys.executable, "-B", str(partitions.TOOL), "--dir", str(machine.directory), *arguments],
+                             capture_output=True, text=True, env=dict(colead.os.environ))
+        return ran.returncode, json.loads(ran.stdout)
+
+    def test_the_state_tools_give_of_delivery_is_refused_and_writes_nothing(self) -> None:
+        before = self.a.surfaces(self.remote)
+        code, said = self.cli(self.a, "scope", "give", "--scope", "delivery", "--to", self.second)
+        self.assertNotEqual(code, 0, said)
+        self.assertEqual(said["code"], "scope.handover_unparked", said)
+        self.assertIn("collab give --scope delivery", json.dumps(said))
+        self.assertEqual(self.a.surfaces(self.remote), before)
+        self.assertTrue(state_tool.holds(self.a.journal(), self.first, "delivery"))
+        # Another scope still passes through the same command.
+        code, said = self.cli(self.a, "scope", "give", "--scope", "lane:lane-2", "--to", self.second)
+        self.assertEqual((code, said["entry"]["kind"]), (0, "scope.transferred"), said)
 
 
 class HandoffMarkerTests(PublisherFixture):
