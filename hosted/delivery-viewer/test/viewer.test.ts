@@ -1,5 +1,7 @@
 import { JSDOM } from "jsdom";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
 import { createViewStore, type PublicProjection } from "../src/view-store";
 import { cases } from "./fixtures.generated";
@@ -791,6 +793,30 @@ describe("the hosted page draws what the local page draws", () => {
       expect(words.length).toBeGreaterThan(400);
       expect(words).toBe(chapters(local));
       expect(words).not.toMatch(/not published|Local reference omitted/);
+    } finally {
+      local.window.close();
+      hosted.window.close();
+    }
+  });
+  it("draws a planning cut the publisher builds, its Seats, Feedback and plan as the local page does", () => {
+    // The cut hosted.collect would publish for the corpus's planning record, built by this commit's publisher.
+    const built = execFileSync("python3", ["-B", fileURLToPath(new URL("./node/planning_cut.py", import.meta.url))], {
+      encoding: "utf8",
+    });
+    const body = JSON.parse(built) as PublicProjection;
+    projection(body);
+    const local = drawn(body, false);
+    const hosted = drawn(body, true);
+    try {
+      expect(chapters(hosted)).toBe(chapters(local));
+      const page = hosted.window.document;
+      expect(page.querySelector("#seats .title")!.textContent).toBe("2 seats write this delivery.");
+      expect(page.querySelector("#feedback .title")!.textContent).toBe("2 open, 1 blocking · 4 raised on 3 sections.");
+      expect(page.querySelector("#plan .plan-approval")!.textContent).toBe(
+        "Agent review only · 2 review rounds · every lens aligned · endorsed by Ama · stale endorsement by Ben <b>B</b> · not approved by a person",
+      );
+      // The record's markup is text on the hosted page too.
+      expect(page.querySelectorAll("#feedback script, #feedback img, #seats b").length).toBe(0);
     } finally {
       local.window.close();
       hosted.window.close();
