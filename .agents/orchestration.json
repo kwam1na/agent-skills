@@ -2508,22 +2508,7 @@
       "timeoutSeconds": 180
     },
     "refreshSeconds": 180,
-    "liveHome": "line-map",
-    "liveRuns": {
-      "renderer": "runs",
-      "inventory": {
-        "argv": [
-          "python3",
-          "-B",
-          ".agent-skills/current",
-          "--root",
-          ".",
-          "harness",
-          "runs"
-        ],
-        "timeoutSeconds": 10
-      }
-    }
+    "liveHome": "line-map"
   },
   "fullHealthTimeoutSeconds": 5400,
   "reuse": {
