@@ -1,0 +1,259 @@
+{
+  "schemaVersion": "delivery-plan/1",
+  "updated": "2026-10-30T11:00:00Z",
+  "outcome": {
+    "summary": "Plan preview (agent review only): Saved addresses",
+    "text": "Shoppers keep their addresses between visits."
+  },
+  "requiredLenses": [],
+  "proofKinds": [
+    {
+      "id": "review",
+      "label": "Review",
+      "source": "record"
+    },
+    {
+      "id": "handed",
+      "label": "Handed off",
+      "source": "record"
+    },
+    {
+      "id": "merged",
+      "label": "Merged",
+      "source": "record"
+    }
+  ],
+  "units": [
+    {
+      "subject": "SHOP-91",
+      "title": "Saved addresses",
+      "criteria": [
+        {
+          "id": "SHOP-91.1",
+          "text": "Criterion 1 of SHOP-91"
+        },
+        {
+          "id": "SHOP-91.2",
+          "text": "Criterion 2 of SHOP-91"
+        }
+      ],
+      "proofs": [
+        "review",
+        "handed",
+        "merged"
+      ]
+    },
+    {
+      "subject": "SHOP-92",
+      "title": "Address book export",
+      "criteria": [
+        {
+          "id": "SHOP-92.1",
+          "text": "Criterion 1 of SHOP-92"
+        }
+      ],
+      "proofs": [
+        "review",
+        "handed",
+        "merged"
+      ]
+    }
+  ],
+  "finish": [
+    {
+      "id": "finish-1",
+      "label": "Finish 1",
+      "text": "Every saved address survives a sign-out",
+      "at": "2026-10-30T06:00:00Z",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "approved": {
+    "at": "2026-10-29T23:20:00Z",
+    "snapshot": {
+      "units": [
+        {
+          "subject": "SHOP-91",
+          "title": "Saved addresses",
+          "criteria": [
+            {
+              "id": "SHOP-91.1",
+              "text": "Criterion 1 of SHOP-91"
+            },
+            {
+              "id": "SHOP-91.2",
+              "text": "Criterion 2 of SHOP-91"
+            }
+          ],
+          "proofs": [
+            "review",
+            "handed",
+            "merged"
+          ]
+        },
+        {
+          "subject": "SHOP-92",
+          "title": "Address book export",
+          "criteria": [
+            {
+              "id": "SHOP-92.1",
+              "text": "Criterion 1 of SHOP-92"
+            }
+          ],
+          "proofs": [
+            "review",
+            "handed",
+            "merged"
+          ]
+        }
+      ],
+      "finish": [
+        {
+          "id": "finish-1",
+          "label": "Finish 1",
+          "text": "Every saved address survives a sign-out",
+          "at": "2026-10-30T06:00:00Z",
+          "covers": {
+            "criteria": [],
+            "proofs": []
+          }
+        }
+      ]
+    }
+  },
+  "changes": [],
+  "evidence": {},
+  "approvals": [
+    {
+      "text": "Product Owner signs off the copy",
+      "state": "waiting"
+    },
+    {
+      "text": "The operator approves the plan",
+      "state": "waiting"
+    }
+  ],
+  "outOfScope": [
+    "Importing addresses"
+  ],
+  "preview": {
+    "plan": "docs/plans/saved-addresses.md",
+    "commit": "01c58f10025cc29102f3f612038b299304225d14",
+    "approval": "endorsed",
+    "layout": "delivery",
+    "decisions": [
+      "Addresses are kept per account, never per device.",
+      "No new renderer version."
+    ],
+    "endorsements": [
+      {
+        "seat": "s-aaaaaaaaaaaa",
+        "label": "Ama",
+        "commit": "01c58f10025cc29102f3f612038b299304225d14"
+      },
+      {
+        "seat": "s-bbbbbbbbbbbb",
+        "label": "Ben",
+        "commit": "01c58f10025cc29102f3f612038b299304225d14"
+      }
+    ]
+  },
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ],
+    "state": "aligned",
+    "rounds": [
+      {
+        "round": 1,
+        "candidateRef": "1111111111111111111111111111111111111111",
+        "at": "2026-10-30T03:00:00Z",
+        "outcome": "changes",
+        "verdicts": {
+          "lens.outcome-correctness": "changes",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 1,
+          "P2": 0,
+          "P3": 0
+        },
+        "raised": [
+          {
+            "id": "c1-1",
+            "lens": "lens.outcome-correctness",
+            "severity": "P1",
+            "summary": "Round 1 found a gap in the plan.",
+            "state": "resolved"
+          }
+        ],
+        "settled": []
+      },
+      {
+        "round": 2,
+        "candidateRef": "2222222222222222222222222222222222222222",
+        "at": "2026-10-30T04:00:00Z",
+        "outcome": "changes",
+        "verdicts": {
+          "lens.outcome-correctness": "changes",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 1,
+          "P2": 0,
+          "P3": 0
+        },
+        "raised": [
+          {
+            "id": "c2-1",
+            "lens": "lens.outcome-correctness",
+            "severity": "P1",
+            "summary": "Round 2 found a gap in the plan.",
+            "state": "resolved"
+          }
+        ],
+        "settled": [
+          {
+            "id": "c1-1",
+            "lens": "lens.outcome-correctness",
+            "state": "fixed",
+            "fixCommit": "2222222222222222222222222222222222222222",
+            "resolution": "Fixed in round 2."
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "candidateRef": "3333333333333333333333333333333333333333",
+        "at": "2026-10-30T05:00:00Z",
+        "outcome": "approve",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        },
+        "raised": [],
+        "settled": [
+          {
+            "id": "c2-1",
+            "lens": "lens.outcome-correctness",
+            "state": "fixed",
+            "fixCommit": "3333333333333333333333333333333333333333",
+            "resolution": "Fixed in round 3."
+          }
+        ]
+      }
+    ]
+  }
+}

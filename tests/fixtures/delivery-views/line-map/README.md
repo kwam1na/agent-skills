@@ -27,7 +27,12 @@ The page has since been reworked on purpose, and its goldens follow it:
 `tests/delivery_views_page/recapture-goldens.mjs` re-derives each case's page text, detail panels, plan folds and the
 compared blocks from the page as it stands, with the clock, stops and folds its golden names. The links block is left as
 captured, since no row compares it. A recapture is committed apart from any page change. The page text is the whole
-page's, the story's "What happened" included: its words are the narrator's, told from each case's journal.
+page's, the story's "What happened" included: its words are the narrator's, told from each case's journal. A golden's
+`chapters` names chapters it pins whole, by id, each as its page shows it once the rail opens it. The golden test also
+recaptures every golden in memory and asserts each file is byte for byte as committed.
+
+`shared-cases.mjs` builds the two shared records from the page lane's fixtures: run it after changing one, then
+recapture.
 
 The cases:
 
@@ -40,6 +45,8 @@ The cases:
 | `delivery-records-epic` | a real delivery record of nine merged pieces | their three recorded runs |
 | `integration` | a delivery whose two pieces landed and that is rejoining its target: two catch-ups, a failed then a passing suite, a round asking for changes struck by the second catch-up, and an approving round with an over-budget suite at the current head | an empty inventory |
 | `round-card-record` | a record built with the state tool for the two pieces that landed the round card, its entries since rewritten as facts | their two recorded runs, one with stored findings |
+| `plan-shared` | a planning record two seats write: one endorsement of an older commit, a section held by the second seat, open, blocking and settled feedback, one settled by a seat other than its raiser, the second seat held for another writer generation, and markup in a label and in feedback | the plan review's |
+| `colead` | a planning record every approver seat endorsed, with a writer seat that doesn't endorse and relabels itself, a seat waiting to be admitted, a lane held by the second seat, the queue handed to it and not yet taken up, its updates held as invalid, and this checkout's own seat split | the plan review's |
 
 Real records and run listings named the capturing machine's home directory; the
 capture replaced it with `~/` in its inputs before rendering, so inputs and

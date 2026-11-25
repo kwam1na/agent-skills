@@ -170,7 +170,7 @@ test("review text never becomes markup", async () => {
 const PREVIEW_PAGES = new Map();
 function previewPage(name) {
   if (!PREVIEW_PAGES.has(name)) {
-    const { document, plan } = PREVIEW_CASES[name]();
+    const { document, plan } = (PREVIEW_CASES[name] ?? PLANNING_CASES[name])();
     PREVIEW_PAGES.set(name, render(document, plan));
   }
   return PREVIEW_PAGES.get(name);
@@ -229,7 +229,8 @@ test("a planning record's line names its endorsements, says a stale one, and rea
 });
 
 test("no preview chapter reads as approved, at any round's ending, and none draws the switcher or the changes fold", async () => {
-  const names = [...Object.keys(PREVIEW_CASES)];
+  // A planning record's plan chapter is held to the same rule as any preview's.
+  const names = [...Object.keys(PREVIEW_CASES), ...Object.keys(PLANNING_CASES)];
   for (const name of names) {
     const app = await previewShown(name);
     const words = unapprovedText(app);
@@ -237,7 +238,7 @@ test("no preview chapter reads as approved, at any round's ending, and none draw
     expect([name, app.querySelector("#plan .plan-switch"), app.querySelector('#plan .plan-fold[data-fold="changes"]'),
       app.querySelector("#plan .plan-scoped"), app.querySelector("#plan .ps-when")]).toEqual([name, null, null, null, null]);
     // Every review fold is drawn whole, its newest round's card included, so each ending's pill and verdicts are read.
-    if (PREVIEW_CASES[name]().plan.planReview) expect([name, Boolean(app.querySelector(`${FOLD} .run-card-outcome`))]).toEqual([name, true]);
+    if ((PREVIEW_CASES[name] ?? PLANNING_CASES[name])().plan.planReview) expect([name, Boolean(app.querySelector(`${FOLD} .run-card-outcome`))]).toEqual([name, true]);
   }
   // The approving branches each fixture reaches: the round pill, the story head, and a lens's verdict beside the round's.
   expect((await previewShown("preview-aligned-first")).querySelector(`${FOLD} .run-story`).textContent).toBe("Lenses aligned on the first round · nothing raised");

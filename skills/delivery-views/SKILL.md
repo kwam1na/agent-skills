@@ -1168,6 +1168,32 @@ terminal cut: the last of `delivery.closed`, `lane.assigned`,
 `terminal: true`, as the viewer retains a completed delivery, so a closed
 sibling's last stories still land.
 
+### What the line map shows of a shared record
+
+A shared record, one with `meta.collab`, gets two chapters, made the first time
+its record is shared. A record nobody shares draws exactly as before. Both read
+the record's journal and `meta.collab`, and no label decides anything.
+
+- **Seats**, after Who. Who writes the record, each seat by its latest label:
+  whether it endorses the plan, writes without endorsing, or waits to be
+  admitted. Who holds each scope: `delivery`, `queue`, each lane, and each plan
+  section passed on, with every other plan section the `delivery` holder's. A
+  transfer counts only when the scope's holder made it. A queue handed to
+  another seat says "queue moving to <label>" until that seat writes an entry
+  that has seen the handover. Each peer's freshness, as the sync loop last read
+  it: "<label> as of 4s", "<label> held: generation differs" or "held: its
+  updates don't fit this record". A split is the record's own, never a peer's:
+  a checkout whose seat split says so at the chapter's head.
+- **Feedback**, before What happened, once any is raised. A thread per section
+  it is on, in the order first raised: each feedback's writer and text, and
+  whether it is open, open and blocking, or settled, with its outcome, who
+  settled it and why.
+
+A planning record's plan chapter keeps the preview's line: "Endorsed by
+<labels>" once every approver seat endorsed its commit, and each endorsement,
+current or stale, before that. Like any preview's, it says no form of
+"approve".
+
 ### What the views show of siblings
 
 The state wrapper words what the record's siblings show once, as the

@@ -757,6 +757,15 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 .across-read.is-unread { color: var(--soft); }
 .parked.across li.is-landed { color: var(--soft); }
 
+/* Seats and Feedback: a shared record's chapters, drawn only on one. */
+.seats-group, .feedback-group { margin-top: 24px; }
+.seats-head, .feedback-anchor { font: 500 13px/18px var(--mono); color: var(--soft); margin: 0 0 4px; overflow-wrap: anywhere; }
+.seats-note { font-size: 13px; color: var(--faint); margin: 8px 0 0; }
+.seats-split { color: var(--warn, var(--ink)); }
+.parked li .seat-role, .parked li .scope-note, .parked li .feedback-state { display: block; margin: 2px 0 0; }
+.parked li.feedback-row.is-blocking .feedback-state { color: var(--ink); font-weight: 500; }
+.parked li.feedback-row.is-settled { color: var(--soft); }
+
 /* Rail */
 .foot { padding: 32px max(24px, env(safe-area-inset-left, 0px)) 48px; border-top: 1px solid var(--hair); text-align: center; font-size: 13px; }
 .foot a { color: var(--soft); }
