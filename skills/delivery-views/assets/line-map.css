@@ -144,6 +144,8 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 /* The sheet's surface is its own layer, so anything drawn behind the sheet sits under it rather than over it. */
 .checking::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--lift); box-shadow: var(--shadow-sheet); }
 .checking > * { min-width: 0; }
+/* While a piece is checked, its sheet leads Now: under the sentence, as wide as the rows beneath it. */
+.checking.is-leading { max-width: 980px; }
 .checking.failed::after { box-shadow: var(--shadow-sheet), inset 0 0 0 1.5px var(--held); }
 .ck-h { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); display: flex; align-items: center; gap: 8px; }
 .ck-count { margin-left: auto; font: 500 13px/18px var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
@@ -277,6 +279,8 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
   column-gap: 56px; row-gap: 10px; margin-right: 10px; }
 .chapter-now .journey + .facts { margin-top: -4px; padding-top: 28px; }
 .fact { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 10px; align-content: start; min-width: 0; }
+/* The record's state keeps the last column, even when the middle fact has nothing to say. */
+.facts > .fact.since { grid-column: 3; }
 .fact-label { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; }
 .fact-label > span { display: inline-flex; gap: 8px; align-items: center; }
 .fact-value { align-self: baseline; font-size: 15px; line-height: 1.4; color: var(--ink); text-wrap: pretty; }
@@ -912,6 +916,7 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 }
 @media (max-width: 640px) {
   .facts { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; row-gap: 28px; }
+  .facts > .fact.since { grid-column: auto; }
   .chapter { padding: 48px 20px; }
   .chapter-now { min-height: auto; }
   .checking { padding: 18px 16px; border-radius: 12px; }
@@ -1242,15 +1247,6 @@ body.paged .chapter-now.is-fresh > .inner { margin-bottom: 0; }
 .chapter-now.is-fresh .title { max-width: 18ch; }
 .chapter-now.is-fresh .kicker { display: flex; align-items: center; gap: 6px; }
 .chapter-now.is-fresh .plan-now { max-width: 56ch; font-size: 19px; }
-/* The Now page's ready figures, by element: a bare .ready would also take in the line's stops ready to be checked. */
-dl.ready { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0; margin: 12px 0 0; max-width: 980px;
-  border-top: 1px solid var(--hair); }
-.ready-cell { display: grid; gap: 4px; padding: 18px 20px 4px 0; color: var(--ink); text-decoration: none; }
-.ready-cell + .ready-cell { padding-left: 20px; border-left: 1px solid var(--hair); }
-.ready-number { margin: 0; font: 300 clamp(34px, 4vw, 48px)/1 var(--display); letter-spacing: -0.02em; font-variant-numeric: lining-nums tabular-nums; }
-.ready-label { order: 2; font-size: 13px; color: var(--faint); }
-.ready-cell.is-link:hover .ready-label { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--edge); }
-.ready-cell.is-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; border-radius: 4px; }
 /* The starting line: every piece waiting, in its lane's colour, the line dotted until something runs on it. */
 .starting { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; column-gap: 14px; max-width: 980px; margin-top: 18px; }
 .starting-end { font-size: 12px; color: var(--faint); white-space: nowrap; }
@@ -1270,12 +1266,25 @@ dl.ready { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 
 .opens-right:hover .starting-name, .opens-right:focus-visible .starting-name,
 .opens-left:hover .starting-name, .opens-left:focus-visible .starting-name { transform: translate(0, 0); }
 .starting-post { display: grid; place-items: center; }
+/* Each starting stop as the line draws its piece: dotted while not started, a ring while built or reviewed, half filled
+   when ready to be checked, a diamond while the lead has yet to accept it, an arc while it is checked, a triangle when
+   stopped. */
+.starting-stop.is-later, .starting-stop.is-unknown { border-style: dotted; }
+.starting-stop.is-now { position: relative; border-color: color-mix(in oklab, var(--c, var(--edge)) 25%, var(--paper)); }
+.starting-stop.is-now::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid transparent;
+  border-top-color: var(--c, var(--edge)); border-right-color: var(--c, var(--edge)); }
+.starting-stop.is-ready { background: linear-gradient(90deg, var(--c, var(--edge)) 50%, var(--paper) 50%); }
+/* The diamond and the triangle are drawn on a layer of their own, so neither turns nor clips the stop's name. */
+.starting-stop.is-pending, .starting-stop.is-held { position: relative; border: 0; border-radius: 0; background: none; }
+.starting-stop.is-pending:hover, .starting-stop.is-pending:focus-visible,
+.starting-stop.is-held:hover, .starting-stop.is-held:focus-visible { background: none; }
+.starting-stop.is-pending::before { content: ""; position: absolute; inset: 2px; box-sizing: border-box; border: 2px solid var(--c, var(--edge));
+  border-radius: 2px; background: var(--paper); transform: rotate(45deg); }
+.starting-stop.is-held::before { content: ""; position: absolute; inset: 0; background: var(--held); clip-path: polygon(50% 4%, 100% 92%, 0 92%); }
+.starting-stage { display: block; margin-top: 2px; font-size: 11px; color: var(--faint); }
 .starting-post-mark { width: 3px; height: 26px; border-radius: 2px; background: var(--ink); }
 @keyframes starting-in { from { opacity: 0; transform: scale(.4); } }
 @media (max-width: 720px) {
-  dl.ready { grid-template-columns: 1fr 1fr; }
-  .ready-cell:nth-child(3) { padding-left: 0; border-left: 0; }
-  .ready-cell:nth-child(n + 3) { border-top: 1px solid var(--hair); }
   .starting { grid-template-columns: minmax(0, 1fr) auto; row-gap: 8px; }
   .starting-end.is-start { grid-column: 1 / -1; }
   .starting-end.is-finish { display: none; }

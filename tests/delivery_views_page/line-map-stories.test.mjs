@@ -48,14 +48,82 @@ test("the facts row opens with the stories landed out of the total, a track in l
   expect(stories.querySelector(".fact-said").textContent).toBe("2 in the queue · 2 being built");
 });
 
+test("before anything lands, each starting stop is drawn and said by where its piece stands", async () => {
+  const doc = record({
+    queue: [item("A", "checking"), item("B", "queued"), item("C", "queued", { pending: true }), item("D", "stopped")],
+    planned: [planned("E", "building"), planned("F", "review"), planned("G", "planned")],
+  });
+  const app = await facts(doc);
+  const stops = [...app.querySelectorAll("#now .starting-stop")];
+  expect(stops.map((stop) => [...stop.classList].filter((name) => name.startsWith("is-")).join(" "))).toEqual(
+    ["is-now", "is-ready", "is-ready is-pending", "is-held", "is-active", "is-active", "is-later"]);
+  expect(stops.map((stop) => stop.getAttribute("aria-label").split(", ").slice(2).join(", "))).toEqual([
+    "Being checked before merge", "Ready, waiting to be checked", "Handed over, waiting for the lead to accept",
+    "Stopped, waiting for its lane", "Being built", "In review", "Not started"]);
+  // A stop's hover says where it stands under its name.
+  expect(stops[1].querySelector(".starting-name").textContent).toBe("B · Work BReady, waiting to be checked");
+  expect(app.querySelector("#now .starting-end.is-start").textContent).toBe("Under way");
+  expect(app.querySelector("#now .stories .fact-said").textContent).toBe("3 in the queue · 2 being built");
+  // The queue lands the piece being checked first.
+  expect(app.querySelectorAll("#now .facts > .fact")[1].querySelector(".fact-value").textContent).toBe("Work A");
+  // With nothing started, every stop is open and the row is ready to start, with nothing to count and nothing queued.
+  const ready = await facts(record({ planned: [planned("A", "planned"), planned("B", "planned")] }));
+  expect([...ready.querySelectorAll("#now .starting-stop")].map((stop) => stop.classList.contains("is-later"))).toEqual([true, true]);
+  expect(ready.querySelector("#now .starting-end.is-start").textContent).toBe("Ready to start");
+  expect(ready.querySelector("#now .stories .fact-said")).toBeNull();
+  const nothing = ready.querySelectorAll("#now .facts > .fact")[1];
+  expect([nothing.querySelector(".fact-label").textContent, nothing.querySelector(".fact-value").textContent])
+    .toEqual(["Next to land", "Nothing in the queue yet"]);
+});
+
+test("while a piece is checked, its checks lead Now, under the sentence, and the facts row leaves what lands next to them", async () => {
+  const checking = { now: { subject: "A", title: "Work A", startedAt: minute(55), steps: [
+    { label: "unit tests", state: "running", startedAt: minute(57), expectedSeconds: 240 }, { label: "end to end", state: "pending" }] }, next: [] };
+  const doc = record({ queue: [item("A", "checking"), item("B", "queued")], planned: [planned("C", "building")], meta: { checking } });
+  const app = await facts(doc);
+  const order = [...app.querySelector("#now .inner").children].map((node) => node.classList[0]);
+  // The sheet stands right after the sentence and its marks, before the starting line and the facts.
+  expect(order.indexOf("checking")).toBe(order.indexOf("now-state") + 1);
+  expect(order.indexOf("checking") < order.indexOf("starting")).toBe(true);
+  expect(app.querySelector("#now .checking").classList.contains("is-leading")).toBe(true);
+  // The facts row keeps the stories and the record's state, which stays in the last column.
+  const cells = [...app.querySelectorAll("#now .facts > .fact")];
+  expect(cells.map((cell) => cell.classList.contains("since") ? "since" : cell.querySelector(".fact-label").textContent)).toEqual(["Stories", "since"]);
+  // Waiting to be checked is not a check running: the sheet keeps its place below, and the middle fact returns.
+  const waiting = await facts(record({ queue: [item("A", "queued")], planned: [planned("C", "building")] }));
+  const after = [...waiting.querySelector("#now .inner").children].map((node) => node.classList[0]);
+  expect(after.indexOf("checking") > after.indexOf("starting")).toBe(true);
+  expect(waiting.querySelector("#now .checking").classList.contains("is-leading")).toBe(false);
+  expect(waiting.querySelectorAll("#now .facts > .fact")[1].querySelector(".fact-label").textContent).toBe("Next to land");
+});
+
+test("the record's state keeps the facts row's last column whatever the middle says", async () => {
+  let column = null;
+  const doc = record({ queue: [item("A", "checking")], meta: { checking: { now: { subject: "A", startedAt: minute(55), steps: [] }, next: [] } } });
+  await openPage(pageWithRuns(doc, {}, { config: FORGE }), { now: NOW, steps: [{ run(window) {
+    column = window.getComputedStyle(window.document.querySelector("#now .facts > .fact.since")).getPropertyValue("grid-column");
+  } }] });
+  expect(column).toBe("3");
+});
+
 test("a delivery with nothing landed looks ahead to its total instead of counting zero, and a closed one shows its final count", async () => {
   const none = await facts(record({ queue: [item("A", "queued")], planned: [planned("B", "building"), planned("C", "building")] }));
-  // Before anything lands, Now draws no facts row: the total reads as large figures, and every piece as an open stop.
-  expect(none.querySelector("#now .facts")).toBeNull();
+  // Before anything lands, every piece is a stop drawn where it stands, and the facts row counts from zero: the stories
+  // with the queue and the build, the one the queue lands next in place of the last landed, and the record's state.
   expect(none.querySelector("#now").classList.contains("is-fresh")).toBe(true);
-  expect([...none.querySelectorAll("#now .ready .ready-cell")].map((cell) => cell.textContent)).toEqual(["3pieces to land", "1lane"]);
+  expect(none.querySelector("#now .ready")).toBeNull();
   expect([...none.querySelectorAll("#now .starting-stop")].map((stop) => stop.getAttribute("aria-label"))).toEqual(
-    ["A, Work A, not started", "B, Work B, not started", "C, Work C, not started"]);
+    ["A, Work A, Ready, waiting to be checked", "B, Work B, Being built", "C, Work C, Being built"]);
+  expect(none.querySelector("#now .starting-end.is-start").textContent).toBe("Under way");
+  expect([...none.querySelectorAll("#now .facts > .fact .fact-label")].map((label) => label.textContent).slice(0, 2))
+    .toEqual(["Stories", "Next to land"]);
+  expect(none.querySelector("#now .stories .fact-value").textContent).toBe("0 of 3 landed");
+  expect(none.querySelector("#now .stories .fact-said").textContent).toBe("1 in the queue · 2 being built");
+  const next = none.querySelectorAll("#now .facts > .fact")[1];
+  expect(next.querySelector(".fact-value").textContent).toBe("Work A");
+  expect(next.querySelector(".fact-detail").textContent).toBe("A · Ready, waiting to be checked");
+  expect(none.querySelector("#now .facts > .fact.since")).toBe(none.querySelectorAll("#now .facts > .fact")[2]);
+  expect(none.querySelector("#now .kicker .now-since")).toBeNull();
   // The closed epic landed all nine: its final count, with nothing left in the queue or the build to count.
   const folder = path.join(CORPUS, "delivery-records-epic");
   const page = renderPage(readJson(path.join(folder, "document.json")), { config: readJson(path.join(CORPUS, "linked-config.json")),

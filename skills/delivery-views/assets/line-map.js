@@ -1325,49 +1325,35 @@
   function plural(count, one, many) { return count + " " + (count === 1 ? one : many || one + "s"); }
 
   /* 1. Now */
-  /** Before anything lands: what the delivery holds, as a row of large figures. */
-  function readyFigures(doc, all) {
-    var lanes = [];
-    all.forEach(function (piece) { var lane = text(piece.item.lane); if (lanes.indexOf(lane) < 0) { lanes.push(lane); } });
-    var figuresRow = [[all.length, all.length === 1 ? "piece to land" : "pieces to land"], [lanes.length, lanes.length === 1 ? "lane" : "lanes"]];
-    if (plan) {
-      var counts = planCounts(doc);
-      if (counts.total) { figuresRow.push([counts.total, counts.total === 1 ? "criterion to prove" : "criteria to prove", "#plan"]); }
-    }
-    var finish = list(doc.state.finish).filter(isObject).length;
-    if (finish) { figuresRow.push([finish, finish === 1 ? "finish line" : "finish lines"]); }
-    var row = el("dl", "ready");
-    figuresRow.forEach(function (figure) {
-      var value = el("dd", "ready-number", String(figure[0]));
-      var label = el("dt", "ready-label", figure[1]);
-      var cell = add(el("div", "ready-cell"), value, label);
-      if (figure[2]) {
-        var link = add(el("a", "ready-cell is-link"), value, label);
-        link.setAttribute("href", figure[2]);
-        cell = link;
-      }
-      row.appendChild(cell);
-    });
-    return row;
-  }
-  /** Before anything lands: every piece as an open stop in its lane's colour, in landing order, up to the finish post. */
+  /**
+   * Before anything lands: every piece as a stop in its lane's colour, in landing order, up to the finish post, each drawn
+   * as the line draws it (not started, being built or reviewed, ready, waiting on the lead, being checked, stopped) and
+   * said in the line's words. The row is ready to start only while nothing has. Its classes carry an is- prefix, so no
+   * rule of the page's own for a bare state name reaches them.
+   */
   function startingLine(doc, all) {
     var box = el("div", "starting");
     var stops = el("ol", "starting-stops");
+    var current = checkingNow(doc);
+    var nowSubject = current && current.subject !== undefined && current.subject !== null ? String(current.subject) : null;
+    var started = false;
     all.forEach(function (piece, index) {
       var key = subjectOf(piece.item);
-      var stop = el("a", "starting-stop");
+      var kind = stopKind(piece, nowSubject);
+      if (kind !== "later") { started = true; }
+      var words = piece.planned && piece.item.stage === "planned" ? STAGE_WORDS.planned : pieceWords(doc, piece.item);
+      var stop = el("a", "starting-stop " + kind.split(" ").map(function (part) { return "is-" + part; }).join(" "));
       stop.setAttribute("href", "#line");
       stop.style.setProperty("--c", laneColour(text(piece.item.lane)));
       stop.style.setProperty("--i", String(index));
       // Its name opens toward the room it has: rightward near the start, leftward near the finish.
       stop.classList.add(index < all.length / 3 ? "opens-right" : index >= all.length * 2 / 3 ? "opens-left" : "opens-mid");
-      stop.setAttribute("aria-label", (key ? key + ", " : "") + titleOf(doc, piece.item) + ", not started");
-      stop.appendChild(el("span", "starting-name", (key ? key + " · " : "") + titleOf(doc, piece.item)));
+      stop.setAttribute("aria-label", (key ? key + ", " : "") + titleOf(doc, piece.item) + ", " + words);
+      stop.appendChild(add(el("span", "starting-name"), (key ? key + " · " : "") + titleOf(doc, piece.item), el("small", "starting-stage", words)));
       stops.appendChild(add(el("li"), stop));
     });
-    add(box, el("div", "starting-end is-start", "Ready to start"), stops, add(el("div", "starting-post"), el("span", "starting-post-mark")),
-      el("div", "starting-end is-finish", "Finish line"));
+    add(box, el("div", "starting-end is-start", started ? "Under way" : "Ready to start"), stops,
+      add(el("div", "starting-post"), el("span", "starting-post-mark")), el("div", "starting-end is-finish", "Finish line"));
     return box;
   }
   /*
@@ -1718,23 +1704,18 @@
     // Before anything has landed, the page looks ahead: what is about to be delivered, rather than how much of it is zero.
     var fresh = !closed && all.length > 0 && landed === 0 && !step && !partDone.length;
     inner.parentNode.classList.toggle("is-fresh", fresh);
-    if (fresh) {
-      var stamp = since(doc, meta, closed).querySelector(".fact-value");
-      if (stamp && text(stamp.textContent)) { add(kicker, kicker.firstChild ? " · " : null, el("span", "now-since", stamp.textContent)); }
-    }
     // Now leads, under the delivery's name: one sentence, its marks and at most one fact.
-    var nodes = (kicker.firstChild ? [kicker, title] : [title]).concat([nowBlock(doc, all)]);
+    var nowNode = nowBlock(doc, all);
+    var nodes = (kicker.firstChild ? [kicker, title] : [title]).concat([nowNode]);
     // The outcome when it says more than the name, then how much of the plan is proven and how often it changed,
     // linked to the plan chapter.
     var said = outcome && outcome !== text(meta.headline) && outcome !== name ? outcome : null;
     var planLink = planNow(doc);
-    if (fresh) {
-      if (said) { nodes.push(add(el("p", "plan-now"), said)); }
-      nodes.push(readyFigures(doc, all));
-      nodes.push(startingLine(doc, all));
-    } else if (said || planLink) {
+    if (said || planLink) {
       nodes.push(add(el("p", "plan-now"), said, planLink ? add(el("span", "plan-now-line"), planLink) : null));
     }
+    // Before anything lands, the starting line stands where the journey will: every piece, drawn where it stands.
+    if (fresh) { nodes.push(startingLine(doc, all)); }
     if (behind) { nodes.push(el("p", "say say-across", behind)); }
     // A lead's own status line, while it stands, is theirs to say.
     var sayWords = fresh ? "" : sayLine(doc);
@@ -1742,18 +1723,24 @@
     // What the lead waits on in another delivery sharing the base, and what waits on the lead, as the state tool says.
     waitLines(doc, "lead", "p", "say say-wait").forEach(function (line) { nodes.push(line); });
     var panel = closed ? null : checkingPanel(doc, all);
-    if (panel) { nodes.push(panel); }
+    // While a piece is checked, the checks lead: their sheet stands right under the sentence that names the piece, as
+    // wide as the rows beneath it. Otherwise it keeps its place below.
+    var leading = panel && panel.classList.contains("live");
+    if (leading) { panel.classList.add("is-leading"); nodes.splice(nodes.indexOf(nowNode) + 1, 0, panel); }
+    else if (panel) { nodes.push(panel); }
     var supervisor = needsYou(doc, all, Boolean(closed));
     if (supervisor) { nodes.push(supervisor); }
     var left = closed ? leftOpen(doc, all) : null;
     if (left) { nodes.push(left); }
     var partway = closeStoppedPartway(doc, closed);
     if (partway) { nodes.push(partway); }
-    if (!fresh) {
-      nodes.push(journey(doc, all, closed ? tally.landed : landed));
-      // Under the line, three facts in one shape: how many stories have landed, what landed last, and the record's state.
-      nodes.push(add(el("div", "facts"), storiesFact(all, closed ? tally : null), lastLanded(doc, all), since(doc, meta, closed)));
-    }
+    if (!fresh) { nodes.push(journey(doc, all, closed ? tally.landed : landed)); }
+    // Under the line, three facts in one shape: how many stories have landed, what landed last, or before anything has
+    // what the queue lands next, and the record's state.
+    nodes.push(add(el("div", "facts"), storiesFact(all, closed ? tally : null),
+      // While the checks lead, they already say what lands next.
+      fresh ? (leading ? null : nextToLand(doc, all)) : lastLanded(doc, all),
+      since(doc, meta, closed)));
     var was = prev.checkingHeight;
     inner.replaceChildren.apply(inner, nodes);
     // A live update that changes the sheet's height, a check starting or a failure listed, eases it there instead of jumping.
@@ -1811,6 +1798,20 @@
     return link;
   }
   /** The piece that landed last, by its title, with its ticket, its pull request when the forge snapshot knows it, and when. */
+  /** Before anything lands, in place of the last landed: the piece the queue lands next, the one being checked first. */
+  function nextToLand(doc, all) {
+    var current = checkingNow(doc);
+    var nowSubject = current && current.subject !== undefined && current.subject !== null ? String(current.subject) : null;
+    var rank = { now: 0, ready: 1, "ready pending": 2 };
+    var queued = all.filter(function (piece) { return !piece.planned && rank[stopKind(piece, nowSubject)] !== undefined; })
+      .map(function (piece, index) { return { piece: piece, index: index, rank: rank[stopKind(piece, nowSubject)] }; })
+      .sort(function (a, b) { return a.rank - b.rank || a.index - b.index; });
+    if (!queued.length) { return fact("", "Next to land", "Nothing in the queue yet"); }
+    var item = queued[0].piece.item;
+    var ticket = subjectOf(item) ? issue(subjectOf(item)) : null;
+    if (ticket) { ticket.classList.add("fact-ref"); }
+    return fact("", "Next to land", titleOf(doc, item), add(el("span"), ticket, ticket ? " \u00b7 " : null, pieceWords(doc, item)));
+  }
   function lastLanded(doc, all) {
     var landed = latestMerge(doc);
     if (!landed) { return null; }
