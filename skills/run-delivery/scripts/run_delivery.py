@@ -7529,7 +7529,9 @@ def candidate_ownership(c, lane: str, base: str, head: str, state: dict) -> tupl
             raise Stop(f"writer_not_owned: {error}") from error
         regional_paths = {claim["path"] for claim in regions}
     else:
-        changed = list(filter(None, run(["git", "diff", "--no-renames", "--name-only", "-z", base, head]).stdout.split("\0")))
+        # Read as file-system bytes, as the region helper reads them, so a name that isn't UTF-8 is still judged.
+        changed = list(filter(None, run(["git", "diff", "--no-renames", "--name-only", "-z", base, head],
+                                        errors="surrogateescape").stdout.split("\0")))
         outside, regional_paths = {}, set()
     ownership = c.effective_ownership(state)
     if "laneOwnership" not in state:
@@ -8014,6 +8016,37 @@ def verify_integration_checkout(c, root: Path, key: str, base: str, target: str)
     raise Stop(f"{root} already exists and does not hold the integration setup for {key} on {base}")
 
 
+def setup_head(c, key: str, plan: str) -> str:
+    """HEAD of the standing checkout, for an integration setup, which drafts from the committed tree at it into a
+    checkout of its own. It refuses a tracked change, staged or not, and an untracked file at a path setup writes (the
+    delivery file, the lane brief and the binding) or reads from the working tree (the settings the standing
+    configuration takes, which the new checkout wouldn't have). Every other untracked file is named and left alone."""
+    guarded = {(Path(c.deliveries_rel) / f"{key}.json").as_posix(), f"{Path(plan).with_suffix('').as_posix()}.lane-brief.md",
+               ".agents/orchestration.json", CONFIG, *(old for old, new in LEGACY_NAMES if new == CONFIG),
+               ".agents/delivery-views.json", "harness.config.ts"}
+    changed, colliding, elsewhere = [], [], []
+    # Not stripped: the first line's leading space is its status column.
+    for line in run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=c.root).stdout.splitlines():
+        if not line.startswith("?? "):
+            changed.append(line)
+        elif line[3:] in guarded:
+            colliding.append(line)
+        else:
+            elsewhere.append(line[3:])
+    refused = []
+    if changed:
+        refused.append("the checkout has uncommitted changes; commit or remove them first:\n" + "\n".join(changed)[:800])
+    if colliding:
+        refused.append("the checkout has untracked files where setup reads or writes; commit or remove them first:\n"
+                       + "\n".join(colliding))
+    if refused:
+        raise Stop("\n".join(refused))
+    if elsewhere:
+        shown = elsewhere[:20] + ([f"and {len(elsewhere) - 20} more"] if len(elsewhere) > 20 else [])
+        print("left alone: untracked files setup doesn't read:\n  " + "\n  ".join(shown))
+    return git("rev-parse", "HEAD", cwd=c.root)
+
+
 def integration_checkout(c, key: str, base: str, plan: str) -> tuple[Path, str]:
     """Find or create the lead checkout, keeping the standing binding on its own branch."""
     if not c.binding_base or git("check-ref-format", "--branch", base, check=False) != base:
@@ -8060,7 +8093,7 @@ def integration_checkout(c, key: str, base: str, plan: str) -> tuple[Path, str]:
         else:
             git("worktree", "add", "-q", "--track", "-b", base, str(root), f"{c.remote}/{base}")
     else:
-        head = clean_head()
+        head = setup_head(c, key, plan)
         if Shelf(c.root, head).text(plan) is None:
             raise Stop("name a committed repository-relative plan")
         if Shelf(c.root, head).json(f"{c.deliveries_rel}/{key}.json") is not None:
@@ -13117,6 +13150,12 @@ ENCLOSING_KINDS = {".py": "python", ".js": "javascript", ".mjs": "javascript", "
 LANE_FILES_LIMIT = 400
 
 
+def shown_path(path: str) -> str:
+    """A path as the views show it: one read as file-system bytes (`surrogateescape`), so git can be handed it back, with
+    each byte that isn't UTF-8 shown as a replacement character. A UTF-8 path is unchanged."""
+    return path.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+
+
 def enclosing_name(path: str, lines: list[str], line: int) -> str | None:
     """The name of the block line `line` (one-based) sits in, on the new side: the line itself when it names one, else
     the nearest one above it. In Python and JavaScript, the nearest one indented less than the code it holds, so a
@@ -13164,8 +13203,10 @@ def read_lane_branch(c, story: str, base: str) -> dict | None:
         run(["git", "fetch", "-q", "--no-write-fetch-head", c.remote, f"+refs/heads/{branch}:refs/remotes/{c.remote}/{branch}"],
             cwd=c.root)
         merge_base = git("merge-base", base, head, cwd=c.root)
+        # Read as file-system bytes: a name that isn't UTF-8 is handed back to git as it is, and shown with
+        # replacement characters.
         paths = list(filter(None, run(["git", "diff", "--name-only", "--no-renames", "-z", merge_base, head],
-                                      cwd=c.root).stdout.split("\0")))
+                                      cwd=c.root, errors="surrogateescape").stdout.split("\0")))
         files = []
         for path in paths:
             # Not strictly decoded: a binary or non-UTF-8 file is still a change the read reports, by its hunks.
@@ -13192,11 +13233,13 @@ def lane_holdings(c, lane: str, read: dict, state: dict) -> dict:
         return read
     helper = _region_ownership()
     _, outside = candidate_ownership(c, lane, read["mergeBase"], read["head"], state)
+    # Judged by the shown path, so a kept read, whose paths were written shown, is judged as a fresh one.
+    outside = [shown_path(item) for item in outside]
     regions = state.get("laneRegions", [])
     shared = shared_outputs(c) if "laneOwnership" in state else set()
     files = []
     for entry in read["files"]:
-        path = entry["path"]
+        path = shown_path(entry["path"])  # a fresh read's name that isn't UTF-8 is judged, and written, as shown
         refused = path in outside or any(item.startswith(f"{path}: ") for item in outside)
         changes = [dict(change, inside=not refused) for change in entry["changes"]]
         holds = "shared" if path in shared else "span" if any(claim["path"] == path for claim in regions) else "file"
@@ -13251,7 +13294,8 @@ def claimed_files(c, state: dict, base: str) -> dict:
     for path in regional + whole:
         if len(files) >= LANE_FILES_LIMIT:
             break
-        shown = run(["git", "show", f"{base}:{path}"], cwd=c.root, check=False)
+        # Not strictly decoded: a claimed binary file is counted as a UTF-8 file's lines are, not a failed step.
+        shown = run(["git", "show", f"{base}:{path}"], cwd=c.root, check=False, errors="replace")
         length = len(shown.stdout.splitlines()) if shown.returncode == 0 else 0
         if path in regional:
             spans = []
@@ -15714,7 +15758,14 @@ def requeue(c, key: str) -> None:
                        + (f" and the queue's synced head {item['syncedHead'][:10]}" if item.get("syncedHead") else "")
                        + ": the lane hands it off again")
         found[:] = [item]
-        return ["--element", f"queue[subject={key}]", "--set", json.dumps({"/stage": "queued", "/checks": []})]
+        # The lane row the stop wrote, saying it stopped and waiting on the lead, no longer holds: it is put back as
+        # the queue puts back a candidate it takes again, so "Needs you", the close and the status line drop the stop.
+        queue = [{**q, "stage": "queued", "checks": []} if q["subject"] == key else q for q in doc["state"]["queue"]]
+        return {"queue": queue, "lanes": delivery_state.lane_rows_put_back(doc["state"], key)}
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
     patch_from(back_to_queued, f"{key}'s re-queue", writer="runner")
     item = found[0]
     # The re-queue answers the stop it resolves, which closes that setback.
