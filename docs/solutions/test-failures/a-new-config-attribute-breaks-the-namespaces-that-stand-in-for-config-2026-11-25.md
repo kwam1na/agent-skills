@@ -55,9 +55,9 @@ field would hide the next drift instead of fixing this one.
 
 - Before a change makes a helper read a `Config` field it didn't read before, search the tests for
   `SimpleNamespace(` configs that reach the helper, and add the field to them in the same change.
-- When a story changes `skills/run-delivery/scripts/run_delivery.py`, select the modules that build such namespaces,
-  `tests.test_run_delivery_supervisor` and `tests.test_lane_changes` among them, as well as the modules the story
-  touches.
+- Select the modules that search finds as checks for the change, as well as the modules the story touches. On
+  2026-11-25, 22 test modules built `SimpleNamespace` configs (`git grep -n "SimpleNamespace(" tests/`), so the search
+  is the rule. `tests.test_run_delivery_supervisor` and `tests.test_lane_changes` are only the two this incident hit.
 
 ## Related Issues
 
