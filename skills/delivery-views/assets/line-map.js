@@ -5218,8 +5218,9 @@
     });
     return { first: first, held: held, passed: passed, last: last };
   }
+  /** Who holds `delivery`, `queue` or a lane: its holder once passed on, the first seat until then. */
   function holderOf(register, scope) {
-    return scope in register.held ? register.held[scope] : /^plan:/.test(scope) ? (register.held.delivery || register.first) : register.first;
+    return scope in register.held ? register.held[scope] : register.first;
   }
   /** A queue handed on that its new holder has not yet taken up: no entry of that seat has seen the transfer. */
   function queueMoving(doc, register) {

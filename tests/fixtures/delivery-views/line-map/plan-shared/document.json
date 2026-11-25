@@ -269,6 +269,46 @@
           "s-bbbbbbbbbbbb": 5
         }
       }
+    },
+    {
+      "id": 12,
+      "at": "2026-10-30T06:12:00Z",
+      "kind": "feedback.raised",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "anchor": "### SHOP-91. Saved addresses",
+        "text": "Drop the cap?",
+        "blocking": false
+      },
+      "origin": {
+        "seat": "s-bbbbbbbbbbbb",
+        "seq": 6,
+        "seen": {
+          "s-aaaaaaaaaaaa": 6
+        }
+      }
+    },
+    {
+      "id": 13,
+      "at": "2026-10-30T06:13:00Z",
+      "kind": "feedback.resolved",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "outcome": "declined",
+        "reason": "The cap stays."
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 7,
+        "seen": {
+          "s-bbbbbbbbbbbb": 6
+        }
+      },
+      "answers": [
+        12
+      ]
     }
   ],
   "stats": {},

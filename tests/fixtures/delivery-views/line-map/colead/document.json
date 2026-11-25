@@ -21,6 +21,11 @@
             "label": "Cy",
             "admitted": true,
             "approver": false
+          },
+          "s-dddddddddddd": {
+            "label": "Di",
+            "admitted": false,
+            "approver": false
           }
         },
         "peers": {
@@ -305,6 +310,45 @@
         "seen": {
           "s-bbbbbbbbbbbb": 2,
           "s-cccccccccccc": 1
+        }
+      }
+    },
+    {
+      "id": 12,
+      "at": "2026-10-30T06:12:00Z",
+      "kind": "seat.labeled",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-cccccccccccc",
+        "label": "Cyrus"
+      },
+      "origin": {
+        "seat": "s-cccccccccccc",
+        "seq": 2,
+        "seen": {
+          "s-aaaaaaaaaaaa": 8,
+          "s-bbbbbbbbbbbb": 2
+        }
+      }
+    },
+    {
+      "id": 13,
+      "at": "2026-10-30T06:13:00Z",
+      "kind": "seat.requested",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-dddddddddddd",
+        "label": "Di"
+      },
+      "origin": {
+        "seat": "s-dddddddddddd",
+        "seq": 1,
+        "seen": {
+          "s-aaaaaaaaaaaa": 8,
+          "s-bbbbbbbbbbbb": 2,
+          "s-cccccccccccc": 2
         }
       }
     }

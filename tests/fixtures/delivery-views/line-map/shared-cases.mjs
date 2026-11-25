@@ -51,6 +51,8 @@ const CASES = {
         [9, BEN, "feedback.resolved", { outcome: "accepted", reason: "CSV it is <img src=x onerror=alert(1)>." }, { answers: [8] }],
         [10, BEN, "plan.endorsed", { commit: headOf("plan", 1) }],
         [11, AMA, "plan.endorsed", { commit: headOf("plan") }],
+        [12, BEN, "feedback.raised", { anchor: "### SHOP-91. Saved addresses", text: "Drop the cap?", blocking: false }],
+        [13, AMA, "feedback.resolved", { outcome: "declined", reason: "The cap stays." }, { answers: [12] }],
       ],
     });
     return { document, plan };
@@ -63,7 +65,8 @@ const CASES = {
     document.state.queue = [{ ...item("SHOP-91", "queued"), order: 1 }];
     shared(document, {
       seats: { [AMA]: { label: "Ama", admitted: true, approver: true }, [BEN]: { label: "Ben", admitted: true, approver: true },
-        "s-cccccccccccc": { label: "Cy", admitted: true, approver: false } },
+        "s-cccccccccccc": { label: "Cy", admitted: true, approver: false },
+        "s-dddddddddddd": { label: "Di", admitted: false, approver: false } },
       peers: { [BEN]: { through: 3, fetchedAt: minute(350), heldReason: "slice_invalid" },
         "s-cccccccccccc": { through: 1, fetchedAt: minute(356), heldReason: null } },
       steps: [
@@ -78,6 +81,9 @@ const CASES = {
         [9, AMA, "plan.endorsed", { commit: headOf("plan") }],
         [10, AMA, "queue.stopped", { seat: AMA }],
         [11, AMA, "scope.transferred", { scope: "queue", from: AMA, to: BEN }],
+        // Cy's label changes in its own entry; the record's seats still carry the label it was admitted with.
+        [12, "s-cccccccccccc", "seat.labeled", { seat: "s-cccccccccccc", label: "Cyrus" }],
+        [13, "s-dddddddddddd", "seat.requested", { seat: "s-dddddddddddd", label: "Di" }],
       ],
       heldReason: "seat_split",
     });
