@@ -4298,9 +4298,12 @@ class SupervisorTrackerTests(unittest.TestCase):
         page = fx.tmp / "record/line-map.html"
         holding = lambda drawn: sorted("base.broken" if item["source"].endswith("(base.broken)") else item["source"]
                                        for item in drawn["items"] if item["holding"])
-        # Each holds the close, and the line map the pass draws lists each, from the same list the close read.
-        drawn = wait_for(lambda: (lambda d: d if holding(d) == ["base.broken", "fullHealth", "tracker publisher"] else None)(
+        # Each holds the close, and the line map the pass draws lists each, from the same list the close read. The
+        # tracker publisher's lag, which nobody can act on, keeps its row there and stops claiming to hold up the finish.
+        lagging = lambda drawn: [item for item in drawn["items"] if item["source"] == "tracker publisher"]
+        drawn = wait_for(lambda: (lambda d: d if holding(d) == ["base.broken", "fullHealth"] and lagging(d) else None)(
             self.embedded_needs(page.read_text())), "each holding in the line map")
+        self.assertEqual([item["holding"] for item in lagging(drawn)], [False], drawn)
         self.assertTrue(drawn["running"], drawn)
         # Stale once a pass is overdue: the interval (1s here) and once more the longer of it and the pass's own time.
         moment = lambda text: datetime.datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ")
@@ -4315,12 +4318,21 @@ class SupervisorTrackerTests(unittest.TestCase):
         for item in last["needsYou"]:
             if item["holding"]:
                 self.assertIn(item["text"], last["closeHeldBy"])
+        # The supervisor's own pass still holds the close on the publisher's lag.
+        [publisher] = [item for item in last["needsYou"] if item["source"] == "tracker publisher"]
+        self.assertTrue(publisher["holding"], publisher)
+        self.assertIn(publisher["text"], last["closeHeldBy"])
         self.assertEqual(kinds(fx, "delivery.closed"), [])
-        # Clearing one removes it on a following pass; the other still holds. The rerun passes, so it repairs the base.
+        # Clearing one removes it on a following pass; the lag still holds the close, and the line map keeps its row
+        # without saying it holds up the finish. The rerun passes, so it repairs the base.
         (fx.tmp / "health").write_text("pass")
         code, out = fx.flow("lead-resolve", "full-health", "--why", "flaky", cwd=fx.main)
         self.assertEqual(code, 0, out)
-        wait_for(lambda: holding(self.embedded_needs(page.read_text())) == ["tracker publisher"], "fullHealth cleared")
+        cleared = wait_for(lambda: (lambda d: d if holding(d) == [] and lagging(d) else None)(
+            self.embedded_needs(page.read_text())), "fullHealth cleared")
+        self.assertEqual([item["holding"] for item in lagging(cleared)], [False], cleared)
+        self.assertTrue(any("tracker publisher" in item["source"] and item["text"] in passes(fx)[-1]["closeHeldBy"]
+                            for item in passes(fx)[-1]["needsYou"]), passes(fx)[-1])
         self.assertEqual(kinds(fx, "delivery.closed"), [])
         # Stopped, it says so: the list, the line map and `latest` all say it isn't running, and keep no items.
         os.kill(pid, signal.SIGTERM)
