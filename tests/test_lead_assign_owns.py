@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import unittest
 
+from agent_skills.validate import sentence_text
 from tests.test_region_claims import CommandCase, command_fixture, numbered
 
 
@@ -19,7 +20,7 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.fx, cls.delivery = command_fixture(cls, {"FX-5": "lane-1", "FX-6": "lane-1", "FX-7": "lane-2", "FX-8": "lane-3",
                                                      "FX-9": "lane-2", "FX-10": "lane-1", "FX-11": "lane-3",
-                                                     "FX-13": "lane-1", "FX-14": "lane-1"})
+                                                     "FX-12": "lane-2", "FX-13": "lane-1", "FX-14": "lane-1"})
 
     def names(self, key: str, path: str) -> None:
         """The story's plan section names ``path``, so lead-assign reads it as one of the story's files."""
@@ -222,6 +223,68 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
         refused = self.flow("lead-accept", "FX-9", "--take", "lib/pin1.txt", "--why", "a pin", ok=False)
         self.assertIn("FX-9 has merged: --take grants a file to a candidate waiting for acceptance", refused)
         self.assertEqual(self.record_bytes(), written)
+
+    def test_handoff_names_the_grant_or_move_that_clears_an_out_of_lane_file_before_review(self) -> None:
+        from tests.test_run_delivery_supervisor import hand_off
+        base = self.push_base({"lib/out12.txt": ["out\n"], "lib/g12/other.txt": ["other\n"],
+                               "lib/span12.txt": numbered(6, "s"), "lib/unrelated12.txt": ["unrelated\n"]})
+        for pattern in ("lib/out12.txt", "lib/g12/*"):
+            self.flow("lead-own", "--grant", pattern, "--lane", "lane-2")
+        self.grant("lib/span12.txt", "lane-2", base, 1, 3)
+        self.grant("lib/span12.txt", "lane-3", base, 4, 6)
+        self.flow("lead-own", "--grant", "lib/unrelated12.txt", "--lane", "lane-3")  # lane-3 holds more than the glob
+        refusals = []
+
+        def narrowed(wt, url) -> None:
+            # Narrowed after review: a file no lane holds, a file another lane holds by a glob, and a file lanes
+            # share by lines whose changed span no lane holds.
+            self.flow("lead-own", "--revoke", "lib/out12.txt", "--lane", "lane-2")
+            self.flow("lead-own", "--move", "lib/g12/*", "--lane", "lane-3", "--from", "lane-2")
+            self.flow("lead-own", "--revoke-region", "lib/span12.txt", "--lane", "lane-2", "--base", base,
+                      "--start", "1", "--end", "3")
+            refused = self.flow("handoff", "FX-12", "--pr", url, cwd=wt, ok=False)
+            refusals.append(refused)
+            self.assertIn("writer_not_owned: FX-12 changes files outside lane-2's", refused)
+            self.assertIn("the lead clears each whole file before hand-off with:", refused)
+            self.assertIn("lead-own --grant lib/out12.txt --lane lane-2\n", refused)
+            # The other lane's own pattern, which lead-own --move takes, not the file's path.
+            self.assertIn("lead-own --move 'lib/g12/*' --lane lane-2 --from lane-3", refused)
+            self.assertIn("lib/span12.txt: ", refused)
+            for wrong in ("--take", "lib/g12/other.txt --lane", "--grant lib/span12.txt", "--grant 'lib/span12.txt",
+                          "lib/unrelated12.txt"):
+                self.assertNotIn(wrong, refused)
+            # The named commands, and a span for the shared file, are what clear it: the hand-off that follows succeeds.
+            self.flow("lead-own", "--grant", "lib/out12.txt", "--lane", "lane-2")
+            self.flow("lead-own", "--move", "lib/g12/*", "--lane", "lane-2", "--from", "lane-3")
+            self.grant("lib/span12.txt", "lane-2", base, 1, 3)
+
+        hand_off(self.fx, "FX-12", "lane-2", before=narrowed,
+                 files={"lib/out12.txt": "out changed\n", "lib/g12/other.txt": "other changed\n",
+                        "lib/span12.txt": "".join(["s 1 changed\n", *numbered(6, "s")[1:]])})
+        self.assertEqual(len(refusals), 1)
+
+    def test_take_is_described_as_for_a_file_narrowed_out_after_hand_off(self) -> None:
+        from tests.test_run_delivery import ROOT
+        flat = " ".join((ROOT / "skills/run-delivery/SKILL.md").read_text(encoding="utf-8").split())
+        self.assertIn("`--take PATH --why T`, repeatable with one `--why`, is for a file the lead narrowed out of the "
+                      "lane's claims after the lane handed off, and accepts its change: review-prepare, review-reduce "
+                      "and handoff already refuse a change to a file outside the lane, and the `lead-own --grant` that "
+                      "refusal names, or `--move` for a file another lane holds, clears it before review.", flat)
+        help_text = " ".join(self.flow("lead-accept", "--help").split())
+        self.assertIn("for a file the lead narrowed out of the lane's claims after it handed off: grant the lane a "
+                      "whole-file claim on it, then accept; repeatable, and needs --why. Before hand-off, "
+                      "review-prepare and handoff refuse an out-of-lane file, and lead-own --grant clears it", help_text)
+        sentence = ("lead-accept --take is for a file the lead narrowed out of the lane's claims after the lane handed "
+                    "off.")
+        catalog = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
+        texts = {"catalog.json": next(skill["degradedBehavior"] for skill in catalog["skills"]
+                                      if skill["id"] == "run-delivery")}
+        for name in ("jira", "linear", "run-delivery"):
+            texts[f"profiles/{name}.json"] = json.loads((ROOT / f"profiles/{name}.json").read_text(encoding="utf-8"))[
+                "description"]
+        for name, sentences in texts.items():
+            with self.subTest(file=name):
+                self.assertIn(sentence, sentence_text(sentences))
 
     def test_acceptance_refuses_an_edge_insertion_next_to_another_lane_and_takes_it_otherwise(self) -> None:
         from tests.test_run_delivery_supervisor import hand_off
