@@ -1,0 +1,281 @@
+{
+  "state": {
+    "version": 3,
+    "meta": {
+      "headline": "Plan preview (agent review only): Saved addresses",
+      "updatedAt": "2026-10-30T11:59:00Z",
+      "collab": {
+        "key": "SHOP-90",
+        "seats": {
+          "s-aaaaaaaaaaaa": {
+            "label": "Ama",
+            "admitted": true,
+            "approver": true
+          },
+          "s-bbbbbbbbbbbb": {
+            "label": "Ben <b>B</b>",
+            "admitted": true,
+            "approver": true
+          }
+        },
+        "peers": {
+          "s-bbbbbbbbbbbb": {
+            "through": 4,
+            "fetchedAt": "2026-10-30T11:55:00Z",
+            "heldReason": "generation_differs"
+          }
+        }
+      },
+      "phase": "planning"
+    },
+    "lanes": [
+      {
+        "id": "lane-1",
+        "title": "Lane one",
+        "focus": "",
+        "state": "working",
+        "waitingOn": null,
+        "since": "2026-10-30T06:00:00Z"
+      }
+    ],
+    "queue": [],
+    "planned": [
+      {
+        "subject": "SHOP-91",
+        "title": "Saved addresses",
+        "lane": "lane-1",
+        "stage": "planned"
+      },
+      {
+        "subject": "SHOP-92",
+        "title": "Address book export",
+        "lane": "lane-1",
+        "stage": "planned"
+      }
+    ],
+    "finish": [
+      {
+        "id": "finish-1",
+        "text": "Every saved address survives a sign-out",
+        "met": false
+      }
+    ],
+    "followups": [],
+    "leases": []
+  },
+  "journal": [
+    {
+      "id": 1,
+      "at": "2026-10-30T06:01:00Z",
+      "kind": "record.started",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "base": {
+          "ref": "origin/main",
+          "head": "01c0fec00256acd102ec5ae2038208f30417b704"
+        }
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 1,
+        "seen": {}
+      }
+    },
+    {
+      "id": 2,
+      "at": "2026-10-30T06:02:00Z",
+      "kind": "seat.admitted",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-aaaaaaaaaaaa",
+        "label": "Ama",
+        "approver": true
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 2,
+        "seen": {}
+      }
+    },
+    {
+      "id": 3,
+      "at": "2026-10-30T06:03:00Z",
+      "kind": "seat.requested",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-bbbbbbbbbbbb",
+        "label": "Ben <b>B</b>"
+      },
+      "origin": {
+        "seat": "s-bbbbbbbbbbbb",
+        "seq": 1,
+        "seen": {
+          "s-aaaaaaaaaaaa": 2
+        }
+      }
+    },
+    {
+      "id": 4,
+      "at": "2026-10-30T06:04:00Z",
+      "kind": "seat.admitted",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-bbbbbbbbbbbb",
+        "label": "Ben <b>B</b>",
+        "approver": true
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 3,
+        "seen": {
+          "s-bbbbbbbbbbbb": 1
+        }
+      },
+      "answers": [
+        3
+      ]
+    },
+    {
+      "id": 5,
+      "at": "2026-10-30T06:05:00Z",
+      "kind": "scope.transferred",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "scope": "plan:### SHOP-92. Address book export",
+        "from": "s-aaaaaaaaaaaa",
+        "to": "s-bbbbbbbbbbbb"
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 4,
+        "seen": {
+          "s-bbbbbbbbbbbb": 1
+        }
+      }
+    },
+    {
+      "id": 6,
+      "at": "2026-10-30T06:06:00Z",
+      "kind": "feedback.raised",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "anchor": "## Decisions",
+        "text": "Per account <script>alert(1)</script>, or per device?",
+        "blocking": true
+      },
+      "origin": {
+        "seat": "s-bbbbbbbbbbbb",
+        "seq": 2,
+        "seen": {
+          "s-aaaaaaaaaaaa": 4
+        }
+      }
+    },
+    {
+      "id": 7,
+      "at": "2026-10-30T06:07:00Z",
+      "kind": "feedback.raised",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "anchor": "### SHOP-91. Saved addresses",
+        "text": "Name the cap on saved addresses.",
+        "blocking": false
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 5,
+        "seen": {
+          "s-bbbbbbbbbbbb": 2
+        }
+      }
+    },
+    {
+      "id": 8,
+      "at": "2026-10-30T06:08:00Z",
+      "kind": "feedback.raised",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "anchor": "### SHOP-92. Address book export",
+        "text": "CSV first.",
+        "blocking": false
+      },
+      "origin": {
+        "seat": "s-bbbbbbbbbbbb",
+        "seq": 3,
+        "seen": {
+          "s-aaaaaaaaaaaa": 5
+        }
+      }
+    },
+    {
+      "id": 9,
+      "at": "2026-10-30T06:09:00Z",
+      "kind": "feedback.resolved",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "outcome": "accepted",
+        "reason": "CSV it is <img src=x onerror=alert(1)>."
+      },
+      "origin": {
+        "seat": "s-bbbbbbbbbbbb",
+        "seq": 4,
+        "seen": {
+          "s-aaaaaaaaaaaa": 5
+        }
+      },
+      "answers": [
+        8
+      ]
+    },
+    {
+      "id": 10,
+      "at": "2026-10-30T06:10:00Z",
+      "kind": "plan.endorsed",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "commit": "01efd59302952095033a6b9703dfb6990485019b"
+      },
+      "origin": {
+        "seat": "s-bbbbbbbbbbbb",
+        "seq": 5,
+        "seen": {
+          "s-aaaaaaaaaaaa": 5
+        }
+      }
+    },
+    {
+      "id": 11,
+      "at": "2026-10-30T06:11:00Z",
+      "kind": "plan.endorsed",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "commit": "01c58f10025cc29102f3f612038b299304225d14"
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 6,
+        "seen": {
+          "s-bbbbbbbbbbbb": 5
+        }
+      }
+    }
+  ],
+  "stats": {},
+  "estimates": {},
+  "status": {
+    "source": "derived",
+    "text": ""
+  },
+  "focus": {}
+}

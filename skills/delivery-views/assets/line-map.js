@@ -5180,6 +5180,162 @@
     parts.across.replaceChildren.apply(parts.across, nodes);
   }
 
+  /* Shared records: who writes it, who holds what, and the feedback on its plan */
+  // A shared record's meta.collab, or none: a record nobody shares draws neither chapter, and is drawn as it always was.
+  function collabOf(doc) {
+    var meta = isObject(doc.state) && isObject(doc.state.meta) ? doc.state.meta : null;
+    return meta && isObject(meta.collab) ? meta.collab : null;
+  }
+  function entriesOf(doc) { return list(doc.journal).filter(function (entry) { return isObject(entry) && isObject(entry.data); }); }
+  /** Each seat's latest label, from the record's seats and its seat entries; a label is only shown, never read. */
+  function seatLabels(doc, collab) {
+    var labels = Object.create(null);
+    var seats = isObject(collab.seats) ? collab.seats : {};
+    Object.keys(seats).forEach(function (seat) { if (isObject(seats[seat]) && text(seats[seat].label)) { labels[seat] = text(seats[seat].label); } });
+    entriesOf(doc).forEach(function (entry) {
+      if (/^seat\./.test(text(entry.kind)) && text(entry.data.seat) && text(entry.data.label)) { labels[entry.data.seat] = entry.data.label; }
+    });
+    return labels;
+  }
+  function seatName(labels, seat) { return labels[seat] || text(seat) || "a seat"; }
+  /**
+   * D6's scopes as the journal holds them: the record's first seat holds every scope until its holder passes one on, a
+   * plan section nobody holds is the delivery holder's, and a transfer counts only when the scope's holder made it.
+   */
+  function scopeRegister(doc) {
+    var first = null, held = Object.create(null), passed = [], last = Object.create(null);
+    entriesOf(doc).forEach(function (entry) {
+      var origin = isObject(entry.origin) ? entry.origin : null;
+      if (!origin) { return; }
+      if (entry.kind === "record.started" && first === null) { first = text(origin.seat); return; }
+      if (entry.kind !== "scope.transferred") { return; }
+      var scope = text(entry.data.scope);
+      var holder = scope in held ? held[scope] : /^plan:/.test(scope) ? (held.delivery || first) : first;
+      if (!scope || holder !== text(origin.seat) || holder !== text(entry.data.from)) { return; }
+      if (!(scope in held) && scope !== "delivery" && scope !== "queue") { passed.push(scope); }
+      held[scope] = text(entry.data.to);
+      last[scope] = entry;
+    });
+    return { first: first, held: held, passed: passed, last: last };
+  }
+  function holderOf(register, scope) {
+    return scope in register.held ? register.held[scope] : /^plan:/.test(scope) ? (register.held.delivery || register.first) : register.first;
+  }
+  /** A queue handed on that its new holder has not yet taken up: no entry of that seat has seen the transfer. */
+  function queueMoving(doc, register) {
+    var moved = register.last.queue;
+    if (!moved) { return null; }
+    var to = text(moved.data.to), from = text(moved.origin.seat), seq = moved.origin.seq;
+    var taken = entriesOf(doc).some(function (entry) {
+      var origin = isObject(entry.origin) ? entry.origin : null;
+      return origin && text(origin.seat) === to && isObject(origin.seen) && typeof origin.seen[from] === "number" && origin.seen[from] >= seq;
+    });
+    return taken ? null : to;
+  }
+  var PEER_HELD = table({ generation_differs: "held: generation differs", slice_invalid: "held: its updates don't fit this record" });
+  /** A peer as the sync loop last read it: "Ben as of 4s", "Ben held: generation differs", "Ben split". */
+  function peerWords(name, peer) {
+    var reason = text(peer.heldReason);
+    if (reason === "seat_split") { return name + " split"; }
+    if (reason) { return name + " " + (PEER_HELD[reason] || "held"); }
+    var at = seconds(text(peer.fetchedAt));
+    return at === null ? name + " not read yet" : name + " as of " + duration(Math.max(0, Date.now() / 1000 - at));
+  }
+  /** A chapter made the first time a record is shared, before `before`, and hidden while the record isn't. */
+  function sharedChapter(id, name, before, shared) {
+    if (!shared && !parts[id]) { return null; }
+    var section = parts[id] ? parts[id].parentNode : chapterOf([id, name], before);
+    var link = rail.querySelector('a[href="#' + id + '"]');
+    section.classList.toggle("is-absent", !shared);
+    section.hidden = !shared || (PAGED && section.id !== currentPage);
+    if (link) { link.hidden = !shared; }
+    if (!shared) {
+      parts[id].replaceChildren();
+      if (currentPage === id) { showPage(chapterIds()[0]); }
+      return null;
+    }
+    return parts[id];
+  }
+  /** Seats: who writes this shared record, who holds each scope, how fresh each peer is, and a queue moving between seats. */
+  function drawSeats(doc) {
+    var collab = collabOf(doc);
+    var inner = sharedChapter("seats", "Seats", "left", collab);
+    if (!inner) { return; }
+    var labels = seatLabels(doc, collab);
+    var register = scopeRegister(doc);
+    var seats = isObject(collab.seats) ? collab.seats : {};
+    var ids = Object.keys(seats);
+    var admitted = ids.filter(function (seat) { return isObject(seats[seat]) && seats[seat].admitted === true; });
+    var who = el("ul", "parked seats-list");
+    ids.forEach(function (seat) {
+      var held = isObject(seats[seat]) ? seats[seat] : {};
+      var role = held.admitted !== true ? "waiting to be admitted" : held.approver === true ? "endorses the plan" : "writes, doesn't endorse";
+      who.appendChild(add(el("li", "seat-row"), add(el("span", "p"), el("span", "seat-id", text(seat))), seatName(labels, seat),
+        el("span", "p seat-role", role)));
+    });
+    var moving = queueMoving(doc, register);
+    var scopes = el("ul", "parked scopes-list");
+    var row = function (scope, holder, note) {
+      scopes.appendChild(add(el("li", "scope-row"), add(el("span", "p"), el("span", "scope-name", scope)), seatName(labels, holder),
+        note ? el("span", "p scope-note", note) : null));
+    };
+    row("delivery", holderOf(register, "delivery"), null);
+    row("queue", holderOf(register, "queue"), moving ? "queue moving to " + seatName(labels, moving) : null);
+    list(doc.state.lanes).filter(function (lane) { return isObject(lane) && text(lane.id); }).forEach(function (lane) {
+      if (register.passed.indexOf("lane:" + lane.id) < 0) { row("lane:" + lane.id, holderOf(register, "lane:" + lane.id), null); }
+    });
+    register.passed.forEach(function (scope) { row(scope, register.held[scope], null); });
+    var peers = isObject(collab.peers) ? collab.peers : {};
+    var fresh = el("ul", "parked peers-list");
+    Object.keys(peers).sort().forEach(function (seat) {
+      if (isObject(peers[seat])) { fresh.appendChild(add(el("li", "peer-row"), peerWords(seatName(labels, seat), peers[seat]))); }
+    });
+    var nodes = [el("div", "kicker", "Seats"),
+      el("h2", "title", admitted.length + (admitted.length === 1 ? " seat writes" : " seats write") + " this delivery" +
+        (moving ? ", and its queue is moving to " + seatName(labels, moving) + "." : "."))];
+    if (text(collab.heldReason) === "seat_split") {
+      nodes.push(el("p", "say seats-split", "This checkout's seat split from its chain: it writes nothing more here."));
+    }
+    nodes.push(add(el("div", "seats-group"), el("h3", "seats-head", "Who writes"), who),
+      add(el("div", "seats-group"), el("h3", "seats-head", "Who holds what"), scopes,
+        el("p", "p seats-note", "Every other plan section is " + seatName(labels, holderOf(register, "delivery")) + "'s, as the delivery's holder.")));
+    if (fresh.firstChild) { nodes.push(add(el("div", "seats-group"), el("h3", "seats-head", "Peers"), fresh)); }
+    inner.replaceChildren.apply(inner, nodes);
+  }
+  var FEEDBACK_SETTLED = table({ accepted: "Accepted", declined: "Declined", answered: "Answered" });
+  /** Feedback on the plan, a thread on each section it is on: what was raised, by whom, and how its holder settled it. */
+  function drawFeedback(doc) {
+    var collab = collabOf(doc);
+    var raised = collab ? entriesOf(doc).filter(function (entry) { return entry.kind === "feedback.raised" && text(entry.data.anchor); }) : [];
+    var inner = sharedChapter("feedback", "Feedback", "happened", collab && raised.length ? collab : null);
+    if (!inner) { return; }
+    var labels = seatLabels(doc, collab);
+    var settled = Object.create(null);
+    entriesOf(doc).forEach(function (entry) {
+      if (entry.kind === "feedback.resolved") { list(entry.answers).forEach(function (id) { settled[id] = entry; }); }
+    });
+    var writer = function (entry) { return seatName(labels, isObject(entry.origin) ? text(entry.origin.seat) : ""); };
+    var anchors = [];
+    raised.forEach(function (entry) { if (anchors.indexOf(entry.data.anchor) < 0) { anchors.push(entry.data.anchor); } });
+    var open = raised.filter(function (entry) { return !settled[entry.id]; });
+    var blocking = open.filter(function (entry) { return entry.data.blocking === true; });
+    var nodes = [el("div", "kicker", "Feedback"),
+      el("h2", "title", (open.length ? open.length + " open" : "None open") + (blocking.length ? ", " + blocking.length + " blocking" : "") +
+        " · " + raised.length + " raised on " + anchors.length + (anchors.length === 1 ? " section." : " sections."))];
+    anchors.forEach(function (anchor) {
+      var thread = el("ul", "parked feedback-thread");
+      raised.filter(function (entry) { return entry.data.anchor === anchor; }).forEach(function (entry) {
+        var answer = settled[entry.id];
+        var state = answer ? (FEEDBACK_SETTLED[text(answer.data.outcome)] || "Settled") + " by " + writer(answer) +
+          (text(answer.data.reason) ? ": " + answer.data.reason : "") : entry.data.blocking === true ? "Open, blocking" : "Open";
+        thread.appendChild(add(el("li", "feedback-row" + (answer ? " is-settled" : entry.data.blocking === true ? " is-blocking" : "")),
+          el("span", "p", writer(entry)), text(entry.data.text), el("span", "p feedback-state", state)));
+      });
+      nodes.push(add(el("div", "feedback-group"), el("h3", "feedback-anchor", anchor), thread));
+    });
+    inner.replaceChildren.apply(inner, nodes);
+  }
+
   /* 6. Parked */
   // Set-aside rows the reader opened, kept across live redraws.
   var asideOpen = {};
@@ -5316,7 +5472,9 @@
     drawWho(doc, all);
     drawLeft(doc, all);
     drawAcross(doc);
+    drawSeats(doc);
     if (parts.plan) { drawPlan(doc); }
+    drawFeedback(doc);
     drawHappened(doc);
     drawParked(doc);
     dropTurned();
