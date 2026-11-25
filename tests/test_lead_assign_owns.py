@@ -18,7 +18,8 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.fx, cls.delivery = command_fixture(cls, {"FX-5": "lane-1", "FX-6": "lane-1", "FX-7": "lane-2", "FX-8": "lane-3",
-                                                     "FX-9": "lane-2", "FX-10": "lane-1", "FX-11": "lane-3"})
+                                                     "FX-9": "lane-2", "FX-10": "lane-1", "FX-11": "lane-3",
+                                                     "FX-12": "lane-2"})
 
     def names(self, key: str, path: str) -> None:
         """The story's plan section names ``path``, so lead-assign reads it as one of the story's files."""
@@ -172,6 +173,44 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
         self.assertIn("lib/pin1.txt, lib/pin2.txt", decision["data"]["text"])
         self.assertEqual(decision["data"]["why"], "one-line pins the story needs in files no lane holds")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+
+    def test_handoff_names_the_grant_or_move_that_clears_an_out_of_lane_file_before_review(self) -> None:
+        from tests.test_run_delivery_supervisor import hand_off
+        self.push_base({"lib/out12.txt": ["out\n"], "lib/other12.txt": ["other\n"]})
+        for path in ("lib/out12.txt", "lib/other12.txt"):
+            self.flow("lead-own", "--grant", path, "--lane", "lane-2")
+        refusals = []
+
+        def narrowed(wt, url) -> None:
+            # Narrowed after review: one file no lane holds, one another lane holds.
+            self.flow("lead-own", "--revoke", "lib/out12.txt", "--lane", "lane-2")
+            self.flow("lead-own", "--move", "lib/other12.txt", "--lane", "lane-3", "--from", "lane-2")
+            refused = self.flow("handoff", "FX-12", "--pr", url, cwd=wt, ok=False)
+            refusals.append(refused)
+            self.assertIn("writer_not_owned: FX-12 changes files outside lane-2's", refused)
+            self.assertIn("the lead clears each whole file before hand-off with:", refused)
+            self.assertIn("lead-own --grant lib/out12.txt --lane lane-2\n", refused)
+            self.assertIn("lead-own --move lib/other12.txt --lane lane-2 --from lane-3", refused)
+            self.assertNotIn("--take", refused)
+            # The named commands are what clear it: the hand-off that follows succeeds.
+            self.flow("lead-own", "--grant", "lib/out12.txt", "--lane", "lane-2")
+            self.flow("lead-own", "--move", "lib/other12.txt", "--lane", "lane-2", "--from", "lane-3")
+
+        hand_off(self.fx, "FX-12", "lane-2", files={"lib/out12.txt": "out changed\n", "lib/other12.txt": "other changed\n"},
+                 before=narrowed)
+        self.assertEqual(len(refusals), 1)
+
+    def test_take_is_described_as_for_a_file_narrowed_out_after_hand_off(self) -> None:
+        from tests.test_run_delivery import ROOT
+        flat = " ".join((ROOT / "skills/run-delivery/SKILL.md").read_text(encoding="utf-8").split())
+        self.assertIn("`--take PATH --why T`, repeatable with one `--why`, is for a file the lead narrowed out of the "
+                      "lane's claims after the lane handed off, and accepts its change: review-prepare, review-reduce "
+                      "and handoff already refuse a change to a file outside the lane, and the `lead-own --grant` that "
+                      "refusal names, or `--move` for a file another lane holds, clears it before review.", flat)
+        help_text = " ".join(self.flow("lead-accept", "--help").split())
+        self.assertIn("for a file the lead narrowed out of the lane's claims after it handed off: grant the lane a "
+                      "whole-file claim on it, then accept; repeatable, and needs --why. Before hand-off, "
+                      "review-prepare and handoff refuse an out-of-lane file, and lead-own --grant clears it", help_text)
 
     def test_acceptance_refuses_an_edge_insertion_next_to_another_lane_and_takes_it_otherwise(self) -> None:
         from tests.test_run_delivery_supervisor import hand_off
