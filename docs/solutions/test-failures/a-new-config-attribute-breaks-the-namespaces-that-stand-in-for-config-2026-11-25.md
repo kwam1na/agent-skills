@@ -56,8 +56,8 @@ field would hide the next drift instead of fixing this one.
 - Before a change makes a helper read a `Config` field it didn't read before, search the tests for
   `SimpleNamespace(` configs that reach the helper, and add the field to them in the same change.
 - Select the modules that search finds as checks for the change, as well as the modules the story touches. On
-  2026-11-25, 22 test modules built `SimpleNamespace` configs (`git grep -n "SimpleNamespace(" tests/`), so the search
-  is the rule. `tests.test_run_delivery_supervisor` and `tests.test_lane_changes` are only the two this incident hit.
+  2026-11-25, 22 test modules used `SimpleNamespace(` (`git grep -l "SimpleNamespace(" tests/`), configs among them, so
+  the search is the rule. `tests.test_run_delivery_supervisor` and `tests.test_lane_changes` are only the two this incident hit.
 
 ## Related Issues
 
