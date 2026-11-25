@@ -8808,6 +8808,24 @@ def write_target_quiet(state: Path, seconds: float) -> None:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
+def target_quiet_argument(passed: list[str]) -> tuple[float | None, list[str]]:
+    """`--target-quiet SECONDS`, lead-wait's own option and not the wait's: the seconds, finite and not negative, and
+    the wait's arguments without it. None when it isn't given."""
+    quiet, rest, words = None, [], iter(passed)
+    for word in words:
+        if word == "--target-quiet" or word.startswith("--target-quiet="):
+            value = word.partition("=")[2] if "=" in word else next(words, "")
+            try:
+                quiet = float(value)
+            except ValueError:
+                quiet = -1.0
+            if not (0 <= quiet < float("inf")):
+                raise Stop(f"--target-quiet {value or '(nothing)'} is not a number of seconds, finite and not negative")
+            continue
+        rest.append(word)
+    return quiet, rest
+
+
 def target_settlement(peers: list[dict], log: list[dict], began: str, window: float, at: float) -> dict:
     """Whether the target has settled at `at`, by Decision 20: a target peer merged, since this record began and since
     the last settle the flow log's `targets` lines keep, nothing is checking or queued on any target peer now, and the
@@ -12509,24 +12527,6 @@ def listener_words(c) -> str:
     return f"; the lead isn't listening: no lead-wait runs while {', '.join(needed)}" if needed else ""
 
 
-def target_quiet_argument(passed: list[str]) -> tuple[float | None, list[str]]:
-    """`--target-quiet SECONDS`, lead-wait's own option and not the wait's: the seconds, finite and not negative, and
-    the wait's arguments without it. None when it isn't given."""
-    quiet, rest, words = None, [], iter(passed)
-    for word in words:
-        if word == "--target-quiet" or word.startswith("--target-quiet="):
-            value = word.partition("=")[2] if "=" in word else next(words, "")
-            try:
-                quiet = float(value)
-            except ValueError:
-                quiet = -1.0
-            if not (0 <= quiet < float("inf")):
-                raise Stop(f"--target-quiet {value or '(nothing)'} is not a number of seconds, finite and not negative")
-            continue
-        rest.append(word)
-    return quiet, rest
-
-
 def lead_wait(args) -> None:
     """`delivery_state.py wait`, with a lease in the record while it runs. Takes the wait's own arguments; without
     `--after` it starts after the journal's last entry, and without `--output` it writes the default output."""
@@ -15821,9 +15821,7 @@ def lead_integrate(args) -> None:
     else:
         done = state_tool("journal", "--kind", "integration.landed", "--subject", c.delivery, "--data", json.dumps(
             {"target": target, "head": head}))
-    print(f"recorded {args.fact} as entry {journal_id(done)} at {head[:10]}")
-    for line in target_peer_lines(c):
-        print(line)
+    print("\n".join([f"recorded {args.fact} as entry {journal_id(done)} at {head[:10]}", *target_peer_lines(c)]))
 
 
 def moved_head_stands(c, doc: dict, head: str, last: dict | None) -> str:
