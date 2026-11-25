@@ -14,15 +14,27 @@ import json
 import os
 import re
 import signal
+import sys
 import time
 import unittest
 from pathlib import Path
 
+from tests import test_delivery_views_hosted as publisher_fixtures
 from tests.collab_remotes import assert_fast_forwards_only
 from tests.quiet_git import quieten
 from tests.test_planning_record import B_SECTION, KEY, PlanningRecordCase, journal, record
 from tests.test_run_delivery import POSIX_ONLY, commit, plan_delivery, sh, write_results
 from tests.test_run_delivery_supervisor import hand_off, supervised
+from tests.test_run_delivery_tracker import FAKE_ADAPTER, WORKFLOW, blank_store
+
+# The hosted publisher reaches the fake origin on loopback in place of the configured one, on both machines.
+SHIM = """import http.client
+Real = http.client.HTTPConnection
+def fixture(host, port=None, timeout=None, context=None):
+    assert host == "deliveries.example.com"
+    return Real("127.0.0.1", {port}, timeout=timeout)
+http.client.HTTPSConnection = fixture
+"""
 from tests.test_run_delivery_plan_review import OC, results, slug_store
 
 RUN_QUIETLY = True  # two supervisors, each with its live view and sync loop, and real git throughout
@@ -31,6 +43,12 @@ RUN_QUIETLY = True  # two supervisors, each with its live view and sync loop, an
 REACH_SECONDS = 10
 # The fields a record keeps for its own machine only, which the two machines never compare (D6's `local` rows).
 LOCAL_META = ("updatedAt", "writerGeneration", "closing", "collab")
+
+
+def tracker_publisher_entry() -> dict:
+    """The binding's tracker publisher, from the release the fixture runs, as lead-setup adds it."""
+    return {"id": "tracker", "argv": [sys.executable, "-B", ".agent-skills/current/skills/run-delivery/scripts/"
+                                      "tracker_publisher.py", "--state-dir", "{stateDirectory}"], "timeoutSeconds": 600}
 
 
 def origins(folder: Path) -> list[tuple[str, int]]:
@@ -79,11 +97,36 @@ class TwoMachinesTests(PlanningRecordCase):
         d = json.loads(path.read_text())
         del d["stateDirectory"]
         path.write_text(json.dumps(d, indent=2))
-        commit(fx.main, "FX-1: the record stays the planning record")
+        # One tracker both machines post to, each through its own ledger, and one hosted origin both publish to.
+        (fx.main / "tools/fake_adapter.py").write_text(FAKE_ADAPTER)
+        self.tracker = fx.tmp / "tracker.json"
+        store = blank_store()
+        store["issues"] = {key: {"status": "Backlog", "comments": [], "markers": [], "labels": [], "parent": None,
+                                 "summary": key} for key in ("FX-1", "FX-2", "FX-3")}
+        self.tracker.write_text(json.dumps(store))
+        conf = json.loads(binding.read_text())
+        conf["tracker"] = {**conf.get("tracker", {}), "argv": [sys.executable, "-B", "tools/fake_adapter.py"]}
+        binding.write_text(json.dumps(conf, indent=2) + "\n")
+        bound = fx.main / ".agents/orchestration.json"
+        flow = json.loads(bound.read_text())
+        flow["state"]["publishers"] = [tracker_publisher_entry()]
+        bound.write_text(json.dumps(flow, indent=2) + "\n")
+        (fx.main / ".agents/delivery-views.json").write_text(json.dumps(publisher_fixtures.CFG, indent=2) + "\n")
+        commit(fx.main, "FX-1: the record stays the planning record, with its tracker and hosted page")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
         sh("git", "switch", "-q", "-c", "lead/FX-1", cwd=fx.main)
         sh("git", "push", "-q", "-u", "origin", "lead/FX-1", cwd=fx.main)
-        self.env = {**fx.env, "RUN_DELIVERY_SUPERVISOR": "on"}
+        self.origin = publisher_fixtures.ReceiverTests("test_actual_lost_response_reconciles_and_confirmation_is_fresh_"
+                                                       "collection_only")
+        self.origin.setUp()
+        self.addCleanup(self.origin.doCleanups)
+        shim = fx.tmp / "shim"
+        shim.mkdir()
+        (shim / "sitecustomize.py").write_text(SHIM.format(port=self.origin.server.server_port))
+        self.env = {**fx.env, "RUN_DELIVERY_SUPERVISOR": "on", "FIXTURE_PUBLISH_TOKEN": publisher_fixtures.TOKEN,
+                    "PYTHONPATH": str(shim), "FAKE_TRACKER_STORE": str(self.tracker), "FAKE_TRACKER_TOKEN": "good",
+                    "FAKE_TRACKER_WORKFLOW": json.dumps(WORKFLOW)}
+        fx.env = {**self.env, "RUN_DELIVERY_SUPERVISOR": "off"}
         self.b_repo = fx.tmp / "b"
         sh("git", "clone", "-q", "-b", "lead/FX-1", fx.origin, self.b_repo)
         quieten(self.b_repo)
@@ -230,10 +273,14 @@ class TwoMachinesTests(PlanningRecordCase):
         self.run_at(fx.main, "lead-accept", "FX-2")
         self.assertEqual(self.merged("FX-2"), seat_b, "b's queue merges a's candidate")
         self.converged("after b's queue merged a's candidate")
-        # delivery moves to b, then every scope comes back to a.
+        # delivery moves to b, whose supervisor takes the hosted identity a carried and publishes as it: the public
+        # link is unchanged, and no tracker update is posted twice.
+        identity = json.loads((self.a / "hosted-identity.json").read_text())
         self.run_at(fx.main, "collab", "give", "--scope", "delivery", "--to", seat_b, "--wait", "60")
         self.reaches(self.b, "scope.transferred", "delivery reaches b", scope="delivery")
         self.converged("after delivery moved to b")
+        self.taken(identity)
+        self.posted_once()
         for scope in ("delivery", "queue", "lane:lane-2"):
             self.run_at(b_repo, "collab", "give", "--scope", scope, "--to", seat_a, "--wait", "60")
             self.reaches(self.a, "scope.transferred", f"{scope} comes back to a", scope=scope, to=seat_a)
@@ -241,6 +288,23 @@ class TwoMachinesTests(PlanningRecordCase):
         # The plan's branch and both seats' chains only ever moved forward on the remote.
         for ref in ("refs/heads/lead/FX-1", f"refs/agent-skills/{KEY}/{seat_a}", f"refs/agent-skills/{KEY}/{seat_b}"):
             assert_fast_forwards_only(fx.origin, ref)
+
+    def taken(self, identity: dict) -> None:
+        """b's supervisor writes the identity a carried as its own and publishes under it, within its next passes."""
+        deadline = time.monotonic() + 60
+        path = self.b / "hosted-identity.json"
+        while not (path.is_file() and json.loads(path.read_text()).get("publicId") == identity["publicId"]):
+            if time.monotonic() >= deadline:
+                self.fail(f"b didn't take a's hosted identity within 60s: {path.read_text() if path.is_file() else None}")
+            time.sleep(0.5)
+
+    def posted_once(self) -> None:
+        """Every tracker marker, a comment's or a transition's, was posted once, by whichever seat held delivery."""
+        store = json.loads(self.tracker.read_text())
+        posted = [marker for issue in store["issues"].values()
+                  for marker in [*issue["markers"], *(m for comment in issue["comments"] for m in comment["markers"])]]
+        self.assertTrue(posted, "the tracker publisher posted nothing")
+        self.assertEqual(sorted(posted), sorted(set(posted)), "a tracker update was posted twice")
 
     def merged(self, key: str) -> str:
         """`key`'s candidate merges on the base and its merge reaches both machines, within the queue's own time: the
