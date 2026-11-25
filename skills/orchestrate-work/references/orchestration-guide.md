@@ -282,6 +282,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `compounding.recorded` | On the epic: whether a learning was preserved and where, or why none was, or why the decision was skipped. | the epic | Compounding decided |
 | `hook.held` | None: a host hook held, or warned about, a lead's stop while no listener ran, and the entry shows in the record and the views. | nowhere | - |
 | `peer.merged` | None: the supervisor journals a merge by another delivery on the base that changed a file one of this delivery's open stories names, and the entry shows in the record and the views. | nowhere | - |
+| `target.settled` | None: the supervisor journals that the deliveries merging into the integration target went quiet once a merge landed there, and the entry shows in the record and the views. | nowhere | - |
 | `delivery.closed` | On the epic: the close-out summary; the epic moves to its final state. | the epic | Delivery closed |
 
 The lead posts the updates in this table, including every cross-lane
@@ -1230,8 +1231,9 @@ file, and reads no CI or forge. It returns on the first thing needing the lead:
 
 - a journal entry after `--after` of kind `candidate.handed`, `check.failed`,
   `candidate.merged`, `candidate.stopped`, `base.broken`, `blocker.recorded`,
-  `serving.held` or `sibling.landed`; the last frees a story that waits on a sibling
-  delivery's story;
+  `serving.held`, `sibling.landed` or `target.settled`; `sibling.landed` frees a story
+  that waits on a sibling delivery's story, and `target.settled` says the deliveries
+  merging into the integration target have gone quiet;
 - a lane in the `blocked` state. A lane in the `waiting` state waits on a story, which goes on by itself when it
   lands: it wakes no wait, is never reported quiet, isn't in "Needs you" and doesn't hold the close;
 - machine pressure: five-minute load above `--load-multiple` times the cores
@@ -2208,6 +2210,14 @@ stay reachable through the merge parents, and their recorded identities are reta
 
 Lanes start newly assigned stories from the moved remote base. Existing branches follow the lead's
 base-merge authorization and review rules. Review and gate the integration candidate on its current head.
+
+Wait for the target to settle before an integration review round or a full-suite run. While other
+deliveries are merging into the target, each of their merges moves it again and voids a round or run
+started before it. `doctor --delivery`, `lead-integrate` and the supervisor's status line name each
+delivery registered on the integration target, with what its queue is checking and has queued. Once a
+target peer has merged and every target peer's queue has been empty for the window, 600 seconds unless
+`lead-wait --target-quiet SECONDS` sets the record's own, the supervisor journals `target.settled`,
+which wakes the lead's wait. Merge the target in then, and start the round or the run.
 
 When a flake affects both the integration base and the default branch, land the shared fix on the default
 branch too. Record a `decision.recorded` entry on the delivery naming the fix, the upstream change request

@@ -1,5 +1,6 @@
 {
   "description": [
+    "An integration lead's doctor --delivery, lead-integrate and status line name each delivery registered on its integration target with what its queue is checking and has queued, and the supervisor journals target.settled once a target peer has merged and every target peer's queue has been empty for the window, 600 seconds unless lead-wait --target-quiet sets the record's own; with no integration target, or no delivery on it, nothing changes.",
     "lead-init and lead-run --resume end with the one live view the lead opens in the host's browser pane, unasked: the hosted view when hosted is enabled and has a URL, else the local live view's address, and nothing while no supervisor runs; delivery.orient names the same view to a lead, never to a lane.",
     "Optional host-native Jira tracker adapter layered on the run-delivery profile, whose commands run on POSIX hosts only.",
     "The adapter maps the neutral tracker operations onto the host's Atlassian MCP connector, configured by the repository's tracker properties, and the decomposition and tracked-execution workflows reach Jira only through it, without changing core behavior when tracking is unavailable.",

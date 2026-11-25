@@ -37,3 +37,12 @@ test("a check carried over a base move is drawn in the story and reads as carrie
   expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Checks carried /);
   expect([...history.querySelectorAll("li span")].map((row) => row.textContent).at(-1)).toBe("Checks carried to the new main line: lib carried, none ran again, across 1 commit");
 });
+
+test("the target settling reads as its kind's label in the story, never as its kind's name", async () => {
+  const document = record({ queue: [item("A", "queued")], journal: journal([[10, "candidate.handed", "A"],
+    [11, "target.settled", "A", { data: { target: "main", peers: ["B-1"], stories: ["B-2"], seconds: 600 } }]]) });
+  const [shown] = await openPage(pageWithRuns(document, {}, { config: CONFIG }), { now: NOW, store: false });
+  const labels = [...shown.app.querySelectorAll("#happened .beat-label")].map((label) => label.textContent);
+  expect(labels).toContain("Target settled");
+  expect(shown.app.querySelector("#happened .story").textContent.includes("target.settled")).toBe(false);
+});

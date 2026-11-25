@@ -41,6 +41,8 @@ def _load(name: str, path: Path):
 
 region_ownership = _load("region_ownership", SCRIPTS / "region_ownership.py")
 run_delivery = _load("run_delivery", ROOT / "skills/run-delivery/scripts/run_delivery.py")
+# The queue's rules for shared outputs, as a lead's _merge_queue gives them from its release: here, this source tree's.
+merge_queue = _load("merge_queue", SCRIPTS / "merge_queue.py")
 
 SHARED = "src/shared.py"
 SHARED_LINES = "".join([f"def first_{i}():\n    return {i}\n\n\n" for i in range(4)]
@@ -115,8 +117,9 @@ class Delivery:
 
     def config(self, shared: tuple[str, ...] = ()) -> SimpleNamespace:
         binding = {"regenerable": {"regenerators": [{"id": "r"}], "listings": [{"path": p} for p in shared]}} if shared else {}
+        # A lead's shelf reads its own working tree (no ref), so shared_binding reads the binding at the base head.
         return SimpleNamespace(root=self.lead, remote="origin", base_ref="origin/main", state=self.record,
-                               binding=binding, branch=lambda key: f"claude/{key}",
+                               binding=binding, shelf=run_delivery.Shelf(self.lead), branch=lambda key: f"claude/{key}",
                                effective_ownership=lambda state: state.get("laneOwnership", {}))
 
     def one_pass(self, c: SimpleNamespace | None = None) -> tuple[dict, list[dict]]:
@@ -125,7 +128,8 @@ class Delivery:
         git(self.lead, "fetch", "-q", "origin")
         doc = {"state": json.loads(json.dumps(self.state)), "journal": []}
         with mock.patch.object(run_delivery, "load_state", return_value=doc), \
-                mock.patch.object(run_delivery, "_region_ownership", return_value=region_ownership):
+                mock.patch.object(run_delivery, "_region_ownership", return_value=region_ownership), \
+                mock.patch.object(run_delivery, "_merge_queue", return_value=merge_queue):
             run_delivery.write_lane_changes(c)
             return (json.loads((self.record / "lane-changes.json").read_text()),
                     run_delivery.lane_change_needs(c, doc["state"]))
