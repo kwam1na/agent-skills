@@ -6072,7 +6072,7 @@ ADOPTER_FILES = frozenset({".agents/orchestration.json", ".agents/delivery-postu
                            "state.json", "journal.jsonl", "sessions.json", "needs-you.json", "lane-changes.json",
                            "peer-waits.json", "live.json", "supervisor.json", "evidence-page.json",
                            "evidence-notes.json", "friction.md", "supervisor.blockers.json", "supervisor.jsonl",
-                           "wait.json", "lead-wait.json", "hosted-identity.json", "hosted-status.json",
+                           "wait.json", "lead-wait.json", "target-quiet.json", "hosted-identity.json", "hosted-status.json",
                            "hosted-owner.json", "hosted-retry.json", "hosted-terminal.json"})
 
 
