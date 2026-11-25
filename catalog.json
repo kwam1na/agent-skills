@@ -731,7 +731,8 @@
         "lead-init writes the integration step for a delivery with an integrationTarget, lead-suite journals integration.suite there with a passed, over-budget, unreadable or failed result, and lead-integrate journals the target merged in, an integration review round, the change request into the target and its merge.",
         "Every region grant, carve and carry prints its spans' first and last lines at the base; lead-own --around TEXT names a span by the enclosing function, statement, Markdown section or indented block of the one line holding TEXT, refusing a missing or ambiguous anchor with its candidates; a Python span whose edge cuts a statement is refused; --insert before or after widens a span by one unclaimed line so an insertion at its edge falls inside it; and claims-check asks for spans by anchor.",
         "A close leaves an operator's checkout that is on another branch or holds uncommitted changes where it is, naming why, and lead-retire keeps the lead's checkout, naming what holds it, while anything of the delivery runs from it, the archive lacks a journal entry, or it holds a change or an unpushed head.",
-        "Claiming commands, claim, check, gate, lead-push's guards, lead-suite and the post-merge fullHealth, run unclaimed and say so when the machine ledger can't be used."
+        "Claiming commands, claim, check, gate, lead-push's guards, lead-suite and the post-merge fullHealth, run unclaimed and say so when the machine ledger can't be used.",
+        "A lane's change to a file outside its claims is refused at review-prepare, review-reduce and handoff, naming the lead-own --grant, or --move for a file another lane holds, that clears it before review; lead-accept --take is for a file the lead narrowed out of the lane's claims after the lane handed off."
       ],
       "dependencies": [
         {
