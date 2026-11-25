@@ -325,6 +325,10 @@ class LaneSharedOutputTests(unittest.TestCase):
         self.assertIn(f"shared_output_irreproducible: the binding's generators, run on the candidate's own tree, don't "
                       f"reproduce {GRAPH} (regeneration writes other bytes)", out)
         self.assertEqual(self.record(fx), written)
+        # The lane's own commands verify the new head too, never reusing what they kept for the head before it.
+        out = self.flow(fx, "handoff", "FX-3", "--pr", urls["FX-3"], cwd=trees["FX-3"], ok=False)
+        self.assertIn(f"shared_output_irreproducible: the binding's generators, run on the candidate's own tree, don't "
+                      f"reproduce {GRAPH} (regeneration writes other bytes)", out)
         out = self.flow(fx, "lead-accept", "FX-3", "--take", GRAPH, "--why", "a pin", ok=False)
         self.assertIn(f"{GRAPH} is a declared shared output, which no lane takes", out)
         self.assertEqual(self.record(fx), written)
