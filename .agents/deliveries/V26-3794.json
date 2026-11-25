@@ -262,18 +262,6 @@
           "text": "Each handover keeps the public link and posts nothing twice, with the allow side shown before and after the move; scope.handover_busy covers pending publication, tracker posts in flight and checkouts left."
         },
         {
-          "id": "v26-3802-3",
-          "text": "The close waits for peer cleanup and the queue holder's full-health result, journals one delivery.closed, and peers count it closed only after the archive; reopened and resumed closes behave as the plan states."
-        },
-        {
-          "id": "v26-3802-4",
-          "text": "Full health runs once per head across machines, including a rerun asked for off the queue holder and a delivery that merged nothing; posture notes dedupe by the latest note."
-        },
-        {
-          "id": "v26-3802-5",
-          "text": "Evidence follows D22, including recording a peer lane's story from the carried log, lane-tenure ordering, a lane that returns, lane clips never counting, and each lead-evidence refusal leaving every listed surface unchanged."
-        },
-        {
           "id": "v26-3802-6",
           "text": "Writes reach the peer within two poll ticks plus one push, with no explicit sync command; clock skew of an hour changes no outcome."
         },
@@ -363,6 +351,32 @@
       ],
       "after": [
         "V26-3798"
+      ]
+    },
+    "V26-3847": {
+      "title": "Close, full health and evidence on a shared record, from carried inputs",
+      "lane": "lane-1",
+      "why": "Lead split of V26-3802 (decision 374): V26-3847 takes the carried inputs, the close-out, full health across machines and D22 evidence.",
+      "criteria": [
+        {
+          "id": "v26-3847-1",
+          "text": "The close waits for peer cleanup and the queue holder's full-health result, journals one delivery.closed, and peers count it closed only after the archive; reopened and resumed closes behave as the plan states."
+        },
+        {
+          "id": "v26-3847-2",
+          "text": "Full health runs once per head across machines, including a rerun asked for off the queue holder and a delivery that merged nothing; posture notes dedupe by the latest note."
+        },
+        {
+          "id": "v26-3847-3",
+          "text": "Evidence follows D22, including recording a peer lane's story from the carried log, lane-tenure ordering, a lane that returns, lane clips never counting, and each lead-evidence refusal leaving every listed surface unchanged."
+        },
+        {
+          "id": "v26-3847-4",
+          "text": "Each carried input arrives on the peer with its key and ordering rule, and an unshared record writes no carried member."
+        }
+      ],
+      "after": [
+        "V26-3802"
       ]
     }
   },

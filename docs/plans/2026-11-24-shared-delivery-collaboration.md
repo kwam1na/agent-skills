@@ -1454,6 +1454,10 @@ Lane 2, tier 5, after V26-3801 and V26-3802. Sensor-only for docs, test-first fo
 
 Lane 2, tier 5, after V26-3798. Added mid-delivery: Operator ruling 2026-11-24: V26-3798 is split so the planning-record core starts now; this story carries its preview-builder work, which waits on V26-3775's V26-3779 (approval-7).
 
+### V26-3847. Close, full health and evidence on a shared record, from carried inputs
+
+Lane 1, tier 3, after V26-3802. Added mid-delivery: Lead split of V26-3802 (decision 374): V26-3847 takes the carried inputs, the close-out, full health across machines and D22 evidence.
+
 ## Scenarios across stories
 
 - A seat offline for ten minutes keeps writing its own scopes. They catch
