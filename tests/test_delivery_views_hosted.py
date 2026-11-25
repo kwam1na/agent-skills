@@ -422,15 +422,22 @@ class CollectionTests(unittest.TestCase):
         (self.state/render.LANE_CHANGES_FILE).write_text(json.dumps({**changes,'at':'2026-11-15T00:01:00Z'}))
         refiled=hosted.collect(self.inputs)
         self.assertNotEqual(filed['sourceFingerprint'],refiled['sourceFingerprint'])
-    def test_the_cut_counts_the_integrations_drift_in_the_deliverys_own_repository(self):
+    def test_the_cut_carries_the_forges_checks_on_the_change_request_as_the_local_page_reads_them(self):
         self.document['meta']['integration']={'base':'integrate/app','target':'main','remote':'origin'};self.write_state()
-        asked=[]
-        def drift(document,repository=None):
-            asked.append(repository);return {'moved':2,'behind':1}
-        with mock.patch.object(hosted.render,'integration_drift',side_effect=drift):
-            value=hosted.collect(self.inputs)
-        self.assertEqual(asked,[self.root])
-        self.assertEqual(value['integration'],{'drift':{'moved':2,'behind':1}})
+        request='https://github.com/acme/app/pull/7'
+        (self.state/'journal.jsonl').write_text(json.dumps({'id':1,'at':'2026-11-15T00:00:00Z','kind':'integration.requested',
+            'lane':None,'subject':'APP','data':{'changeRequest':request,'head':'a'*40}})+'\n')
+        checks={'pending':0,'failing':[{'name':'lint','onTarget':True}]}
+        (self.state/'snapshots').mkdir()
+        (self.state/render.FORGE_FILE).write_text(json.dumps({'items':[{'changeRequest':request,'checks':checks}]}))
+        value=hosted.collect(self.inputs)
+        self.assertEqual(value['integration'],{'checks':checks})
+        self.assertEqual(value['integration'],render.read_forge_block(self.state,hosted.record_document(self.state)))
+        # A new forge read is a new cut.
+        (self.state/render.FORGE_FILE).write_text(json.dumps({'items':[{'changeRequest':request,'checks':{'pending':1,'failing':[]}}]}))
+        again=hosted.collect(self.inputs)
+        self.assertEqual(again['integration'],{'checks':{'pending':1,'failing':[]}})
+        self.assertNotEqual(value['sourceFingerprint'],again['sourceFingerprint'])
     def test_changed_cut_symlink_and_different_run_response_are_refused(self):
         original=render.read_needs_block
         def mutate(directory):

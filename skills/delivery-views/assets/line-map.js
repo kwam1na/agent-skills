@@ -260,14 +260,15 @@
   // What a closed delivery left open, as the renderer derived it from the record and said it from the table.
   var leftBlock = document.getElementById("delivery-left-open");
   var LEFT_OPEN = leftBlock ? readNeeds(leftBlock.textContent) : null;
-  // How far the integration's target moved, as the renderer counted it from its own repository: { drift: { moved, behind } }.
+  // What the forge says of the integration's change request, as the renderer read it beside the record:
+  // { checks: { pending, failing: [{ name, onTarget }] } }. Without it Now says nothing of the forge's checks.
   var integrationBlock = document.getElementById("delivery-integration");
-  var DRIFT = integrationBlock ? readDrift(integrationBlock.textContent) : null;
-  function readDrift(textContent) {
+  var FORGE = integrationBlock ? readForge(integrationBlock.textContent) : null;
+  function readForge(textContent) {
     try { var block = JSON.parse(textContent); } catch (error) { return null; }
-    var drift = isObject(block) && isObject(block.drift) ? block.drift : null;
+    var checks = isObject(block) && isObject(block.checks) ? block.checks : null;
     var count = function (value) { return typeof value === "number" && value >= 0 && Math.floor(value) === value; };
-    return drift && count(drift.moved) && count(drift.behind) ? drift : null;
+    return checks && count(checks.pending) && Array.isArray(checks.failing) ? { checks: checks } : null;
   }
   function changeLink(changeRequest) {
     var target = changeTarget(changeRequest);
@@ -1369,6 +1370,288 @@
       el("div", "starting-end is-finish", "Finish line"));
     return box;
   }
+  /*
+   * Now's lead: one sentence naming the stage the delivery is at and who it waits on, up to four marks (done, live,
+   * stop, todo) with the live one labelled by its holder, and at most one fact that changes what the reader would do.
+   * Everything is read from the record, the supervisor's list and the forge's facts the renderer gave: nothing here
+   * names a repository's own checks, branches or commands. An item that holds nothing the reader can act on, such as
+   * a tracker behind the record or a target gaining commits the work already holds, never reaches it.
+   */
+  var MARK_RANK = { stop: 0, done: 1, live: 2, todo: 3 };
+  var MARK_WORDS = { done: "done", live: "now", stop: "stopped", todo: "to come" };
+  function nowMark(label, state, who) { return { label: label, state: state, who: who || null }; }
+  /** A span of time in words: "12 minutes", "3 hours", "2 days". */
+  function spanWords(total) {
+    var minutes = Math.max(1, Math.round(total / 60)), hours = Math.floor(minutes / 60);
+    if (minutes < 60) { return plural(minutes, "minute"); }
+    return hours < 48 ? plural(hours, "hour") : plural(Math.floor(hours / 24), "day");
+  }
+  /** The story that is moving, for stage 1's second beat, with where it is: the one being checked, in review, queued or built. */
+  var MOVING = [["is being checked", function (piece) { return !piece.planned && IN_CHECKS[piece.item.stage]; }],
+    ["is in review", function (piece) { return piece.planned && piece.item.stage === "review"; }],
+    ["is in the queue", function (piece) { return !piece.planned && piece.item.stage === "queued"; }],
+    ["is being built", function (piece) { return piece.planned && piece.item.stage === "building"; }]];
+  function moving(all) {
+    for (var index = 0; index < MOVING.length; index += 1) {
+      var found = all.filter(MOVING[index][1])[0];
+      if (found) { return { piece: found, where: MOVING[index][0] }; }
+    }
+    return null;
+  }
+  /** The row the lead named as the broken base's repair, while the base awaits one. */
+  function repairOf(all) {
+    return all.filter(function (piece) { return !piece.planned && isObject(piece.item.repair) && !isLanded(piece); })[0] || null;
+  }
+  function baseAwaitsRepair(doc) {
+    var last = null;
+    list(doc.journal).forEach(function (entry) { if (isObject(entry) && (entry.kind === "base.broken" || entry.kind === "base.repaired")) { last = entry.kind; } });
+    return last === "base.broken";
+  }
+  /** Each lane as one mark: its landed stories of its own, done once all have landed, stopped while it holds a stopped story or the repair. */
+  function laneMarks(doc, all, last) {
+    var lanes = [], byLane = Object.create(null);
+    all.forEach(function (piece) {
+      var lane = text(piece.item.lane);
+      if (!byLane[lane]) { byLane[lane] = []; lanes.push(lane); }
+      byLane[lane].push(piece);
+    });
+    var repair = baseAwaitsRepair(doc) ? repairOf(all) : null;
+    var marks = lanes.map(function (lane, at) {
+      var own = byLane[lane], done = own.filter(isLanded).length;
+      var name = lane ? laneLabel(lane) : noLane(doc);
+      var made;
+      if (repair && text(repair.item.lane) === lane) { made = nowMark(name + " · repairing", "stop"); }
+      else if (own.some(function (piece) { return !piece.planned && piece.item.stage === "stopped"; })) { made = nowMark(name + " · stopped", "stop"); }
+      else if (done === own.length) { made = nowMark(name + " · " + done + " of " + own.length, "done"); }
+      else {
+        var started = done > 0 || own.some(function (piece) { return !piece.planned || piece.item.stage !== "planned"; });
+        // A delivery that closed with the lane's work unlanded has nothing at work any more.
+        made = nowMark(name + " · " + done + " of " + own.length, started && !closedEntry(doc) ? "live" : "todo");
+      }
+      made.at = at;
+      return made;
+    });
+    marks.sort(function (a, b) { return MARK_RANK[a.state] - MARK_RANK[b.state] || a.at - b.at; });
+    // Past three lanes the rest share the third mark, in the state the most pressing of them is in.
+    if (marks.length > 3) {
+      var rest = marks.slice(2);
+      var state = rest.map(function (made) { return made.state; }).sort(function (a, b) { return MARK_RANK[a] - MARK_RANK[b]; })[0];
+      marks = marks.slice(0, 2).concat([nowMark(rest.length + " more lanes", state)]);
+    }
+    return marks.map(function (made) { return nowMark(made.label, made.state); }).concat([nowMark(last, closedEntry(doc) && all.every(isLanded) && (last !== "Rejoin" || Boolean((integrationOf(doc) || {}).landed)) ? "done" : "todo")]);
+  }
+  /** The rejoin's four marks, the one at `at` live (or stopped) with its holder and its count, those before it done. */
+  function rejoinMarks(at, state, who, count) {
+    return ["Suite", "Review", "Merge", "Landed"].map(function (label, index) {
+      if (index < at) { return nowMark(label, "done"); }
+      if (index > at) { return nowMark(label, "todo"); }
+      return nowMark(count ? label + " · " + count : label, state, who);
+    });
+  }
+  /** The integration review round running at the integration's head: its latest start under the delivery's key that no round answers. */
+  function rejoinRoundRunning(doc, step) {
+    var key = text(isObject(doc.state.meta) ? doc.state.meta.trackerParent : "");
+    if (!key) { return null; }
+    var start = null;
+    list(doc.journal).forEach(function (entry) {
+      if (!isObject(entry) || entry.subject !== key || !isObject(entry.data)) { return; }
+      if (entry.kind === "review.started") { start = entry; }
+      else if (entry.kind === "review.round" && start && entry.data.round === start.data.round) { start = null; }
+    });
+    return start && typeof start.data.round === "number" && text(start.data.head) === step.head ? start : null;
+  }
+  /** The forge's word on a failing check of the change request: how many fail, and whether the target fails them too. */
+  function failingFact(step) {
+    var failing = isObject(FORGE) && isObject(FORGE.checks) ? list(FORGE.checks.failing).filter(isObject) : [];
+    if (!failing.length) { return null; }
+    var onTarget = failing.filter(function (check) { return check.onTarget === true; }).length;
+    var said = failing.length === 1 ? "1 forge check fails" : failing.length + " forge checks fail";
+    var target = step.target;
+    if (onTarget === failing.length) { return said + ", on " + target + " too."; }
+    if (!onTarget) { return said + ", and " + target + (failing.length === 1 ? " passes it." : " passes them."); }
+    return said + ", " + onTarget + " of them on " + target + " too.";
+  }
+  function pendingChecks() {
+    var checks = isObject(FORGE) && isObject(FORGE.checks) ? FORGE.checks : null;
+    return checks && typeof checks.pending === "number" && checks.pending > 0 ? checks.pending : 0;
+  }
+  /** The follow-ups the close-out still has to file. */
+  function unfiled(doc) {
+    return list(doc.state.followups).filter(function (entry) { return isObject(entry) && (!text(entry.reference) || entry.reference === entry.id); }).length;
+  }
+  /** "All 9 stories are in.", or "The one story is in." */
+  function allIn(count) { return count === 1 ? "The one story is in." : "All " + count + " stories are in."; }
+  function closedDay(closed) {
+    var at = seconds(eventTime(closed));
+    if (at === null) { return ""; }
+    var date = new Date(at * 1000);
+    return MONTHS[date.getMonth()] + " " + date.getDate();
+  }
+  /** The stage the rejoin is at, once every story has landed: its sentence, marks and fact. */
+  function rejoinStage(doc, all, step) {
+    var allInNow = allIn(all.length) + " ";
+    var request = step.latest.requested;
+    // The change request by its number, linked, when the renderer gave its address; otherwise by what it is.
+    var requestLink = function (starts) {
+      var changeRequest = request ? text(request.data.changeRequest) : "";
+      return changeRequest && changeTarget(changeRequest) ? changeLink(changeRequest) : starts ? "The change request" : "the change request";
+    };
+    var closed = closedEntry(doc);
+    if (step.landed) {
+      var where = [request ? requestLink(true) : "The work", " is in " + step.target + "."];
+      if (closed) {
+        var day = closedDay(closed);
+        return { sentence: ["Delivered" + (day ? " " + day : "") + ": " + plural(all.length, "story", "stories") + " into " + step.target + "."],
+          marks: rejoinMarks(4) };
+      }
+      var filing = unfiled(doc);
+      return { sentence: where.concat([" The delivery is closing."]), marks: rejoinMarks(3, "live", null, "closing"),
+        fact: filing ? { text: "Filing " + plural(filing, "follow-up") + "." } : null };
+    }
+    var later = function (entry) { return entry && request && entry.id > request.id; };
+    // The target moved under the change request: the lead merged it in, and nothing has run at the new head yet.
+    if (request && !standing(step, "requested") && later(step.latest.merged) && !suiteRunning(step)
+        && !standing(step, "suite") && !standing(step, "round") && !rejoinRoundRunning(doc, step)) {
+      return { sentence: [step.target + " moved. The lead is bringing ", requestLink(), " up to date."], marks: rejoinMarks(2, "live", "lead", "updating") };
+    }
+    if (standing(step, "requested")) {
+      var fact = failingFact(step);
+      fact = fact ? { text: fact } : null;
+      if (pendingChecks()) { return { sentence: [allInNow, requestLink(true), "'s checks are still running."], marks: rejoinMarks(2, "live", "forge"), fact: fact }; }
+      return { sentence: [allInNow, requestLink(true), " waits for your merge."], marks: rejoinMarks(2, "live", "you"), fact: fact };
+    }
+    var running = rejoinRoundRunning(doc, step);
+    if (running) {
+      return { sentence: ["The integration review is in round " + running.data.round + "."], marks: rejoinMarks(1, "live", "lead", "round " + running.data.round) };
+    }
+    if (standing(step, "round")) {
+      var round = step.latest.round;
+      if (roundApproves(round)) { return { sentence: ["The review approved. The lead opens the change request next."], marks: rejoinMarks(2, "live", "lead") }; }
+      var found = isObject(round.data.findings) ? round.data.findings : {};
+      var fixes = [found.P0, found.P1].filter(function (n) { return typeof n === "number" && n > 0; }).reduce(function (a, b) { return a + b; }, 0);
+      var number = typeof round.data.round === "number" ? round.data.round : 1;
+      return { sentence: ["Round " + number + " asked for " + (fixes ? plural(fixes, "fix", "fixes") : "changes") + ". The lead is making " + (fixes === 1 ? "it." : "them.")],
+        marks: rejoinMarks(1, "live", "lead", "fixing") };
+    }
+    var started = suiteRunning(step);
+    if (started) {
+      var clock = suiteClock(started);
+      return { sentence: [allInNow + "The full suite is running" + (suiteRunWords(started) ? ": " + suiteRunWords(started) : "") + "."],
+        marks: rejoinMarks(0, "live", "lead", clock.spent === null ? null : Math.floor(clock.spent / 60) + " min") };
+    }
+    if (standing(step, "suite")) {
+      var suite = step.latest.suite.data;
+      if (suite.result === "over-budget") {
+        var spent = typeof suite.seconds === "number" ? suite.seconds : null, budget = typeof suite.budgetSeconds === "number" ? suite.budgetSeconds : null;
+        var over = spent !== null && budget !== null ? Math.max(1, Math.round((spent - budget) / 60)) + " min over budget" : "over budget";
+        return { sentence: ["Every test passed, " + over + ". It's your call to accept."], marks: rejoinMarks(0, "live", "you"),
+          fact: spent !== null && budget !== null ? { text: Math.round(spent / 60) + " min against a budget of " + Math.round(budget / 60) + " min." } : null };
+      }
+      if (suitePasses(step.latest.suite)) { return { sentence: ["The full suite passed. The integration review runs next."], marks: rejoinMarks(1, "live", "lead") }; }
+      var happened = el("a", null, "What happened");
+      happened.setAttribute("href", "#happened");
+      return { sentence: ["The full suite failed at " + short(suite.head) + ". The lead is fixing it."], marks: rejoinMarks(0, "stop", "lead"),
+        fact: { nodes: [happened, " has the run."], stop: true } };
+    }
+    return { sentence: [allInNow + "The full suite runs next."], marks: rejoinMarks(0, "live", "lead") };
+  }
+  /** Where the delivery stands: its stage, then the overrides a stopped queue, the reader's own call and an out-of-date page put over it. */
+  function nowState(doc, all) {
+    var closed = closedEntry(doc);
+    // Every own story in while a sibling delivery's part is open or unread: the state tool's first sentence says this
+    // repository's part is done, in place of the delivery's own close.
+    var partDone = isObject(doc.across) ? list(doc.across.partDone).map(text).filter(Boolean) : [];
+    var ownPart = partDone.length ? [partDone[0].replace(/\.$/, "") + "."] : null;
+    var step = integrationOf(doc);
+    var landed = all.filter(isLanded).length;
+    var stage;
+    if (step && all.length && (step.landed || (!closed && landed === all.length))) { stage = rejoinStage(doc, all, step); }
+    else if (closed) {
+      var tally = closedTally(all), day = closedDay(closed);
+      var when = day ? " " + day : "";
+      stage = { sentence: tally.total && tally.landed === tally.total && ownPart ? ownPart : [!tally.total ? "Closed" + when + " with " + (all.length ? "nothing left to land." : "nothing on the line.")
+        : tally.landed === tally.total ? "Delivered" + when + ": " + plural(tally.landed, "story", "stories") + " landed."
+        : "Closed" + when + ": " + tally.landed + " of " + plural(tally.total, "story", "stories") + " landed."],
+        marks: all.length ? laneMarks(doc, all, step ? "Rejoin" : "Landed") : [] };
+    } else if (!all.length) {
+      stage = { sentence: ["Nothing is on the line yet."], marks: [] };
+    } else if (landed === all.length) {
+      stage = { sentence: ownPart || [allIn(all.length) + " The delivery is closing."],
+        marks: laneMarks(doc, all, "Close").map(function (made, index, marks) { return index === marks.length - 1 ? nowMark("Close", "live", "lead") : made; }) };
+    } else {
+      var next = moving(all);
+      // The count turns digit by digit as a live update moves it, as every count on the page does.
+      stage = { sentence: [figures(el("span"), "now", landed + " of " + all.length), all.length === 1 ? " story is in." : " stories are in."].concat(next ? [" ", issue(subjectOf(next.piece.item)), " " + next.where + "."] : []),
+        marks: laneMarks(doc, all, step ? "Rejoin" : "Landed") };
+    }
+    var now = { sentence: stage.sentence, stop: false, marks: stage.marks, fact: stage.fact || null };
+    if (closed) { return now; }
+    var meta = isObject(doc.state.meta) ? doc.state.meta : {};
+    var liveMark = now.marks.filter(function (made) { return made.state === "live" || made.state === "stop"; })[0]
+      || now.marks.filter(function (made) { return made.state === "todo"; })[0] || null;
+    // A stopped queue: the sentence, in the stop colour, naming its repair; the rejoin's live mark turns the stop colour.
+    var hold = isObject(meta.hold) ? meta.hold : null;
+    if (hold || baseAwaitsRepair(doc)) {
+      var repair = hold ? null : repairOf(all);
+      now.sentence = hold ? ["The queue is paused" + (text(hold.reason) ? ": " + text(hold.reason).replace(/\.$/, "") : "") + "."]
+        : ["The queue has stopped: the main line is broken. "].concat(repair ? [issue(subjectOf(repair.item)), " is the repair."] : ["No repair is named yet."]);
+      now.stop = true;
+      now.fact = { text: hold ? "Nothing merges until the hold lifts." : repair ? "Nothing merges until the repair lands." : "Nothing merges until a repair is named.", stop: true };
+      if (step && liveMark && liveMark.state === "live" && landed === all.length) { liveMark.state = "stop"; }
+    }
+    // The reader's own call, from a current list: it takes the sentence, and the live mark becomes theirs.
+    var current = NEEDS && NEEDS.running === true && seconds(NEEDS.staleAfter) !== null && Date.now() / 1000 <= seconds(NEEDS.staleAfter);
+    var call = current ? list(NEEDS.items).filter(function (item) { return isObject(item) && item.who === "operator"; })[0] : null;
+    if (call) {
+      var said = isObject(call.said) ? call.said : {};
+      var words = (text(said.headline) || text(call.text)).replace(/\s+$/, "");
+      now.sentence = [/[.?!]$/.test(words) ? words : words + "."];
+      now.stop = false;
+      // The mark that becomes theirs: the asking lane's when the item names a lane drawn as a mark, else the live one.
+      var asking = text(call.lane) ? laneLabel(text(call.lane)) : "";
+      var yours = (asking ? now.marks.filter(function (made) { return made.label.split(" · ")[0] === asking; })[0] : null) || liveMark;
+      if (yours) {
+        yours.who = "you";
+        if (yours.state === "todo") { yours.state = "live"; }
+        if (!(now.fact && now.fact.stop)) { now.fact = { text: yours.label.split(" · ")[0] + " waits on you." }; }
+      }
+    }
+    // A page that may be out of date says so as its fact: a stopped or silent supervisor, or a record with no recent update.
+    var stale = null;
+    if (NEEDS && NEEDS.unreadable !== true && seconds(NEEDS.at) !== null) {
+      var since = Math.max(0, Date.now() / 1000 - seconds(NEEDS.at));
+      if (NEEDS.running !== true) { stale = "The lead's supervisor stopped " + spanWords(since) + " ago, so this page may be out of date."; }
+      else if (seconds(NEEDS.staleAfter) === null || Date.now() / 1000 > seconds(NEEDS.staleAfter)) {
+        stale = "The lead's supervisor last reported " + spanWords(since) + " ago, so this page may be out of date.";
+      }
+    }
+    var updated = seconds(meta.updatedAt);
+    if (!stale && updated !== null && Date.now() / 1000 - updated > 90 * 60) { stale = "No update for " + spanWords(Date.now() / 1000 - updated) + ", so this page may be out of date."; }
+    if (stale) { now.fact = { text: stale, stop: true }; }
+    return now;
+  }
+  /** Now's lead as the page draws it. */
+  function nowBlock(doc, all) {
+    var now = nowState(doc, all);
+    var box = el("div", "now-state");
+    box.appendChild(add.apply(null, [el("h2", "now-sentence" + (now.stop ? " is-stop" : ""))].concat(now.sentence)));
+    if (now.marks.length) {
+      var marks = el("ol", "now-marks");
+      marks.setAttribute("aria-label", "Where it stands");
+      now.marks.forEach(function (made) {
+        var li = el("li", "now-mark is-" + made.state);
+        li.setAttribute("data-state", made.state);
+        if (made.who) { li.setAttribute("data-who", made.who); }
+        var dot = el("span", "now-dot");
+        dot.setAttribute("aria-hidden", "true");
+        add(li, dot, el("span", "now-mark-label", made.who ? made.label + " · " + made.who : made.label), el("span", "sr", ", " + MARK_WORDS[made.state]));
+        marks.appendChild(li);
+      });
+      box.appendChild(marks);
+    }
+    if (now.fact) { box.appendChild(add.apply(null, [el("p", "now-fact" + (now.fact.stop ? " is-stop" : ""))].concat(now.fact.nodes || [now.fact.text]))); }
+    return box;
+  }
   function drawNow(doc, all) {
     // A redraw can remove what the card describes without a mouseleave; such a card hides.
     if (!card.hidden && cardTarget && !cardTarget.isConnected) { hideCard(); }
@@ -1378,29 +1661,9 @@
     var closed = closedEntry(doc);
     var step = closed ? null : integrationOf(doc);
     var tally = closed ? closedTally(all) : null;
-    // How far the delivery has come, said once and first on the line under the name. Every own piece has landed while a
-    // sibling delivery's part is open or unread: the state tool's sentences, in place of a done count. The first says
-    // this repository's part is done; the rest name each sibling.
+    // What sibling deliveries still hold once this repository's part is done, as the state tool says it: under Now.
     var partDone = isObject(doc.across) ? list(doc.across.partDone).map(text).filter(Boolean) : [];
-    var behind = null;
-    var count = el("b", "now-count");
-    var done = function (words) {
-      if (!partDone.length) { return add(count, words); }
-      behind = partDone.slice(1).join(" ");
-      return add(count, partDone[0].replace(/\.$/, ""));
-    };
-    if (closed && !tally.total) { add(count, all.length ? "Closed with nothing left to land" : "Closed with nothing on the line"); }
-    else if (closed && tally.landed === tally.total) { done("Every piece landed"); }
-    else if (closed) { add(count, "Closed with ", figures(el("span"), "now", tally.landed + " of " + tally.total), " pieces landed"); }
-    else if (!all.length) { add(count, "Nothing on the line yet"); }
-    else if (landed === all.length && step && step.landed) { done("Every piece landed"); }
-    // Every piece is in and the delivery still rejoins its target: the count in two beats, the second muted.
-    else if (landed === all.length && step) {
-      add(count, figures(el("span"), "now", plural(landed, "piece")), " landed beside " + step.target, " · ",
-        el("span", "title-beat", "Now it rejoins"));
-    }
-    else if (landed === all.length) { done("Every piece has landed"); }
-    else { add(count, figures(el("span"), "now", landed + " of " + all.length), " pieces have landed"); }
+    var behind = partDone.length > 1 && landed === all.length && !(step && !closed) ? partDone.slice(1).join(" ") : null;
     var outcome = plan && isObject(plan.outcome) ? text(plan.outcome.summary) : "";
     var parent = text(meta.trackerParent);
     // The delivery's name is the headline. A ticket key it opens with is left off when the kicker links that ticket, or
@@ -1459,23 +1722,23 @@
       var stamp = since(doc, meta, closed).querySelector(".fact-value");
       if (stamp && text(stamp.textContent)) { add(kicker, kicker.firstChild ? " · " : null, el("span", "now-since", stamp.textContent)); }
     }
-    var nodes = kicker.firstChild ? [kicker, title] : [title];
-    // The outcome when it says more than the name, then the count, how much of the plan is proven and how often it
-    // changed, linked to the plan chapter.
+    // Now leads, under the delivery's name: one sentence, its marks and at most one fact.
+    var nodes = (kicker.firstChild ? [kicker, title] : [title]).concat([nowBlock(doc, all)]);
+    // The outcome when it says more than the name, then how much of the plan is proven and how often it changed,
+    // linked to the plan chapter.
     var said = outcome && outcome !== text(meta.headline) && outcome !== name ? outcome : null;
     var planLink = planNow(doc);
     if (fresh) {
-      nodes.push(add(el("p", "plan-now"), said));
+      if (said) { nodes.push(add(el("p", "plan-now"), said)); }
       nodes.push(readyFigures(doc, all));
       nodes.push(startingLine(doc, all));
-    } else {
-      nodes.push(add(el("p", "plan-now"), said, add(el("span", "plan-now-line"), count, planLink ? " · " : null, planLink)));
+    } else if (said || planLink) {
+      nodes.push(add(el("p", "plan-now"), said, planLink ? add(el("span", "plan-now-line"), planLink) : null));
     }
     if (behind) { nodes.push(el("p", "say say-across", behind)); }
-    var sayWords = fresh ? "" : sayLine(doc, all);
+    // A lead's own status line, while it stands, is theirs to say.
+    var sayWords = fresh ? "" : sayLine(doc);
     if (sayWords) { nodes.push(el("p", "say", sayWords)); }
-    var rejoining = step && !step.landed && landed === all.length && all.length ? driftLine(step) : "";
-    if (rejoining) { nodes.push(figures(el("p", "say say-drift"), "drift", rejoining)); }
     // What the lead waits on in another delivery sharing the base, and what waits on the lead, as the state tool says.
     waitLines(doc, "lead", "p", "say say-wait").forEach(function (line) { nodes.push(line); });
     var panel = closed ? null : checkingPanel(doc, all);
@@ -1498,25 +1761,10 @@
     if (panel && was && was !== prev.checkingHeight) { easeSheet(panel, was); }
   }
 
-  /**
-   * The sentence under the headline. A lead's override is shown whole; the derived status repeats what the
-   * panels below already say, so the page says what landed last instead.
-   */
-  // How far the target moved while the work went on and how often the lead caught up: the counts only when the renderer
-  // could read them.
-  function driftLine(step) {
-    var caught = "caught up " + plural(step.merges.length, "time");
-    if (!DRIFT) { return "The lead has " + caught + "."; }
-    return step.target + " moved " + plural(DRIFT.moved, "commit") + " while this worked. The lead has " + caught +
-      ", and the gap is " + DRIFT.behind + ".";
-  }
-  function sayLine(doc, all) {
+  /** A lead's override of the status line, shown whole while it stands; the derived status is Now's sentence. */
+  function sayLine(doc) {
     var status = isObject(doc.status) ? doc.status : {};
-    if (status.source === "override" && text(status.text)) { return text(status.text); }
-    var merges = list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "candidate.merged"; });
-    if (latestMerge(doc)) { return ""; }
-    if (merges.length) { return "Work has landed; merge time unknown."; }
-    return all.length ? "Nothing has landed yet." : "";
+    return status.source === "override" ? text(status.text) : "";
   }
   function latestMerge(doc) {
     return list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "candidate.merged" && seconds(eventTime(entry)) !== null; })
@@ -3382,7 +3630,7 @@
         var opened = /<script type="application\/json" id="delivery-left-open">([^<]*)<\/script>/.exec(page);
         LEFT_OPEN = opened ? readNeeds(opened[1]) : null;
         var drifted = /<script type="application\/json" id="delivery-integration">([^<]*)<\/script>/.exec(page);
-        DRIFT = drifted ? readDrift(drifted[1]) : null;
+        FORGE = drifted ? readForge(drifted[1]) : null;
         if (isObject(next)) { runs = next; safely(lastGood || shown); }
       }).catch(function () { /* the runs already shown stay */ });
     }, typeof wait === "number" ? wait : 3000);

@@ -1,0 +1,163 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3845",
+  "headline": "V26-3845: make the live view's Now page say where a delivery stands, and stop four lead-command frictions",
+  "baseBranch": "integrate/now-page-and-lead-fixes",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-24-now-page-and-lead-fixes.md",
+  "laneBrief": "docs/plans/2026-11-24-now-page-and-lead-fixes.lane-brief.md",
+  "brief": {
+    "notes": null
+  },
+  "context": {
+    "sections": []
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/delivery-views/**",
+        "hosted/delivery-viewer/**",
+        "tests/delivery_views_page/**",
+        "tests/test_delivery_views*.py",
+        "skills/orchestrate-work/references/wait-words.json",
+        "tests/test_waits.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/run-delivery/**",
+        "tests/test_run_delivery*.py",
+        "skills/orchestrate-work/scripts/merge_queue.py",
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "tests/test_merge_queue.py"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3819": {
+      "title": "Lead the live view's Now page with one sentence, four marks and one fact, at every stage of a delivery",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3819-1",
+          "text": "Each of the 12 stages and 3 overrides renders the canvas's sentence shape, marks and fact from a fixture record, with the live mark's holder taken from the record."
+        },
+        {
+          "id": "v26-3819-2",
+          "text": "During the rejoin, Now never names an item as holding up the finish unless it holds the close and its holder can act on it. A tracker lag alone renders no Now sentence or fact."
+        },
+        {
+          "id": "v26-3819-3",
+          "text": "A change request waiting on a merge renders its link and \"waits for your merge\". A failing forge check renders as the fact, saying whether the target fails it too."
+        },
+        {
+          "id": "v26-3819-4",
+          "text": "The hosted view renders the same Now as the local view for each fixture."
+        },
+        {
+          "id": "v26-3819-5",
+          "text": "No page text names a repository-specific check, branch or command. Checked in a rendered view against kwam1na/athena#488 and the canvas, light and dark, at 375px."
+        }
+      ]
+    },
+    "V26-3844": {
+      "title": "Stop the supervisor's lane-changes step failing on non-UTF-8 output",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3844-1",
+          "text": "With a lane branch whose diff or listing carries a file name that isn't valid UTF-8, the step completes and reports its branches. The odd name is shown with replacement characters."
+        },
+        {
+          "id": "v26-3844-2",
+          "text": "Today's output for UTF-8 names is unchanged."
+        }
+      ]
+    },
+    "V26-3841": {
+      "title": "Let lead-setup --integration run beside untracked files it never reads",
+      "lane": "lane-2",
+      "after": [
+        "V26-3844"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3841-1",
+          "text": "Setup succeeds with an untracked file outside the paths it writes, names it in its output, and leaves it untouched."
+        },
+        {
+          "id": "v26-3841-2",
+          "text": "Setup still refuses a modified tracked file, and an untracked file at a path it would write."
+        }
+      ]
+    },
+    "V26-3436": {
+      "title": "Drop a resolved queue stop from the supervisor's status line once the candidate is requeued",
+      "lane": "lane-2",
+      "after": [
+        "V26-3841"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3436-1",
+          "text": "After a requeue journals check.started for the candidate, the status line no longer names its earlier stop, and a test holds that."
+        }
+      ]
+    },
+    "V26-3843": {
+      "title": "Say, in every lead command, that a broken base holds the queue until a repair is named",
+      "lane": "lane-2",
+      "after": [
+        "V26-3436"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3843-1",
+          "text": "With a base.broken standing, each of those commands prints the hold and the repair command. Without one, their output is unchanged."
+        },
+        {
+          "id": "v26-3843-2",
+          "text": "Accepting with the repair option queues the candidate as the repair, which the queue takes first and alone."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "V26-3819, V26-3844, V26-3841, V26-3436 and V26-3843 land on integrate/now-page-and-lead-fixes through its merge queue, each with every criterion met",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration head, with --workers 4 --budget tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide's integration review says, and merged into main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "grantedBy": "kwamina (operator, in chat, 2026-11-24)",
+    "grantedOn": "2026-11-24"
+  }
+}

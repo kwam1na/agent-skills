@@ -3474,6 +3474,48 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("still waits for acceptance", out)
 
+    def test_a_requeue_drops_the_stop_from_the_status_line_and_the_close_hold(self) -> None:
+        """After the lead requeues a stopped candidate, the lane row no longer says it stopped and waits on the lead,
+        so neither the close's hold nor a lead command's status line names the resolved stop. check.started writes no
+        lane row, so the row the requeue put back is the one the status line reads until the outcome. The requeue
+        leaves every other candidate in the queue as it was."""
+        fx = self.fixture(grant_ready=False, merge_needs_ready=False)
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        self.assertEqual([e["data"]["reason"] for e in kinds(fx, "candidate.stopped")], ["merge_refused"])
+        stopped = "lane-1 waits on you: FX-2 stopped: merge_refused"
+        self.assertTrue(any(stopped in h for h in self.once(fx)["closeHeldBy"]))
+        # Another candidate stands in the queue, accepted and not yet run.
+        hand_off(fx, "FX-3", "lane-2")
+        code, out = fx.flow("lead-accept", "FX-3", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        # Held at a stage the requeue would write differently, so a requeue that resets every item is seen.
+        state_tool(fx, "patch", "--writer", "runner", "--version", str(record(fx)["state"]["version"]), "--element",
+                   "queue[subject=FX-3]", "--set", json.dumps({"/stage": "checking"}))
+        other = next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-3")
+        self.assertEqual(other["stage"], "checking", other)
+        forge = json.loads((fx.tmp / "forge.json").read_text())
+        forge["https://forge.test/pr/1"]["draft"] = False  # the lead marks it ready by hand
+        (fx.tmp / "forge.json").write_text(json.dumps(forge))
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-3"), other)
+        state_tool(fx, "patch", "--writer", "runner", "--version", str(record(fx)["state"]["version"]), "--element",
+                   "queue[subject=FX-3]", "--set", json.dumps({"/stage": "queued"}))
+        row = next(lane for lane in record(fx)["state"]["lanes"] if lane["id"] == "lane-1")
+        self.assertFalse(row.get("focus", "").startswith("FX-2 stopped:"), row)
+        self.assertNotEqual(row.get("waitingOn"), "lead", row)
+        self.assertFalse(any("waits on you" in h for h in self.once(fx)["closeHeldBy"]))
+        code, out = fx.flow("lead-hints", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("FX-2 stopped", out)
+        queue_run(fx, "FX-2")
+        requeued = kinds(fx, "handoff.requeued")[-1]["id"]
+        self.assertTrue([e for e in kinds(fx, "check.started") if e["subject"] == "FX-2" and e["id"] > requeued])
+        self.assertFalse(any("FX-2 stopped" in h for h in self.once(fx)["closeHeldBy"]))
+
     def test_a_stop_the_lead_requeues_narrates_to_one_setback_closed_at_the_requeue(self) -> None:
         fx = self.fixture(grant_ready=False, merge_needs_ready=False)
         hand_off(fx, "FX-2", "lane-1")
@@ -4256,9 +4298,12 @@ class SupervisorTrackerTests(unittest.TestCase):
         page = fx.tmp / "record/line-map.html"
         holding = lambda drawn: sorted("base.broken" if item["source"].endswith("(base.broken)") else item["source"]
                                        for item in drawn["items"] if item["holding"])
-        # Each holds the close, and the line map the pass draws lists each, from the same list the close read.
-        drawn = wait_for(lambda: (lambda d: d if holding(d) == ["base.broken", "fullHealth", "tracker publisher"] else None)(
+        # Each holds the close, and the line map the pass draws lists each, from the same list the close read. The
+        # tracker publisher's lag, which nobody can act on, keeps its row there and stops claiming to hold up the finish.
+        lagging = lambda drawn: [item for item in drawn["items"] if item["source"] == "tracker publisher"]
+        drawn = wait_for(lambda: (lambda d: d if holding(d) == ["base.broken", "fullHealth"] and lagging(d) else None)(
             self.embedded_needs(page.read_text())), "each holding in the line map")
+        self.assertEqual([item["holding"] for item in lagging(drawn)], [False], drawn)
         self.assertTrue(drawn["running"], drawn)
         # Stale once a pass is overdue: the interval (1s here) and once more the longer of it and the pass's own time.
         moment = lambda text: datetime.datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ")
@@ -4273,12 +4318,21 @@ class SupervisorTrackerTests(unittest.TestCase):
         for item in last["needsYou"]:
             if item["holding"]:
                 self.assertIn(item["text"], last["closeHeldBy"])
+        # The supervisor's own pass still holds the close on the publisher's lag.
+        [publisher] = [item for item in last["needsYou"] if item["source"] == "tracker publisher"]
+        self.assertTrue(publisher["holding"], publisher)
+        self.assertIn(publisher["text"], last["closeHeldBy"])
         self.assertEqual(kinds(fx, "delivery.closed"), [])
-        # Clearing one removes it on a following pass; the other still holds. The rerun passes, so it repairs the base.
+        # Clearing one removes it on a following pass; the lag still holds the close, and the line map keeps its row
+        # without saying it holds up the finish. The rerun passes, so it repairs the base.
         (fx.tmp / "health").write_text("pass")
         code, out = fx.flow("lead-resolve", "full-health", "--why", "flaky", cwd=fx.main)
         self.assertEqual(code, 0, out)
-        wait_for(lambda: holding(self.embedded_needs(page.read_text())) == ["tracker publisher"], "fullHealth cleared")
+        cleared = wait_for(lambda: (lambda d: d if holding(d) == [] and lagging(d) else None)(
+            self.embedded_needs(page.read_text())), "fullHealth cleared")
+        self.assertEqual([item["holding"] for item in lagging(cleared)], [False], cleared)
+        self.assertTrue(any("tracker publisher" in item["source"] and item["text"] in passes(fx)[-1]["closeHeldBy"]
+                            for item in passes(fx)[-1]["needsYou"]), passes(fx)[-1])
         self.assertEqual(kinds(fx, "delivery.closed"), [])
         # Stopped, it says so: the list, the line map and `latest` all say it isn't running, and keep no items.
         os.kill(pid, signal.SIGTERM)
@@ -5634,6 +5688,123 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.serve_until_idle(fx)
         self.assertEqual(self.stage(fx, "FX-3"), "queued")
 
+    def test_a_standing_break_is_named_by_every_lead_command_and_lead_accept_names_the_repair(self) -> None:
+        """While a base.broken stands, lead-accept, its --requeue, lead-flake and the status line say the queue runs
+        nothing until a repair is named, with the commands that name one; without one their output is unchanged.
+        lead-accept --repair queues the candidate as the repair, which the queue takes first and alone; its merge
+        journals base.repaired, and the held candidate then goes through."""
+        fx = self.fixture()
+        hold = "the queue runs no candidate until a repair is named"
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("the base is broken", out)
+        # --repair with no break standing is refused, accepting nothing.
+        hand_off(fx, "FX-3", "lane-2")
+        code, out = fx.flow("lead-accept", "FX-3", "--repair", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the base isn't broken", out)
+        self.assertTrue(next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-3").get("pending"))
+        state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps(
+            {"source": "queue", "reason": "base_broken", "detail": "lint also fails on the base"}))
+        broken = kinds(fx, "base.broken")[-1]["id"]
+        said = f"the base is broken (journal entry {broken}): {hold}"
+        repair_commands = ("lead-accept KEY --repair", f"delivery_state.py --dir {fx.tmp / 'record'} repair --subject KEY")
+        code, out = fx.flow("lead-flake", "--check", "lint", "--ref", "https://tracker.test/F-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn(said, out)
+        for command in repair_commands:
+            self.assertIn(command, out)
+        state_tool(fx, "patch", "--writer", "runner", "--version", str(record(fx)["state"]["version"]), "--element",
+                   "queue[subject=FX-2]", "--set", json.dumps({"/stage": "stopped"}))
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn(said, out)
+        code, out = fx.flow("lead-hints", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn(said, out)
+        # The running form says it too: a supervisor holds its lock (this process, standing in for one).
+        lock = fx.tmp / "flow-log/FX-1.supervisor.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock, "a+") as held:
+            held.seek(0)
+            held.truncate()
+            held.write(json.dumps({"pid": os.getpid(), "address": "http://127.0.0.1:1"}))
+            held.flush()
+            fcntl.flock(held, fcntl.LOCK_EX)
+            try:
+                code, out = fx.flow("lead-hints", cwd=fx.main)
+            finally:
+                fcntl.flock(held, fcntl.LOCK_UN)
+        lock.unlink()
+        self.assertEqual(code, 0, out)
+        self.assertIn("supervisor: running", out)
+        self.assertIn(said, out)
+        # Accepting FX-3 as the repair queues it with the mark, and the status line names it.
+        code, out = fx.flow("lead-accept", "FX-3", "--repair", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("named FX-3 the repair", out)
+        self.assertIn(f"the base is broken (journal entry {broken}): the queue runs only FX-3, the named repair", out)
+        self.assertNotIn(hold, out)
+        rows = {q["subject"]: q for q in record(fx)["state"]["queue"]}
+        self.assertIn("repair", rows["FX-3"])
+        self.assertNotIn("repair", rows["FX-2"])
+        self.assertEqual((rows["FX-2"]["stage"], rows["FX-3"]["stage"]), ("queued", "queued"))
+        # With FX-3 the named repair, another --repair is refused before anything is written.
+        version = record(fx)["state"]["version"]
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", "--repair", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-3 is already the base's named repair", out)
+        self.assertEqual(record(fx)["state"]["version"], version)
+        self.serve_until_idle(fx)
+        journal = record(fx)["journal"]
+        merged = [e["subject"] for e in journal if e["kind"] == "candidate.merged"]
+        self.assertEqual(merged, ["FX-3", "FX-2"])
+        [repaired] = [e for e in journal if e["kind"] == "base.repaired"]
+        self.assertEqual(repaired["data"].get("repair"), "FX-3")
+        first_fx2 = min(e["id"] for e in journal if e["kind"] == "check.started" and e["subject"] == "FX-2")
+        fx3_merged = next(e["id"] for e in journal if e["kind"] == "candidate.merged" and e["subject"] == "FX-3")
+        self.assertGreater(first_fx2, repaired["id"])
+        self.assertGreater(repaired["id"], fx3_merged - 1)
+        # With the break repaired, a lead command's output says nothing of it.
+        code, out = fx.flow("lead-hints", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("the base is broken", out)
+        # A merged story is never named the repair, and the refusal accepts nothing.
+        state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps(
+            {"source": "queue", "reason": "base_broken", "detail": "broken again"}))
+        accepted = len(kinds(fx, "handoff.accepted"))
+        code, out = fx.flow("lead-accept", "FX-2", "--repair", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-2 is merged", out)
+        self.assertEqual(len(kinds(fx, "handoff.accepted")), accepted)
+
+    def test_a_requeue_with_repair_names_the_stopped_candidate_and_keeps_a_mark_it_already_carries(self) -> None:
+        """lead-accept --requeue KEY --repair re-queues the stopped candidate as the repair; a row that already carries
+        the mark, as a --self-repair hand-off's does, keeps it with no second write."""
+        fx = self.fixture()
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps(
+            {"source": "queue", "reason": "base_broken", "detail": "lint also fails on the base"}))
+        row = lambda: next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-2")
+        stop = lambda: state_tool(fx, "patch", "--writer", "runner", "--version", str(record(fx)["state"]["version"]),
+                                  "--element", "queue[subject=FX-2]", "--set", json.dumps({"/stage": "stopped"}))
+        stop()
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", "--repair", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("named FX-2 the repair", out)
+        self.assertEqual(row()["stage"], "queued")
+        named = row()["repair"]
+        self.assertIn("the queue runs only FX-2, the named repair", out)
+        # Stopped again with its mark, and re-queued with --repair: the mark it carries stands, unwritten.
+        stop()
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", "--repair", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("named FX-2 the repair", out)
+        self.assertEqual((row()["stage"], row()["repair"]), ("queued", named))
+
     def test_a_close_out_run_of_its_own_that_is_flaky_holds_nothing(self) -> None:
         fx = self.fixture(fullHealthRerun=FLAKY_RERUN)
         (fx.tmp / "health").write_text("flaky")
@@ -6979,6 +7150,89 @@ class LeadEndsAFailedRunTests(unittest.TestCase):
                             cwd=fx.main)
         self.assertNotEqual(code, 0, out)
         self.assertEqual(len(kinds(fx, "base.broken")), 1)
+
+
+class LaneChangesBytesTests(unittest.TestCase):
+    """The pass's lane-changes step reads git output that isn't UTF-8 without ending: a claimed binary file at the base,
+    and a branch's file named with bytes that aren't UTF-8, shown with replacement characters."""
+
+    def delivery(self):
+        from tests.test_lane_changes import Delivery
+        folder = Path(tempfile.mkdtemp(prefix="lane-changes-bytes-"))
+        self.addCleanup(subprocess.run, ["rm", "-rf", str(folder)])
+        here = os.getcwd()
+        # Acceptance's whole-file check reads the diff in the working directory, which a pass runs in the lead's.
+        os.chdir(folder)
+        self.addCleanup(os.chdir, here)
+        made = Delivery(folder)
+        os.chdir(made.lead)
+        return made
+
+    @staticmethod
+    def push_named(d, checkout: Path, name: bytes, data: bytes) -> str:
+        """Commits and pushes a file whose name is `name`, through the index, since APFS refuses a name that isn't
+        UTF-8 on disk."""
+        def git_bytes(*argv, stdin: bytes | None = None) -> bytes:
+            return subprocess.run([b"git", b"-c", b"core.hooksPath=/dev/null", *argv], cwd=checkout, input=stdin,
+                                  capture_output=True, check=True).stdout.strip()
+        oid = git_bytes(b"hash-object", b"-w", b"--stdin", stdin=data)
+        git_bytes(b"update-index", b"--add", b"--cacheinfo", b"100644," + oid + b"," + name)
+        git_bytes(b"-c", b"user.name=t", b"-c", b"user.email=t@t", b"commit", b"-q", b"-m", b"odd name")
+        branch = git_bytes(b"rev-parse", b"--abbrev-ref", b"HEAD")
+        git_bytes(b"push", b"-q", b"origin", b"HEAD:refs/heads/" + branch)
+        return git_bytes(b"rev-parse", b"HEAD").decode()
+
+    def test_a_claimed_binary_file_at_the_base_leaves_the_step_complete(self) -> None:
+        d = self.delivery()
+        # The bytes that ended the step in a live delivery: a font a lane held whole, read as text for its line count.
+        font = b"wOF2\x00\x01\x00\x00\x00\x00\x10\x00\x00\x0a\x00\x00\x00\x00\x20\xcc\x41\n\x00\xff"
+        d.land({"docs/note.md": "note\n"})
+        landing = d.folder / "landing"
+        (landing / "docs/font.woff2").write_bytes(font)
+        git_run = lambda *argv: subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *argv], cwd=landing,
+                                               check=True, capture_output=True)
+        git_run("add", "-A")
+        git_run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "font")
+        git_run("push", "-q", "origin", "HEAD:refs/heads/main")
+        d.state["laneRegions"] = [{"lane": "lane-2", "path": "src/shared.py", "baseHead": d.base, "start": 1, "end": 3}]
+        checkout = d.story("S-1", "lane-1")
+        d.push(checkout, {"src/one.py": "def one():\n    return 11\n"})
+        changes, items = d.one_pass()
+        self.assertEqual([(f["path"], f["holds"]) for f in changes["lanes"]["lane-1"]["files"]], [("src/one.py", "file")])
+        font_entry = next(f for f in changes["files"] if f["path"] == "docs/font.woff2")
+        self.assertEqual(font_entry["lanes"], ["lane-1"])
+        self.assertEqual(font_entry["lines"], len(font.decode("utf-8", "replace").splitlines()))
+        # A text file's count is the one the step gave before.
+        guide = next(f for f in changes["files"] if f["path"] == "docs/guide.md")
+        self.assertEqual(guide["lines"], len("# Guide\n\n## Setup\n\nRun it.\n".splitlines()))
+        self.assertEqual(items, [])
+
+    def test_a_branch_file_named_with_bytes_that_arent_utf8_is_shown_with_replacement_characters(self) -> None:
+        for regions in (False, True):
+            with self.subTest(regions=regions):
+                d = self.delivery()
+                if regions:
+                    d.state["laneRegions"] = [{"lane": "lane-2", "path": "src/shared.py", "baseHead": d.base,
+                                               "start": 1, "end": 3}]
+                checkout = d.story("S-1", "lane-1")
+                ordinary = d.story("S-2", "lane-2")
+                d.push(ordinary, {"src/two.js": "function two() {\n  return 22;\n}\n"})
+                self.push_named(d, checkout, b"docs/caf\xe9.md", b"# Caf\n")
+                self.push_named(d, checkout, b"src/caf\xcc.py", b"def cafe():\n    return 1\n")
+                changes, items = d.one_pass()
+                odd = changes["lanes"]["lane-1"]
+                self.assertNotIn("unreadable", odd)
+                self.assertEqual([(f["path"], f["holds"], [c["name"] for c in f["changes"]]) for f in odd["files"]],
+                                 [("docs/caf\ufffd.md", "file", ["Caf"]), ("src/caf\ufffd.py", "none", ["cafe"])])
+                # An ordinary branch reads as it did.
+                self.assertEqual(changes["lanes"]["lane-2"]["files"], [{"path": "src/two.js", "holds": "file", "changes": [
+                    {"old": 2, "removed": 1, "start": 2, "added": 1, "name": "two", "inside": True}]}])
+                self.assertEqual([item["text"] for item in items],
+                                 ["Lane 1 changed `src/caf\ufffd.py`, which it doesn't hold."])
+                # The next pass keeps the read and judges it the same.
+                again, again_items = d.one_pass()
+                self.assertEqual(again["lanes"], changes["lanes"])
+                self.assertEqual(again_items, items)
 
 
 if __name__ == "__main__":

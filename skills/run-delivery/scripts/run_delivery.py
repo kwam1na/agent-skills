@@ -7529,7 +7529,9 @@ def candidate_ownership(c, lane: str, base: str, head: str, state: dict) -> tupl
             raise Stop(f"writer_not_owned: {error}") from error
         regional_paths = {claim["path"] for claim in regions}
     else:
-        changed = list(filter(None, run(["git", "diff", "--no-renames", "--name-only", "-z", base, head]).stdout.split("\0")))
+        # Read as file-system bytes, as the region helper reads them, so a name that isn't UTF-8 is still judged.
+        changed = list(filter(None, run(["git", "diff", "--no-renames", "--name-only", "-z", base, head],
+                                        errors="surrogateescape").stdout.split("\0")))
         outside, regional_paths = {}, set()
     ownership = c.effective_ownership(state)
     if "laneOwnership" not in state:
@@ -8014,6 +8016,37 @@ def verify_integration_checkout(c, root: Path, key: str, base: str, target: str)
     raise Stop(f"{root} already exists and does not hold the integration setup for {key} on {base}")
 
 
+def setup_head(c, key: str, plan: str) -> str:
+    """HEAD of the standing checkout, for an integration setup, which drafts from the committed tree at it into a
+    checkout of its own. It refuses a tracked change, staged or not, and an untracked file at a path setup writes (the
+    delivery file, the lane brief and the binding) or reads from the working tree (the settings the standing
+    configuration takes, which the new checkout wouldn't have). Every other untracked file is named and left alone."""
+    guarded = {(Path(c.deliveries_rel) / f"{key}.json").as_posix(), f"{Path(plan).with_suffix('').as_posix()}.lane-brief.md",
+               ".agents/orchestration.json", CONFIG, *(old for old, new in LEGACY_NAMES if new == CONFIG),
+               ".agents/delivery-views.json", "harness.config.ts"}
+    changed, colliding, elsewhere = [], [], []
+    # Not stripped: the first line's leading space is its status column.
+    for line in run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=c.root).stdout.splitlines():
+        if not line.startswith("?? "):
+            changed.append(line)
+        elif line[3:] in guarded:
+            colliding.append(line)
+        else:
+            elsewhere.append(line[3:])
+    refused = []
+    if changed:
+        refused.append("the checkout has uncommitted changes; commit or remove them first:\n" + "\n".join(changed)[:800])
+    if colliding:
+        refused.append("the checkout has untracked files where setup reads or writes; commit or remove them first:\n"
+                       + "\n".join(colliding))
+    if refused:
+        raise Stop("\n".join(refused))
+    if elsewhere:
+        shown = elsewhere[:20] + ([f"and {len(elsewhere) - 20} more"] if len(elsewhere) > 20 else [])
+        print("left alone: untracked files setup doesn't read:\n  " + "\n  ".join(shown))
+    return git("rev-parse", "HEAD", cwd=c.root)
+
+
 def integration_checkout(c, key: str, base: str, plan: str) -> tuple[Path, str]:
     """Find or create the lead checkout, keeping the standing binding on its own branch."""
     if not c.binding_base or git("check-ref-format", "--branch", base, check=False) != base:
@@ -8060,7 +8093,7 @@ def integration_checkout(c, key: str, base: str, plan: str) -> tuple[Path, str]:
         else:
             git("worktree", "add", "-q", "--track", "-b", base, str(root), f"{c.remote}/{base}")
     else:
-        head = clean_head()
+        head = setup_head(c, key, plan)
         if Shelf(c.root, head).text(plan) is None:
             raise Stop("name a committed repository-relative plan")
         if Shelf(c.root, head).json(f"{c.deliveries_rel}/{key}.json") is not None:
@@ -10558,6 +10591,40 @@ def lead_accept(args) -> None:
 
 
 def accept_story(c, args) -> None:
+    """Accept or re-queue the story, and with --repair name it the broken base's repair in the same step: checked
+    before anything is written, so a refused --repair accepts nothing."""
+    if not getattr(args, "repair", False):
+        accept_named(c, args)
+        return
+    key = c.require(args.requeue or args.key) if (args.requeue or args.key) else None
+    if key is None:
+        raise Stop("name the story to accept, or --requeue a stopped one")
+    doc = load_state()
+    if not standing_break(doc["journal"]):
+        raise Stop("--repair names the broken base's repair, and the base isn't broken: accept without it")
+    named = [q["subject"] for q in doc["state"]["queue"] if "repair" in q and q["subject"] != key]
+    if named:
+        raise Stop(f"{named[0]} is already the base's named repair; withdraw it with the state tool's repair --withdraw "
+                   "first, or accept without --repair")
+    item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
+    if item is None or item["stage"] == "merged":
+        raise Stop(f"--repair names a candidate the queue takes; {key} is "
+                   f"{'merged' if item else 'not in the queue (a no-change hand-off is never queued)'}")
+    accept_named(c, args)
+    item = next((q for q in load_state()["state"]["queue"] if q["subject"] == key), None) or {}
+    if "repair" not in item:
+        if item.get("stage") != "queued" or item.get("pending"):
+            raise Stop(f"{key} was accepted, but it is {item.get('stage', 'not in the queue')}, not queued, so it isn't "
+                       f"named the repair; name it once it is queued: {state_command()} repair --subject {key}")
+        done = state_tool("repair", "--subject", key, check=False)
+        if done.returncode != 0:
+            answer = json.loads(done.stdout) if done.stdout.strip().startswith("{") else {}
+            raise Stop(f"{key} was accepted, but the state tool refused to name it the repair: "
+                       f"{answer.get('error') or (done.stderr or done.stdout).strip()[-400:]}")
+    print(f"named {key} the repair: the queue takes it first and alone, and its merge journals base.repaired")
+
+
+def accept_named(c, args) -> None:
     if args.requeue:
         requeue(c, c.require(args.requeue))
         return
@@ -11631,6 +11698,41 @@ def on_fallback(c) -> str:
                             "checks" for subject, checks in named)
 
 
+def state_command() -> str:
+    """The state tool's command line as messages name it, beside flow_command's, with this delivery's record."""
+    c = CFG
+    tool = (Path(c.release_override) if c is not None and c.release_override else Path(TOOL_PATH).parents[3]) / STATE_TOOL
+    return f"python3 -B {tool} --dir {cfg().state}"
+
+
+def standing_break(journal: list[dict]) -> dict | None:
+    """The base.broken that stands, the last word on the base as the queue reads it, or None."""
+    last = next((entry for entry in reversed(journal) if entry.get("kind") in ("base.broken", "base.repaired")), None)
+    return last if last is not None and last["kind"] == "base.broken" else None
+
+
+def break_hold(c) -> str:
+    """While a base.broken stands, what every lead command says of it: the queue runs nothing until a repair is named,
+    with the commands that name one, or only the repair named. Empty when none stands."""
+    release = getattr(c, "release", None)  # a status line built for a bare record, with no release, says nothing of it
+    if release is None:
+        return ""
+    try:
+        doc = shown_record(release, c.state)
+    except (Stop, ValueError, OSError):
+        return ""
+    broken = standing_break(doc.get("journal") or [])
+    if broken is None:
+        return ""
+    named = [q["subject"] for q in (doc.get("state") or {}).get("queue") or [] if isinstance(q, dict) and "repair" in q]
+    if named:
+        return (f"; the base is broken (journal entry {broken['id']}): the queue runs only {named[0]}, the named repair, "
+                "until it lands and journals base.repaired")
+    return (f"; the base is broken (journal entry {broken['id']}): the queue runs no candidate until a repair is named. "
+            f"Name one: {flow_command()} lead-accept KEY --repair, or for a candidate already queued, {state_command()} "
+            "repair --subject KEY")
+
+
 def supervisor_line(c) -> str | None:
     """What every lead command repeats: the supervisor's state, the live view's address, any candidate checking on the
     fallback, and what the close waits on, or how to restart it."""
@@ -11639,14 +11741,14 @@ def supervisor_line(c) -> str | None:
     held, recorded = read_lock(supervisor_lock_path(c))
     if held:
         return (f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
-                + live_fallback(c.state) + on_fallback(c) + listener_words(c) + waits_on(c))
+                + live_fallback(c.state) + on_fallback(c) + break_hold(c) + listener_words(c) + waits_on(c))
     said = closed_status(c)
     if said is not None:
         return "supervisor: " + said
     serving = view_serving(c.state)
     address = f"; live view {live_address(serving['port'])}" if serving else ""
     return (f"supervisor: down ({supervisor_down_words(c.state)}){address}; restart it with {flow_command()} "
-            "lead-run --resume" + listener_words(c) + waits_on(c))
+            "lead-run --resume" + break_hold(c) + listener_words(c) + waits_on(c))
 
 
 def live_fallback(state: Path) -> str:
@@ -13119,6 +13221,12 @@ ENCLOSING_KINDS = {".py": "python", ".js": "javascript", ".mjs": "javascript", "
 LANE_FILES_LIMIT = 400
 
 
+def shown_path(path: str) -> str:
+    """A path as the views show it: one read as file-system bytes (`surrogateescape`), so git can be handed it back, with
+    each byte that isn't UTF-8 shown as a replacement character. A UTF-8 path is unchanged."""
+    return path.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+
+
 def enclosing_name(path: str, lines: list[str], line: int) -> str | None:
     """The name of the block line `line` (one-based) sits in, on the new side: the line itself when it names one, else
     the nearest one above it. In Python and JavaScript, the nearest one indented less than the code it holds, so a
@@ -13166,8 +13274,10 @@ def read_lane_branch(c, story: str, base: str) -> dict | None:
         run(["git", "fetch", "-q", "--no-write-fetch-head", c.remote, f"+refs/heads/{branch}:refs/remotes/{c.remote}/{branch}"],
             cwd=c.root)
         merge_base = git("merge-base", base, head, cwd=c.root)
+        # Read as file-system bytes: a name that isn't UTF-8 is handed back to git as it is, and shown with
+        # replacement characters.
         paths = list(filter(None, run(["git", "diff", "--name-only", "--no-renames", "-z", merge_base, head],
-                                      cwd=c.root).stdout.split("\0")))
+                                      cwd=c.root, errors="surrogateescape").stdout.split("\0")))
         files = []
         for path in paths:
             # Not strictly decoded: a binary or non-UTF-8 file is still a change the read reports, by its hunks.
@@ -13194,11 +13304,13 @@ def lane_holdings(c, lane: str, read: dict, state: dict) -> dict:
         return read
     helper = _region_ownership()
     _, outside = candidate_ownership(c, lane, read["mergeBase"], read["head"], state)
+    # Judged by the shown path, so a kept read, whose paths were written shown, is judged as a fresh one.
+    outside = [shown_path(item) for item in outside]
     regions = state.get("laneRegions", [])
     shared = shared_outputs(c) if "laneOwnership" in state else set()
     files = []
     for entry in read["files"]:
-        path = entry["path"]
+        path = shown_path(entry["path"])  # a fresh read's name that isn't UTF-8 is judged, and written, as shown
         refused = path in outside or any(item.startswith(f"{path}: ") for item in outside)
         changes = [dict(change, inside=not refused) for change in entry["changes"]]
         holds = "shared" if path in shared else "span" if any(claim["path"] == path for claim in regions) else "file"
@@ -13253,7 +13365,8 @@ def claimed_files(c, state: dict, base: str) -> dict:
     for path in regional + whole:
         if len(files) >= LANE_FILES_LIMIT:
             break
-        shown = run(["git", "show", f"{base}:{path}"], cwd=c.root, check=False)
+        # Not strictly decoded: a claimed binary file is counted as a UTF-8 file's lines are, not a failed step.
+        shown = run(["git", "show", f"{base}:{path}"], cwd=c.root, check=False, errors="replace")
         length = len(shown.stdout.splitlines()) if shown.returncode == 0 else 0
         if path in regional:
             spans = []
@@ -15716,7 +15829,14 @@ def requeue(c, key: str) -> None:
                        + (f" and the queue's synced head {item['syncedHead'][:10]}" if item.get("syncedHead") else "")
                        + ": the lane hands it off again")
         found[:] = [item]
-        return ["--element", f"queue[subject={key}]", "--set", json.dumps({"/stage": "queued", "/checks": []})]
+        # The lane row the stop wrote, saying it stopped and waiting on the lead, no longer holds: it is put back as
+        # the queue puts back a candidate it takes again, so "Needs you", the close and the status line drop the stop.
+        queue = [{**q, "stage": "queued", "checks": []} if q["subject"] == key else q for q in doc["state"]["queue"]]
+        return {"queue": queue, "lanes": delivery_state.lane_rows_put_back(doc["state"], key)}
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
     patch_from(back_to_queued, f"{key}'s re-queue", writer="runner")
     item = found[0]
     # The re-queue answers the stop it resolves, which closes that setback.
@@ -17227,6 +17347,9 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=lead_assign)
     p = command(sub, "lead-accept"); p.add_argument("key", nargs="?"); p.add_argument("--accept-blocked", action="append")
     p.add_argument("--requeue", metavar="KEY", help="re-queue a stopped candidate you resolved, with no new hand-off")
+    p.add_argument("--repair", action="store_true",
+                   help="while the base is broken, name the candidate this accepts or re-queues the base's repair, "
+                        "which the queue takes first and alone")
     p.add_argument("--accept-restarts", action="store_true")
     p.add_argument("--accept-discarded", action="append", type=int, metavar="ROUND")
     p.add_argument("--checks", help="under selection.lead: the candidate's checks, by catalogue id, comma-separated, "

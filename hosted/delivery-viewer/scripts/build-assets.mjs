@@ -44,7 +44,7 @@ patch(
     PLAN = payload.plan || null; plan = PLAN && isObject(PLAN.plan) ? PLAN.plan : null; NEEDS = payload.needs || null;
     FILES = payload.files ? readNeeds(JSON.stringify(payload.files)) : null;
     LEFT_OPEN = payload.leftOpen ? readNeeds(JSON.stringify(payload.leftOpen)) : null;
-    DRIFT = payload.integration ? readDrift(JSON.stringify(payload.integration)) : null;
+    FORGE = payload.integration ? readForge(JSON.stringify(payload.integration)) : null;
     if (PLAN && !parts.plan) {
       var section = el("section", "chapter chapter-plan arrived"); section.id = "plan";
       parts.plan = el("div", "inner"); section.appendChild(parts.plan);
