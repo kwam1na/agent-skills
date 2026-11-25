@@ -1738,8 +1738,8 @@
     // Under the line, three facts in one shape: how many stories have landed, what landed last, or before anything has
     // what the queue lands next, and the record's state.
     nodes.push(add(el("div", "facts"), storiesFact(all, closed ? tally : null),
-      // While the checks lead, they already say what lands next.
-      fresh ? (leading ? null : nextToLand(doc, all)) : lastLanded(doc, all),
+      // While the checking sheet shows, it already says what lands next.
+      fresh ? (panel ? null : nextToLand(doc, all)) : lastLanded(doc, all),
       since(doc, meta, closed)));
     var was = prev.checkingHeight;
     inner.replaceChildren.apply(inner, nodes);

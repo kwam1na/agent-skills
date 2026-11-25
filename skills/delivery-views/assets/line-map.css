@@ -140,12 +140,10 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 
 /* Being checked now */
 /* The checking sheet: what is being checked now, floating on the ground. */
-.checking { position: relative; isolation: isolate; max-width: 640px; display: grid; align-content: start; gap: 12px; padding: 22px 24px; border-radius: 14px; }
+.checking { position: relative; isolation: isolate; max-width: 980px; display: grid; align-content: start; gap: 12px; padding: 22px 24px; border-radius: 14px; }
 /* The sheet's surface is its own layer, so anything drawn behind the sheet sits under it rather than over it. */
 .checking::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--lift); box-shadow: var(--shadow-sheet); }
 .checking > * { min-width: 0; }
-/* While a piece is checked, its sheet leads Now: under the sentence, as wide as the rows beneath it. */
-.checking.is-leading { max-width: 980px; }
 .checking.failed::after { box-shadow: var(--shadow-sheet), inset 0 0 0 1.5px var(--held); }
 .ck-h { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); display: flex; align-items: center; gap: 8px; }
 .ck-count { margin-left: auto; font: 500 13px/18px var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }

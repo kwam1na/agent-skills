@@ -64,8 +64,8 @@ test("before anything lands, each starting stop is drawn and said by where its p
   expect(stops[1].querySelector(".starting-name").textContent).toBe("B · Work BReady, waiting to be checked");
   expect(app.querySelector("#now .starting-end.is-start").textContent).toBe("Under way");
   expect(app.querySelector("#now .stories .fact-said").textContent).toBe("3 in the queue · 2 being built");
-  // The queue lands the piece being checked first.
-  expect(app.querySelectorAll("#now .facts > .fact")[1].querySelector(".fact-value").textContent).toBe("Work A");
+  // The checking sheet says what lands first, so the facts row leaves it out.
+  expect(app.querySelectorAll("#now .facts > .fact")).toHaveLength(2);
   // With nothing started, every stop is open and the row is ready to start, with nothing to count and nothing queued.
   const ready = await facts(record({ planned: [planned("A", "planned"), planned("B", "planned")] }));
   expect([...ready.querySelectorAll("#now .starting-stop")].map((stop) => stop.classList.contains("is-later"))).toEqual([true, true]);
@@ -89,12 +89,17 @@ test("while a piece is checked, its checks lead Now, under the sentence, and the
   // The facts row keeps the stories and the record's state, which stays in the last column.
   const cells = [...app.querySelectorAll("#now .facts > .fact")];
   expect(cells.map((cell) => cell.classList.contains("since") ? "since" : cell.querySelector(".fact-label").textContent)).toEqual(["Stories", "since"]);
-  // Waiting to be checked is not a check running: the sheet keeps its place below, and the middle fact returns.
+  // Waiting to be checked is not a check running: the sheet keeps its place below, and still says what lands next.
   const waiting = await facts(record({ queue: [item("A", "queued")], planned: [planned("C", "building")] }));
   const after = [...waiting.querySelector("#now .inner").children].map((node) => node.classList[0]);
   expect(after.indexOf("checking") > after.indexOf("starting")).toBe(true);
   expect(waiting.querySelector("#now .checking").classList.contains("is-leading")).toBe(false);
-  expect(waiting.querySelectorAll("#now .facts > .fact")[1].querySelector(".fact-label").textContent).toBe("Next to land");
+  expect([...waiting.querySelectorAll("#now .facts > .fact")].map((cell) => cell.classList.contains("since") ? "since" : cell.querySelector(".fact-label").textContent))
+    .toEqual(["Stories", "since"]);
+  // With no sheet, nothing queued or checked, the middle fact says so.
+  const building = await facts(record({ planned: [planned("C", "building")] }));
+  expect(building.querySelector("#now .checking")).toBeNull();
+  expect(building.querySelectorAll("#now .facts > .fact")[1].querySelector(".fact-value").textContent).toBe("Nothing in the queue yet");
 });
 
 test("the record's state keeps the facts row's last column whatever the middle says", async () => {
@@ -115,14 +120,12 @@ test("a delivery with nothing landed looks ahead to its total instead of countin
   expect([...none.querySelectorAll("#now .starting-stop")].map((stop) => stop.getAttribute("aria-label"))).toEqual(
     ["A, Work A, Ready, waiting to be checked", "B, Work B, Being built", "C, Work C, Being built"]);
   expect(none.querySelector("#now .starting-end.is-start").textContent).toBe("Under way");
-  expect([...none.querySelectorAll("#now .facts > .fact .fact-label")].map((label) => label.textContent).slice(0, 2))
-    .toEqual(["Stories", "Next to land"]);
   expect(none.querySelector("#now .stories .fact-value").textContent).toBe("0 of 3 landed");
   expect(none.querySelector("#now .stories .fact-said").textContent).toBe("1 in the queue · 2 being built");
-  const next = none.querySelectorAll("#now .facts > .fact")[1];
-  expect(next.querySelector(".fact-value").textContent).toBe("Work A");
-  expect(next.querySelector(".fact-detail").textContent).toBe("A · Ready, waiting to be checked");
-  expect(none.querySelector("#now .facts > .fact.since")).toBe(none.querySelectorAll("#now .facts > .fact")[2]);
+  // A is ready to be checked, and the checking sheet says so: the facts row leaves what lands next to it.
+  expect(none.querySelector("#now .checking .ck-t").textContent).toBe("Work A");
+  expect([...none.querySelectorAll("#now .facts > .fact")].map((cell) => cell.classList.contains("since") ? "since" : cell.querySelector(".fact-label").textContent))
+    .toEqual(["Stories", "since"]);
   expect(none.querySelector("#now .kicker .now-since")).toBeNull();
   // The closed epic landed all nine: its final count, with nothing left in the queue or the build to count.
   const folder = path.join(CORPUS, "delivery-records-epic");
