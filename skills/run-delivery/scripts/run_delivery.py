@@ -8724,6 +8724,27 @@ def peer_deliveries(c, *, target: bool = False) -> list[dict]:
     return peers
 
 
+def peer_status_words(peer: dict) -> str:
+    if peer["status"] == "live":
+        return f"live, pid {peer['pid']}"
+    if peer["status"] == "stale":
+        return f"stale: its supervisor, pid {peer['pid']}, isn't running"
+    return "no supervisor"
+
+
+def peer_line(peer: dict) -> str:
+    """A peer as doctor --delivery lists it: its supervisor, its lead checkout, and what its queue is checking and
+    has queued, read from its record through its entry."""
+    if peer["status"] == "unreadable":
+        return f"{peer['file']}: unreadable"
+    said = f"{peer['key']} ({peer_status_words(peer)}; led from {peer.get('lead')})"
+    state = json_object(Path(peer["state"]) / "state.json")
+    if not state:
+        return f"{said}: its record {peer['state']} can't be read"
+    checking, queued = peer_queue(state)
+    return f"{said}: checking {checking or 'nothing'}; queued {', '.join(queued) or 'nothing'}"
+
+
 def peer_queue(state: dict) -> tuple[str | None, list[str]]:
     """What a peer's queue is checking now, and what else it has queued, from its record's state."""
     current = ((state.get("meta") or {}).get("checking") or {}).get("now")
@@ -8821,27 +8842,6 @@ def target_settlement(peers: list[dict], log: list[dict], began: str, window: fl
         marks[merge["peer"]] = max(marks.get(merge["peer"], 0), merge["entry"])
     return {"merges": merges, "busy": busy, "since": since, "due": due,
             "settle": bool(merges) and not busy and due is not None and at >= due, "settled": marks}
-
-
-def peer_status_words(peer: dict) -> str:
-    if peer["status"] == "live":
-        return f"live, pid {peer['pid']}"
-    if peer["status"] == "stale":
-        return f"stale: its supervisor, pid {peer['pid']}, isn't running"
-    return "no supervisor"
-
-
-def peer_line(peer: dict) -> str:
-    """A peer as doctor --delivery lists it: its supervisor, its lead checkout, and what its queue is checking and
-    has queued, read from its record through its entry."""
-    if peer["status"] == "unreadable":
-        return f"{peer['file']}: unreadable"
-    said = f"{peer['key']} ({peer_status_words(peer)}; led from {peer.get('lead')})"
-    state = json_object(Path(peer["state"]) / "state.json")
-    if not state:
-        return f"{said}: its record {peer['state']} can't be read"
-    checking, queued = peer_queue(state)
-    return f"{said}: checking {checking or 'nothing'}; queued {', '.join(queued) or 'nothing'}"
 
 
 def slot_line(c) -> str:
