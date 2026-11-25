@@ -5233,10 +5233,12 @@
     return taken ? null : to;
   }
   var PEER_HELD = table({ generation_differs: "held: generation differs", slice_invalid: "held: its updates don't fit this record" });
-  /** A peer as the sync loop last read it: "Ben as of 4s", "Ben held: generation differs", "Ben split". */
+  /**
+   * A peer as the sync loop last read it: "Ben as of 4s" or "Ben held: generation differs". A split is never a peer's:
+   * it is the record's own, said at the chapter's head.
+   */
   function peerWords(name, peer) {
     var reason = text(peer.heldReason);
-    if (reason === "seat_split") { return name + " split"; }
     if (reason) { return name + " " + (PEER_HELD[reason] || "held"); }
     var at = seconds(text(peer.fetchedAt));
     return at === null ? name + " not read yet" : name + " as of " + duration(Math.max(0, Date.now() / 1000 - at));

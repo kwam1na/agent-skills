@@ -27,14 +27,15 @@
           "s-bbbbbbbbbbbb": {
             "through": 3,
             "fetchedAt": "2026-10-30T11:50:00Z",
-            "heldReason": "seat_split"
+            "heldReason": "slice_invalid"
           },
           "s-cccccccccccc": {
             "through": 1,
             "fetchedAt": "2026-10-30T11:56:00Z",
             "heldReason": null
           }
-        }
+        },
+        "heldReason": "seat_split"
       },
       "phase": "planning"
     },

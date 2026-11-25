@@ -45,7 +45,10 @@ test("Seats lists who writes the record, who holds each scope, and how fresh and
   expect(colead.querySelector(".title").textContent).toBe("3 seats write this delivery, and its queue is moving to Ben.");
   expect(rows(colead, ".scope-row")).toEqual(["deliveryAma", "queueBenqueue moving to Ben", "lane:lane-1Ama", "lane:lane-2Ben"]);
   expect(rows(colead, ".seat-row").at(-1)).toBe("s-ccccccccccccCywrites, doesn't endorse");
-  expect(rows(colead, ".peer-row")).toEqual(["Ben split", "Cy as of 4m"]);
+  expect(rows(colead, ".peer-row")).toEqual(["Ben held: its updates don't fit this record", "Cy as of 4m"]);
+  // A split is the record's own, never a peer's: said once, at the chapter's head; a record that hasn't split says nothing.
+  expect(colead.querySelector(".seats-split").textContent).toBe("This checkout's seat split from its chain: it writes nothing more here.");
+  expect(seats.querySelector(".seats-split")).toBe(null);
 });
 
 test("once the queue's new holder writes an entry that has seen the handover, the queue is no longer moving", async () => {

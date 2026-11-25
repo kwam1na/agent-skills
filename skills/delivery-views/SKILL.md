@@ -1181,7 +1181,9 @@ the record's journal and `meta.collab`, and no label decides anything.
   transfer counts only when the scope's holder made it. A queue handed to
   another seat says "queue moving to <label>" until that seat writes an entry
   that has seen the handover. Each peer's freshness, as the sync loop last read
-  it: "<label> as of 4s", "<label> held: generation differs", "<label> split".
+  it: "<label> as of 4s", "<label> held: generation differs" or "held: its
+  updates don't fit this record". A split is the record's own, never a peer's:
+  a checkout whose seat split says so at the chapter's head.
 - **Feedback**, before What happened, once any is raised. A thread per section
   it is on, in the order first raised: each feedback's writer and text, and
   whether it is open, open and blocking, or settled, with its outcome, who

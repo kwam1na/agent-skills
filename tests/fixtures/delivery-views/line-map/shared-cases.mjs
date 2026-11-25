@@ -56,7 +56,7 @@ const CASES = {
     return { document, plan };
   },
   // A planning record every approver seat has endorsed, its queue handed to Ben and not yet taken up, a lane Ben holds,
-  // and Ben's chain split.
+  // Ben's updates held as invalid, and this checkout's own seat split from its chain.
   "colead": () => {
     const { document, plan } = previewDelivery({ rounds: 3, approval: "endorsed", endorsements: [endorsement("Ama"), endorsement("Ben")] });
     document.state.lanes.push({ id: "lane-2", title: "Lane two", focus: "", state: "idle", waitingOn: null, since: minute(0) });
@@ -64,7 +64,7 @@ const CASES = {
     shared(document, {
       seats: { [AMA]: { label: "Ama", admitted: true, approver: true }, [BEN]: { label: "Ben", admitted: true, approver: true },
         "s-cccccccccccc": { label: "Cy", admitted: true, approver: false } },
-      peers: { [BEN]: { through: 3, fetchedAt: minute(350), heldReason: "seat_split" },
+      peers: { [BEN]: { through: 3, fetchedAt: minute(350), heldReason: "slice_invalid" },
         "s-cccccccccccc": { through: 1, fetchedAt: minute(356), heldReason: null } },
       steps: [
         [1, AMA, "record.started", START],
@@ -79,6 +79,7 @@ const CASES = {
         [10, AMA, "queue.stopped", { seat: AMA }],
         [11, AMA, "scope.transferred", { scope: "queue", from: AMA, to: BEN }],
       ],
+      heldReason: "seat_split",
     });
     return { document, plan };
   },
