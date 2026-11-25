@@ -350,6 +350,39 @@ class LaneTests(unittest.TestCase):
         self.assertEqual(files["words"], "Lane 3 is next on APP-3, which waits for APP-1 to land. "
                                          "Lane 2 holds skills/render.py for it.")
 
+    def test_an_idle_lanes_wait_names_its_blocker_for_a_card_to_draw(self) -> None:
+        # The card groups a lane's waits by its next story: each names the story it waits on, that story's lane, whether the
+        # blocker is in the merge queue, its phase in one word from the table, and the files a hold names.
+        [order] = of(record(), "lane-1")
+        self.assertEqual({key: order.get(key) for key in ("blocker", "onLane", "queued", "phase", "files")},
+                         {"blocker": "APP-1", "onLane": "lane-2", "queued": False, "phase": "reviewing", "files": None})
+        [files] = of(record(), "lane-3")
+        self.assertEqual({key: files.get(key) for key in ("blocker", "onLane", "queued", "phase", "files")},
+                         {"blocker": "APP-1", "onLane": "lane-2", "queued": False, "phase": "reviewing",
+                          "files": ["skills/render.py"]})
+        for stage, fields, queued, phase in (("queued", {}, True, "queued"), ("syncing", {}, True, "syncing"),
+                                             ("checking", {}, True, "checking"),
+                                             ("queued", {"pending": True}, False, "handed"),
+                                             ("stopped", {}, False, "stopped")):
+            with self.subTest(stage=stage, fields=fields):
+                document = record()
+                queue(document, "APP-1", stage, **fields)
+                [wait] = of(document, "lane-1")
+                self.assertEqual((wait["queued"], wait["phase"]), (queued, phase))
+        document = record()
+        planned(document, "APP-1")["stage"] = "building"
+        [wait] = of(document, "lane-1")
+        self.assertEqual(wait["phase"], "building")
+
+    def test_a_lane_standing_handed_over_says_what_its_next_story_waits_on_as_an_idle_one_does(self) -> None:
+        # A hand-off leaves the lane handed over until its story merges or the lead accepts it: it is free all the
+        # same, and its next story waits for the same reasons.
+        document = record()
+        row(document, "lane-1")["state"] = "handed"
+        [wait] = of(document, "lane-1")
+        self.assertEqual((wait["cause"], wait["blocker"], wait["words"]),
+                         ("order", "APP-1", "Lane 1 is next on APP-2, which waits for APP-1 to land."))
+
     def test_a_waiting_lane_with_no_story_of_its_own_left_says_only_what_it_waits_for(self) -> None:
         document = record()
         row(document, "lane-3").update(state="waiting", waitingOn="APP-1")

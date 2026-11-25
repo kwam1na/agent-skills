@@ -103,7 +103,10 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .kicker { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .title { margin: 0; font-family: var(--display); font-weight: 500; font-size: clamp(28px, 4.2vw, 44px); line-height: 1.1; letter-spacing: -0.02em; max-width: 24ch; }
 /* On Now the delivery's name steps back to a quiet second line under its kicker: the sentence beneath it leads. */
-.chapter-now .title { font-size: clamp(20px, 2.4vw, 26px); font-weight: 400; line-height: 1.2; max-width: 40ch; color: var(--soft); text-wrap: balance; }
+.chapter-now .title { font-size: clamp(20px, 2.4vw, 26px); font-weight: 400; line-height: 1.2; max-width: 40ch; color: var(--soft); text-wrap: balance;
+  /* At most three lines, so the sentence under it sits at one height however long the name is; the whole name is
+     read out, and shown on the page's card when the name is cut. */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
 /* Now's lead, as direction D draws it: one sentence in the display face, the four marks on one thread, the one fact quiet
    beneath. A mark's shape is its state: done is filled ink, live a ring with a halo, stop the stop colour, todo a faint
    ring. The thread is solid where the work has passed and dashed ahead of it. Trouble alone is coloured. */
@@ -140,7 +143,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 
 /* Being checked now */
 /* The checking sheet: what is being checked now, floating on the ground. */
-.checking { position: relative; isolation: isolate; max-width: 640px; display: grid; align-content: start; gap: 12px; padding: 22px 24px; border-radius: 14px; }
+.checking { position: relative; isolation: isolate; max-width: 980px; display: grid; align-content: start; gap: 12px; padding: 22px 24px; border-radius: 14px; }
 /* The sheet's surface is its own layer, so anything drawn behind the sheet sits under it rather than over it. */
 .checking::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--lift); box-shadow: var(--shadow-sheet); }
 .checking > * { min-width: 0; }
@@ -234,6 +237,11 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
    marks: a faint stroke of its lane's line with the story's stop on it, and for a wait the blocker's stop joined by a
    hairline. Holding rows lead at full weight; the rest follow quieter. Red is only ever a stopped stop's. */
 .needs-you { max-width: 72ch; display: grid; gap: 10px; }
+/* As a sheet, "Needs you" is as wide as the rows, on the checking sheet's card; when it waits on the reader it leads
+   Now and its edge takes the wait colour. */
+.needs-you.is-sheet { position: relative; isolation: isolate; max-width: 980px; gap: 12px; padding: 22px 24px; border-radius: 14px; }
+.needs-you.is-sheet::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--lift); box-shadow: var(--shadow-sheet); }
+.needs-you.is-sheet.is-leading::after { box-shadow: var(--shadow-sheet), inset 0 0 0 1.5px color-mix(in oklab, var(--wait) 70%, transparent); }
 .needs-you .ah { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--soft); }
 .needs-you .needs-summary { margin: 0; font-size: 15px; }
 .needs-you .needs-none, .needs-you .needs-more { margin: 0; color: var(--soft); font-size: 14px; }
@@ -277,6 +285,8 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
   column-gap: 56px; row-gap: 10px; margin-right: 10px; }
 .chapter-now .journey + .facts { margin-top: -4px; padding-top: 28px; }
 .fact { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 10px; align-content: start; min-width: 0; }
+/* The record's state keeps the last column, even when the middle fact has nothing to say. */
+.facts > .fact.since { grid-column: 3; }
 .fact-label { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; }
 .fact-label > span { display: inline-flex; gap: 8px; align-items: center; }
 .fact-value { align-self: baseline; font-size: 15px; line-height: 1.4; color: var(--ink); text-wrap: pretty; }
@@ -584,6 +594,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .issue-card b { display: block; font: 450 12px/16px var(--mono); color: var(--soft); margin-bottom: 4px; }
 .issue-card .ic-t { font-size: 14px; font-weight: 550; margin-bottom: 4px; }
 .issue-card .ic-s { color: var(--soft); }
+.issue-card .title-whole { font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
 /* A delivery's span, from the kicker: its two ends on a short line, a hollow mark for the start and a solid one for the
    close, as the line map's own stops are drawn; the run sits on the line between them. */
 .when { position: relative; display: grid; grid-template-columns: 9px auto; column-gap: 12px; min-width: 196px; }
@@ -605,6 +616,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .person .swatch { display: grid; align-self: start; margin-top: 1px; width: 20px; height: 20px; color: var(--c); }
 .person .swatch .persona { width: 20px; height: 20px; }
 .person h3 { margin: 0; font-weight: 550; font-size: 15px; line-height: 22px; }
+.person .lane-name { margin: 0; color: var(--faint); font-size: 12px; line-height: 16px; }
 .person .doing { margin: 2px 0 0; color: var(--soft); font-size: 14px; overflow-wrap: anywhere; }
 .person .said { margin: 2px 0 0; color: var(--faint); font-size: 12px; }
 .person .said.old { color: var(--wait); }
@@ -616,6 +628,29 @@ a.issue-link { color: inherit; cursor: pointer; }
 .chip.blocked { background: var(--held-wash); color: var(--held); }
 .person .on { font: 400 12px/16px var(--mono); color: var(--faint); max-width: 100%; overflow-wrap: anywhere; text-align: right; }
 .person .on.waiting { color: var(--wait); }
+/* A lane's story in the merge queue is progress, said in ink like the other working chips. */
+.chip.queue { color: var(--ink); }
+/* A lane's next story, once: the blockers as pills nearest to landing first, each in its lane's colour, filled while it
+   is in the merge queue, with a lock when it holds files the next story needs; one legend names those files. */
+.person .next { grid-column: 2 / -1; display: grid; gap: 10px; margin-top: -4px; padding-top: 12px; border-top: 1px solid var(--hair); min-width: 0; }
+.person .next .k { color: var(--faint); }
+.next-head { margin: 0; font-size: 14px; color: var(--soft); overflow-wrap: anywhere; }
+.next-head .issue-link { font-family: var(--mono); font-size: 13px; }
+.waiting-on { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.waiting-on .k { margin-right: 4px; }
+.dep { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; padding: 3px 11px 3px 9px; border: 1px solid var(--hair); border-radius: 999px;
+  white-space: nowrap; color: var(--ink); }
+.dep .issue-link { font-family: var(--mono); font-size: 12px; }
+.dep .dot { flex: none; width: 8px; height: 8px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--c); }
+.dep.queued .dot { background: var(--c); }
+.dep .phase { color: var(--soft); }
+.lock { display: inline-grid; flex: none; width: 12px; height: 12px; color: var(--faint); }
+.lock svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.next .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--faint); }
+.next .legend > span { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.next .legend code { font: 400 12px/16px var(--mono); }
+.next .legend .dot { flex: none; width: 8px; height: 8px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--faint); }
+.next .legend .dot.filled { background: var(--faint); }
 /* Who holds which files: a fold under the lanes, each claimed file in its lane's colour, solid where changed. */
 .files-fold { margin-top: 16px; border-top: 1px solid var(--hair); padding: 12px 0 0; }
 .files-fold > summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--soft); }
@@ -888,6 +923,7 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 }
 @media (max-width: 640px) {
   .facts { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; row-gap: 28px; }
+  .facts > .fact.since { grid-column: auto; }
   .chapter { padding: 48px 20px; }
   .chapter-now { min-height: auto; }
   .checking { padding: 18px 16px; border-radius: 12px; }
@@ -1071,7 +1107,10 @@ body.paged .rail { display: none; }
 .chapter-tab-button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .chapter-tab-button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .chapter-tab-button .chapter-tab-chevron { width: 12px; height: 12px; }
-.chapter-tab-label { color: var(--ink); white-space: nowrap; }
+.chapter-tab-label { display: inline-grid; grid-template-columns: minmax(0, 1fr); justify-items: start; color: var(--ink); white-space: nowrap; }
+/* Every chapter's name sits in the one cell, so the label keeps the longest one's width; only the current one shows. */
+.chapter-tab-name, .chapter-tab-sizer { grid-area: 1 / 1; }
+.chapter-tab-sizer { visibility: hidden; }
 .chapter-tab-list { position: absolute; top: calc(100% + 8px); right: -3px; min-width: 220px; margin: 0; padding: 6px; list-style: none;
   border: 1px solid var(--hair); border-radius: 12px; background: var(--lift); box-shadow: 0 12px 32px rgba(0, 0, 0, .18); }
 .chapter-tab-list[hidden] { display: none; }
@@ -1095,7 +1134,8 @@ body:not(.paged) .chapter-tab-hint { display: none; }
 @media (max-width: 720px) {
   body.paged .chapter { padding-top: 72px; min-height: max(480px, 64dvh); }
   body.paged .chapter > .inner { margin-bottom: 56px; }
-  .chapter-tab-label { max-width: 9ch; overflow: hidden; text-overflow: ellipsis; }
+  .chapter-tab-label { max-width: 9ch; overflow: hidden; }
+  .chapter-tab-name { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .page-where { display: none; }
 }
 
@@ -1215,17 +1255,8 @@ body:not(.paged) .chapter-tab-hint { display: none; }
 /* On its own page, the opening sits in the middle of the window. */
 body.paged .chapter-now.is-fresh { min-height: 100vh; min-height: 100dvh; justify-content: center; padding-bottom: 88px; }
 body.paged .chapter-now.is-fresh > .inner { margin-bottom: 0; }
-.chapter-now.is-fresh .title { max-width: 18ch; }
 .chapter-now.is-fresh .kicker { display: flex; align-items: center; gap: 6px; }
 .chapter-now.is-fresh .plan-now { max-width: 56ch; font-size: 19px; }
-.ready { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0; margin: 12px 0 0; max-width: 980px;
-  border-top: 1px solid var(--hair); }
-.ready-cell { display: grid; gap: 4px; padding: 18px 20px 4px 0; color: var(--ink); text-decoration: none; }
-.ready-cell + .ready-cell { padding-left: 20px; border-left: 1px solid var(--hair); }
-.ready-number { margin: 0; font: 300 clamp(34px, 4vw, 48px)/1 var(--display); letter-spacing: -0.02em; font-variant-numeric: lining-nums tabular-nums; }
-.ready-label { order: 2; font-size: 13px; color: var(--faint); }
-.ready-cell.is-link:hover .ready-label { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--edge); }
-.ready-cell.is-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; border-radius: 4px; }
 /* The starting line: every piece waiting, in its lane's colour, the line dotted until something runs on it. */
 .starting { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; column-gap: 14px; max-width: 980px; margin-top: 18px; }
 .starting-end { font-size: 12px; color: var(--faint); white-space: nowrap; }
@@ -1245,12 +1276,25 @@ body.paged .chapter-now.is-fresh > .inner { margin-bottom: 0; }
 .opens-right:hover .starting-name, .opens-right:focus-visible .starting-name,
 .opens-left:hover .starting-name, .opens-left:focus-visible .starting-name { transform: translate(0, 0); }
 .starting-post { display: grid; place-items: center; }
+/* Each starting stop as the line draws its piece: dotted while not started, a ring while built or reviewed, half filled
+   when ready to be checked, a diamond while the lead has yet to accept it, an arc while it is checked, a triangle when
+   stopped. */
+.starting-stop.is-later, .starting-stop.is-unknown { border-style: dotted; }
+.starting-stop.is-now { position: relative; border-color: color-mix(in oklab, var(--c, var(--edge)) 25%, var(--paper)); }
+.starting-stop.is-now::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid transparent;
+  border-top-color: var(--c, var(--edge)); border-right-color: var(--c, var(--edge)); }
+.starting-stop.is-ready { background: linear-gradient(90deg, var(--c, var(--edge)) 50%, var(--paper) 50%); }
+/* The diamond and the triangle are drawn on a layer of their own, so neither turns nor clips the stop's name. */
+.starting-stop.is-pending, .starting-stop.is-held { position: relative; border: 0; border-radius: 0; background: none; }
+.starting-stop.is-pending:hover, .starting-stop.is-pending:focus-visible,
+.starting-stop.is-held:hover, .starting-stop.is-held:focus-visible { background: none; }
+.starting-stop.is-pending::before { content: ""; position: absolute; inset: 2px; box-sizing: border-box; border: 2px solid var(--c, var(--edge));
+  border-radius: 2px; background: var(--paper); transform: rotate(45deg); }
+.starting-stop.is-held::before { content: ""; position: absolute; inset: 0; background: var(--held); clip-path: polygon(50% 4%, 100% 92%, 0 92%); }
+.starting-stage { display: block; margin-top: 2px; font-size: 11px; color: var(--faint); }
 .starting-post-mark { width: 3px; height: 26px; border-radius: 2px; background: var(--ink); }
 @keyframes starting-in { from { opacity: 0; transform: scale(.4); } }
 @media (max-width: 720px) {
-  .ready { grid-template-columns: 1fr 1fr; }
-  .ready-cell:nth-child(3) { padding-left: 0; border-left: 0; }
-  .ready-cell:nth-child(n + 3) { border-top: 1px solid var(--hair); }
   .starting { grid-template-columns: minmax(0, 1fr) auto; row-gap: 8px; }
   .starting-end.is-start { grid-column: 1 / -1; }
   .starting-end.is-finish { display: none; }

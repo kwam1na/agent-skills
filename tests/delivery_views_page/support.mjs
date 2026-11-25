@@ -426,6 +426,10 @@ export function builtinPage(document, registry = null) {
 export function withAcross(document) {
   return JSON.parse(tool({ across: document }));
 }
+/** A record as the live server sends it: with what everything in it waits on, derived afresh by the state tool. */
+export function waited(document) {
+  return JSON.parse(tool({ waited: document }));
+}
 /** A record as the live server sends it: with the story the narrator tells of it. */
 export function told(document) {
   return JSON.parse(tool({ told: document }));

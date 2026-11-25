@@ -5527,8 +5527,8 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
     (``files``); and for the lead, while the lead's ``story.held`` stands
     (``held``). A story in review waits on the round its lane is running
     (``review``), from its latest ``review.started`` until that round is
-    reduced, restarted or abandoned. An idle lane waits for the same reasons as
-    its next planned story. ``needing`` names what "Needs you" already lists,
+    reduced, restarted or abandoned. An idle lane, or one handed over, waits for
+    the same reasons as its next planned story. ``needing`` names what "Needs you" already lists,
     so a wait on it says that someone has to act.
 
     It reads the record it is given and the table of sentences, nothing else:
@@ -5590,6 +5590,20 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
         return ({"subject": subject, "on": key, "cause": "sibling", "stage": "planned", "frees": "landed",
                  "needsSomeone": unread is None}, fields)
 
+    queued = {item["subject"] for item in queue}
+
+    def blocker(wait: dict, fields: dict) -> dict:
+        """What a lane card draws of the story its next story waits on: that story, its lane, whether it is in the
+        merge queue, its phase in one word, and the files a hold names. Only an order or files wait has one."""
+        other = items.get(wait["on"]) if wait["cause"] in ("order", "files") else None
+        if other is None:
+            return {}
+        stage = where(other)
+        return {"blocker": other["subject"], "onLane": lane_of(other),
+                "queued": other["subject"] in queued and stage not in ("handed", "stopped"),
+                "phase": wait_said(table, "stages", "phase", {"stage": stage}),
+                **({"files": list(fields["files"])} if wait["cause"] == "files" else {})}
+
     told: dict[str, list[tuple[dict, dict]]] = {}
     for entry in planned:
         if entry["stage"] != "planned":
@@ -5637,14 +5651,15 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
                            "frees": "ended", "since": start["at"], "needsSomeone": False,
                            "words": wait_said(table, "waits", "review", fields)})
     for row in state["lanes"]:
-        if row.get("state") != "idle":
+        # A lane handed over is as free as an idle one until its story merges or the lead accepts it.
+        if row.get("state") not in ("idle", "handed"):
             continue
         following = next((entry for entry in planned if entry["lane"] == row["id"] and entry["stage"] == "planned"), None)
         for wait, fields in told.get(following["subject"], []) if following else []:
             said = wait_said(table, "lanes", wait["cause"], {**fields, "subject": row["id"], "next": following["subject"]})
             result.append({"subject": row["id"], "on": following["subject"], "cause": wait["cause"], "stage": "planned",
                            "frees": wait["frees"], **({"since": wait["since"]} if "since" in wait else {}),
-                           "needsSomeone": False, "words": said})
+                           "needsSomeone": False, "words": said, **blocker(wait, fields)})
     for row in state["lanes"]:
         if row.get("state") == "waiting" and row.get("waitingOn") in items and row["waitingOn"] not in landed:
             # A lane waiting on a story goes on by itself when that story lands: it names the story it will finish.

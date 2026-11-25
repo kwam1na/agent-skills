@@ -108,9 +108,9 @@ test("a sibling that can't be read now never lets the done headline show", async
 
 test("before every own story has landed, the headline is today's whatever the siblings say", async () => {
   const [shown] = await open(document([sibling("backend", stories("building"))], { landed: false }));
-  // With nothing landed yet, Now says none is in, then looks ahead: the pieces to land as a figure, and no part-done line.
+  // With nothing landed yet, Now says none is in, then looks ahead: the stories counted from zero, and no part-done line.
   expect(shown.app.querySelector("#now .now-sentence").textContent).toMatch(/^0 of 1 story is in\./);
-  expect([...shown.app.querySelectorAll("#now .ready .ready-cell")].map((cell) => cell.textContent)).toEqual(["1piece to land", "1lane"]);
+  expect(shown.app.querySelector("#now .stories .fact-value").textContent).toBe("0 of 1 landed");
   expect(shown.app.querySelector("#now .say-across")).toBeNull();
 });
 

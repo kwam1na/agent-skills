@@ -8,6 +8,8 @@
         prints the run view's summary, with its round reports when readings are given
     {"embed": <value>}
         prints the value as the page embeds it
+    {"waited": <document>}
+        prints the document with what everything in it waits on, derived afresh, as the live server sends a record
     {"told": <document>}
         prints the document with the story the narrator tells of it, as the live server sends a record
     {"builtin": {"document": ..., "registry": <path> | null}}
@@ -57,5 +59,9 @@ elif "across" in request:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "skills" / "orchestrate-work" / "scripts"))
     import render_state  # noqa: E402
     sys.stdout.write(json.dumps(render_state.with_across(request["across"])))
+elif "waited" in request:
+    # A record as the live server sends it: with what everything in it waits on, derived afresh.
+    asked = {key: value for key, value in request["waited"].items() if key not in ("waits", "waitedOn")}
+    sys.stdout.write(json.dumps(render.with_waits(asked)))
 elif "told" in request:
     sys.stdout.write(json.dumps(render.with_story({key: value for key, value in request["told"].items() if key != "story"}, None)))

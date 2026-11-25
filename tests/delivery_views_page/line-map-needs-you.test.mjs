@@ -147,3 +147,31 @@ test("a page that watches its delivery close shows what it left open after that 
   expect(box.querySelector(".ah").textContent).toBe("Left open at close");
   expect([...box.querySelectorAll(".a1")].map((row) => row.textContent)).toEqual(["APP-1 was stopped"]);
 });
+
+test("the list is a sheet as wide as the rows, and when something on it waits on the reader it leads Now", async () => {
+  const order = (page) => [...page.app.querySelector("#now .inner").children].map((node) => node.classList[0]);
+  // A row waits on the operator: the sheet leads, right under the sentence and its marks, and is marked as leading.
+  const yours = await shown();
+  const sheet = yours.app.querySelector("#now .needs-you");
+  expect([sheet.classList.contains("is-sheet"), sheet.classList.contains("is-leading")]).toEqual([true, true]);
+  const lead = order(yours);
+  expect(lead.indexOf("needs-you")).toBe(lead.indexOf("now-state") + 1);
+  expect(rows(yours).map((row) => row.getAttribute("data-who"))).toEqual(["lead", "operator", "lead"]);
+  // Nothing on it waits on the reader: still a sheet, but in its place below, not leading.
+  const theirs = await shown(needs({ items: needs().items.filter((item) => item.who !== "operator") }));
+  const quiet = theirs.app.querySelector("#now .needs-you");
+  expect([quiet.classList.contains("is-sheet"), quiet.classList.contains("is-leading")]).toEqual([true, false]);
+  const below = order(theirs);
+  expect(below.indexOf("needs-you") > below.indexOf("now-state") + 1).toBe(true);
+});
+
+test("a list that waits on the reader leads ahead of a running check", async () => {
+  const document = record();
+  document.state.queue.push({ order: 2, subject: "APP-3", title: "Check", lane: "lane-1", stage: "checking", head: "b".repeat(40), checks: [] });
+  document.state.meta.checking = { now: { subject: "APP-3", startedAt: "2026-11-17T11:58:00Z",
+    steps: [{ label: "unit tests", state: "running", startedAt: "2026-11-17T11:58:00Z" }] }, next: [] };
+  const page = await shown(needs(), document);
+  const order = [...page.app.querySelector("#now .inner").children].map((node) => node.classList[0]);
+  expect(order.indexOf("needs-you")).toBe(order.indexOf("now-state") + 1);
+  expect(order.indexOf("checking")).toBe(order.indexOf("needs-you") + 1);
+});

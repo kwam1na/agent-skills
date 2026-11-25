@@ -209,6 +209,18 @@ over and what they cost, then the lead's decisions. The Setbacks filter shows th
 ledger and the chapters' setback lines; the others show neither. A story told before
 the ledger keeps its own summary and standing lines.
 
+In "Who's doing what", an idle or handed-over lane whose next story waits names that
+story once,
+then a "Waiting on" row of one pill per story it waits on, nearest to landing first,
+from the waits the state tool gives it: each pill is in its lane's colour, filled
+while the story is in the merge queue and hollow while it is still with its lane,
+with its phase in one word, and a lock when it holds files the next story needs.
+One legend names those files. A landed story drops off the row, and the block goes
+once the next story starts; any other wait keeps its own sentence. Once the lane's
+own story is handed off, its card says "handed off at" its head "after review
+round" N, and its chip says "In merge queue" with the runner's phase and how long
+the story has been there.
+
 When the record has region claims, so lanes share files by lines, "Who's doing
 what" offers "Who holds which files", closed by default. It reads
 `lane-changes.json`, which each supervisor pass writes beside the record from

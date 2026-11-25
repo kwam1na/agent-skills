@@ -507,7 +507,20 @@
   tabIcon.setAttribute("viewBox", "0 0 24 24");
   tabIcon.setAttribute("aria-hidden", "true");
   tabIcon.innerHTML = '<path d="M9 6h11M9 12h11M9 18h11M5 6h.01M5 12h.01M5 18h.01"/>';
-  var tabLabel = el("span", "chapter-tab-label", "Now");
+  // The label holds every chapter's name in one cell, only the current one seen, so the tab is as wide as the longest
+  // name and stepping between pages never moves the corner.
+  var tabLabel = el("span", "chapter-tab-label");
+  var tabName = el("span", "chapter-tab-name", "Now");
+  tabLabel.appendChild(tabName);
+  function nameTab(id) {
+    tabName.textContent = chapterName(id);
+    var sizers = chapterIds().map(function (one) {
+      var sizer = el("span", "chapter-tab-sizer", chapterName(one));
+      sizer.setAttribute("aria-hidden", "true");
+      return sizer;
+    });
+    tabLabel.replaceChildren.apply(tabLabel, [tabName].concat(sizers));
+  }
   var tabChevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   tabChevron.setAttribute("viewBox", "0 0 24 24");
   tabChevron.setAttribute("aria-hidden", "true");
@@ -653,7 +666,7 @@
     Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
       link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + id));
     });
-    tabLabel.textContent = chapterName(id);
+    nameTab(id);
     tabButton.setAttribute("aria-label", "Chapters: " + chapterName(id));
     var heading = document.querySelector("h1");
     fillWhere(heading ? heading.textContent : document.title);
@@ -966,7 +979,7 @@
   function followScroll(id) {
     if (id !== currentPage && history.replaceState) { history.replaceState(null, "", "#" + id); }
     currentPage = id;
-    tabLabel.textContent = chapterName(id);
+    nameTab(id);
     tabButton.setAttribute("aria-label", "Chapters: " + chapterName(id));
   }
 
@@ -1325,49 +1338,35 @@
   function plural(count, one, many) { return count + " " + (count === 1 ? one : many || one + "s"); }
 
   /* 1. Now */
-  /** Before anything lands: what the delivery holds, as a row of large figures. */
-  function readyFigures(doc, all) {
-    var lanes = [];
-    all.forEach(function (piece) { var lane = text(piece.item.lane); if (lanes.indexOf(lane) < 0) { lanes.push(lane); } });
-    var figuresRow = [[all.length, all.length === 1 ? "piece to land" : "pieces to land"], [lanes.length, lanes.length === 1 ? "lane" : "lanes"]];
-    if (plan) {
-      var counts = planCounts(doc);
-      if (counts.total) { figuresRow.push([counts.total, counts.total === 1 ? "criterion to prove" : "criteria to prove", "#plan"]); }
-    }
-    var finish = list(doc.state.finish).filter(isObject).length;
-    if (finish) { figuresRow.push([finish, finish === 1 ? "finish line" : "finish lines"]); }
-    var row = el("dl", "ready");
-    figuresRow.forEach(function (figure) {
-      var value = el("dd", "ready-number", String(figure[0]));
-      var label = el("dt", "ready-label", figure[1]);
-      var cell = add(el("div", "ready-cell"), value, label);
-      if (figure[2]) {
-        var link = add(el("a", "ready-cell is-link"), value, label);
-        link.setAttribute("href", figure[2]);
-        cell = link;
-      }
-      row.appendChild(cell);
-    });
-    return row;
-  }
-  /** Before anything lands: every piece as an open stop in its lane's colour, in landing order, up to the finish post. */
+  /**
+   * Before anything lands: every piece as a stop in its lane's colour, in landing order, up to the finish post, each drawn
+   * as the line draws it (not started, being built or reviewed, ready, waiting on the lead, being checked, stopped) and
+   * said in the line's words. The row is ready to start only while nothing has. Its classes carry an is- prefix, so no
+   * rule of the page's own for a bare state name reaches them.
+   */
   function startingLine(doc, all) {
     var box = el("div", "starting");
     var stops = el("ol", "starting-stops");
+    var current = checkingNow(doc);
+    var nowSubject = current && current.subject !== undefined && current.subject !== null ? String(current.subject) : null;
+    var started = false;
     all.forEach(function (piece, index) {
       var key = subjectOf(piece.item);
-      var stop = el("a", "starting-stop");
+      var kind = stopKind(piece, nowSubject);
+      if (kind !== "later") { started = true; }
+      var words = piece.planned && piece.item.stage === "planned" ? STAGE_WORDS.planned : pieceWords(doc, piece.item);
+      var stop = el("a", "starting-stop " + kind.split(" ").map(function (part) { return "is-" + part; }).join(" "));
       stop.setAttribute("href", "#line");
       stop.style.setProperty("--c", laneColour(text(piece.item.lane)));
       stop.style.setProperty("--i", String(index));
       // Its name opens toward the room it has: rightward near the start, leftward near the finish.
       stop.classList.add(index < all.length / 3 ? "opens-right" : index >= all.length * 2 / 3 ? "opens-left" : "opens-mid");
-      stop.setAttribute("aria-label", (key ? key + ", " : "") + titleOf(doc, piece.item) + ", not started");
-      stop.appendChild(el("span", "starting-name", (key ? key + " · " : "") + titleOf(doc, piece.item)));
+      stop.setAttribute("aria-label", (key ? key + ", " : "") + titleOf(doc, piece.item) + ", " + words);
+      stop.appendChild(add(el("span", "starting-name"), (key ? key + " · " : "") + titleOf(doc, piece.item), el("small", "starting-stage", words)));
       stops.appendChild(add(el("li"), stop));
     });
-    add(box, el("div", "starting-end is-start", "Ready to start"), stops, add(el("div", "starting-post"), el("span", "starting-post-mark")),
-      el("div", "starting-end is-finish", "Finish line"));
+    add(box, el("div", "starting-end is-start", started ? "Under way" : "Ready to start"), stops,
+      add(el("div", "starting-post"), el("span", "starting-post-mark")), el("div", "starting-end is-finish", "Finish line"));
     return box;
   }
   /*
@@ -1675,6 +1674,13 @@
     var status = /^(.*\S)\s*\(([^()]{1,80})\)$/.exec(name);
     if (status) { name = status[1]; }
     var title = add(el("h1", "title"), name);
+    // A name past three lines is cut with an ellipsis: pointing at it shows it whole on the page's own card.
+    title.addEventListener("mouseenter", function () {
+      if (title.scrollHeight <= title.clientHeight + 1) { return; }
+      card.replaceChildren(el("div", "title-whole", name));
+      placeCard(title);
+    });
+    title.addEventListener("mouseleave", hideCard);
     // The kicker is one line: the tracker item the delivery's work is listed under, linked when the renderer linked it,
     // then how long it has run.
     var kicker = el("div", "kicker");
@@ -1718,23 +1724,18 @@
     // Before anything has landed, the page looks ahead: what is about to be delivered, rather than how much of it is zero.
     var fresh = !closed && all.length > 0 && landed === 0 && !step && !partDone.length;
     inner.parentNode.classList.toggle("is-fresh", fresh);
-    if (fresh) {
-      var stamp = since(doc, meta, closed).querySelector(".fact-value");
-      if (stamp && text(stamp.textContent)) { add(kicker, kicker.firstChild ? " · " : null, el("span", "now-since", stamp.textContent)); }
-    }
     // Now leads, under the delivery's name: one sentence, its marks and at most one fact.
-    var nodes = (kicker.firstChild ? [kicker, title] : [title]).concat([nowBlock(doc, all)]);
+    var nowNode = nowBlock(doc, all);
+    var nodes = (kicker.firstChild ? [kicker, title] : [title]).concat([nowNode]);
     // The outcome when it says more than the name, then how much of the plan is proven and how often it changed,
     // linked to the plan chapter.
     var said = outcome && outcome !== text(meta.headline) && outcome !== name ? outcome : null;
     var planLink = planNow(doc);
-    if (fresh) {
-      if (said) { nodes.push(add(el("p", "plan-now"), said)); }
-      nodes.push(readyFigures(doc, all));
-      nodes.push(startingLine(doc, all));
-    } else if (said || planLink) {
+    if (said || planLink) {
       nodes.push(add(el("p", "plan-now"), said, planLink ? add(el("span", "plan-now-line"), planLink) : null));
     }
+    // Before anything lands, the starting line stands where the journey will: every piece, drawn where it stands.
+    if (fresh) { nodes.push(startingLine(doc, all)); }
     if (behind) { nodes.push(el("p", "say say-across", behind)); }
     // A lead's own status line, while it stands, is theirs to say.
     var sayWords = fresh ? "" : sayLine(doc);
@@ -1742,18 +1743,29 @@
     // What the lead waits on in another delivery sharing the base, and what waits on the lead, as the state tool says.
     waitLines(doc, "lead", "p", "say say-wait").forEach(function (line) { nodes.push(line); });
     var panel = closed ? null : checkingPanel(doc, all);
-    if (panel) { nodes.push(panel); }
+    // While a piece is checked, the checks lead: their sheet stands right under the sentence that names the piece, as
+    // wide as the rows beneath it. Otherwise it keeps its place below.
+    var leading = panel && panel.classList.contains("live");
+    if (leading) { panel.classList.add("is-leading"); nodes.splice(nodes.indexOf(nowNode) + 1, 0, panel); }
+    else if (panel) { nodes.push(panel); }
     var supervisor = needsYou(doc, all, Boolean(closed));
-    if (supervisor) { nodes.push(supervisor); }
+    // "Needs you" is a sheet of its own, as wide as the rows. When something on it waits on the reader, it leads Now,
+    // right under the sentence, ahead of any running checks: that is what the reader is here to do.
+    var yours = supervisor && Boolean(supervisor.querySelector(".needs-row[data-who='operator']"));
+    if (supervisor) { supervisor.classList.add("is-sheet"); }
+    if (yours) { supervisor.classList.add("is-leading"); nodes.splice(nodes.indexOf(nowNode) + 1, 0, supervisor); }
+    else if (supervisor) { nodes.push(supervisor); }
     var left = closed ? leftOpen(doc, all) : null;
     if (left) { nodes.push(left); }
     var partway = closeStoppedPartway(doc, closed);
     if (partway) { nodes.push(partway); }
-    if (!fresh) {
-      nodes.push(journey(doc, all, closed ? tally.landed : landed));
-      // Under the line, three facts in one shape: how many stories have landed, what landed last, and the record's state.
-      nodes.push(add(el("div", "facts"), storiesFact(all, closed ? tally : null), lastLanded(doc, all), since(doc, meta, closed)));
-    }
+    if (!fresh) { nodes.push(journey(doc, all, closed ? tally.landed : landed)); }
+    // Under the line, three facts in one shape: how many stories have landed, what landed last, or before anything has
+    // what the queue lands next, and the record's state.
+    nodes.push(add(el("div", "facts"), storiesFact(all, closed ? tally : null),
+      // While the checking sheet shows, it already says what lands next.
+      fresh ? (panel ? null : nextToLand(doc, all)) : lastLanded(doc, all),
+      since(doc, meta, closed)));
     var was = prev.checkingHeight;
     inner.replaceChildren.apply(inner, nodes);
     // A live update that changes the sheet's height, a check starting or a failure listed, eases it there instead of jumping.
@@ -1811,6 +1823,20 @@
     return link;
   }
   /** The piece that landed last, by its title, with its ticket, its pull request when the forge snapshot knows it, and when. */
+  /** Before anything lands, in place of the last landed: the piece the queue lands next, the one being checked first. */
+  function nextToLand(doc, all) {
+    var current = checkingNow(doc);
+    var nowSubject = current && current.subject !== undefined && current.subject !== null ? String(current.subject) : null;
+    var rank = { now: 0, ready: 1, "ready pending": 2 };
+    var queued = all.filter(function (piece) { return !piece.planned && rank[stopKind(piece, nowSubject)] !== undefined; })
+      .map(function (piece, index) { return { piece: piece, index: index, rank: rank[stopKind(piece, nowSubject)] }; })
+      .sort(function (a, b) { return a.rank - b.rank || a.index - b.index; });
+    if (!queued.length) { return fact("", "Next to land", "Nothing in the queue yet"); }
+    var item = queued[0].piece.item;
+    var ticket = subjectOf(item) ? issue(subjectOf(item)) : null;
+    if (ticket) { ticket.classList.add("fact-ref"); }
+    return fact("", "Next to land", titleOf(doc, item), add(el("span"), ticket, ticket ? " \u00b7 " : null, pieceWords(doc, item)));
+  }
   function lastLanded(doc, all) {
     var landed = latestMerge(doc);
     if (!landed) { return null; }
@@ -2498,6 +2524,7 @@
     items.forEach(function (entry) {
       var item = entry.item, said = isObject(item.said) ? item.said : {};
       var li = el("li", "needs-row " + (item.holding === true ? "is-holding" : "is-quiet"));
+      li.setAttribute("data-who", text(item.who));
       var margin = needsMargin(doc, all, item);
       var meta = add(el("div", "nr-meta"), el("span", "nr-who", text(said.who)));
       if (item.holding === true) { add(meta, add(el("span", "nr-holding"), el("span", "nr-dot"), text(words.holding))); }
@@ -2640,6 +2667,8 @@
   // Without one the post stands this far past the last tick. With sibling repositories drawn, the epic's line runs on past
   // the post to a join where the siblings turn in, and a post of its own.
   var POST_GAP = 40, EPIC_JOIN_GAP = 66, EPIC_POST_GAP = 128, MERGE_TOP = 16, MOST_DRAWN = 2;
+  // Half of "Finish line" at the label's 13px, with a little room; the tally's 11px mono advances 0.6em a character.
+  var LABEL_HALF = 36, TALLY_CHAR = 6.6;
   // The merge's texts' sizes, as the stylesheet sets them, so the room above the line holds every line of the epic's words.
   var TEXT_SIZE = { "mg-label": 13, "mg-count": 11, "mg-step-label": 10, "mg-why": 10 };
   /**
@@ -2749,7 +2778,8 @@
     var postX = step ? barEnd + BAR_TO_POST : ticks.end + POST_GAP;
     var postY = step ? trunkY + TARGET_DROP : trunkY;
     var epicJoinX = postX + EPIC_JOIN_GAP, epicPostX = postX + EPIC_POST_GAP;
-    var width = step ? postX + TARGET_RUN + 8 : epic ? epicPostX + 14 : postX + 14;
+    // The post's label is centred on it, so the drawing reaches past the post far enough to hold it whole.
+    var width = step ? postX + TARGET_RUN + 8 : epic ? epicPostX + 14 : postX + LABEL_HALF;
     var svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("class", "line-merge");
     var landed = all.filter(isLanded).length;
@@ -2877,8 +2907,11 @@
     }
     // The finish post, its label, and the finish lines as squares beside the label, with how many are met.
     shape(svg, "path", { class: "mg-post", d: "M" + postX + " " + (postY - 20) + "V" + (postY + 20) });
-    // Over the post, the label sits higher only to leave the squares room.
-    shape(svg, "text", { class: "mg-label", x: postX, y: postY - (finish.length ? 52 : 30), "text-anchor": "middle" }, "Finish line");
+    // Over the post, the label sits higher to leave the squares room, or to stand clear of a tally that reaches under it.
+    var tallyNode = svg.querySelector("text.mg-tally");
+    var tallyEnd = tallyNode ? Number(tallyNode.getAttribute("x")) + tallyNode.textContent.length * TALLY_CHAR : -Infinity;
+    var raised = finish.length || (!step && tallyEnd > postX - LABEL_HALF);
+    shape(svg, "text", { class: "mg-label", x: postX, y: postY - (raised ? 52 : 30), "text-anchor": "middle" }, "Finish line");
     if (finish.length) {
       var squaresX = postX - (finish.length * 11) / 2 - 12;
       finish.forEach(function (line, k) {
@@ -3843,6 +3876,113 @@
     });
     return add(box, ruler, rows);
   }
+  /*
+   * A lane's next story, as its card draws it. The state tool gives an idle lane's wait on its next story a blocker
+   * when the cause is the plan's order or a file hold: the story it waits on, that story's lane, whether it is in the
+   * merge queue, its phase in one word and the files a hold names. Those are grouped by blocker into one pill each,
+   * nearest to landing first; every other wait keeps its own sentence.
+   */
+  var LANDING = ["merging", "checked", "checking", "synced", "syncing", "queued", "handed", "review", "building", "planned", "stopped"];
+  function blockerStage(doc, subject) {
+    // The last queue row for the story, as the state tool reads it.
+    var rows = list(doc.state.queue).filter(function (item) { return isObject(item) && subjectOf(item) === subject; });
+    var item = rows[rows.length - 1];
+    if (item) { return item.pending === true || item.noChange ? "handed" : text(item.stage); }
+    var entry = list(doc.state.planned).filter(function (planned) { return isObject(planned) && subjectOf(planned) === subject; })[0];
+    return !entry ? "" : entry.noChange ? "handed" : text(entry.stage);
+  }
+  function nextOf(doc, laneId) {
+    var blockers = [], byKey = Object.create(null), rest = [], next = "";
+    waitsOf(doc, "waits", laneId).forEach(function (wait) {
+      var key = typeof wait.blocker === "string" && wait.blocker ? wait.blocker : "";
+      if (!key || typeof wait.on !== "string" || (next && wait.on !== next)) { rest.push(wait); return; }
+      next = wait.on;
+      var pill = byKey[key];
+      if (!pill) {
+        pill = byKey[key] = { key: key, lane: text(wait.onLane), queued: wait.queued === true, phase: text(wait.phase), files: [] };
+        blockers.push(pill);
+      }
+      list(wait.files).forEach(function (path) { if (typeof path === "string" && pill.files.indexOf(path) < 0) { pill.files.push(path); } });
+    });
+    function rank(pill) { var at = LANDING.indexOf(blockerStage(doc, pill.key)); return at < 0 ? LANDING.length : at; }
+    blockers = blockers.map(function (pill, index) { return { pill: pill, index: index, rank: rank(pill) }; })
+      .sort(function (a, b) { return a.rank - b.rank || a.index - b.index; }).map(function (ranked) { return ranked.pill; });
+    return { next: next, blockers: blockers, rest: rest };
+  }
+  var LOCK = '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>';
+  function lockMark(label) {
+    var mark = el("span", "lock");
+    mark.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + LOCK + "</svg>";
+    if (label) { mark.setAttribute("role", "img"); mark.setAttribute("aria-label", label); }
+    return mark;
+  }
+  /** The block under a lane card: its next story once, a "Waiting on" row of one pill per blocker, and a legend. */
+  function nextBlock(doc, found, colours) {
+    var item = list(doc.state.planned).filter(function (entry) { return isObject(entry) && subjectOf(entry) === found.next; })[0];
+    var head = add(el("p", "next-head"), el("span", "k", "Next"), " ", issue(found.next));
+    if (item && titleOf(doc, item) !== found.next) { add(head, " \u00b7 " + titleOf(doc, item)); }
+    var row = add(el("div", "waiting-on"), el("span", "k", "Waiting on"));
+    var held = [];
+    found.blockers.forEach(function (pill) {
+      var node = el("span", "dep" + (pill.queued ? " queued" : ""));
+      node.style.setProperty("--c", colours[pill.lane] || laneColour(pill.lane));
+      var said = [pill.lane ? laneLabel(pill.lane) : "No lane", pill.queued ? "in the merge queue" : "still with its lane"];
+      if (pill.files.length) { said.push("holds " + pill.files.join(", ")); }
+      node.setAttribute("title", said.join(" \u00b7 "));
+      add(node, el("span", "dot"), issue(pill.key), el("span", "phase", pill.phase));
+      if (pill.files.length) {
+        node.appendChild(lockMark("holds files " + found.next + " needs"));
+        pill.files.forEach(function (path) { if (held.indexOf(path) < 0) { held.push(path); } });
+      }
+      row.appendChild(node);
+    });
+    var legend = el("div", "legend");
+    if (found.blockers.some(function (pill) { return pill.queued; })) { legend.appendChild(add(el("span"), el("i", "dot filled"), "in the merge queue")); }
+    if (found.blockers.some(function (pill) { return !pill.queued; })) { legend.appendChild(add(el("span"), el("i", "dot"), "still with its lane")); }
+    if (held.length) {
+      legend.appendChild(add(el("span"), lockMark(""), add(el("span"), "holds ", el("code", null, held.join(", ")), ", which " + found.next + " needs")));
+    }
+    return add(el("div", "next"), head, row, legend);
+  }
+  /*
+   * A lane's own story once it is handed off: the latest of its stories still in the queue, unless the lane has
+   * moved on to other work. The card then says where it went and follows it through the queue.
+   */
+  var QUEUE_PHASE = table({ queued: "queued", syncing: "syncing", synced: "syncing", checking: "checking", checked: "checked", merging: "merging" });
+  function handedOf(doc, lane) {
+    if (lane.state !== "idle" && lane.state !== "handed" && lane.state !== "waiting") { return null; }
+    var mine = list(doc.state.queue).filter(function (item) {
+      return isObject(item) && item.lane === lane.id && item.stage !== "merged" && item.stage !== "stopped";
+    }).sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+    var item = mine[mine.length - 1] || null;
+    if (!item || (lane.state === "waiting" && lane.waitingOn !== subjectOf(item))) { return null; }
+    return item;
+  }
+  function roundsOf(doc, item) {
+    var most = 0;
+    journalFor(doc, subjectOf(item), { "review.round": true }).forEach(function (entry) {
+      var round = isObject(entry.data) && typeof entry.data.round === "number" ? entry.data.round : 0;
+      if (round > most) { most = round; }
+    });
+    return most || (typeof item.reportedRounds === "number" ? item.reportedRounds : 0);
+  }
+  function handedLine(doc, item) {
+    var rounds = roundsOf(doc, item);
+    // A hand-off the lead hasn't accepted yet leaves the queue row at its earlier head: the journal has the new one.
+    var latest = journalFor(doc, subjectOf(item), { "candidate.handed": true }).pop();
+    var head = latest && isObject(latest.data) && typeof latest.data.head === "string" && latest.data.head ? latest.data.head : item.head;
+    return add(el("p", "doing"), issue(subjectOf(item)), " \u00b7 handed off at ", el("code", null, short(head)),
+      rounds ? " after review round " + rounds : "");
+  }
+  /** The chip of a lane whose story is in the merge queue, with the runner's phase and how long it has been there. */
+  function queueChip(doc, item, lane) {
+    if (item.pending === true || !QUEUE_PHASE[item.stage]) { return null; }
+    // Since its latest hand-off, or, for a record that journals none, since the lane stood handed over.
+    var handed = journalFor(doc, subjectOf(item), { "candidate.handed": true }).pop();
+    var then = handed ? seconds(handed.at) : lane.state === "handed" ? seconds(lane.since) : null;
+    var since = then === null || Date.now() / 1000 < then ? "" : duration(Date.now() / 1000 - then);
+    return [el("span", "chip queue", "In merge queue"), el("span", "on", QUEUE_PHASE[item.stage] + (since ? " \u00b7 " + since : ""))];
+  }
   function drawWho(doc, all) {
     whoDrawn = [doc, all];
     var inner = parts.who;
@@ -3866,16 +4006,25 @@
         var changed = prev.lanes && prev.lanes[lane.id] !== undefined && prev.lanes[lane.id] !== mark && !reduced();
         var row = el("div", "person" + (changed ? " changed" : ""));
         row.style.setProperty("--c", colours[lane.id] || "var(--soft)");
-        var who = add(el("div"), el("h3", null, text(lane.title) || text(lane.id)));
+        var who = add(el("div"), el("p", "lane-name", laneLabel(text(lane.id))), el("h3", null, text(lane.title) || text(lane.id)));
         var doing = text(lane.focus) || text(focus[lane.id]);
-        if (doing) { who.appendChild(el("p", "doing", doing)); }
+        var handed = closed ? null : handedOf(doc, lane);
+        if (handed) { who.appendChild(handedLine(doc, handed)); }
+        else if (doing) { who.appendChild(el("p", "doing", doing)); }
         if (text(lane.focus) && !closed) { who.appendChild(rowAge(lane)); }
-        if (!closed) { waitLines(doc, lane.id, "p", "doing wait").forEach(function (line) { who.appendChild(line); }); }
-        var st = add(el("div", "st"), closed ? el("span", "chip done", "Finished") : el("span", "chip" + (LANE_WORDS[lane.state] ? " " + lane.state : ""), LANE_WORDS[lane.state] || "Unknown"));
-        if (closed) { /* what a lane last waited on or how long it has held is over */ }
-        else if (lane.waitingOn) { st.appendChild(el("span", "on waiting", "waiting on " + text(lane.waitingOn))); }
-        else if (heldFor(lane.since)) { st.appendChild(el("span", "on", heldFor(lane.since))); }
+        var next = closed ? null : nextOf(doc, lane.id);
+        if (next) { next.rest.forEach(function (wait) { who.appendChild(waitLine("p", "doing wait", wait)); }); }
+        var inQueue = handed ? queueChip(doc, handed, lane) : null;
+        var st = el("div", "st");
+        if (closed) { st.appendChild(el("span", "chip done", "Finished")); /* what a lane last waited on or how long it has held is over */ }
+        else if (inQueue) { add(st, inQueue[0], inQueue[1]); }
+        else {
+          st.appendChild(el("span", "chip" + (LANE_WORDS[lane.state] ? " " + lane.state : ""), LANE_WORDS[lane.state] || "Unknown"));
+          if (lane.waitingOn) { st.appendChild(el("span", "on waiting", "waiting on " + text(lane.waitingOn))); }
+          else if (heldFor(lane.since)) { st.appendChild(el("span", "on", heldFor(lane.since))); }
+        }
         add(row, add(el("span", "swatch"), persona("lane")), who, st);
+        if (next && next.blockers.length) { row.appendChild(nextBlock(doc, next, colours)); }
         people.appendChild(row);
       });
       nodes.push(people);

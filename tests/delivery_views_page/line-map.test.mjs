@@ -146,7 +146,7 @@ test("draws the run as a line map, chapter by chapter", async () => {
   // Who: each lane, its state and what it is on, and the leases held.
   const who = chapter("who");
   expect(who.querySelector("h2")?.textContent).toBe("3 of 4 lanes are working right now.");
-  expect([...who.querySelectorAll(".chip")].map((chip) => chip.textContent)).toEqual(["Handed over", "In review", "Blocked", "Standing by"]);
+  expect([...who.querySelectorAll(".chip")].map((chip) => chip.textContent)).toEqual(["In merge queue", "In review", "Blocked", "Standing by"]);
   expect(who.textContent).toContain("waiting on the dev backend lease");
   expect(who.querySelector(".leases")?.textContent).toBe("dev-backend held by lead for 25m");
 
