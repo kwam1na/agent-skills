@@ -12015,6 +12015,10 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("--take grants a claim in the record: seed this record with lead-own --seed first", out)
         self.assertEqual(written(), before)
+        # The refusal is the flag's alone: without it, the legacy record still takes an assignment, left unseeded.
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("laneOwnership", json.loads(state.read_text()))
 
     def test_lead_ownership_rejects_duplicate_grants_and_lane_checkouts(self) -> None:
         fx = self.delivery(assign=False)
