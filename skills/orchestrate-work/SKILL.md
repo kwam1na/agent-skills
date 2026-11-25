@@ -1023,7 +1023,7 @@ an unshared record every step runs, as before. run-delivery's
 
 | Step | Runs on |
 | --- | --- |
-| `reconcile`, `regions`, `peers`, `grants`, `planView`, `finish`, `publish`, `cleanupBeforeClose`, `friction`, `closeOut` | the machine whose seat holds `delivery` |
+| `reconcile`, `regions`, `peers`, `grants`, `planView`, `finish`, `publish`, `cleanupBeforeClose`, `friction`, `closeOut`, `carried` | the machine whose seat holds `delivery` |
 | `fullHealth` | the machine whose seat holds `queue` |
 | `lenses`, `cleanup`, `deferrals` | every machine, for the stories of the lanes its seat holds, whose checkouts and review rounds are there |
 | `blockers` | every machine, journalling only blockers about its own supervisor's children |

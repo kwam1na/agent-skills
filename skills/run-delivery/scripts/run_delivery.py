@@ -17637,7 +17637,7 @@ COLLAB_POLL_FLOOR = 2
 # orchestration guide's "Which machine runs what" table says the same.
 SHARED_STEPS = {"reconcile": "delivery", "regions": "delivery", "peers": "delivery", "grants": "delivery", "planView": "delivery",
                 "finish": "delivery",
-                "publish": "delivery", "cleanupBeforeClose": "delivery", "friction": "delivery", "closeOut": "delivery",
+                "publish": "delivery", "cleanupBeforeClose": "delivery", "friction": "delivery", "closeOut": "delivery", "carried": "delivery",
                 "fullHealth": "queue", "lenses": "lane", "cleanup": "lane", "deferrals": "lane", "blockers": "every", "inputs": "every",
                 "peerWaits": "every", "laneChanges": "every", "needs": "every", "render": "every", "latest": "every"}
 
