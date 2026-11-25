@@ -392,3 +392,7 @@ Scenarios, with this delivery's integration target as a peer delivery's base:
 - a delivery with no integration target, and one whose target has no peer, show and journal nothing;
 - the line map shows `target.settled`'s label, and the tracker publisher posts nothing for it;
 - the guide's integration recipe holds its sentence, with a presence pin.
+
+### V26-3895. Open the delivery's live view in the host's browser pane when a delivery begins
+
+Lane 2, tier 1, not blocked. Added mid-delivery: The operator ruled on 2026-11-25 that the workflow, not the lead's memory, makes the lead open the live view at every delivery's start
