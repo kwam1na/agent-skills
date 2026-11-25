@@ -1,0 +1,215 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3893",
+  "headline": "V26-3893: lanes share the generated files the runner can reproduce, and an integration lead sees peers merging into its target",
+  "baseBranch": "integrate/shared-generated-files",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-24-shared-generated-files.md",
+  "laneBrief": "docs/plans/2026-11-24-shared-generated-files.lane-brief.md",
+  "brief": {
+    "notes": null
+  },
+  "context": {
+    "sections": []
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "catalog.json",
+        "profiles/*",
+        "schemas/catalog.schema.json",
+        "schemas/profile.schema.json",
+        "agent_skills/validate.py",
+        "agent_skills/release.py",
+        "skills/orchestrate-work/scripts/merge_queue.py",
+        "skills/run-delivery/SKILL.md",
+        "skills/run-delivery/references/adopting.md",
+        "tests/test_registry.py",
+        "tests/test_catalog.py",
+        "tests/test_delivery_views_hosted_projection.py",
+        "tests/test_lane_ruling_corpus.py",
+        "tests/test_hive_knowledge_adapter.py",
+        "tests/test_readme.py",
+        "tests/test_lead_assign_owns.py",
+        "tests/test_handoff_listing.py",
+        "tests/test_merge_queue.py",
+        "tests/test_shared_outputs.py",
+        "docs/solutions/best-practices/a-listing-stop-is-cleared-by-ownership-not-a-base-merge-2026-11-16.md"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "skills/run-delivery/scripts/tracker_publisher.py",
+        "skills/delivery-views/assets/line-map.js",
+        "tests/test_run_delivery_peers.py",
+        "tests/test_lead_wait.py",
+        "tests/test_run_delivery_tracker.py",
+        "tests/delivery_views_page/line-map-kinds.test.mjs"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3611": {
+      "title": "Keep each catalog and profile sentence on its own line, so stories stop conflicting there",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3611-1",
+          "text": "c1: Two branches that each add a sentence to the same skill's entry merge without a conflict."
+        },
+        {
+          "id": "v26-3611-2",
+          "text": "c2: scripts/validate-registry.py accepts the list form and refuses an empty item."
+        },
+        {
+          "id": "v26-3611-3",
+          "text": "c3: The released archives' rendered catalog and profile text is unchanged by the migration."
+        }
+      ]
+    },
+    "V26-3703": {
+      "title": "Say when `lead-accept --take` applies, and which grant clears an out-of-lane file before hand-off",
+      "lane": "lane-1",
+      "after": [
+        "V26-3611"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3703-1",
+          "text": "handoff's writer_not_owned refusal for an out-of-lane file names the lead-own --grant for that file and lane."
+        },
+        {
+          "id": "v26-3703-2",
+          "text": "lead-accept --take's help text and run-delivery SKILL.md's row say it is for a file narrowed out after hand-off, each held by a presence pin."
+        },
+        {
+          "id": "v26-3703-3",
+          "text": "--take keeps its behaviour."
+        }
+      ]
+    },
+    "V26-3700": {
+      "title": "Pin `--take`'s path and merged refusals, `--own-co-changed` with nothing to add, and the named-only warning's last line",
+      "lane": "lane-1",
+      "after": [
+        "V26-3703"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3700-1",
+          "text": "lead-accept --take on a merged story is refused with its merged message, and nothing is written."
+        },
+        {
+          "id": "v26-3700-2",
+          "text": "lead-assign --own-co-changed with nothing outside the lane makes no commit and leaves the record's bytes unchanged."
+        },
+        {
+          "id": "v26-3700-3",
+          "text": "With --own-co-changed, the named-only warning's last line is held exactly."
+        }
+      ]
+    },
+    "V26-3701": {
+      "title": "Pin `--own-co-changed`'s and `--take`'s legacy-record refusals, with nothing written",
+      "lane": "lane-1",
+      "after": [
+        "V26-3700"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3701-1",
+          "text": "lead-assign --own-co-changed is refused with the \"seed this record with lead-own --seed first\" message, and state.json and the journal are unchanged."
+        },
+        {
+          "id": "v26-3701-2",
+          "text": "lead-accept --take is refused the same way, with nothing written."
+        }
+      ]
+    },
+    "V26-3741": {
+      "title": "Let lanes share generated files when the runner can reproduce them",
+      "lane": "lane-1",
+      "after": [
+        "V26-3701"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3741-1",
+          "text": "Test first with two lanes editing unrelated sources that change the same declared outputs. Both finish review and handoff without a claim transfer. The queue regenerates and verifies the result after the first merge moves the base."
+        },
+        {
+          "id": "v26-3741-2",
+          "text": "An irreproducible edit, failed generator or attempted self-authorization by a candidate stops progression with an actionable explanation."
+        },
+        {
+          "id": "v26-3741-3",
+          "text": "Existing listing digest and membership tests still pass. Adopters without the new declaration retain their current behavior."
+        },
+        {
+          "id": "v26-3741-4",
+          "text": "Document the binding with a graph example and verify it through the public lane and queue commands."
+        }
+      ]
+    },
+    "V26-3616": {
+      "title": "Tell an integration lead when other deliveries are merging into its target",
+      "lane": "lane-2",
+      "after": [
+        "V26-3611"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3616-1",
+          "text": "c1: An integration lead's status line names peer deliveries merging into its target."
+        },
+        {
+          "id": "v26-3616-2",
+          "text": "c2: The lead's wait wakes when the target has been quiet after a peer merge."
+        },
+        {
+          "id": "v26-3616-3",
+          "text": "c3: With no peer delivery on the target, nothing changes."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "V26-3611, V26-3703, V26-3700, V26-3701, V26-3741 and V26-3616 land on integrate/shared-generated-files through its merge queue, each with every criterion met",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration head, with --workers 4 --budget tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide's integration review says, merged into main, and CI's cut-release passes on the change request",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "grantedBy": "kwamina (operator, /run-delivery in chat, 2026-11-25)",
+    "grantedOn": "2026-11-25"
+  }
+}

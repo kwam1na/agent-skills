@@ -1,5 +1,5 @@
 {
   "schemaVersion": "delivery-posture/1",
   "posture": "focused",
-  "reason": "V26-3406's close-out: the operator chose to skip the close-out full suite. The full local suite passed on b8a60a9 before the candidate was tagged, and the queue ran each candidate's selected checks."
+  "reason": "V26-3893: the operator asked on 2026-11-25 for the focused posture with the full suite only at integration. No fullHealth runs after a story merges or at close-out; the queue runs each candidate's selected checks, and the lead runs the full local suite once with lead-suite at the integration head, before the integration change request into main."
 }
