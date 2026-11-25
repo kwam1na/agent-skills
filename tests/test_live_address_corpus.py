@@ -51,6 +51,25 @@ LANES_UP_FRONT = (
     "Some hosts let the lead start a session only in a turn the operator began, not in one a lane's report or a wake "
     "began, so a lane started later can sit waiting on the operator.",
 )
+GUIDE = "skills/orchestrate-work/references/orchestration-guide.md"
+# The view a delivery's start names, which the lead opens unasked: run-delivery's Host behaviour and the guide's Publish.
+OPEN_AT_START = {
+    RUN_DELIVERY: (
+        "**The live view opens when a delivery begins.** `lead-init` and `lead-run --resume` end with one next step, "
+        "`Next step: open <url> in the host's browser pane now, unasked.`, and the lead opens that view in the same "
+        "turn, without being asked: the hosted view's URL when `.agents/delivery-views.json` enables `hosted` and the "
+        "watcher has one, the local live view's address otherwise.",
+        "The `delivery.orient` hook names the same view to a lead session that starts, resumes or compacts.",
+        "With no supervisor running, as after `--no-supervisor`, there is no view and nothing is named. Lanes never "
+        "open it.",
+    ),
+    GUIDE: (
+        "Start the live view at the beginning of the delivery and open it for the operator in the same turn, unasked;",
+        "The lead opens the one view run-delivery's `lead-init` and `lead-run --resume` name as their next step, in "
+        "the host's browser pane: the hosted view first, when hosted is enabled and has a URL, and the local live "
+        "view's address otherwise. Lanes never open it.",
+    ),
+}
 # Names a host-specific instruction would reach for: hosts, products and their tools.
 HOST_NAMES = re.compile(
     r"\bclaude\b|\bcodex\b|\bcursor\b|\bchrome\b|\bsafari\b|\bvs ?code\b|preview_start|mcp__|start_session|"
@@ -75,6 +94,7 @@ def delivered_passages() -> dict[str, str]:
     return {
         "run-delivery Host behaviour": _between(run_delivery, "**Live addresses open in a browser.**",
                                                 "## Where lanes read the delivery"),
+        "orchestration-guide Publish": _between(_document(GUIDE), "### 5. Publish", "### 6."),
         "run-delivery Running lanes": _between(run_delivery, "- Every lane starts up front.", " - "),
         "compound-delivery-kernel": _between(kernel, "### The live view", "## Handoff"),
         "orchestrate-work": _between(orchestrate, "**The live view.**", "```bash"),
@@ -95,6 +115,15 @@ class LiveAddressRuleTests(unittest.TestCase):
         for relative, sentence in ONE_SENTENCE.items():
             with self.subTest(skill=relative):
                 self.assertIn(sentence, _document(relative))
+
+    def test_the_lead_opens_the_view_a_delivery_start_names(self) -> None:
+        text = _document(RUN_DELIVERY)
+        sections = {RUN_DELIVERY: text[text.index("## Host behaviour"):text.index("## Where lanes read the delivery")],
+                    GUIDE: _between(_document(GUIDE), "### 5. Publish", "### 6.")}
+        for relative, phrases in OPEN_AT_START.items():
+            for phrase in phrases:
+                with self.subTest(skill=relative, phrase=phrase[:50]):
+                    self.assertIn(phrase, sections[relative])
 
     def test_every_lane_starts_with_the_delivery(self) -> None:
         text = _document(RUN_DELIVERY)

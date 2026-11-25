@@ -1,5 +1,6 @@
 {
   "description": [
+    "lead-init and lead-run --resume end with the one live view the lead opens in the host's browser pane, unasked: the hosted view when hosted is enabled and has a URL, else the local live view's address, and nothing while no supervisor runs; delivery.orient names the same view to a lead, never to a lane.",
     "The commands that carry out an orchestrated delivery, layered on the delivery views: lens round briefs and round files, gate runs, in-app checks under a lease, draft change requests, lane hand-offs, and the lead's setup, assignment, acceptance, evidence, ship and close-out.",
     "A delivery whose stories declare criteria also gets the plan chapter's input, written by lead-side commands alone, with every change to the approved plan recorded.",
     "The plan's own review runs through plan-review commands with no round bound, kept in a durable store every plan write reads and fitted to the plan's caps; lead-setup drafts approvals and out of scope from the plan, and lead-plan approval marks one done.",
