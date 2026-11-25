@@ -580,7 +580,7 @@ the binding declares none.
 When stories keep regenerating the same generated file, such as a dependency graph, and the binding's own generators
 reproduce it from the sources, declare it shared rather than moving its claim from lane to lane:
 
-```json
+```json example outline
 "regenerable": {
   "paths": ["gen/**"],
   "regenerators": [["python3", "tools/graph.py"]],
