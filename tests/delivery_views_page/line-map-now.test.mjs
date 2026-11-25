@@ -112,3 +112,86 @@ test("a failing check the target passes says so, and so does a mix", async () =>
   expect(await fact([{ name: "lint", onTarget: true }, { name: "e2e", onTarget: true }])).toBe("2 forge checks fail, on main too.");
   expect(await fact([])).toBe(null);
 });
+
+test("the reader's call goes to the lane that asks while stories land, and its fact names that lane", async () => {
+  const landing = FIXTURES.find((fixture) => fixture.name === "01-stories-landing");
+  const call = FIXTURES.find((fixture) => fixture.name === "13-needs-your-call");
+  const shown = nowOf(await drawn({ ...landing, needs: call.needs }));
+  expect(shown.sentence).toBe(call.expected.sentence);
+  expect(shown.marks).toEqual([["Lane 3 · 2 of 2", "done", null], ["Lane 1 · 2 of 4", "live", null],
+    ["Lane 2 · 2 of 3 · you", "live", "you"], ["Rejoin", "todo", null]]);
+  expect(shown.fact).toBe("Lane 2 waits on you.");
+});
+
+test("a delivery closed with stories unlanded draws no lane at work and no rejoin done", async () => {
+  const landing = FIXTURES.find((fixture) => fixture.name === "01-stories-landing");
+  const journal = landing.document.journal;
+  const closed = { ...landing, document: { ...landing.document, journal: [...journal,
+    { id: journal.length + 1, at: "2026-10-30T11:00:00Z", kind: "delivery.closed", lane: null, subject: "APP-10", data: {} }] } };
+  const shown = nowOf(await drawn(closed));
+  expect(shown.sentence).toBe("Closed Oct 30: 6 of 9 stories landed.");
+  expect(shown.marks.map(([, state]) => state)).toEqual(["done", "todo", "todo", "todo"]);
+});
+
+/** A fixture by name, with entries appended to its journal under the delivery's key and its meta changed. */
+const KEY = "APP-10";
+function derived(name, { entries = [], meta = {}, queue = null, needs, integration } = {}) {
+  const base = FIXTURES.find((fixture) => fixture.name === name);
+  const journal = [...base.document.journal];
+  entries.forEach(([kind, data]) => journal.push({ id: journal.length + 1, at: "2026-10-30T11:50:00Z", kind, lane: null, subject: KEY, data }));
+  const state = { ...base.document.state, meta: { ...base.document.state.meta, ...meta }, ...(queue ? { queue: queue(base.document.state.queue) } : {}) };
+  return { ...base, document: { ...base.document, state, journal }, ...(needs !== undefined ? { needs } : {}),
+    ...(integration !== undefined ? { integration } : {}) };
+}
+const head = (fixture) => [...fixture.document.journal].reverse().find((entry) => entry.kind === "integration.merged")?.data.head;
+
+test("a review round answered by its record is no longer running, and a start at an older head never is", async () => {
+  const fixing = FIXTURES.find((fixture) => fixture.name === "07-review-fix");
+  const at = fixing.document.journal.find((entry) => entry.kind === "review.round").data.head;
+  // The lead moved the head after the round asked for a fix: a start naming the old head is not a round under way.
+  const moved = derived("07-review-fix", { entries: [["integration.merged", { target: "main", targetHead: "f".repeat(40), head: "e".repeat(40), conflicts: [] }],
+    ["review.started", { round: 2, head: at, lenses: ["lens.outcome-correctness"], restart: false }]] });
+  expect(nowOf(await drawn(moved)).sentence).not.toContain("is in round");
+  expect(nowOf(await drawn(moved)).sentence).toBe("All 9 stories are in. The full suite runs next.");
+});
+
+test("a held queue says so in the stop colour, with what nothing merges until", async () => {
+  const shown = nowOf(await drawn(derived("01-stories-landing", { meta: { hold: { reason: "Waiting on the deploy freeze." } } })));
+  expect([shown.sentence, shown.stop, shown.fact, shown.factStop])
+    .toEqual(["The queue is paused: Waiting on the deploy freeze.", true, "Nothing merges until the hold lifts.", true]);
+});
+
+test("the overrides combine as the canvas says: a broken base stops the rejoin's live mark, a stop fact outlasts a call, a call wakes a todo mark", async () => {
+  const broken = nowOf(await drawn(derived("08-waits-for-merge", { entries: [["base.broken", { source: "queue" }]] })));
+  expect(broken.marks[2]).toEqual(["Merge · you", "stop", "you"]);
+  expect([broken.sentence, broken.stop]).toEqual(["The queue has stopped: the main line is broken. No repair is named yet.", true]);
+  expect(broken.fact).toBe("Nothing merges until a repair is named.");
+  const call = FIXTURES.find((fixture) => fixture.name === "13-needs-your-call");
+  const stopped = nowOf(await drawn({ ...derived("14-work-stopped"), needs: call.needs }));
+  expect(stopped.sentence).toBe(call.expected.sentence);
+  expect([stopped.fact, stopped.factStop]).toEqual(["Nothing merges until the repair lands.", true]);
+  // Nothing landed and nothing started: every lane is to come, and the call makes the asking lane's mark live and yours.
+  const fresh = derived("01-stories-landing", { needs: call.needs, queue: (queue) => queue.map((item) => ({ ...item, stage: "queued" })) });
+  fresh.document = { ...fresh.document, journal: [], state: { ...fresh.document.state, planned: fresh.document.state.planned.map((item) => ({ ...item, stage: "planned" })) } };
+  const woke = nowOf(await drawn(fresh));
+  expect(woke.marks.find(([label]) => label.startsWith("Lane 2"))).toEqual(["Lane 2 · 0 of 3 · you", "live", "you"]);
+});
+
+test("the target moving yields to a suite at the new head, and a silent supervisor says when it last reported", async () => {
+  const moved = FIXTURES.find((fixture) => fixture.name === "10-target-moved");
+  const running = derived("10-target-moved", { entries: [["integration.suite.started", { head: head(moved), startedAt: "2026-10-30T11:50:00Z" }]] });
+  expect(nowOf(await drawn(running)).sentence).toBe("All 9 stories are in. The full suite is running: 10 min.");
+  const silent = derived("08-waits-for-merge", { integration: null, needs: { spec: "delivery-needs-you/1", running: true, at: "2026-10-30T11:40:00Z",
+    staleAfter: "2026-10-30T11:45:00Z", items: [] } });
+  expect(nowOf(await drawn(silent)).fact).toBe("The lead's supervisor last reported 20 minutes ago, so this page may be out of date.");
+});
+
+test("a forge block with a malformed count draws nothing of the forge, and a passing suite with no round sends the review next", async () => {
+  const malformed = nowOf(await drawn(derived("08-waits-for-merge", { integration: { checks: { pending: -1, failing: [{ name: "lint", onTarget: true }] } } })));
+  expect([malformed.sentence, malformed.fact]).toEqual(["All 9 stories are in. #7 waits for your merge.", null]);
+  const passed = FIXTURES.find((fixture) => fixture.name === "04-suite-failed");
+  const suite = passed.document.journal.find((entry) => entry.kind === "integration.suite");
+  const green = { ...passed, document: { ...passed.document, journal: passed.document.journal.map((entry) => entry === suite ? { ...entry, data: { ...entry.data, result: "passed" } } : entry) } };
+  const shown = nowOf(await drawn(green));
+  expect([shown.sentence, shown.marks[1]]).toEqual(["The full suite passed. The integration review runs next.", ["Review · lead", "live", "lead"]]);
+});

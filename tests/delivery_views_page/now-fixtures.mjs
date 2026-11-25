@@ -32,7 +32,7 @@ const merged = (at, head) => [at, "integration.merged", KEY, { data: { target: "
 const requested = (at, head) => [at, "integration.requested", KEY, { data: { changeRequest: REQUEST, head } }];
 const rejoined = (at) => [at, "integration.landed", KEY, { data: { target: "main", head: headOf("main-final") } }];
 // Everything before the change request, passing: the suite and an approving review at the integration's head.
-const throughReview = [suite(50, H), round(60, H, 1, "approve")];
+const throughReview = [suite(50, H), reviewStarted(55, H, 1), round(60, H, 1, "approve")];
 
 /** A record of the nine stories, every one landed unless `queue` says otherwise, then `steps` under the delivery's key. */
 function delivery(steps = [], { queue = null, planned = [], integration = INTEGRATION, landings = everyLanding, meta = {}, followups } = {}) {
@@ -83,9 +83,9 @@ export function fixtures() {
     ["05-over-budget", "Suite over budget: your call", delivery([suite(50, H, "over-budget", { seconds: 1800, budgetSeconds: 1740 })]),
       { sentence: "Every test passed, 1 min over budget. It's your call to accept.", fact: "30 min against a budget of 29 min.",
         marks: marks(live("Suite", "you"), todo("Review"), todo("Merge"), todo("Landed")) }],
-    ["06-review-running", "Review running", delivery([suite(50, H), round(60, H, 1, "changes", { P1: 1 }), reviewStarted(70, H, 2)]),
+    ["06-review-running", "Review running", delivery([suite(50, H), reviewStarted(55, H, 1), round(60, H, 1, "changes", { P1: 1 }), reviewStarted(70, H, 2)]),
       { sentence: "The integration review is in round 2.", marks: marks(SUITE, live("Review · round 2", "lead"), todo("Merge"), todo("Landed")) }],
-    ["07-review-fix", "Review asked for a fix", delivery([suite(50, H), round(60, H, 1, "changes", { P1: 1 })]),
+    ["07-review-fix", "Review asked for a fix", delivery([suite(50, H), reviewStarted(55, H, 1), round(60, H, 1, "changes", { P1: 1 })]),
       { sentence: "Round 1 asked for 1 fix. The lead is making it.", marks: marks(SUITE, live("Review · fixing", "lead"), todo("Merge"), todo("Landed")) }],
     ["08-waits-for-merge", "Waits for your merge", delivery([...throughReview, requested(70, H)]),
       { sentence: "All 9 stories are in. #7 waits for your merge.", link: ["#7", REQUEST], fact: "1 forge check fails, on main too.",
@@ -103,7 +103,7 @@ export function fixtures() {
         marks: marks(SUITE, REVIEW, MERGE, live("Landed · closing")) }],
     ["12-closed", "Closed", delivery([...throughReview, requested(70, H), rejoined(90), [100, "delivery.closed", KEY]]),
       { sentence: "Delivered Oct 30: 9 stories into main.", marks: marks(SUITE, REVIEW, MERGE, { label: "Landed", state: "done" }) }],
-    ["13-needs-your-call", "Override: the lead needs your call", delivery([suite(50, H), round(60, H, 1, "changes", { P1: 1 }), reviewStarted(70, H, 2)]),
+    ["13-needs-your-call", "Override: the lead needs your call", delivery([suite(50, H), reviewStarted(55, H, 1), round(60, H, 1, "changes", { P1: 1 }), reviewStarted(70, H, 2)]),
       { sentence: "Lane 2 waits on you about keeping a story that grew past its plan.", fact: "Review waits on you.",
         marks: marks(SUITE, live("Review · round 2", "you"), todo("Merge"), todo("Landed")), needs: needs([operatorCall, trackerLag]) }],
     ["14-work-stopped", "Override: work stopped", delivery([[300, "base.broken", null, { data: { source: "queue" } }]], { landings: sixLandings,

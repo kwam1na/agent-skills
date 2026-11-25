@@ -565,6 +565,21 @@
       },
       {
         "id": 29,
+        "at": "2026-10-30T06:55:00Z",
+        "kind": "review.started",
+        "lane": null,
+        "subject": "APP-10",
+        "data": {
+          "round": 1,
+          "head": "7057f247eb1ff18565e7f0c3e0aff0015b77ef3f",
+          "lenses": [
+            "lens.outcome-correctness"
+          ],
+          "restart": false
+        }
+      },
+      {
+        "id": 30,
         "at": "2026-10-30T07:00:00Z",
         "kind": "review.round",
         "lane": null,
@@ -587,7 +602,7 @@
         }
       },
       {
-        "id": 30,
+        "id": 31,
         "at": "2026-10-30T07:10:00Z",
         "kind": "integration.requested",
         "lane": null,
@@ -598,7 +613,7 @@
         }
       },
       {
-        "id": 31,
+        "id": 32,
         "at": "2026-10-30T07:30:00Z",
         "kind": "integration.landed",
         "lane": null,

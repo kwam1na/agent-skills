@@ -1425,7 +1425,8 @@
       else if (done === own.length) { made = nowMark(name + " · " + done + " of " + own.length, "done"); }
       else {
         var started = done > 0 || own.some(function (piece) { return !piece.planned || piece.item.stage !== "planned"; });
-        made = nowMark(name + " · " + done + " of " + own.length, started ? "live" : "todo");
+        // A delivery that closed with the lane's work unlanded has nothing at work any more.
+        made = nowMark(name + " · " + done + " of " + own.length, started && !closedEntry(doc) ? "live" : "todo");
       }
       made.at = at;
       return made;
@@ -1437,7 +1438,7 @@
       var state = rest.map(function (made) { return made.state; }).sort(function (a, b) { return MARK_RANK[a] - MARK_RANK[b]; })[0];
       marks = marks.slice(0, 2).concat([nowMark(rest.length + " more lanes", state)]);
     }
-    return marks.map(function (made) { return nowMark(made.label, made.state); }).concat([nowMark(last, closedEntry(doc) ? "done" : "todo")]);
+    return marks.map(function (made) { return nowMark(made.label, made.state); }).concat([nowMark(last, closedEntry(doc) && all.every(isLanded) ? "done" : "todo")]);
   }
   /** The rejoin's four marks, the one at `at` live (or stopped) with its holder and its count, those before it done. */
   function rejoinMarks(at, state, who, count) {
@@ -1606,10 +1607,13 @@
       var words = (text(said.headline) || text(call.text)).replace(/\s+$/, "");
       now.sentence = [/[.?!]$/.test(words) ? words : words + "."];
       now.stop = false;
-      if (liveMark) {
-        liveMark.who = "you";
-        if (liveMark.state === "todo") { liveMark.state = "live"; }
-        if (!(now.fact && now.fact.stop)) { now.fact = { text: liveMark.label.split(" · ")[0] + " waits on you." }; }
+      // The mark that becomes theirs: the asking lane's when the item names a lane drawn as a mark, else the live one.
+      var asking = text(call.lane) ? laneLabel(text(call.lane)) : "";
+      var yours = (asking ? now.marks.filter(function (made) { return made.label.split(" · ")[0] === asking; })[0] : null) || liveMark;
+      if (yours) {
+        yours.who = "you";
+        if (yours.state === "todo") { yours.state = "live"; }
+        if (!(now.fact && now.fact.stop)) { now.fact = { text: yours.label.split(" · ")[0] + " waits on you." }; }
       }
     }
     // A page that may be out of date says so as its fact: a stopped or silent supervisor, or a record with no recent update.
