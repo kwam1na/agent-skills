@@ -12171,8 +12171,10 @@ def render_views(c, only: str | None = None) -> str:
     if config is None:
         return "no binding: nothing to render"
     if only == "publishers":
-        # `liveHome` names a renderer, and this half declares none; the renderers half still answers to it.
-        config = {**{key: value for key, value in config.items() if key != "liveHome"}, "renderers": []}
+        # `liveHome` and `liveRuns` each name a renderer, and this half declares none; the renderers half still
+        # answers to both.
+        config = {**{key: value for key, value in config.items() if key not in ("liveHome", "liveRuns")},
+                  "renderers": []}
     elif only == "renderers":
         config = {**config, "publishers": []}
     script = c.release / "skills/orchestrate-work/scripts/render_state.py"

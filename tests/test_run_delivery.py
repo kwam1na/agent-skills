@@ -11490,8 +11490,9 @@ class RunDeliveryRenderHalvesTests(unittest.TestCase):
 
     def test_each_half_runs_only_its_own_entries_and_no_half_runs_both(self) -> None:
         state = {"directory": "s", "renderers": [{"id": "page", "builtin": "static-page", "output": "p.html"}],
-                 "publishers": [{"id": "post", "argv": ["true"]}], "liveHome": "page"}
-        unhomed = {key: value for key, value in state.items() if key != "liveHome"}
+                 "publishers": [{"id": "post", "argv": ["true"]}], "liveHome": "page",
+                 "liveRuns": {"renderer": "page", "inventory": {"argv": ["true"]}}}
+        unhomed = {key: value for key, value in state.items() if key not in ("liveHome", "liveRuns")}
         c = types.SimpleNamespace(release=Path("/release"), state=Path("/record"), root=Path("/repo"))
         for only, expected in ((None, state), ("publishers", {**unhomed, "renderers": []}),
                                ("renderers", {**state, "publishers": []})):
@@ -11503,11 +11504,13 @@ class RunDeliveryRenderHalvesTests(unittest.TestCase):
                     self.assertEqual(self.tool.render_views(c, only=only), "rendered")
                 self.assertEqual(json.loads(seen[0][seen[0].index("--state-config") + 1]), expected)
 
-    def test_the_publishers_half_of_a_binding_with_a_live_home_runs_its_publishers(self) -> None:
+    def test_the_publishers_half_of_a_binding_with_a_live_home_and_live_runs_runs_its_publishers(self) -> None:
         state_tool = ROOT / "skills/orchestrate-work/scripts/delivery_state.py"
         config = {"directory": "s", "liveHome": "home",
+                  "liveRuns": {"renderer": "runs", "inventory": {"argv": ["true"], "timeoutSeconds": 10}},
                   "publishers": [{"id": "sink", "argv": ["sh", "-c", "cat > \"$0/published-copy.json\"", "{stateDirectory}"]}],
-                  "renderers": [{"id": "home", "argv": ["sh", "-c", "cat >/dev/null; echo home"], "output": "home.html"}]}
+                  "renderers": [{"id": "home", "argv": ["sh", "-c", "cat >/dev/null; echo home"], "output": "home.html"},
+                                {"id": "runs", "argv": ["sh", "-c", "cat >/dev/null; echo runs"], "output": "runs.html"}]}
         with tempfile.TemporaryDirectory() as folder:
             record = Path(folder) / "state"
             c = types.SimpleNamespace(release=ROOT, state=record, root=Path(folder))
@@ -11517,9 +11520,10 @@ class RunDeliveryRenderHalvesTests(unittest.TestCase):
                 self.assertEqual(self.tool.render_views(c, only="publishers"), "rendered")
                 self.assertTrue((record / "published-copy.json").is_file())
                 self.assertFalse((record / "home.html").exists(), "the publishers half draws no view")
-                # The renderers half still answers to the home it names.
+                # The renderers half still answers to the home and the runs page it names.
                 self.assertEqual(self.tool.render_views(c, only="renderers"), "rendered")
                 self.assertTrue((record / "home.html").is_file())
+                self.assertTrue((record / "runs.html").is_file())
 
 
 class DeliveryPostureReaderTests(unittest.TestCase):
