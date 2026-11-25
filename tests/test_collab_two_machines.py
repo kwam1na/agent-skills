@@ -25,6 +25,7 @@ from tests.quiet_git import quieten
 from tests.test_planning_record import B_SECTION, KEY, PlanningRecordCase, journal, record
 from tests.test_run_delivery import POSIX_ONLY, commit, plan_delivery, sh, write_results
 from tests.test_run_delivery_supervisor import hand_off, supervised
+from tests.test_run_delivery_plan_review import OC, results, slug_store
 from tests.test_run_delivery_tracker import FAKE_ADAPTER, WORKFLOW, blank_store
 
 # The hosted publisher reaches the fake origin on loopback in place of the configured one, on both machines.
@@ -35,7 +36,6 @@ def fixture(host, port=None, timeout=None, context=None):
     return Real("127.0.0.1", {port}, timeout=timeout)
 http.client.HTTPSConnection = fixture
 """
-from tests.test_run_delivery_plan_review import OC, results, slug_store
 
 RUN_QUIETLY = True  # two supervisors, each with its live view and sync loop, and real git throughout
 
@@ -80,7 +80,8 @@ def causal(folder: Path) -> bool:
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class TwoMachinesTests(PlanningRecordCase):
-    """The finish line's two-machine delivery, step by step, on one pair of clones."""
+    """The finish line's two-machine delivery, step by step, on one pair of clones: a TestCase on the planning
+    record's fixture, which installs the release once per class and keeps git to each clone's own settings."""
 
     def setUp(self) -> None:
         fx = self.fx = self.fixture()
