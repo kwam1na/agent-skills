@@ -6286,7 +6286,7 @@ def _checks_argument(value: str) -> object:
 # What a running `wait` returns on: the journal kinds that need the lead. A blocked lane and machine pressure also end it.
 # A held runner wakes the lead as a blocker does: the queue writes its hold as serving.held.
 WAIT_KINDS = frozenset({"candidate.handed", "check.failed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded",
-                        "serving.held", "sibling.landed"})
+                        "serving.held", "sibling.landed", "target.settled"})
 # 0 is a wake and 1 an error, so a lead can tell what ended a wait left running in the background.
 WAIT_EXPIRED_EXIT = 3
 WAIT_TIMEOUT_SECONDS = 1800.0

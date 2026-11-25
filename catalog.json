@@ -533,6 +533,7 @@
         "tracker-operations"
       ],
       "degradedBehavior": [
+        "target.settled joins the kinds that wake the lead's wait, and the integration recipe waits for the target to settle before a review round or a full-suite run.",
         "Without a host that can start and message sessions no lane starts: the lead records the blocker and brings it to the operator, who may choose to deliver the tickets one at a time through $execute-work.",
         "Optional tracking may be absent; the delivery state and journal remain authoritative for where the epic stands.",
         "Recovered merges preserve source occurrence separately from observation; unavailable source times remain unknown.",
@@ -680,6 +681,7 @@
         "bounded-terminal-notification"
       ],
       "degradedBehavior": [
+        "An integration lead's doctor --delivery, lead-integrate and status line name each delivery registered on its integration target with what its queue is checking and has queued, and the supervisor journals target.settled once a target peer has merged and every target peer's queue has been empty for the window, 600 seconds unless lead-wait --target-quiet sets the record's own; with no integration target, or no delivery on it, nothing changes.",
         "Lead changes publish under the merge queue lock.",
         "A lane can retain its aligned review across exact base commits authorized by the lead before the merge.",
         "A temporary flake can be declared while a check runs.",

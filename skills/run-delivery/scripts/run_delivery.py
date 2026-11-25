@@ -8688,10 +8688,22 @@ def unregister_delivery(c) -> str | None:
     return f"removed {c.delivery} from the deliveries registered beside the repository ({path})"
 
 
-def peer_deliveries(c) -> list[dict]:
+def integration_target(c) -> str | None:
+    """The branch this delivery's integration step rejoins, as lead-init recorded it in the record's
+    `meta.integration`; None for a delivery with no integration step, or no record."""
+    integration = (json_object(c.state / "state.json").get("meta") or {}).get("integration")
+    target = integration.get("target") if isinstance(integration, dict) else None
+    return target if isinstance(target, str) and target else None
+
+
+def peer_deliveries(c, *, target: bool = False) -> list[dict]:
     """The other deliveries registered on this delivery's base, each with its `status`: `live` while its supervisor's
     pid runs, `stale` once it doesn't, `none` when it was started with no supervisor. An entry that can't be read is
-    listed whatever its base, as `{file, status: unreadable}`, and stops nothing."""
+    listed whatever its base, as `{file, status: unreadable}`, and stops nothing. With `target`, the readable
+    deliveries whose base is this delivery's integration target instead, whatever their status: none without one."""
+    wanted = integration_target(c) if target else c.base_branch
+    if wanted is None:
+        return []
     folder = registry_folder(c.root)
     peers = []
     for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
@@ -8702,13 +8714,113 @@ def peer_deliveries(c) -> list[dict]:
         if not (isinstance(entry, dict) and all(isinstance(entry.get(name), str) and entry[name]
                                                 for name in ("key", "base", "state"))
                 and (entry.get("pid") is None or valid_pid(entry["pid"]))):
-            peers.append({"file": path.name, "status": "unreadable"})
+            if not target:  # same-base mode names it; listing it twice would say nothing more
+                peers.append({"file": path.name, "status": "unreadable"})
             continue
-        if entry["key"] == c.delivery or entry["base"] != c.base_branch:
+        if entry["key"] == c.delivery or entry["base"] != wanted:
             continue
         pid = entry.get("pid")
         peers.append({**entry, "status": "none" if pid is None else "live" if pid_runs(pid) else "stale"})
     return peers
+
+
+def peer_queue(state: dict) -> tuple[str | None, list[str]]:
+    """What a peer's queue is checking now, and what else it has queued, from its record's state."""
+    current = ((state.get("meta") or {}).get("checking") or {}).get("now")
+    checking = current.get("subject") if isinstance(current, dict) else None
+    queued = [item.get("subject") for item in state.get("queue") or [] if isinstance(item, dict)
+              and item.get("stage") in ("queued", "syncing", "synced", "checked") and item.get("subject") != checking]
+    return checking, queued
+
+
+def target_peer_lines(c) -> list[str]:
+    """Each delivery merging into this delivery's integration target, as doctor --delivery and lead-integrate list
+    it: nothing without an integration target or a peer on it."""
+    target = integration_target(c)
+    return [f"integration target {target}: {peer_line(peer)}" for peer in peer_deliveries(c, target=True)]
+
+
+def target_peer_words(c) -> str:
+    """The status line's word on the deliveries merging into the integration target: what each is checking and has
+    queued. Empty without an integration target or a peer on it; never a refusal."""
+    try:
+        target = integration_target(c)
+        peers = peer_deliveries(c, target=True)
+    except (OSError, ValueError, Stop):
+        return ""
+    said = []
+    for peer in peers:
+        checking, queued = peer_queue(json_object(Path(peer["state"]) / "state.json"))
+        said.append(f"{peer['key']} checking {checking or 'nothing'}, queued {', '.join(queued) or 'nothing'}")
+    return f"; merging into the target {target}: {'; '.join(said)}" if said else ""
+
+
+# How long the deliveries merging into the integration target stay quiet after a merge before the supervisor journals
+# `target.settled`, unless `lead-wait --target-quiet` set the record's own window.
+TARGET_QUIET_SECONDS = 600.0
+TARGET_QUIET_FILE = "target-quiet.json"
+
+
+def settle_clock() -> float:
+    """The supervisor's clock for the target's settle: the one place it reads the time, which a test replaces."""
+    return time.time()
+
+
+def target_quiet_seconds(state: Path) -> float:
+    """The record's settle window, `<state>/target-quiet.json`'s `seconds`, else 600."""
+    seconds = json_object(state / TARGET_QUIET_FILE).get("seconds")
+    usable = (isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds == seconds
+              and 0 <= seconds < float("inf"))
+    return float(seconds) if usable else TARGET_QUIET_SECONDS
+
+
+def write_target_quiet(state: Path, seconds: float) -> None:
+    """Keep the record's settle window, through a temporary file, under the state lock the record's copies take."""
+    path = state / TARGET_QUIET_FILE
+    staging = path.with_name(f".{TARGET_QUIET_FILE}.{os.getpid()}")
+    with open(state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            staging.write_text(json.dumps({"seconds": seconds}, indent=2) + "\n")
+            os.replace(staging, path)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def target_settlement(peers: list[dict], log: list[dict], began: str, window: float, at: float) -> dict:
+    """Whether the target has settled at `at`, by Decision 20: a target peer merged, since this record began and since
+    the last settle the flow log's `targets` lines keep, nothing is checking or queued on any target peer now, and the
+    window has passed since the later of the last candidate entry in their journals and the last pass that saw one
+    busy. Each peer is `{key, busy, journal}`. Returns the unsettled `merges`, the `busy` peers, when the quiet began
+    (`since`) and is `due`, whether to `settle`, and the `settled` marks a settle would keep."""
+    settled: dict[str, int] = {}
+    quiet: list[float] = []
+    for row in log:
+        if isinstance(row.get("settled"), dict):
+            for key, through in row["settled"].items():
+                if type(through) is int:
+                    settled[key] = max(through, settled.get(key, 0))
+        seen = row.get("busyAt")
+        if isinstance(seen, (int, float)) and not isinstance(seen, bool):
+            quiet.append(float(seen))
+    merges, busy = [], []
+    for peer in peers:
+        if peer["busy"]:
+            busy.append(peer["key"])
+        for entry in peer["journal"]:
+            kind, moment = str(entry.get("kind") or ""), stamp_seconds(entry.get("at"))
+            if kind.startswith("candidate.") and moment is not None:
+                quiet.append(moment)
+            if (kind == "candidate.merged" and isinstance(entry.get("at"), str) and entry["at"] >= began
+                    and type(entry.get("id")) is int and entry["id"] > settled.get(peer["key"], 0)):
+                merges.append({"peer": peer["key"], "subject": entry.get("subject"), "entry": entry["id"]})
+    since = max(quiet) if quiet else None
+    due = since + window if since is not None else None
+    marks = dict(settled)
+    for merge in merges:
+        marks[merge["peer"]] = max(marks.get(merge["peer"], 0), merge["entry"])
+    return {"merges": merges, "busy": busy, "since": since, "due": due,
+            "settle": bool(merges) and not busy and due is not None and at >= due, "settled": marks}
 
 
 def peer_status_words(peer: dict) -> str:
@@ -8728,10 +8840,7 @@ def peer_line(peer: dict) -> str:
     state = json_object(Path(peer["state"]) / "state.json")
     if not state:
         return f"{said}: its record {peer['state']} can't be read"
-    current = ((state.get("meta") or {}).get("checking") or {}).get("now")
-    checking = current.get("subject") if isinstance(current, dict) else None
-    queued = [item.get("subject") for item in state.get("queue") or [] if isinstance(item, dict)
-              and item.get("stage") in ("queued", "syncing", "synced", "checked") and item.get("subject") != checking]
+    checking, queued = peer_queue(state)
     return f"{said}: checking {checking or 'nothing'}; queued {', '.join(queued) or 'nothing'}"
 
 
@@ -11758,14 +11867,15 @@ def supervisor_line(c) -> str | None:
     held, recorded = read_lock(supervisor_lock_path(c))
     if held:
         return (f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
-                + live_fallback(c.state) + on_fallback(c) + break_hold(c) + listener_words(c) + waits_on(c))
+                + live_fallback(c.state) + on_fallback(c) + break_hold(c) + listener_words(c) + waits_on(c)
+                + target_peer_words(c))
     said = closed_status(c)
     if said is not None:
         return "supervisor: " + said
     serving = view_serving(c.state)
     address = f"; live view {live_address(serving['port'])}" if serving else ""
     return (f"supervisor: down ({supervisor_down_words(c.state)}){address}; restart it with {flow_command()} "
-            "lead-run --resume" + break_hold(c) + listener_words(c) + waits_on(c))
+            "lead-run --resume" + break_hold(c) + listener_words(c) + waits_on(c) + target_peer_words(c))
 
 
 def live_fallback(state: Path) -> str:
@@ -12399,6 +12509,24 @@ def listener_words(c) -> str:
     return f"; the lead isn't listening: no lead-wait runs while {', '.join(needed)}" if needed else ""
 
 
+def target_quiet_argument(passed: list[str]) -> tuple[float | None, list[str]]:
+    """`--target-quiet SECONDS`, lead-wait's own option and not the wait's: the seconds, finite and not negative, and
+    the wait's arguments without it. None when it isn't given."""
+    quiet, rest, words = None, [], iter(passed)
+    for word in words:
+        if word == "--target-quiet" or word.startswith("--target-quiet="):
+            value = word.partition("=")[2] if "=" in word else next(words, "")
+            try:
+                quiet = float(value)
+            except ValueError:
+                quiet = -1.0
+            if not (0 <= quiet < float("inf")):
+                raise Stop(f"--target-quiet {value or '(nothing)'} is not a number of seconds, finite and not negative")
+            continue
+        rest.append(word)
+    return quiet, rest
+
+
 def lead_wait(args) -> None:
     """`delivery_state.py wait`, with a lease in the record while it runs. Takes the wait's own arguments; without
     `--after` it starts after the journal's last entry, and without `--output` it writes the default output."""
@@ -12406,7 +12534,9 @@ def lead_wait(args) -> None:
     if not (c.state / "state.json").exists():
         raise Stop(f"no record at {c.state}: lead-init starts it")
     record_session(c, "lead")
-    passed = list(args.wait_args)
+    quiet, passed = target_quiet_argument(list(args.wait_args))
+    if quiet is not None:
+        write_target_quiet(c.state, quiet)
     parsed = _validator().wait_arguments(passed)
     after = parsed.after
     if after is None:
@@ -15127,7 +15257,7 @@ class Supervisor:
             return cleanup_merged(c, doc, entry["laneWords"])
 
         steps = (("reconcile", reconcile_once), ("regions", lambda: settle_landings(c)), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
-                 ("peers", lambda: self.peer_merges(entry)),
+                 ("peers", lambda: self.peer_merges(entry)), ("target", lambda: self.target_settles(entry)),
                  ("lenses", lambda: journal_lens_returns(c)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
@@ -15232,6 +15362,55 @@ class Supervisor:
             if through != start:
                 append_log("peers", c.delivery, {"peer": peer["key"], "through": through})
         return "; ".join(said) or "nothing new"
+
+    def target_settles(self, entry: dict) -> str:
+        """Journal `target.settled` once the deliveries merging into this delivery's integration target have settled
+        after a merge, by target_settlement, reading the clock through settle_clock. A pass that sees a target peer
+        checking or queued keeps the moment in the flow log's `targets` log, and a settle keeps the last merge of each
+        peer it settled there as soon as it is journalled, so a supervisor started again journals nothing twice.
+        Nothing at all without an integration target or a delivery on it."""
+        c = self.c
+        target = integration_target(c)
+        if target is None:
+            return "no integration target"
+        found = peer_deliveries(c, target=True)
+        if not found:
+            return f"no delivery is registered on the target {target}"
+        scripts = str(c.release / "skills/orchestrate-work/scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import delivery_state
+        peers, said = [], []
+        for peer in found:
+            checking, queued = peer_queue(json_object(Path(peer["state"]) / "state.json"))
+            try:
+                theirs = delivery_state.read_journal(Path(peer["state"]))
+            except (delivery_state.StateError, OSError, ValueError):
+                said.append(f"{peer['key']}: its journal can't be read")
+                theirs = []
+            peers.append({"key": peer["key"], "busy": bool(checking or queued), "journal": theirs})
+        journal = load_state()["journal"]
+        at, window = settle_clock(), target_quiet_seconds(c.state)
+        settle = target_settlement(peers, read_log("targets", c.delivery), journal[0]["at"] if journal else now(),
+                                   window, at)
+        entry["targetSettle"] = {key: settle[key] for key in ("busy", "since", "due", "settle")}
+        if settle["busy"]:
+            append_log("targets", c.delivery, {"busyAt": at})
+            said.append(f"{', '.join(settle['busy'])} checking or queued on {target}")
+        elif not settle["merges"]:
+            said.append(f"nothing merged into {target} since its last settle")
+        elif not settle["settle"]:
+            said.append(f"{target} settles in {max(0, round(settle['due'] - at))}s if it stays quiet")
+        else:
+            merged = sorted({merge["peer"] for merge in settle["merges"]})
+            state_tool("journal", "--kind", "target.settled", "--subject", c.delivery, "--data", json.dumps(
+                {"target": target, "peers": merged, "stories": [merge["subject"] for merge in settle["merges"]
+                                                                 if isinstance(merge["subject"], str)],
+                 "seconds": window}))
+            # Kept at once, so a supervisor stopped mid-pass doesn't settle these merges again.
+            append_log("targets", c.delivery, {"settled": settle["settled"]})
+            said.append(f"{target} settled after {', '.join(merged)} merged")
+        return "; ".join(said)
 
     def peer_merge_files(self, peer: dict, merged: dict) -> tuple[str, set[str]] | None:
         """The commit a peer's merge made and the files it changed. The head comes from the entry's facts, the runner's or one
@@ -15643,6 +15822,8 @@ def lead_integrate(args) -> None:
         done = state_tool("journal", "--kind", "integration.landed", "--subject", c.delivery, "--data", json.dumps(
             {"target": target, "head": head}))
     print(f"recorded {args.fact} as entry {journal_id(done)} at {head[:10]}")
+    for line in target_peer_lines(c):
+        print(line)
 
 
 def moved_head_stands(c, doc: dict, head: str, last: dict | None) -> str:
@@ -17070,9 +17251,10 @@ class Doctor:
         """The other deliveries registered on this base, each with what its queue is checking and has queued; an
         entry that can't be read is named, and fails nothing."""
         found = peer_deliveries(self.delivery)
+        on_target = target_peer_lines(self.delivery)
         if not found:
-            return "ok", f"no other delivery is registered on {self.delivery.base_branch}"
-        return "ok", " | ".join(peer_line(peer) for peer in found)
+            return "ok", " | ".join([f"no other delivery is registered on {self.delivery.base_branch}", *on_target])
+        return "ok", " | ".join([*(peer_line(peer) for peer in found), *on_target])
 
     def merge_slot(self):
         return "ok", slot_line(self.delivery)

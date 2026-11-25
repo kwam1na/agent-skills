@@ -3093,6 +3093,37 @@
       "tracker": null,
       "instruction": "None: the supervisor journals a merge by another delivery on the base that changed a file one of this delivery's open stories names, and the entry shows in the record and the views."
     },
+    "target.settled": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Target settled",
+      "data": {
+        "target": {
+          "type": "name"
+        },
+        "peers": {
+          "type": "names"
+        },
+        "stories": {
+          "type": "names"
+        },
+        "seconds": {
+          "type": "seconds"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{target} settled",
+        "line": "Quiet for {seconds:duration} after {peers:list} merged {stories:list}"
+      },
+      "explain": "The deliveries merging into the integration target have been quiet for a while after a merge, so a review round or full run there can start.",
+      "tracker": null,
+      "instruction": "None: the supervisor journals that the deliveries merging into the integration target went quiet once a merge landed there, and the entry shows in the record and the views."
+    },
     "delivery.closed": {
       "altitude": "headline",
       "tone": "landed",
