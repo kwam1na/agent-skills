@@ -1229,6 +1229,27 @@ class TargetSettlementTests(unittest.TestCase):
         peers = [target_peer("P", happened(1, "candidate.merged", -7200))]
         self.assertEqual(self.settle(peers, offset=10 ** 6)["merges"], [])
 
+    def test_a_closed_peer_is_read_from_its_last_kept_record_and_never_once_that_record_is_gone(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            old, new = Path(folder) / "old", Path(folder) / "new"
+            for record in (old, new):
+                record.mkdir()
+                (record / "state.json").write_text("{}")
+            listed = {"key": "P", "state": str(old), "status": "none"}
+            # First listed: kept.
+            peers, rows = flow.kept_target_peers([listed], [])
+            self.assertEqual((peers, rows), ([listed], [{"peer": "P", "state": str(old)}]))
+            # Kept already, and listed at the same record: nothing more to keep.
+            self.assertEqual(flow.kept_target_peers([listed], rows)[1], [])
+            # Its record moves: kept again, and once it leaves the registry it is read from the new one.
+            moved = {**listed, "state": str(new)}
+            rows += flow.kept_target_peers([moved], rows)[1]
+            self.assertEqual(rows[-1], {"peer": "P", "state": str(new)})
+            self.assertEqual(flow.kept_target_peers([], rows), ([{"key": "P", "state": str(new)}], []))
+            # A closed peer whose record is gone is not read.
+            (new / "state.json").unlink()
+            self.assertEqual(flow.kept_target_peers([], rows), ([], []))
+
     def test_the_window_is_the_records_and_six_hundred_seconds_without_one(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             state = Path(folder)

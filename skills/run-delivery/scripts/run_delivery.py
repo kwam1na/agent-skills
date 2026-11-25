@@ -8826,6 +8826,18 @@ def target_quiet_argument(passed: list[str]) -> tuple[float | None, list[str]]:
     return quiet, rest
 
 
+def kept_target_peers(found: list[dict], log: list[dict]) -> tuple[list[dict], list[dict]]:
+    """The target peers the settle reads, and the flow log rows to keep. Each listed peer's record is kept once it is
+    listed and again when its path changes, the last row winning. A kept peer that has left the registry, as one that
+    closed inside the window has, is still read while its record has a state.json, so its last merge settles."""
+    known = {row["peer"]: row["state"] for row in log
+             if isinstance(row.get("peer"), str) and isinstance(row.get("state"), str)}
+    rows = [{"peer": peer["key"], "state": peer["state"]} for peer in found if known.get(peer["key"]) != peer["state"]]
+    listed = {peer["key"] for peer in found}
+    return [*found, *({"key": key, "state": state} for key, state in sorted(known.items())
+                      if key not in listed and (Path(state) / "state.json").exists())], rows
+
+
 def target_settlement(peers: list[dict], log: list[dict], began: str, window: float, at: float) -> dict:
     """Whether the target has settled at `at`, by Decision 20: a target peer merged, since this record began and since
     the last settle the flow log's `targets` lines keep, nothing is checking or queued on any target peer now, and the
@@ -15398,17 +15410,9 @@ class Supervisor:
         if target is None:
             return "no integration target"
         log = read_log("targets", c.delivery)
-        # Each target peer's record, kept once it is listed: a peer that closes, and so leaves the registry, inside the
-        # window is still read, so its last merge settles.
-        known = {row["peer"]: row["state"] for row in log
-                 if isinstance(row.get("peer"), str) and isinstance(row.get("state"), str)}
-        found = peer_deliveries(c, target=True)
-        for peer in found:
-            if known.get(peer["key"]) != peer["state"]:
-                append_log("targets", c.delivery, {"peer": peer["key"], "state": peer["state"]})
-        listed = {peer["key"] for peer in found}
-        found += [{"key": key, "state": state} for key, state in sorted(known.items())
-                  if key not in listed and (Path(state) / "state.json").exists()]
+        found, kept = kept_target_peers(peer_deliveries(c, target=True), log)
+        for row in kept:
+            append_log("targets", c.delivery, row)
         if not found:
             return f"no delivery is registered on the target {target}"
         scripts = str(c.release / "skills/orchestrate-work/scripts")
