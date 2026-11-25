@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from .catalog import resolve_profile
-from .validate import canonical_json, safe_relative_path, validate_corpus
+from .validate import canonical_json, safe_relative_path, sentence_text, validate_corpus
 
 
 MAX_ENTRIES = 512
@@ -129,6 +129,10 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         if (document.get("id") != selected_profile or not isinstance(includes, list)
                 or not all(isinstance(included, str) for included in includes)):
             raise ReleaseError(f"release.profile: profile {selected_profile} is malformed")
+        # The source keeps the description as a list of sentences; the archive
+        # carries the rendered string, so adopters read the bytes they always did.
+        if "description" in document:
+            document = dict(document, description=sentence_text(document["description"]))
         profile_documents[selected_profile] = document
         pending.extend(document["includes"])
     members = resolve_profile(profile_id, profile_documents)
@@ -139,6 +143,8 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
     selected_paths: list[str] = []
     for member in members:
         skill = dict(skills[member])
+        if "degradedBehavior" in skill:
+            skill["degradedBehavior"] = sentence_text(skill["degradedBehavior"])
         skill["profiles"] = [
             selected_profile
             for selected_profile in skill["profiles"]

@@ -7736,10 +7736,27 @@ def check_candidate_ownership(c, key: str, base: str, head: str) -> str:
         queued = next((item for item in state["queue"] if item["subject"] == key), None)
         if queued and queued.get("assignedLane", queued["lane"]) != queued["lane"] and queued["stage"] != "stopped":
             raise Stop(f"{key} has a hand-off from {queued['lane']}; the lead must settle or return it first")
-        _, outside = candidate_ownership(c, lane, base, head, state)
+        changed, outside = candidate_ownership(c, lane, base, head, state)
         if outside:
-            raise Stop(f"writer_not_owned: {key} changes files outside {lane}'s: {outside}")
+            raise Stop(f"writer_not_owned: {key} changes files outside {lane}'s: {outside}"
+                       + whole_file_requests(c, lane, [path for path in outside if path in changed], state))
     return lane
+
+
+def whole_file_requests(c, lane: str, paths: list[str], state: dict) -> str:
+    """The lead's command that clears each whole file ``lane`` changes outside its claims before review: a grant of a
+    file no lane holds, or a move of the pattern another lane holds it by, as lead-assign --own-co-changed names it.
+    `lead-accept --take` is for a file narrowed out of the lane's claims after it handed off, so a hand-off never
+    needs it."""
+    ownership, command, requests = c.effective_ownership(state), flow_command(), []
+    for path in paths:
+        held = [(other, pattern) for other in owners_of(ownership, path) if other != lane
+                for pattern in ownership[other] if fnmatch.fnmatchcase(path, pattern)]
+        requests.extend(f"\n    {command} lead-own --move {shlex.quote(pattern)} --lane {shlex.quote(lane)} "
+                        f"--from {shlex.quote(other)}" for other, pattern in held)
+        if not held:
+            requests.append(f"\n    {command} lead-own --grant {shlex.quote(path)} --lane {shlex.quote(lane)}")
+    return f"; the lead clears each whole file before hand-off with:{''.join(requests)}" if requests else ""
 
 
 def story_named_files(c, key: str, tracked: list[str]) -> list[str]:
@@ -17383,8 +17400,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--reuse", help="with --checks: check ids whose hand-off records the queue may reuse across paths the "
                    "candidate doesn't change, recorded through select as the lead's grant; needs --why")
     p.add_argument("--take", action="append", metavar="PATH",
-                   help="grant the lane a whole-file claim on a file the candidate changes outside its owns, then "
-                   "accept; repeatable, and needs --why")
+                   help="for a file the lead narrowed out of the lane's claims after it handed off: grant the lane a "
+                   "whole-file claim on it, then accept; repeatable, and needs --why. Before hand-off, review-prepare "
+                   "and handoff refuse an out-of-lane file, and lead-own --grant clears it")
     p.add_argument("--why", help="with --reuse: why that reuse is safe; with --take: why the lane takes each file, "
                    "journalled as the lead's decision"); p.set_defaults(fn=lead_accept)
     p = command(sub, "lead-base-broken", help="name the base broken before a base re-run's verdict, ending a re-run at "
