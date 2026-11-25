@@ -102,7 +102,36 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .inner { width: 100%; max-width: 980px; margin-inline: auto; display: grid; gap: 24px; }
 .kicker { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .title { margin: 0; font-family: var(--display); font-weight: 500; font-size: clamp(28px, 4.2vw, 44px); line-height: 1.1; letter-spacing: -0.02em; max-width: 24ch; }
-.chapter-now .title { font-size: clamp(38px, 6vw, 64px); font-weight: 300; line-height: 1.04; max-width: 17ch; text-wrap: balance; }
+/* On Now the delivery's name steps back to a quiet second line under its kicker: the sentence beneath it leads. */
+.chapter-now .title { font-size: clamp(20px, 2.4vw, 26px); font-weight: 400; line-height: 1.2; max-width: 40ch; color: var(--soft); text-wrap: balance; }
+/* Now's lead, as direction D draws it: one sentence in the display face, the four marks on one thread, the one fact quiet
+   beneath. A mark's shape is its state: done is filled ink, live a ring with a halo, stop the stop colour, todo a faint
+   ring. The thread is solid where the work has passed and dashed ahead of it. Trouble alone is coloured. */
+.now-state { display: grid; gap: 28px; }
+.now-sentence { margin: 0; font-family: var(--display); font-weight: 400; font-size: clamp(30px, 4.6vw, 48px); line-height: 1.12;
+  letter-spacing: -0.015em; max-width: 22ch; color: var(--ink); text-wrap: pretty; overflow-wrap: anywhere; }
+.now-sentence a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+.now-sentence a:hover { color: var(--soft); }
+.now-sentence.is-stop { color: var(--held); }
+.now-marks { display: flex; align-items: flex-start; max-width: 640px; margin: 0; padding: 0; list-style: none; }
+.now-mark { position: relative; flex: 1 1 0; min-width: 0; display: grid; grid-template-rows: 12px auto; row-gap: 10px; padding-right: 8px; }
+.now-mark:last-child { flex: none; padding-right: 0; }
+.now-mark::after { content: ""; position: absolute; top: 5px; left: 12px; right: 0; height: 2px;
+  background: repeating-linear-gradient(90deg, var(--edge) 0 4px, transparent 4px 8px); opacity: .7; }
+.now-mark.is-done:has(+ .now-mark:not(.is-todo))::after { background: var(--ink); opacity: 1; }
+.now-mark:last-child::after { content: none; }
+.now-dot { position: relative; z-index: 1; box-sizing: border-box; width: 12px; height: 12px; border-radius: 50%; }
+.now-mark.is-done .now-dot { background: var(--ink); }
+.now-mark.is-live .now-dot { border: 2px solid var(--ink); background: var(--paper); box-shadow: 0 0 0 4px color-mix(in oklab, var(--ink) 9%, transparent); }
+.now-mark.is-stop .now-dot { background: var(--held); box-shadow: 0 0 0 4px color-mix(in oklab, var(--held) 16%, transparent); }
+.now-mark.is-todo .now-dot { border: 2px solid var(--hair); background: var(--paper); }
+.now-mark-label { font-size: 12px; line-height: 16px; color: var(--faint); overflow-wrap: anywhere; }
+.now-mark.is-live .now-mark-label { color: var(--ink); font-weight: 500; }
+.now-mark.is-stop .now-mark-label { color: var(--held); font-weight: 500; }
+.now-fact { margin: 0; font-size: 14px; line-height: 1.45; color: var(--soft); max-width: 60ch; }
+.now-fact a { color: inherit; text-underline-offset: 3px; }
+.now-fact.is-stop { color: var(--held); }
+.chapter-now .now-state + .plan-now, .chapter-now .now-state + .say { margin-top: -6px; }
 .title b { font-weight: 500; }
 .say { margin: 0; color: var(--soft); max-width: 60ch; font-size: 16px; }
 .kicker .issue-link { white-space: nowrap; }
@@ -885,7 +914,6 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 /* Under the outcome, how much is proven, linked to the plan, and how often the plan changed, on one quiet line. */
 .plan-now-line { display: block; margin-top: 6px; font-size: 14px; color: var(--soft); }
 .plan-now-line .plan-now-link { display: inline; margin: 0; }
-.plan-now-line .now-count { font-weight: 500; color: var(--ink); }
 .plan-now-link:hover, .plan-now-link:focus-visible { color: var(--ink); text-decoration-color: currentColor; }
 .plan-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; max-width: none; }
 /* The plan on the page is older than the record's: said in a quiet line under the headline, with the one thing to do. */

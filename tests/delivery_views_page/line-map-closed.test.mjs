@@ -75,7 +75,7 @@ test("a planned piece reads as not landed at the close, whatever stage it claims
   const stop = shown.app.querySelector(':is(.stop-btn, .mg-tick)[data-subject="P"]');
   expect(stop.className.trim()).toBe("stop-btn unlanded");
   expect(stop.getAttribute("aria-label")).toBe("Work P, Not landed");
-  expect(shown.app.querySelector("#now .now-count").textContent).toBe("Closed with 1 of 2 pieces landed");
+  expect(shown.app.querySelector("#now .now-sentence").textContent).toBe("Closed Oct 30: 1 of 2 stories landed.");
 });
 
 test("a closed delivery's plan says each proof a unit still owes was never given, not that it is still to come", async () => {
@@ -145,8 +145,8 @@ test("a close that stopped partway says so and names a resumed supervisor when t
   const box = await partway(closing());
   expect(box.querySelector(".ah").textContent).toBe("The close stopped partway");
   expect(box.querySelector("p").textContent).toBe("The delivery was closed, but its close-out stopped before it finished. Finish it with lead-run --resume.");
-  // The title still says the delivery closed.
-  expect((await open(closing()))[0].app.querySelector("#now .now-count").textContent).toBe("Every piece landed");
+  // Now still says the delivery closed.
+  expect((await open(closing()))[0].app.querySelector("#now .now-sentence").textContent).toBe("Delivered Oct 30: 1 story landed.");
 });
 
 test("a planned piece the plan removed holds nothing, so the close still finishes with a resumed supervisor", async () => {

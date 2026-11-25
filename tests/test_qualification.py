@@ -65,8 +65,19 @@ class QualificationTests(unittest.TestCase):
             directory = Path(temporary)
             archive, metadata = build_product(directory, "core", "core-qualification-fixture")
             output = directory / "core.json"
-            result = self._run_qualification(archive, metadata, output, directory)
+            # The machine's own ledger, recording an override: views rendered against it would gain a Machine
+            # section, so the pinned views pass only when the qualifier gives its sensors a ledger of their own.
+            ledger = directory / "machine"
+            ledger.mkdir()
+            (ledger / "history.jsonl").write_text(json.dumps({
+                "schemaVersion": "machine-history/1", "at": "2026-11-25T00:38:00Z", "event": "override",
+                "label": "lens run", "admittedBy": "now", "why": "an operator's reason", "waitedSeconds": 0,
+            }) + "\n", encoding="utf-8")
+            before = {path.name: path.read_bytes() for path in ledger.iterdir()}
+            with mock.patch.dict(os.environ, {"AGENT_SKILLS_MACHINE_DIR": str(ledger)}):
+                result = self._run_qualification(archive, metadata, output, directory)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual({path.name: path.read_bytes() for path in ledger.iterdir()}, before)
             record = json.loads(output.read_text(encoding="utf-8"))
             verified = verify_release(archive, metadata)
         self.assertEqual(set(record), {
@@ -451,6 +462,31 @@ class QualificationTests(unittest.TestCase):
                     self.assertEqual(record["result"], "failed")
                     self.assertEqual(record["failure"], f"candidate-process:{returncode}")
                     self.assertNotIn("secret stderr", json.dumps(record))
+
+    def test_each_candidate_scenario_gets_a_fresh_machine_ledger_of_its_own(self) -> None:
+        runner = _load_runner()
+        scenario = "workflow-graph-conformance"
+        passing = runner._run(scenario, lambda checkpoint: checkpoint.check(True, "asserted"))
+        seen = []
+
+        def run(arguments, **options):
+            ledger = Path(options["env"]["AGENT_SKILLS_MACHINE_DIR"])
+            seen.append((ledger, ledger.is_dir() and not any(ledger.iterdir())))
+            return subprocess.CompletedProcess(arguments, 0, json.dumps(passing), "")
+
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.dict(os.environ, {"AGENT_SKILLS_MACHINE_DIR": str(Path(temporary) / "real")}), \
+                mock.patch.object(runner.subprocess, "run", side_effect=run):
+            directory = Path(temporary)
+            for base in (directory / "one", directory / "two"):
+                base.mkdir()
+                runner._candidate_scenario(scenario, directory / "candidate", base,
+                                           directory / "archive.zip", directory / "metadata.json")
+        self.assertEqual(len(seen), 2)
+        (first, first_empty), (second, second_empty) = seen
+        self.assertTrue(first_empty and second_empty)
+        self.assertNotEqual(first, second)
+        self.assertTrue(first.is_relative_to(directory / "one") and second.is_relative_to(directory / "two"))
 
     def test_unexpected_failure_retains_only_a_stable_non_secret_summary(self) -> None:
         runner = _load_runner()

@@ -625,8 +625,9 @@ def selected_files(directory):
     names=['state.json','journal.jsonl','plan.json',render.NEEDS_FILE]
     if any((directory/name).is_symlink() or not (directory/name).resolve().is_relative_to(directory)
            for name in [*names,'review-artifacts']):raise PublishError('source_path')
-    # The files view's reads, which the local page reads as unreadable when they can't be trusted, as the cut does.
-    names.append(render.LANE_CHANGES_FILE)
+    # The files view's reads, and the forge's checks on the change request, which the local page leaves out when they
+    # can't be trusted, as the cut does.
+    names+=[render.LANE_CHANGES_FILE,render.FORGE_FILE]
     state=render.review_state.read_state(directory)
     journal=render.review_state.read_journal(directory)
     subjects={row['subject'] for name in ('queue','planned') for row in state.get(name,[])}
@@ -697,10 +698,10 @@ def collect(inputs,arguments=None):
                     summary=render._read_run(run,run_id,rows[run_id],config['findings']['reportSpecs'])
                     if summary is None:raise PublishError('source_invalid',transient=True)
                     runs[run_id]=summary
-        # The same cut the local live view renders: its files view and the integration's drift, read here as there.
+        # The same cut the local live view renders: its files view and the forge's checks on the change request, read here as there.
         value=public.project(doc,runs,config,source_fingerprint='0'*64,
               plan=render.read_plan_block(directory,doc),needs=render.read_needs_block(directory),
-              files=render.read_lane_changes_block(directory),repository=root)
+              files=render.read_lane_changes_block(directory),repository=root,forge=render.read_forge_block(directory,doc))
         # Close the complete collection interval, including optional inputs and
         # payload construction, rather than verifying APIs before those reads.
         before=copy.deepcopy(trace)

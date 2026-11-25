@@ -94,7 +94,9 @@ test("draws the run as a line map, chapter by chapter", async () => {
   expect(now.querySelector("h1.title")?.textContent).toBe("Checkout resilience");
   // The tracker item the delivery is listed under opens in the tracker.
   expect(now.querySelector(".kicker a")?.getAttribute("href")).toBe("https://tracker.example/issue/PAY-2354");
-  expect(now.querySelector(".now-count")?.textContent).toBe("1 of 8 pieces have landed");
+  // Now leads with where it stands: the stories in, and the one being checked, linked to its ticket.
+  expect(now.querySelector(".now-sentence")?.textContent).toBe("1 of 8 stories are in. PAY-2361 is being checked.");
+  expect(now.querySelector(".now-sentence a")?.getAttribute("href")).toBe("https://tracker.example/issue/PAY-2361");
   // What landed last is the chapter's second fact, after the stories landed: its title, then its ticket, its pull request and how long ago.
   expect(now.querySelector(".facts > .fact:nth-child(2)")?.textContent).toBe("Last landedHold the cart through a payment redirectPAY-2358 · #1101 · 44 minutes ago");
   const checking = now.querySelector(".checking").textContent;
@@ -954,7 +956,7 @@ test("follows the live store: its pushes, its read, and its connection", async (
   const headline = (snapshot) => snapshot.app.querySelector("#now h1.title")?.textContent;
   expect(headline(before)).toBe("Checkout resilience");
   expect(headline(pushed)).toBe("Checkout resilience, later");
-  expect(pushed.app.querySelector("#now .now-count")?.textContent).toBe("2 of 8 pieces have landed");
+  expect(pushed.app.querySelector("#now .now-sentence")?.textContent).toBe("2 of 8 stories are in. PAY-2362 is being checked.");
   expect(pushed.source).toBe("live");
   expect(pushed.app.querySelector(".since")?.textContent).toContain("Live");
   expect(down.app.querySelector(".since")?.textContent).toContain("Reconnecting. Showing the last update.");
@@ -1335,21 +1337,21 @@ test("the delivery's name heads the page, without a ticket key the kicker alread
   expect(kicker.firstChild.tagName).toBe("A");
   expect(kicker.textContent).toMatch(/^PAY-9 · Started .+ ago$/);
   expect((await shown(named("Checkout resilience"))).querySelector("#now .kicker").textContent).toMatch(/^Started .+ ago$/);
-  // The headline is the name, not the count, which leads the line under it.
-  expect(other.querySelector("#now h1.title .now-count")).toBeNull();
-  expect(other.querySelector("#now .plan-now-line").firstChild.className).toBe("now-count");
+  // The headline is the name; where the delivery stands is Now's sentence, right under it.
+  expect(other.querySelector("#now h1.title .now-sentence")).toBeNull();
+  expect(other.querySelector("#now h1.title").nextElementSibling.className).toBe("now-state");
   // It never wraps: a kicker too long for its line ends in an ellipsis.
   const css = readFileSync(path.join(ROOT, "skills/delivery-views/assets/line-map.css"), "utf8");
   expect(css).toContain(".kicker { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; "
     + "white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }");
-  // The count is medium weight, in ink, on the line's softer text.
-  expect(css).toContain(".plan-now-line .now-count { font-weight: 500; color: var(--ink); }");
+  // Now's sentence leads in the display face; the name steps back above it.
+  expect(css).toContain(".now-sentence { margin: 0; font-family: var(--display); font-weight: 400;");
   // The skill's page says the same opening.
   const skill = readFileSync(path.join(ROOT, "skills/delivery-views/SKILL.md"), "utf8").replace(/\s+/g, " ");
-  expect(skill).toContain("Under the delivery's name, its count line says \"Every piece landed\" only when every piece and every live "
-    + "plan unit landed");
-  expect(skill).toContain("The line map shows the first as the count under the delivery's name, without its full stop, and the "
-    + "siblings' sentences below it; the Markdown view and the built-in page say them as they are.");
+  expect(skill).toContain("Now's sentence says \"Delivered <day>: N stories landed.\" only when every piece and every live plan "
+    + "unit landed");
+  expect(skill).toContain("The line map shows the first as Now's sentence, and the siblings' sentences below it; the Markdown view and "
+    + "the built-in page say them as they are.");
 });
 
 test("reads the live record once it is open, and says when it cannot", async () => {

@@ -48,5 +48,5 @@ jobs:
         run: python scripts/cut-release.py --version v0.0.0-rc.0 --out "$RUNNER_TEMP/release"
       - name: Check its outputs and that the tree is unchanged
         run: |
-          test "$(ls "$RUNNER_TEMP/release" | wc -l)" -eq 14
+          test "$(ls "$RUNNER_TEMP/release" | wc -l)" -eq 16
           test -z "$(git status --porcelain)"

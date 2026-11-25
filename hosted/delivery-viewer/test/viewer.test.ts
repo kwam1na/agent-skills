@@ -822,8 +822,11 @@ describe("the hosted page draws what the local page draws", () => {
       hosted.window.close();
     }
   });
-  /** The full record with region claims, a files view, a drift and, when `closed`, what it left open. */
-  function blocksRecord(moved: number, paths: string[], closed = false): PublicProjection {
+  /**
+   * The full record with region claims, a files view, its change request opened with `failing` forge checks failing on
+   * the target too and, when `closed`, what it left open.
+   */
+  function blocksRecord(failing: number, paths: string[], closed = false): PublicProjection {
     const body = fullRecord() as PublicProjection & Record<string, any>;
     const state = body.document.state as Record<string, any>;
     state.laneOwnership = { "lane-1": ["src/*", "docs/*"] };
@@ -833,7 +836,14 @@ describe("the hosted page draws what the local page draws", () => {
         mergeBase: "b".repeat(40), readAt: "2026-10-30T07:39:00Z",
         files: paths.map((path) => ({ path, holds: "file", changes: [] })) } },
       files: paths.map((path) => ({ path, lines: 10, lanes: ["lane-1"] })) };
-    body.integration = { drift: { moved, behind: 1 } };
+    const journal = body.document.journal as Record<string, any>[];
+    const key = (state.meta as Record<string, unknown>).trackerParent;
+    const round = journal.filter((entry) => entry.kind === "review.round" && entry.subject === key).pop()!;
+    journal.push({ id: journal.length + 50, at: "2026-10-30T07:45:00Z", kind: "integration.requested", lane: null, subject: key,
+      data: { changeRequest: "https://github.com/acme/app/pull/7", head: round.data.head } });
+    body.integration = { checks: { pending: 0, failing: Array.from({ length: failing }, (_, index) => ({ name: `check-${index}`, onTarget: true })) } };
+    // Updated just now, so the page's fact is the forge's word rather than that the record may be out of date.
+    (state.meta as Record<string, unknown>).updatedAt = new Date().toISOString();
     if (closed) {
       const journal = body.document.journal as Record<string, unknown>[];
       journal.push({ id: journal.length + 100, at: "2026-10-30T08:00:00Z", kind: "delivery.closed", lane: null, subject: null, data: {} });
@@ -842,10 +852,10 @@ describe("the hosted page draws what the local page draws", () => {
     projection(body);
     return body;
   }
-  it("reads the files view, the drift and what a closed delivery left open from the viewer's seed and its store's pushes", async () => {
+  it("reads the files view, the forge's checks and what a closed delivery left open from the viewer's seed and its store's pushes", async () => {
     const assets = JSON.parse(readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8")) as
       { renderer: string; viewer: string };
-    let served = await revision(1, blocksRecord(3, ["src/one.py"]));
+    let served = await revision(1, blocksRecord(1, ["src/one.py"]));
     const dom = testDOM();
     Object.assign(dom.window, {
       fetch: async (url: string) => url.endsWith("/current") ? Response.json(served.meta)
@@ -860,7 +870,7 @@ describe("the hosted page draws what the local page draws", () => {
       const store = Reflect.get(dom.window, "deliveryStateStore") as ReturnType<typeof createViewStore>;
       dom.window.eval(assets.renderer);
       // The first draw reads the blocks the viewer seeded, as the local page reads the ones it embeds.
-      await vi.waitFor(() => expect(words()).toContain("main moved 3 commits while this worked"));
+      await vi.waitFor(() => expect(words()).toContain("1 forge check fails, on main too."));
       expect(dom.window.document.querySelector("details.files-fold summary")!.textContent).toBe("Who holds which files");
       expect(files()).toContain("src/one.py");
       const local = drawn(served.body, false);
@@ -870,11 +880,11 @@ describe("the hosted page draws what the local page draws", () => {
         local.window.close();
       }
       // A pushed projection moves each block, as a rewritten local page does.
-      served = await revision(2, blocksRecord(5, ["src/one.py", "docs/new.md"]));
+      served = await revision(2, blocksRecord(2, ["src/one.py", "docs/new.md"]));
       await store.poll();
-      await vi.waitFor(() => expect(words()).toContain("main moved 5 commits while this worked"));
+      await vi.waitFor(() => expect(words()).toContain("2 forge checks fail, on main too."));
       expect(files()).toContain("docs/new.md");
-      served = await revision(3, blocksRecord(5, ["src/one.py"], true));
+      served = await revision(3, blocksRecord(2, ["src/one.py"], true));
       await store.poll();
       await vi.waitFor(() => expect(words()).toContain("Work A was left stopped"));
       expect(dom.window.document.querySelector(".left-open .ah")!.textContent).toBe("What it left open");

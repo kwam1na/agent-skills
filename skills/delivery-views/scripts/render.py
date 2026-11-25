@@ -1464,6 +1464,28 @@ def need_row(item: dict, cut) -> dict:
     return row
 
 
+# The kinds of item that hold the close while nobody can act on them, such as a tracker behind the record, which
+# catches up on its own: the page keeps them in "Needs you", never as holding up the finish.
+NEEDS_QUIET = ("trackerLag",)
+
+
+def needs_summary(items: list[dict]) -> str:
+    """The sentence "Needs you" opens with, said again from the table of wait sentences as the supervisor says it: how
+    many items wait on whom, the operator first, and how many of them hold up the finish."""
+    table = review_state.load_wait_words()
+    if not items:
+        return review_state.wait_said(table, "needsYou", "summary", {"shape": "empty", "parts": [], "holding": 0})
+    whom: dict[str, int] = {}
+    for item in sorted(items, key=lambda item: item.get("who") != "operator"):
+        whom[item.get("who") or "lead"] = whom.get(item.get("who") or "lead", 0) + 1
+    parts = [review_state.wait_said(table, "needsYou", "part", {
+        "count": count, "whom": review_state.wait_said(table, "needsYou", "whom", {"who": who})}) for who, count in whom.items()]
+    holding = sum(1 for item in items if item["holding"])
+    shape = ("none" if not holding else "it" if len(items) == 1 else "all" if holding == len(items)
+             else "one" if holding == 1 else "some")
+    return review_state.wait_said(table, "needsYou", "summary", {"shape": shape, "parts": parts, "holding": holding})
+
+
 def read_needs_block(state_directory: Path) -> dict | None:
     """The page's "Needs you" block: None when no supervisor wrote a list, {"unreadable": True} for one that can't be
     trusted, or the list as written, its texts cut to their share. The page decides whether it is current."""
@@ -1499,6 +1521,18 @@ def read_needs_block(state_directory: Path) -> dict | None:
                           if name in NEEDS_WORDS and isinstance(value, str)}
     if len(items) > NEEDS_ITEMS:
         block["more"] = len(items) - NEEDS_ITEMS
+    # An item nobody can act on keeps its row, and stops claiming to hold up the finish: the opening sentence is said
+    # again without it, or left out when the table can't say it.
+    quiet = [item for item in written["items"] if item.get("kind") in NEEDS_QUIET and item["holding"]]
+    if quiet:
+        for row, item in zip(block["items"], items):
+            if item.get("kind") in NEEDS_QUIET:
+                row["holding"] = False
+        try:
+            block["summary"] = cut(needs_summary([{**item, "holding": item["holding"] and item.get("kind") not in NEEDS_QUIET}
+                                                  for item in items]))
+        except (OSError, ValueError, KeyError, TypeError):
+            block.pop("summary", None)
     return block
 
 
@@ -1662,61 +1696,53 @@ def left_open(document: dict) -> dict | None:
         return None
 
 
-# The integration facts that name the integration's head, in journal order; integration.landed ends it and names the
-# target's. A review round is one only under the delivery's own key.
-INTEGRATION_HEADS = ("integration.merged", "integration.suite", "integration.requested")
-DRIFT_TIMEOUT_SECONDS = 5
+# What the forge says of the integration's change request, as its snapshot kept beside the record: whether its checks
+# still run and which fail, each with whether the target fails it too. Only read here, for Now's sentence and fact.
+
+FORGE_FILE = "snapshots/forge.json"
+FORGE_LIMIT_BYTES = 4 * 1024 * 1024
+FORGE_FAILING = 50
+FORGE_NAME = 200
 
 
-def integration_head(document: dict) -> str | None:
-    """The integration's current head: the newest head an integration fact names, or the base head before any."""
-    state = document.get("state") if _is_object(document.get("state")) else {}
+def read_forge_block(state_directory: Path, document: object) -> dict | None:
+    """The forge's checks on the integration's latest change request, ``{"checks": {"pending", "failing": [{"name",
+    "onTarget"}]}}``, from the forge snapshot's item for that request. None for a record without an integration or a
+    request, with no snapshot or no item for the request, and whenever the item's checks can't be trusted."""
+    state = document.get("state") if _is_object(document) and _is_object(document.get("state")) else {}
     meta = state.get("meta") if _is_object(state.get("meta")) else {}
-    key = meta.get("trackerParent")
-    head = meta.get("baseHead") if isinstance(meta.get("baseHead"), str) else None
-    for entry in document.get("journal") if isinstance(document.get("journal"), list) else ():
-        if not _is_object(entry) or not _is_object(entry.get("data")):
-            continue
-        if entry.get("kind") in INTEGRATION_HEADS or (entry.get("kind") == "review.round" and key is not None
-                                                      and entry.get("subject") == key):
-            named = entry["data"].get("head")
-            head = named if isinstance(named, str) else head
-    return head
-
-
-def integration_drift(document: dict, repository: Path | None = None) -> dict | None:
-    """How far the integration's target moved while it worked, ``moved``, and how far its current head is behind the
-    target, ``behind``, each a count of commits on the remote-tracking ref in the repository the renderer runs in. None
-    for a record without an integration, and whenever git can't say: absent, slow, missing a ref, or failing."""
-    state = document.get("state") if _is_object(document.get("state")) else {}
-    meta = state.get("meta") if _is_object(state.get("meta")) else {}
-    integration = meta.get("integration")
-    if not _is_object(integration) or not all(isinstance(integration.get(name), str) and integration[name]
-                                              for name in ("target", "remote")):
+    if not _is_object(meta.get("integration")):
         return None
-    started = next((entry["data"]["base"].get("head") for entry in document.get("journal") or []
-                    if _is_object(entry) and entry.get("kind") == "record.started" and _is_object(entry.get("data"))
-                    and _is_object(entry["data"].get("base"))), None)
-    current = integration_head(document)
-    target = f"refs/remotes/{integration['remote']}/{integration['target']}"
-    counts = []
-    for since in (started, current):
-        if not isinstance(since, str) or not re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", since):
+    requests = [entry["data"]["changeRequest"] for entry in (document.get("journal") if isinstance(document.get("journal"), list) else ())
+                if _is_object(entry) and entry.get("kind") == "integration.requested" and _is_object(entry.get("data"))
+                and isinstance(entry["data"].get("changeRequest"), str) and entry["data"]["changeRequest"]]
+    if not requests:
+        return None
+    path = state_directory / FORGE_FILE
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > FORGE_LIMIT_BYTES:
             return None
-        try:
-            done = subprocess.run(["git", "rev-list", "--count", f"{since}..{target}", "--"], cwd=repository,
-                                  capture_output=True, text=True, timeout=DRIFT_TIMEOUT_SECONDS)
-        except (OSError, subprocess.SubprocessError):
+        snapshot = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    items = snapshot.get("items") if _is_object(snapshot) else None
+    found = next((item for item in items if _is_object(item) and item.get("changeRequest") == requests[-1]), None) \
+        if isinstance(items, list) else None
+    checks = found.get("checks") if found is not None else None
+    if not _is_object(checks) or type(checks.get("pending")) is not int or checks["pending"] < 0 \
+            or not isinstance(checks.get("failing"), list):
+        return None
+    failing = []
+    for check in checks["failing"][:FORGE_FAILING]:
+        if not _is_object(check) or not isinstance(check.get("name"), str) or type(check.get("onTarget")) is not bool:
             return None
-        if done.returncode != 0 or not done.stdout.strip().isdigit():
-            return None
-        counts.append(int(done.stdout.strip()))
-    return {"moved": counts[0], "behind": counts[1]}
+        failing.append({"name": check["name"][:FORGE_NAME], "onTarget": check["onTarget"]})
+    return {"checks": {"pending": checks["pending"], "failing": failing}}
 
 
 def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
                   plan: dict | None = None, needs: dict | None = None, story: bool = True,
-                  files: dict | None = None, repository: Path | None = None) -> dict:
+                  files: dict | None = None, repository: Path | None = None, forge: dict | None = None) -> dict:
     """The shared bounded view data; the local page and the hosted snapshot consume the same cut. Without ``story``,
     the record is not narrated."""
     reviews = native_review_summaries(document)
@@ -1760,18 +1786,17 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
     if story:
         # What a closed delivery left open goes with the story too.
         data["leftOpen"] = left_open(document)
-        # How far the target moved goes with the story: it is read from the repository the cut is made in.
-        drift = integration_drift(document, repository)
-        if drift is not None:
-            data["integration"] = {"drift": drift}
+        # What the forge says of the change request goes with the story: Now's sentence and fact read it.
+        if forge is not None:
+            data["integration"] = forge
     return data
 
 
 def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
                     plan: dict | None = None, needs: dict | None = None, files: dict | None = None,
-                    operator: str | None = None, repository: Path | None = None) -> str:
+                    operator: str | None = None, repository: Path | None = None, forge: dict | None = None) -> str:
     data = line_map_data(document, runs, config, theme_key=theme_key, history=history, plan=plan, needs=needs,
-                         files=files, repository=repository)
+                         files=files, repository=repository, forge=forge)
     document, runs, reviews, view = (data[key] for key in ("document", "runs", "reviews", "view"))
     return "\n".join([
         "<!doctype html>",
@@ -1882,6 +1907,7 @@ def line_map(arguments: argparse.Namespace) -> int:
                            plan=read_plan_block(inputs.state_directory, document),
                            needs=read_needs_block(inputs.state_directory),
                            files=read_lane_changes_block(inputs.state_directory),
+                           forge=read_forge_block(inputs.state_directory, document),
                            operator=checkout_operator(inputs.root), repository=inputs.root)
     sys.stdout.write(page)
     return 0
