@@ -533,6 +533,7 @@
         "tracker-operations"
       ],
       "degradedBehavior": [
+        "The lead opens the live view in the host's browser pane, unasked, when a delivery begins: the hosted view first when hosted is enabled and has a URL, else the local live view's address; lanes never open it.",
         "Without a host that can start and message sessions no lane starts: the lead records the blocker and brings it to the operator, who may choose to deliver the tickets one at a time through $execute-work.",
         "Optional tracking may be absent; the delivery state and journal remain authoritative for where the epic stands.",
         "Recovered merges preserve source occurrence separately from observation; unavailable source times remain unknown.",
@@ -680,6 +681,7 @@
         "bounded-terminal-notification"
       ],
       "degradedBehavior": [
+        "lead-init and lead-run --resume end with the one live view the lead opens in the host's browser pane, unasked: the hosted view when hosted is enabled and has a URL, else the local live view's address, and nothing while no supervisor runs; delivery.orient names the same view to a lead, never to a lane.",
         "Lead changes publish under the merge queue lock.",
         "A lane can retain its aligned review across exact base commits authorized by the lead before the merge.",
         "A temporary flake can be declared while a check runs.",
