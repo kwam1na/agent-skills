@@ -1438,7 +1438,7 @@
       var state = rest.map(function (made) { return made.state; }).sort(function (a, b) { return MARK_RANK[a] - MARK_RANK[b]; })[0];
       marks = marks.slice(0, 2).concat([nowMark(rest.length + " more lanes", state)]);
     }
-    return marks.map(function (made) { return nowMark(made.label, made.state); }).concat([nowMark(last, closedEntry(doc) && all.every(isLanded) ? "done" : "todo")]);
+    return marks.map(function (made) { return nowMark(made.label, made.state); }).concat([nowMark(last, closedEntry(doc) && all.every(isLanded) && (last !== "Rejoin" || Boolean((integrationOf(doc) || {}).landed)) ? "done" : "todo")]);
   }
   /** The rejoin's four marks, the one at `at` live (or stopped) with its holder and its count, those before it done. */
   function rejoinMarks(at, state, who, count) {

@@ -171,10 +171,15 @@ test("the overrides combine as the canvas says: a broken base stops the rejoin's
   expect(stopped.sentence).toBe(call.expected.sentence);
   expect([stopped.fact, stopped.factStop]).toEqual(["Nothing merges until the repair lands.", true]);
   // Nothing landed and nothing started: every lane is to come, and the call makes the asking lane's mark live and yours.
-  const fresh = derived("01-stories-landing", { needs: call.needs, queue: (queue) => queue.map((item) => ({ ...item, stage: "queued" })) });
-  fresh.document = { ...fresh.document, journal: [], state: { ...fresh.document.state, planned: fresh.document.state.planned.map((item) => ({ ...item, stage: "planned" })) } };
-  const woke = nowOf(await drawn(fresh));
+  const base = FIXTURES.find((fixture) => fixture.name === "01-stories-landing");
+  const planned = ["A1", "A2", "A3", "A4", "B1", "B2", "B3", "C1", "C2"].map((subject) => ({ subject, title: `Work ${subject}`,
+    lane: { A: "lane-1", B: "lane-2", C: "lane-3" }[subject[0]], stage: "planned" }));
+  const fresh = { ...base, needs: null, document: { ...base.document, journal: [], state: { ...base.document.state, queue: [], planned } } };
+  // Without the call every lane is to come, so the asking lane's mark starts todo.
+  expect(nowOf(await drawn(fresh)).marks.map(([, state]) => state)).toEqual(["todo", "todo", "todo", "todo"]);
+  const woke = nowOf(await drawn({ ...fresh, needs: call.needs }));
   expect(woke.marks.find(([label]) => label.startsWith("Lane 2"))).toEqual(["Lane 2 · 0 of 3 · you", "live", "you"]);
+  expect(woke.marks.filter(([, state]) => state === "todo")).toHaveLength(3);
 });
 
 test("the target moving yields to a suite at the new head, and a silent supervisor says when it last reported", async () => {
@@ -194,4 +199,14 @@ test("a forge block with a malformed count draws nothing of the forge, and a pas
   const green = { ...passed, document: { ...passed.document, journal: passed.document.journal.map((entry) => entry === suite ? { ...entry, data: { ...entry.data, result: "passed" } } : entry) } };
   const shown = nowOf(await drawn(green));
   expect([shown.sentence, shown.marks[1]]).toEqual(["The full suite passed. The integration review runs next.", ["Review · lead", "live", "lead"]]);
+});
+
+test("a delivery closed with every story in but never rejoined draws its Rejoin mark to come", async () => {
+  const landed = FIXTURES.find((fixture) => fixture.name === "02-last-landed");
+  const journal = landed.document.journal;
+  const closed = { ...landed, document: { ...landed.document, journal: [...journal,
+    { id: journal.length + 1, at: "2026-10-30T11:00:00Z", kind: "delivery.closed", lane: null, subject: "APP-10", data: {} }] } };
+  const shown = nowOf(await drawn(closed));
+  expect(shown.marks.at(-1)).toEqual(["Rejoin", "todo", null]);
+  expect(shown.marks.slice(0, -1).every(([, state]) => state === "done")).toBe(true);
 });
