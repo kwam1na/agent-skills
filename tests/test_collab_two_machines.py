@@ -10,6 +10,7 @@ A peer's record is read from its files, never asked to ingest.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -37,6 +38,9 @@ def fixture(host, port=None, timeout=None, context=None):
 http.client.HTTPSConnection = fixture
 """
 
+# The section nobody was given, which b asks for and a's supervisor grants.
+A_SECTION = "### S1 (FX-2). Thing one (AC1). Regex `/api/one$`"
+
 RUN_QUIETLY = True  # two supervisors, each with its live view and sync loop, and real git throughout
 
 # A write on one machine shows on the other within this many seconds: two ticks of the sync loop and one push.
@@ -51,14 +55,48 @@ def tracker_publisher_entry() -> dict:
                                       "tracker_publisher.py", "--state-dir", "{stateDirectory}"], "timeoutSeconds": 600}
 
 
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    # A stopped child of this process lingers as a zombie until reaped; it counts as gone.
+    with contextlib.suppress(ChildProcessError):
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+            return False
+    return True
+
+
 def origins(folder: Path) -> list[tuple[str, int]]:
     return [(entry["origin"]["seat"], entry["origin"]["seq"]) for entry in journal(folder) if entry.get("origin")]
 
 
+def origin_of(folder: Path, entry: int) -> dict | None:
+    """The origin of the record's journal entry `entry`, which is a local id: the same entry has another on the peer."""
+    return next((item["origin"] for item in journal(folder) if item["id"] == entry), None)
+
+
+def settled_origin(folder: Path) -> dict | None:
+    """The origin of the merge regionsSettled names, which each machine keeps as its own local id."""
+    settled = record(folder).get("regionsSettled")
+    return origin_of(folder, settled) if settled else None
+
+
+def own_log(folder: Path, name: str) -> list[dict]:
+    """This machine's own entries of a flow log, never the copies its peers carried to it."""
+    path = folder.parent / "flow-log" / f"{KEY}.{name}.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()] if path.is_file() else []
+
+
 def shared_state(folder: Path) -> dict:
-    """The record's state as both machines must agree on it: everything but the machine-local fields."""
+    """The record's state as both machines must agree on it: everything but the machine-local fields, with the entry
+    regionsSettled names by its origin."""
     state = record(folder)
     state.pop("version", None)
+    if state.get("regionsSettled"):
+        state["regionsSettled"] = settled_origin(folder)
     state["meta"] = {name: value for name, value in state["meta"].items() if name not in LOCAL_META}
     return state
 
@@ -93,10 +131,16 @@ class TwoMachinesTests(PlanningRecordCase):
         plan = fx.main / "docs/plan.md"
         plan.write_text(plan.read_text() + "\nIt comes after COLLAB-1.\n")
         commit(fx.main, "the plan names a placeholder key")
-        # The fixture delivery with a binding whose queue merges for real, its record left the planning record's.
+        # The fixture delivery with a binding whose queue merges for real, its record left the planning record's, and
+        # the fixture's in-app check kept, which b's lane runs and a records evidence from.
+        in_app = json.loads(binding.read_text())["inApp"]
         path = plan_delivery(fx, supervised(fx))
         d = json.loads(path.read_text())
         del d["stateDirectory"]
+        # FX-3's hand-off needs its loading state held on its pinned request, which b's lane checks.
+        d["stories"]["FX-3"].update(pinned=["/api/two$"], inApp=[{"mode": "hold", "pattern": "/api/two$"}])
+        # FX-2's lane, on a, runs no in-app check.
+        d["stories"]["FX-2"]["inApp"] = "none"
         path.write_text(json.dumps(d, indent=2))
         # One tracker both machines post to, each through its own ledger, and one hosted origin both publish to.
         (fx.main / "tools/fake_adapter.py").write_text(FAKE_ADAPTER)
@@ -107,6 +151,7 @@ class TwoMachinesTests(PlanningRecordCase):
         self.tracker.write_text(json.dumps(store))
         conf = json.loads(binding.read_text())
         conf["tracker"] = {**conf.get("tracker", {}), "argv": [sys.executable, "-B", "tools/fake_adapter.py"]}
+        conf["inApp"] = in_app
         binding.write_text(json.dumps(conf, indent=2) + "\n")
         bound = fx.main / ".agents/orchestration.json"
         flow = json.loads(bound.read_text())
@@ -210,6 +255,10 @@ class TwoMachinesTests(PlanningRecordCase):
         self.run_at(fx.main, "collab", "admit", "--seat", seat_b)
         self.reaches(self.b, "seat.admitted", "a's admission reaches b", seat=seat_b)
         self.converged("after the admission")
+        # b asks for a section nobody was given, and a's supervisor, holding delivery with autoGrant on, grants it.
+        self.run_at(b_repo, "collab", "request", "--scope", f"plan:{A_SECTION}", "--reason", "I'll write story one")
+        self.reaches(self.b, "scope.transferred", "a's grant reaches b", scope=f"plan:{A_SECTION}", to=seat_b)
+        self.converged("after the grant")
         # a passes b a section; each seat edits a section it holds, concurrently, and both edits compose.
         self.run_at(fx.main, "collab", "give", "--scope", f"plan:{B_SECTION}", "--to", seat_b)
         self.reaches(self.b, "scope.transferred", "the section reaches b", scope=f"plan:{B_SECTION}")
@@ -249,10 +298,12 @@ class TwoMachinesTests(PlanningRecordCase):
         plan = json.loads((self.a / "plan.json").read_text())["preview"]
         self.assertEqual(plan["approval"], "endorsed")
         # lead-init adopts the planning record in place: one record, one journal, the same seats.
-        hosted = (self.a / "hosted-identity.json").read_bytes() if (self.a / "hosted-identity.json").exists() else None
+        # The identity's sequence and receipt move as it publishes; its public id is the link.
+        link = lambda: json.loads((self.a / "hosted-identity.json").read_text())["publicId"]
+        hosted = link()
         self.run_at(fx.main, "lead-init")
         self.assertEqual(record(self.a)["meta"]["phase"], "delivery")
-        self.assertEqual((self.a / "hosted-identity.json").read_bytes() if hosted is not None else None, hosted)
+        self.assertEqual(link(), hosted)
         # lead-init writes the delivery's seed over the record in place; b's record shows it, as a delivery.
         self.converged("after lead-init")
         self.assertEqual(record(self.b)["meta"]["phase"], "delivery")
@@ -267,6 +318,9 @@ class TwoMachinesTests(PlanningRecordCase):
         self.run_at(b_repo, "lead-accept", "FX-3")
         self.assertEqual(self.merged("FX-3"), seat_a, "a's queue merges b's candidate")
         self.converged("after a's queue merged b's candidate")
+        # Only the delivery holder records evidence: b's recording is refused while a holds delivery.
+        out = self.run_at(b_repo, "lead-evidence", "record", "FX-3", "--after-build", self.base_build(b_repo), code=2)
+        self.assertIn("delivery", out)
         # The queue moves to b, whose supervisor starts serving it; a's lane hands off, a accepts, and b's queue merges.
         self.run_at(fx.main, "collab", "give", "--scope", "queue", "--to", seat_b, "--wait", "60")
         self.reaches(self.b, "scope.transferred", "the queue reaches b", scope="queue")
@@ -286,9 +340,72 @@ class TwoMachinesTests(PlanningRecordCase):
             self.run_at(b_repo, "collab", "give", "--scope", scope, "--to", seat_a, "--wait", "60")
             self.reaches(self.a, "scope.transferred", f"{scope} comes back to a", scope=scope, to=seat_a)
         self.converged("after the hand-back")
+        # a, holding delivery again, records FX-3's loading clip on the merged base from the hold b's lane ran, which
+        # reached a in b's carried app-checks log.
+        build = self.base_build(fx.main)
+        out = self.run_at(fx.main, "lead-evidence", "record", "FX-3", "--after-build", build)
+        clips = [json.loads(path.read_text()) for path in (fx.main / ".orchestration/review/FX-3/videos").glob("*.json")]
+        base = sh("git", "rev-parse", "HEAD", cwd=build.parent).stdout.strip()
+        self.assertEqual([(clip["mode"], clip["path"], clip["held"], clip["head"]) for clip in clips],
+                         [("hold", "/two", ["/api/two$"], base)], out)
+        # The close: both lanes done and the learning decided, a's supervisor closes the delivery and pushes the
+        # archived close, b counts it closed and its supervisor stops.
+        self.close()
+        # Full health ran once a head, across both machines: whichever seat held the queue ran it, and neither ran a
+        # head the other had.
+        runs = [entry for folder in (self.a, self.b) for entry in own_log(folder, "full-health")]
+        self.assertTrue(runs, "full health never ran")
+        self.assertEqual(sorted(entry["head"] for entry in runs), sorted({entry["head"] for entry in runs}), runs)
+        self.assertEqual(len((fx.tmp / "health.runs").read_text().splitlines()), len(runs))
+        # Entries the two machines name by local id are the same entries on both, by origin.
+        self.assertEqual(settled_origin(self.a), settled_origin(self.b))
+        self.assertIsNotNone(settled_origin(self.a), "no landing settled the regions")
+        # a's close marks, started and finished, both name the delivery.closed b holds, by its origin.
+        closing = record(self.a)["meta"]["closing"]
+        self.assertEqual(set(closing), {"started", "finished"})
+        named = {(found["seat"], found["seq"]) for found in (origin_of(self.a, mark["entry"]) for mark in closing.values())}
+        closed = [(entry["origin"]["seat"], entry["origin"]["seq"]) for entry in journal(self.b)
+                  if entry["kind"] == "delivery.closed"]
+        self.assertEqual(named, set(closed[-1:]))
         # The plan's branch and both seats' chains only ever moved forward on the remote.
         for ref in ("refs/heads/lead/FX-1", f"refs/agent-skills/{KEY}/{seat_a}", f"refs/agent-skills/{KEY}/{seat_b}"):
             assert_fast_forwards_only(fx.origin, ref)
+
+    def base_build(self, root: Path) -> Path:
+        """A stamped build of the merged delivery base, as the lead builds it in its own checkout at `root`."""
+        sh("git", "fetch", "-q", "origin", cwd=root)
+        self.builds = getattr(self, "builds", 0) + 1
+        wt = self.fx.tmp / f"base-{self.builds}"
+        sh("git", "worktree", "add", "-q", "--detach", wt, "origin/feature/FX-1", cwd=root)
+        sh("sh", "-c", "mkdir -p out && cp src/*.txt out/", cwd=wt)
+        head = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        tree = sh("git", "rev-parse", "HEAD^{tree}", cwd=wt).stdout.strip()
+        self.fx.call("write_stamp", wt / "out", head, tree, cwd=wt)
+        return wt / "out"
+
+    def close(self) -> None:
+        """Both lanes done and the learning decided on a: a's supervisor closes the delivery and archives it, and b,
+        seeing the archived close a pushed, counts it closed and its supervisor stops."""
+        fx = self.fx
+        for lane in ("lane-1", "lane-2"):
+            sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py", "--dir", self.a,
+               "focus", "--lane", lane, "--text", "done", "--state", "done", cwd=fx.main)
+        self.run_at(fx.main, "lead-compound", "--not-required", "--why", "the fixture taught nothing new")
+        closed = self.a.parent / "flow-log" / f"{KEY}.closed.json"
+        deadline = time.monotonic() + 120
+        while not closed.is_file():
+            if time.monotonic() >= deadline:
+                passes = (self.a.parent / "flow-log" / f"{KEY}.supervisor.jsonl").read_text().splitlines()
+                self.fail(f"a's supervisor didn't close the delivery within 120s: {passes[-1:]}")
+            time.sleep(0.5)
+        self.reaches(self.b, "delivery.closed", "a's close reaches b")
+        lock = self.b.parent / "flow-log" / f"{KEY}.supervisor.lock"
+        pid = json.loads(lock.read_text() or "{}").get("pid") if lock.is_file() else None
+        deadline = time.monotonic() + REACH_SECONDS * 3
+        while isinstance(pid, int) and alive(pid):
+            if time.monotonic() >= deadline:
+                self.fail(f"b's supervisor ({pid}) didn't stop once a's archived close reached it")
+            time.sleep(0.5)
 
     def taken(self, identity: dict) -> None:
         """b's supervisor writes the identity a carried as its own and publishes under it, within its next passes."""
@@ -334,8 +451,12 @@ class TwoMachinesTests(PlanningRecordCase):
         review = wt / ".orchestration/review" / key
         review.mkdir(parents=True, exist_ok=True)
         (review / "context.md").write_text("- fixture evidence\n")
-        for argv in (("gate", key), ("review-prepare", key, "--round", "1")):
-            code, out = fx.flow(*argv, cwd=wt)
+        # The lane's in-app check of its loading state, on its own build: the hold the evidence is recorded from.
+        for argv in (("gate", key), ("build", key), ("app-check", key, "loading", "--mode", "hold", "--path", f"/{name}",
+                                                     "--hold", f"/api/{name}$", "--eval", "true",
+                                                     "--after-eval", "true"),
+                     ("review-prepare", key, "--round", "1")):
+            code, out = fx.flow(*argv, cwd=wt, env=self.env)
             self.assertEqual(code, 0, out)
         meta = json.loads((review / "round-1.meta.json").read_text())
         write_results(review, 1, key, [entry for entry in fx.lenses(wt) if entry[0] in meta["lenses"]])

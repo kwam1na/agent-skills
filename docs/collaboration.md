@@ -155,6 +155,12 @@ record's first seat holds every scope until its holder passes one on.
   waits for no publication in flight, stops both publishers on this machine, and
   carries the hosted identity and the tracker's position to the new holder, so
   the public link is unchanged and no tracker update is posted twice.
+- **Full health, evidence and the close.** Full health runs once a base head, on the `queue` holder's machine, and
+  every seat reads its result. Only the `delivery` holder records and publishes evidence: a lane's in-app checks
+  travel to it in its seat's chain, so it records a peer lane's story from the checks that lane ran. The `delivery`
+  holder's supervisor closes the delivery once every peer machine has cleaned up its checkouts, and pushes the
+  archived close as it closes. A peer counts the delivery closed only once that archived close reaches it, and its
+  supervisor then stops.
 - **Hand-back.** Every scope can be passed back to one seat, which then leads
   alone. The other seat can keep following the record, or stop.
 

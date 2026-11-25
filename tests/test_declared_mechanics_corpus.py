@@ -88,6 +88,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Nothing secret travels in a seat's chain",
         "It is ingested once the lagging machine runs its own `lead-upgrade-writer`. No machine upgrades another",
         "refuses every later write with `collab.seat_split`",
+        "Full health runs once a base head, on the `queue` holder's machine",
+        "Only the `delivery` holder records and publishes evidence",
+        "A peer counts the delivery closed only once that archived close reaches it",
     ),
     "docs/host-adapters.md": (
         "On Windows, which is not validated (see the README), directory links use",
