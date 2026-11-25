@@ -83,7 +83,7 @@ test("a delivery closed partway counts what the close tallied, with nothing in t
     journal: journal([[10, "approve", "A"], [11, "candidate.handed", "A"], [12, "candidate.merged", "A"], [40, "delivery.closed", "A"]]) });
   const plan = planFor(["A", "B", "C", "D", "E", "F"].map((subject) => unit(subject)), { finish: [] });
   const app = await facts(document, plan);
-  expect(app.querySelector("#now .now-count").textContent).toBe("Closed with 1 of 6 pieces landed");
+  expect(app.querySelector("#now .now-sentence").textContent).toBe("Closed Oct 30: 1 of 6 stories landed.");
   expect(app.querySelector("#now .stories .fact-value").textContent).toBe("1 of 6 landed");
   expect(app.querySelector("#now .stories .fact-said")).toBeNull();
   expect(track(app)).toEqual([["is-landed", 17]]);
