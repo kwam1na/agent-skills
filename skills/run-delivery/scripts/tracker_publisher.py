@@ -164,8 +164,29 @@ def flow_file(flow_log: Path, delivery: str, name: str) -> Path:
     return flow_log / f"{delivery}.{name}.jsonl"
 
 
-def read_flow(flow_log: Path, delivery: str, name: str) -> list[dict]:
-    path = flow_file(flow_log, delivery, name)
+# Each flow log a shared record carries (D21): the scope whose holder writes its entries, so its entries are ordered by
+# that holder's tenure; the fields an entry is known by, the latest one with them winning (none keeps every entry, in
+# order); the fields naming journal entries, which travel by origin; and which entries it carries. On a shared record
+# each entry written here is stamped with its seat (`by`) and the local id of the transfer that began its writer's
+# tenure (`tenureId`); peers' carried entries are kept beside each log, in a file ending PEERS, already translated.
+CARRIED_LOGS = {
+    "acceptance": {"scope": "lane", "key": ("head",), "journal": ()},
+    "app-checks": {"scope": "lane", "key": None, "journal": ()},
+    LANE_STARTS: {"scope": "lane", "key": ("subject", "assigned"), "journal": ("assigned",)},
+    "videos": {"scope": "lane", "key": ("name", "head"), "journal": ()},
+    MARKS: {"scope": "delivery", "key": ("journal",), "journal": ("journal",)},
+    "full-health": {"scope": "queue", "key": None, "journal": (), "only": "result"},
+    "resolutions": {"scope": None, "key": ("journal",), "journal": ("journal",)},
+}
+PEERS = ".peers"
+
+
+def peers_file(flow_log: Path, delivery: str, name: str) -> Path:
+    """Where a carried log's peers' entries are kept beside this machine's own."""
+    return flow_log / f"{delivery}.{name}{PEERS}.jsonl"
+
+
+def read_lines(path: Path) -> list[dict]:
     if not path.exists():
         return []
     entries = []
@@ -175,6 +196,32 @@ def read_flow(flow_log: Path, delivery: str, name: str) -> list[dict]:
             if isinstance(entry, dict):
                 entries.append(entry)
     return entries
+
+
+def carried_order(name: str, entries: list[dict]) -> list[dict]:
+    """A carried log's entries from every seat in causal order: by the tenure each was written in, which only its
+    scope's holder writes in and which passes only by transfer, then in its writer's own order; never by `at`. Where the
+    log is keyed, the latest entry for each key stands, in its place."""
+    rule = CARRIED_LOGS[name]
+    ordered = sorted(enumerate(entries), key=lambda pair: (pair[1].get("tenureId") or 0, pair[0]))
+    entries = [entry for _, entry in ordered]
+    if rule["key"] is None:
+        return entries
+    last = {tuple(entry.get(field) for field in rule["key"]): at for at, entry in enumerate(entries)}
+    return [entry for at, entry in enumerate(entries) if last[tuple(entry.get(field) for field in rule["key"])] == at]
+
+
+def read_flow(flow_log: Path, delivery: str, name: str, *, peers: bool = True) -> list[dict]:
+    """A flow log's entries; on a shared record a carried log's also hold every peer's, in their carried order.
+    ``peers`` false reads this machine's own entries only, as its partition carries them."""
+    path = flow_file(flow_log, delivery, name)
+    entries = read_lines(path)
+    if not peers or name not in CARRIED_LOGS:
+        return entries
+    theirs = peers_file(flow_log, delivery, name)
+    if not theirs.exists():
+        return entries
+    return carried_order(name, [*entries, *read_lines(theirs)])
 
 
 def append_flow(flow_log: Path, delivery: str, name: str, entry: dict) -> dict:
@@ -187,18 +234,24 @@ def append_flow(flow_log: Path, delivery: str, name: str, entry: dict) -> dict:
     return entry
 
 
-def mark(flow_log: Path, delivery: str, journal_id: int, followup: dict | None = None) -> dict:
+def mark(flow_log: Path, delivery: str, journal_id: int, followup: dict | None = None,
+         stamp: dict | None = None) -> dict:
     """Mark a `decision.recorded` entry as one to post: the marking command holds the ledger's lock, waiting for it,
-    across its journal write and this mark. A deferral names its follow-up, {story, finding, title}, to be filed."""
-    entry: dict = {"journal": journal_id}
+    across its journal write and this mark. A deferral names its follow-up, {story, finding, title}, to be filed.
+    ``stamp``: on a shared record, the writer's seat and tenure (CARRIED_LOGS)."""
+    entry: dict = {"journal": journal_id, **(stamp or {})}
     if followup is not None:
         entry["followup"] = {key: followup[key] for key in ("story", "finding", "title")}
     return append_flow(flow_log, delivery, MARKS, entry)
 
 
-def record_lane_start(flow_log: Path, delivery: str, subject: str, lane: str | None = None) -> dict:
-    """A story's start: what its `lane.assigned` waits for before its start move and update."""
-    return append_flow(flow_log, delivery, LANE_STARTS, {"subject": subject, **({"lane": lane} if lane else {})})
+def record_lane_start(flow_log: Path, delivery: str, subject: str, lane: str | None = None,
+                      assigned: int | None = None, stamp: dict | None = None) -> dict:
+    """A story's start: what its `lane.assigned` waits for before its start move and update. On a shared record it
+    names that assignment, by its journal id, and carries the writer's ``stamp``: no reader compares clocks."""
+    return append_flow(flow_log, delivery, LANE_STARTS, {"subject": subject, **({"lane": lane} if lane else {}),
+                                                         **({"assigned": assigned} if assigned is not None else {}),
+                                                         **(stamp or {})})
 
 
 def followup_label(story: str, finding: str) -> str:
@@ -583,9 +636,18 @@ class Publisher:
                 return "the story is already in review"
             if line.get("ticket") == subject and line.get("move") == "start" and line["outcome"] == "transition":
                 return "the story already started"
+        later = [e for e in self.journal if e["id"] > entry["id"] and e.get("subject") == subject]
+        if entry.get("origin"):
+            # A shared record's start names the assignment it follows, so no clocks from two machines are compared.
+            if any(s.get("subject") == subject and s.get("assigned") == entry["id"] for s in self.starts):
+                return None
+            if any(e["kind"] == "lane.assigned" for e in later):
+                return "reassigned before it started"
+            if any(e["kind"] in PAST_START for e in later):
+                return "start never recorded: the story was handed off or merged first"
+            return "wait" if subject in self.held else "removed before it started"
         at = moment(entry["at"])
         started = [moment(s["at"]) for s in self.starts if s.get("subject") == subject and moment(s["at"]) >= at]
-        later = [e for e in self.journal if e["id"] > entry["id"] and e.get("subject") == subject]
         past = [moment(e["at"]) for e in later if e["kind"] in PAST_START]
         reassigned = [moment(e["at"]) for e in later if e["kind"] == "lane.assigned"]
         # Only the story's last assignment before its first start takes that start.

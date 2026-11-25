@@ -4750,13 +4750,9 @@
         }
       },
       "carried": {
-        "description": "What this seat carried when it last passed delivery on, for the seat that takes it: the hosted publisher's identity, so the public link stays, and how far its tracker ledger had posted, by each seat's last seq every entry up to which it covered. Absent until the seat first passes delivery on.",
+        "description": "What this seat's machine carries for its peers (D21): from its first delivery handover, what it kept as it passed delivery on, its hosted publisher's identity, so the public link stays, how far its tracker ledger had posted, by each seat's last seq every entry up to which it covered, its evidence notes and its friction stub; and its machine-local inputs.",
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "hostedIdentity",
-          "trackerThrough"
-        ],
         "properties": {
           "hostedIdentity": {
             "description": "The hosted publisher's identity sidecar as this seat last kept it, with no publication pending, or null where it published nothing.",
@@ -4788,6 +4784,93 @@
               "type": "integer",
               "minimum": 1
             }
+          },
+          "inputs": {
+            "description": "This seat's machine-local inputs its peers read: its own entries of each carried flow log, by log and file key, each with its writer's seat and tenure and the journal entries it names by origin; its lanes' merged or settled stories whose checkout is still on its machine; and, from the delivery holder, the origin of the closing delivery.closed once its close archived, and the built plan.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "logs": {
+                "description": "Each carried flow log, by its name, and its entries by file key: the delivery or a story.",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "acceptance": {
+                    "$ref": "#/$defs/carriedLog"
+                  },
+                  "app-checks": {
+                    "$ref": "#/$defs/carriedLog"
+                  },
+                  "lane-starts": {
+                    "$ref": "#/$defs/carriedLog"
+                  },
+                  "videos": {
+                    "$ref": "#/$defs/carriedLog"
+                  },
+                  "tracker-marks": {
+                    "$ref": "#/$defs/carriedLog"
+                  },
+                  "full-health": {
+                    "$ref": "#/$defs/carriedLog"
+                  },
+                  "resolutions": {
+                    "$ref": "#/$defs/carriedLog"
+                  }
+                }
+              },
+              "checkoutsLeft": {
+                "description": "The subjects of this seat's lanes' merged or settled stories whose checkout still exists on its machine.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "closedEntry": {
+                "description": "The origin of the delivery.closed whose close this seat archived, or null.",
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/$defs/origin"
+                  }
+                ]
+              },
+              "plan": {
+                "description": "The delivery holder's built plan.json, which other seats show instead of building their own, or null.",
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          },
+          "evidenceNotes": {
+            "description": "The evidence-notes.json this seat kept when it last passed delivery on, so the page's title, intro and notes stay; null where it kept none.",
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object"
+              }
+            ]
+          },
+          "friction": {
+            "description": "The friction stub this seat kept when it last passed delivery on, or null.",
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
           }
         }
       }
@@ -4865,6 +4948,35 @@
               "digest": {
                 "type": "string",
                 "pattern": "^[0-9a-f]{16}$"
+              }
+            }
+          }
+        }
+      },
+      "carriedLog": {
+        "description": "One carried flow log's entries, by file key, in its writer's order.",
+        "type": "object",
+        "additionalProperties": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "by",
+              "tenure"
+            ],
+            "properties": {
+              "by": {
+                "$ref": "#/$defs/seat"
+              },
+              "tenure": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/$defs/origin"
+                  }
+                ]
               }
             }
           }

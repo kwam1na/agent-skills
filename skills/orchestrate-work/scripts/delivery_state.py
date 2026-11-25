@@ -7353,6 +7353,11 @@ def main(argv: list[str] | None = None) -> int:
             result = {"ok": True}
         elif args.command == "scope":
             module = _collab()
+            if args.scope_action == "give" and args.scope == "delivery":
+                # Delivery moves with this machine's publishers parked, which only run-delivery can do.
+                raise StateError("scope.handover_unparked", "delivery is handed over with run-delivery's `collab give "
+                                 "--scope delivery --to SEAT`, which parks this machine's tracker and hosted "
+                                 "publishers first; the state tool doesn't hand it over")
             entry = (module.give_scope(args.dir, args.scope, args.to, wait=args.wait) if args.scope_action == "give"
                      else module.request_scope(args.dir, args.scope, args.reason) if args.scope_action == "request"
                      else module.decline_request(args.dir, args.request))

@@ -229,7 +229,7 @@ class PlanningSupervisorTests(PlanningRecordCase):
         self.assertTrue(passes, "no pass was logged")
         # A planning pass logs the list it found, needsYou, as a delivery's pass does; it has no close to hold.
         steps = set(passes[0]) - {"pass", "startedAt", "finishedAt", "at", "delivery", "laneWords", "needsYou"}
-        self.assertEqual(steps, {"needs", "render", "latest", "close"}, passes[0])
+        self.assertEqual(steps, {"inputs", "grants", "planView", "needs", "render", "latest", "close"}, passes[0])
         self.assertEqual(passes[0]["close"], "planning: nothing to close")
         # A planning record has no close, so it owes no compound-learning decision.
         self.assertEqual([item["kind"] for item in passes[0]["needsYou"] if item.get("kind") == "compounding"], [])
@@ -378,6 +378,28 @@ class TwoSeatTests(PlanningRecordCase):
             link.push(folder, remote="origin"), link.fetch(folder, remote="origin", key=KEY),
             link.ingest(folder, key=KEY))]
         return fx, a, b_repo, b, aligned
+
+    def test_collab_give_of_delivery_on_the_command_line_parks_and_moves_it_to_b(self) -> None:
+        fx, a, b_repo, b, _ = self.two_seats()
+        seat_a, seat_b = state_tool.local_seat(a, KEY), state_tool.local_seat(b, KEY)
+        # What a keeps beside its record, by the record's own key, which the command must load to find.
+        stub = a.parent / "flow-log" / f"{KEY}.friction.md"
+        stub.parent.mkdir(parents=True, exist_ok=True)
+        stub.write_text("# Friction\n\na's notes.\n")
+        notes = {"title": "a's page", "intro": None, "notes": {}}
+        (a.parent / "evidence-notes.json").write_text(json.dumps(notes))
+        code, out = self.flow(fx, "collab", "give", "--key", KEY, "--scope", "delivery", "--to", seat_b, "--wait", "5",
+                              cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("scope.transferred", out)
+        self.assertNotIn("Traceback", out)
+        # The transfer was kept with what a carried as it parked, and reaches b.
+        self.assertEqual(state_tool.holder(journal(a), "delivery"), seat_b)
+        self.exchange(a, b)
+        self.assertEqual(state_tool.holder(journal(b), "delivery"), seat_b)
+        carried = generation_tools(self.generation)[1].peer_carried(b, seat_a)
+        self.assertEqual(sorted(carried), ["evidenceNotes", "friction", "hostedIdentity", "trackerThrough"])
+        self.assertEqual((carried["friction"], carried["evidenceNotes"]), ("# Friction\n\na's notes.\n", notes))
 
     def test_sections_rekeying_and_joint_approval_across_two_seats(self) -> None:
         fx, a, b_repo, b, aligned = self.two_seats()
