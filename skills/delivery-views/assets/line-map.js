@@ -1742,7 +1742,12 @@
     if (leading) { panel.classList.add("is-leading"); nodes.splice(nodes.indexOf(nowNode) + 1, 0, panel); }
     else if (panel) { nodes.push(panel); }
     var supervisor = needsYou(doc, all, Boolean(closed));
-    if (supervisor) { nodes.push(supervisor); }
+    // "Needs you" is a sheet of its own, as wide as the rows. When something on it waits on the reader, it leads Now,
+    // right under the sentence, ahead of any running checks: that is what the reader is here to do.
+    var yours = supervisor && Boolean(supervisor.querySelector(".needs-row[data-who='operator']"));
+    if (supervisor) { supervisor.classList.add("is-sheet"); }
+    if (yours) { supervisor.classList.add("is-leading"); nodes.splice(nodes.indexOf(nowNode) + 1, 0, supervisor); }
+    else if (supervisor) { nodes.push(supervisor); }
     var left = closed ? leftOpen(doc, all) : null;
     if (left) { nodes.push(left); }
     var partway = closeStoppedPartway(doc, closed);
@@ -2512,6 +2517,7 @@
     items.forEach(function (entry) {
       var item = entry.item, said = isObject(item.said) ? item.said : {};
       var li = el("li", "needs-row " + (item.holding === true ? "is-holding" : "is-quiet"));
+      li.setAttribute("data-who", text(item.who));
       var margin = needsMargin(doc, all, item);
       var meta = add(el("div", "nr-meta"), el("span", "nr-who", text(said.who)));
       if (item.holding === true) { add(meta, add(el("span", "nr-holding"), el("span", "nr-dot"), text(words.holding))); }

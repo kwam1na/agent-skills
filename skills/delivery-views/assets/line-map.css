@@ -234,6 +234,11 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
    marks: a faint stroke of its lane's line with the story's stop on it, and for a wait the blocker's stop joined by a
    hairline. Holding rows lead at full weight; the rest follow quieter. Red is only ever a stopped stop's. */
 .needs-you { max-width: 72ch; display: grid; gap: 10px; }
+/* As a sheet, "Needs you" is as wide as the rows, on the checking sheet's card; when it waits on the reader it leads
+   Now and its edge takes the wait colour. */
+.needs-you.is-sheet { position: relative; isolation: isolate; max-width: 980px; gap: 12px; padding: 22px 24px; border-radius: 14px; }
+.needs-you.is-sheet::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--lift); box-shadow: var(--shadow-sheet); }
+.needs-you.is-sheet.is-leading::after { box-shadow: var(--shadow-sheet), inset 0 0 0 1.5px color-mix(in oklab, var(--wait) 70%, transparent); }
 .needs-you .ah { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--soft); }
 .needs-you .needs-summary { margin: 0; font-size: 15px; }
 .needs-you .needs-none, .needs-you .needs-more { margin: 0; color: var(--soft); font-size: 14px; }
