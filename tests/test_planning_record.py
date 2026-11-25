@@ -382,6 +382,12 @@ class TwoSeatTests(PlanningRecordCase):
     def test_collab_give_of_delivery_on_the_command_line_parks_and_moves_it_to_b(self) -> None:
         fx, a, b_repo, b, _ = self.two_seats()
         seat_a, seat_b = state_tool.local_seat(a, KEY), state_tool.local_seat(b, KEY)
+        # What a keeps beside its record, by the record's own key, which the command must load to find.
+        stub = a.parent / "flow-log" / f"{KEY}.friction.md"
+        stub.parent.mkdir(parents=True, exist_ok=True)
+        stub.write_text("# Friction\n\na's notes.\n")
+        notes = {"title": "a's page", "intro": None, "notes": {}}
+        (a.parent / "evidence-notes.json").write_text(json.dumps(notes))
         code, out = self.flow(fx, "collab", "give", "--key", KEY, "--scope", "delivery", "--to", seat_b, "--wait", "5",
                               cwd=fx.main)
         self.assertEqual(code, 0, out)
@@ -393,6 +399,7 @@ class TwoSeatTests(PlanningRecordCase):
         self.assertEqual(state_tool.holder(journal(b), "delivery"), seat_b)
         carried = generation_tools(self.generation)[1].peer_carried(b, seat_a)
         self.assertEqual(sorted(carried), ["evidenceNotes", "friction", "hostedIdentity", "trackerThrough"])
+        self.assertEqual((carried["friction"], carried["evidenceNotes"]), ("# Friction\n\na's notes.\n", notes))
 
     def test_sections_rekeying_and_joint_approval_across_two_seats(self) -> None:
         fx, a, b_repo, b, aligned = self.two_seats()
