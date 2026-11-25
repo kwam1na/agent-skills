@@ -530,6 +530,12 @@ def _candidate_scenario(
     environment = dict(os.environ)
     environment["AGENT_SKILLS_EXECUTION_CONTEXT"] = ""
     environment["GITHUB_EVENT_NAME"] = ""
+    # Sensors load test modules by bare name, so the test package's own fresh ledger is never set up. Each scenario
+    # gets an empty one inside its folder, so no sensor reads or writes this machine's real ledger, and it goes with
+    # the qualification's temporary folder.
+    ledger = scenario_root / "machine"
+    ledger.mkdir()
+    environment["AGENT_SKILLS_MACHINE_DIR"] = str(ledger)
     result = subprocess.run(
         [
             sys.executable,
