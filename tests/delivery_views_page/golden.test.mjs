@@ -4,7 +4,9 @@ import assert from "node:assert/strict";
 import { readdirSync, existsSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import { CORPUS, ROOT, block, openPage, pageText, pageWithRuns, readJson, renderPage } from "./support.mjs";
+import { recapturedGoldens } from "./goldens.mjs";
 
 process.env.TZ = "UTC";
 
@@ -34,6 +36,11 @@ for (const name of CASES) {
       const [, opened] = await openPage(page, { now: golden.now, steps: [{ toggle: fold }] });
       assert.equal(opened.app.querySelector(fold).textContent, expected, name);
     }
+    // A chapter a case pins by its id, as its page shows it once the rail opens it.
+    for (const [id, expected] of Object.entries(golden.chapters ?? {})) {
+      const [, shown] = await openPage(page, { now: golden.now, steps: [{ click: `.rail a[href="#${id}"]` }] });
+      assert.equal(shown.app.querySelector(`#${id}`).textContent, expected, id);
+    }
     for (const [subject, expected] of Object.entries(golden.details)) {
       const stop = `:is(.stop-btn, .mg-tick)[data-subject="${subject}"]`;
       const [, shown] = await openPage(page, { now: golden.now, steps: [{ click: stop }] });
@@ -47,6 +54,13 @@ for (const name of CASES) {
     }
   });
 }
+
+test("recapturing the goldens from the page as it stands writes every golden file byte for byte as committed", async () => {
+  // A page change that moves a golden shows here until its recapture is committed, on its own.
+  const files = await recapturedGoldens();
+  assert.ok(Object.keys(files).length > 10);
+  for (const [file, text] of Object.entries(files)) assert.equal(readFileSync(file, "utf8"), text, path.relative(ROOT, file));
+});
 
 test("the link block holds the configured tracker's and forge's addresses for the record's ids", () => {
   const folder = path.join(CORPUS, "parked-round-reports");
