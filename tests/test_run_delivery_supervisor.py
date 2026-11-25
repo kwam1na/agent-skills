@@ -5669,6 +5669,23 @@ class SupervisorPostMergeTests(unittest.TestCase):
         code, out = fx.flow("lead-hints", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertIn(said, out)
+        # The running form says it too: a supervisor holds its lock (this process, standing in for one).
+        lock = fx.tmp / "flow-log/FX-1.supervisor.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock, "a+") as held:
+            held.seek(0)
+            held.truncate()
+            held.write(json.dumps({"pid": os.getpid(), "address": "http://127.0.0.1:1"}))
+            held.flush()
+            fcntl.flock(held, fcntl.LOCK_EX)
+            try:
+                code, out = fx.flow("lead-hints", cwd=fx.main)
+            finally:
+                fcntl.flock(held, fcntl.LOCK_UN)
+        lock.unlink()
+        self.assertEqual(code, 0, out)
+        self.assertIn("supervisor: running", out)
+        self.assertIn(said, out)
         # Accepting FX-3 as the repair queues it with the mark, and the status line names it.
         code, out = fx.flow("lead-accept", "FX-3", "--repair", cwd=fx.main)
         self.assertEqual(code, 0, out)
@@ -5679,6 +5696,12 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertIn("repair", rows["FX-3"])
         self.assertNotIn("repair", rows["FX-2"])
         self.assertEqual((rows["FX-2"]["stage"], rows["FX-3"]["stage"]), ("queued", "queued"))
+        # With FX-3 the named repair, another --repair is refused before anything is written.
+        version = record(fx)["state"]["version"]
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", "--repair", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-3 is already the base's named repair", out)
+        self.assertEqual(record(fx)["state"]["version"], version)
         self.serve_until_idle(fx)
         journal = record(fx)["journal"]
         merged = [e["subject"] for e in journal if e["kind"] == "candidate.merged"]
@@ -5693,6 +5716,40 @@ class SupervisorPostMergeTests(unittest.TestCase):
         code, out = fx.flow("lead-hints", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertNotIn("the base is broken", out)
+        # A merged story is never named the repair, and the refusal accepts nothing.
+        state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps(
+            {"source": "queue", "reason": "base_broken", "detail": "broken again"}))
+        accepted = len(kinds(fx, "handoff.accepted"))
+        code, out = fx.flow("lead-accept", "FX-2", "--repair", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-2 is merged", out)
+        self.assertEqual(len(kinds(fx, "handoff.accepted")), accepted)
+
+    def test_a_requeue_with_repair_names_the_stopped_candidate_and_keeps_a_mark_it_already_carries(self) -> None:
+        """lead-accept --requeue KEY --repair re-queues the stopped candidate as the repair; a row that already carries
+        the mark, as a --self-repair hand-off's does, keeps it with no second write."""
+        fx = self.fixture()
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps(
+            {"source": "queue", "reason": "base_broken", "detail": "lint also fails on the base"}))
+        row = lambda: next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-2")
+        stop = lambda: state_tool(fx, "patch", "--writer", "runner", "--version", str(record(fx)["state"]["version"]),
+                                  "--element", "queue[subject=FX-2]", "--set", json.dumps({"/stage": "stopped"}))
+        stop()
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", "--repair", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("named FX-2 the repair", out)
+        self.assertEqual(row()["stage"], "queued")
+        named = row()["repair"]
+        self.assertIn("the queue runs only FX-2, the named repair", out)
+        # Stopped again with its mark, and re-queued with --repair: the mark it carries stands, unwritten.
+        stop()
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", "--repair", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("named FX-2 the repair", out)
+        self.assertEqual((row()["stage"], row()["repair"]), ("queued", named))
 
     def test_a_close_out_run_of_its_own_that_is_flaky_holds_nothing(self) -> None:
         fx = self.fixture(fullHealthRerun=FLAKY_RERUN)

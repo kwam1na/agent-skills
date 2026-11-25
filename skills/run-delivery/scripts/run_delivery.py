@@ -11714,8 +11714,11 @@ def standing_break(journal: list[dict]) -> dict | None:
 def break_hold(c) -> str:
     """While a base.broken stands, what every lead command says of it: the queue runs nothing until a repair is named,
     with the commands that name one, or only the repair named. Empty when none stands."""
+    release = getattr(c, "release", None)  # a status line built for a bare record, with no release, says nothing of it
+    if release is None:
+        return ""
     try:
-        doc = shown_record(c.release, c.state)
+        doc = shown_record(release, c.state)
     except (Stop, ValueError, OSError):
         return ""
     broken = standing_break(doc.get("journal") or [])
