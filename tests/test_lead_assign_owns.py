@@ -178,11 +178,12 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
     def test_handoff_names_the_grant_or_move_that_clears_an_out_of_lane_file_before_review(self) -> None:
         from tests.test_run_delivery_supervisor import hand_off
         base = self.push_base({"lib/out12.txt": ["out\n"], "lib/g12/other.txt": ["other\n"],
-                               "lib/span12.txt": numbered(6, "s")})
+                               "lib/span12.txt": numbered(6, "s"), "lib/unrelated12.txt": ["unrelated\n"]})
         for pattern in ("lib/out12.txt", "lib/g12/*"):
             self.flow("lead-own", "--grant", pattern, "--lane", "lane-2")
         self.grant("lib/span12.txt", "lane-2", base, 1, 3)
         self.grant("lib/span12.txt", "lane-3", base, 4, 6)
+        self.flow("lead-own", "--grant", "lib/unrelated12.txt", "--lane", "lane-3")  # lane-3 holds more than the glob
         refusals = []
 
         def narrowed(wt, url) -> None:
@@ -200,7 +201,8 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
             # The other lane's own pattern, which lead-own --move takes, not the file's path.
             self.assertIn("lead-own --move 'lib/g12/*' --lane lane-2 --from lane-3", refused)
             self.assertIn("lib/span12.txt: ", refused)
-            for wrong in ("--take", "lib/g12/other.txt --lane", "--grant lib/span12.txt", "--grant 'lib/span12.txt"):
+            for wrong in ("--take", "lib/g12/other.txt --lane", "--grant lib/span12.txt", "--grant 'lib/span12.txt",
+                          "lib/unrelated12.txt"):
                 self.assertNotIn(wrong, refused)
             # The named commands, and a span for the shared file, are what clear it: the hand-off that follows succeeds.
             self.flow("lead-own", "--grant", "lib/out12.txt", "--lane", "lane-2")
