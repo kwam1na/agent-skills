@@ -65,6 +65,23 @@ def _sibling(name: str):
 journal_words = _sibling("journal_words")
 
 
+def _collab():
+    """The shared record's partitions and their transport, loaded when first needed and bound to this module."""
+    module = _sibling("collab")
+    module.state_tool = sys.modules.get(__name__) or _ThisModule()
+    return module
+
+
+class _ThisModule:
+    """This module's names, read as they stand, for a copy loaded without a place in sys.modules."""
+
+    def __getattr__(self, name: str) -> object:
+        try:
+            return globals()[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
 STATE_FILE = "state.json"
 JOURNAL_FILE = "journal.jsonl"
 STATE_LOCK = "state.lock"
@@ -97,6 +114,21 @@ RECONCILE_ATTEMPTS = 5
 FOCUS_ATTEMPTS = 5
 STATE_VERSION = "delivery-state/1"
 WRITERS = ("lead", "runner", "lane")
+# The writer that applies a peer's partition to a shared record: the tool's alone, never a patch's.
+SYNC_WRITER = "sync"
+# Beside a shared record, machine-local: the origin of every value this record holds, and of each element removed, by
+# its partition path. Never part of state.json, and never carried.
+FIELD_ORIGINS_FILE = "field-origins.json"
+SEAT = re.compile(r"^s-[0-9a-f]{12}$")
+# The kinds a shared record's seats are derived from.
+SEAT_KINDS = ("seat.requested", "seat.admitted", "seat.labeled")
+# Fields of a shared record that are this machine's own: never sliced, and never ingested.
+LOCAL_META = ("updatedAt", "writerGeneration", "closing", "collab")
+# What a write on a shared record may do apart from its seat's own writes: the sync writer's ingest, and an unadmitted
+# seat's request to join.
+_COLLAB = threading.local()
+# Each checkout's seat by record folder and key, with the configuration file it was read from and that file's time.
+_SEATS: dict[tuple[str, str], tuple[str, str, int]] = {}
 # What a lane writes about itself, through the tool.
 LANE_FIELDS = ("focus", "state", "waitingOn", "since")
 # The runner writes a row only to say what became of a candidate; focusAt, focusBy, waitingBy and restedFrom are the tool's alone, for every writer.
@@ -682,6 +714,9 @@ def journal_errors(entries: list[object], registry: dict | None = None) -> list[
     schema = load_schema("delivery-journal/2")
     registry = kinds_registry() if registry is None else registry
     errors = []
+    # A shared record's first entry carries its origin, and so does every other; an unshared one's carry none.
+    shared = bool(entries) and isinstance(entries[0], dict) and "origin" in entries[0]
+    counts: dict[str, int] = {}
     for index, entry in enumerate(entries):
         if isinstance(entry, dict) and ("summary" in entry or "data" not in entry):
             errors.append(f"entry {index + 1}: in the older journal shape, with a sentence or without data, "
@@ -691,6 +726,8 @@ def journal_errors(entries: list[object], registry: dict | None = None) -> list[
         errors.extend(f"entry {index + 1}{error}" for error in found)
         if isinstance(entry, dict) and entry.get("id") != index + 1:
             errors.append(f"entry {index + 1}: ids must run in sequence from 1")
+        if not found and isinstance(entry, dict):
+            errors.extend(f"entry {index + 1}{problem}" for problem in _origin_problems(entry, shared, counts))
         if not found and isinstance(entry, dict):
             try:
                 _parse_time(entry["at"], exact=True)
@@ -718,6 +755,26 @@ def journal_errors(entries: list[object], registry: dict | None = None) -> list[
             if "recovery" in entry["data"] and "occurredAt" not in entry:
                 errors.append(f"entry {index + 1}: only a recovered merge carries source identity")
     return errors
+
+
+def _origin_problems(entry: dict, shared: bool, counts: dict[str, int]) -> list[str]:
+    """What is wrong with one entry's origin, given each seat's entries before it in ``counts``, which it advances."""
+    origin = entry.get("origin")
+    if (origin is not None) != shared:
+        return [": every entry of a shared record carries its origin, and no entry of an unshared one does"]
+    if origin is None:
+        return []
+    problems = []
+    seat = origin["seat"]
+    counts[seat] = counts.get(seat, 0) + 1
+    if origin["seq"] != counts[seat]:
+        problems.append(f"/origin/seq: seat {seat}'s entries run in sequence from 1")
+    for other, seq in sorted(origin["seen"].items()):
+        if other == seat:
+            problems.append(f"/origin/seen: a seat's seen names only other seats, not {seat}")
+        elif seq > counts.get(other, 0):
+            problems.append(f"/origin/seen: names entry {seq} of seat {other}, which is not an earlier entry of this journal")
+    return problems
 
 
 def kinds_registry() -> dict:
@@ -865,10 +922,13 @@ def complete_base_move_locked(directory: Path, *, from_head: str, to_head: str, 
             "archiveSha256": running["archiveSha256"]}
     with file_lock(directory / WRITER_LOCK), file_lock(directory / STATE_LOCK):
         current = read_state(directory)
+        # Its writer pin moves here, so only the seat is checked: an unseated, unadmitted or split checkout moves nothing.
+        require_seat(directory, current)
         entries = read_journal(directory)
         facts = {"from": from_head, "to": to_head, "merged": default_head, "why": reason}
         entry = {"id": len(entries) + 1, "at": now(), "kind": "base.moved", "subject": None,
                  "lane": None, "data": facts}
+        entry = _originate(directory, current, entries, [entry])[0]
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
@@ -887,7 +947,7 @@ def complete_base_move_locked(directory: Path, *, from_head: str, to_head: str, 
             errors = state_errors(updated)
             if errors:
                 raise StateError("base_move_invalid", "; ".join(errors))
-            _write_atomically(directory / STATE_FILE, dumps(updated))
+            _store_state(directory, updated)
             if current["meta"].get("writerGeneration") != running:
                 _note_change(directory, "writer-upgrade", version=updated["version"])
             _note_change(directory, "base-move", version=updated["version"])
@@ -919,7 +979,7 @@ def upgrade_writer(directory: Path, *, expected: str, reason: str) -> dict:
                 return current
             updated["version"] += 1
             updated["meta"]["updatedAt"] = now()
-            _write_atomically(directory / STATE_FILE, dumps(updated))
+            _store_state(directory, updated)
             _note_change(directory, f"writer-upgrade: {reason}", version=updated["version"])
             return updated
 
@@ -939,7 +999,444 @@ def read_state(directory: Path, *, for_write: bool = False) -> dict:
     errors = state_errors(state)
     if errors:
         raise StateError("state_invalid", "; ".join(errors))
+    if for_write:
+        require_seat(directory, state)
     return state
+
+
+def collab_of(state: dict) -> dict | None:
+    """A shared record's collab member; None for an unshared record, which behaves as it always has."""
+    meta = state.get("meta") if isinstance(state, dict) else None
+    return meta.get("collab") if isinstance(meta, dict) else None
+
+
+def local_seat(directory: Path, key: str) -> str | None:
+    """The seat this checkout writes a shared record as: ``agent-skills.seat.<key>`` in the local git configuration of
+    the checkout that holds the record, or None. No environment variable sets or overrides it: git's own are left out."""
+    cached = _SEATS.get((str(directory), key))
+    if cached is not None:
+        with contextlib.suppress(OSError):
+            if os.stat(cached[1]).st_mtime_ns == cached[2]:
+                return cached[0]
+    environment = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+    try:
+        found = subprocess.run(["git", "config", "--local", "--get", f"agent-skills.seat.{key}"], cwd=directory,
+                               env=environment, capture_output=True, text=True, timeout=60, check=False)
+        seat = found.stdout.strip()
+        if found.returncode != 0 or not SEAT.match(seat):
+            return None
+        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=directory,
+                                env=environment, capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    # Kept until the configuration file that holds it changes.
+    path = Path(common.stdout.strip()) / "config"
+    with contextlib.suppress(OSError):
+        if common.returncode == 0:
+            _SEATS[(str(directory), key)] = (seat, str(path), os.stat(path).st_mtime_ns)
+    return seat
+
+
+def require_seat(directory: Path, state: dict) -> str | None:
+    """Refuse a write to a shared record from a checkout with no seat, from a seat not yet admitted, or from a checkout
+    whose seat split; the sync writer's ingest, and an unadmitted seat's own request, are the two exceptions."""
+    collab = collab_of(state)
+    if collab is None or getattr(_COLLAB, "sync", False):
+        return None
+    if collab.get("heldReason") == "seat_split":
+        raise StateError("collab.seat_split", "this checkout's seat chain diverged from the one on the remote, so it "
+                         "writes nothing more; collab join --new-seat gives it a fresh seat")
+    seat = local_seat(directory, collab["key"])
+    if seat is None:
+        raise StateError("collab.seat_missing", f"this checkout has no seat for the shared record {collab['key']}: "
+                         "collab join gives it one")
+    if not (collab["seats"].get(seat) or {}).get("admitted") and getattr(_COLLAB, "requesting", None) != seat:
+        raise StateError("collab.seat_not_admitted", f"seat {seat} has not been admitted to {collab['key']}: the "
+                         "delivery holder admits it")
+    return seat
+
+
+def seat_counts(journal: list[dict]) -> dict[str, int]:
+    """How many entries of each seat a shared record's journal holds: each seat's last seq ingested."""
+    counts: dict[str, int] = {}
+    for entry in journal:
+        origin = entry.get("origin")
+        if origin is not None:
+            counts[origin["seat"]] = origin["seq"]
+    return counts
+
+
+def _originate(directory: Path, current: dict, journal: list[dict], made: list[dict]) -> list[dict]:
+    """Each entry of ``made`` with its origin on a shared record: this checkout's seat, its next seq, and what it has
+    seen of every other seat. An entry that has one already, a peer's being ingested, keeps it."""
+    collab = collab_of(current)
+    if collab is None or all("origin" in entry for entry in made):
+        return made
+    seat = local_seat(directory, collab["key"])
+    if seat is None:
+        raise StateError("collab.seat_missing", f"this checkout has no seat for the shared record {collab['key']}")
+    counts = seat_counts(journal)
+    stamped = []
+    for entry in made:
+        if "origin" not in entry:
+            counts[seat] = counts.get(seat, 0) + 1
+            seen = {other: seq for other, seq in sorted(counts.items()) if other != seat}
+            entry = {**entry, "origin": {"seat": seat, "seq": counts[seat], "seen": seen}}
+        stamped.append(entry)
+    return stamped
+
+
+def derived_seats(journal: list[dict]) -> dict:
+    """A shared record's seats, from its seat entries: each seat's latest label, whether admitted, and whether it
+    approves the plan."""
+    seats: dict[str, dict] = {}
+    for entry in journal:
+        if entry["kind"] not in SEAT_KINDS:
+            continue
+        data = entry["data"]
+        if entry["kind"] == "seat.admitted" and "origin" in entry \
+                and holder(journal, "delivery", at=entry["origin"]) != entry["origin"]["seat"]:
+            continue  # only the delivery holder admits a seat
+        seat = seats.setdefault(data["seat"], {"label": data["label"], "admitted": False, "approver": False})
+        seat["label"] = data["label"]
+        if entry["kind"] == "seat.admitted":
+            seat.update(admitted=True, approver=data["approver"])
+    return seats
+
+
+# D6's scopes. Each has one holder, derived from the journal and never stored: the record's first seat holds every
+# scope until its holder passes it on with scope.transferred, and a plan section nobody holds is the delivery holder's.
+SCOPE = re.compile(r"^(delivery|queue|lane:\S.*|plan:\S.*)$")
+# A row's placeholder for the lane its element names, and for any lane at all.
+LANE, ANY_LANE = "lane", "lane:*"
+# D6: who may write each field of a shared record, by a tuple of the scopes permitted, or as "local" (this machine's
+# own, never carried), "tool" or "derived". Every delivery-state/1 property has a row. A local write is checked
+# against every row; the sync filter checks a peer's writes the same way.
+FIELD_MAP = {
+    "": {"schemaVersion": "tool", "version": "local", "meta": "meta", "siblings": ("delivery",), "lanes": "lanes",
+         "queue": "queue", "liveFlakes": ("queue",), "laneOwnership": ("delivery",), "laneRegions": ("delivery",),
+         "regionsSettled": ("delivery",), "planned": "planned", "tickets": ("delivery",), "outside": ("delivery",),
+         "finish": ("delivery",), "followups": ("delivery", ANY_LANE), "leases": ("delivery",),
+         "extensions": ("delivery",)},
+    "meta": {"updatedAt": "local", "writerGeneration": "local", "closing": "local", "collab": "local",
+             **{name: ("delivery",) for name in ("headline", "planFile", "trackerParent", "hold", "statusOverride",
+                                                  "handoffsNeedAcceptance", "integration", "phase")},
+             **{name: ("queue",) for name in ("checking", "baseHead", "releasedHead", "checkHistory", "baseReruns",
+                                               "sources", "sourceReports", "baseMove")}},
+    "lanes": {"id": ("delivery",), "title": ("delivery",),
+              **{name: (LANE, "queue") for name in ("focus", "state", "waitingOn", "since", "focusAt", "focusBy",
+                                                     "waitingBy", "restedFrom", "waitingFrom", "freed")}},
+    "queue": {**{name: ("queue",) for name in ("stage", "checks", "syncedHead", "checkSelection", "repair", "order")},
+              **{name: (LANE,) for name in ("subject", "title", "lane", "assignedLane", "after", "files", "head",
+                                             "supersededAt", "leadInputs", "reportedRounds", "runId", "changeRequest",
+                                             "trackerStarted", "pending", "evidence", "leadSelection",
+                                             "acceptedRegionPaths", "namedChecks")}},
+    "planned": {**{name: ("delivery",) for name in ("subject", "lane", "after")},
+                **{name: (LANE,) for name in ("title", "stage", "files", "changeRequest", "runId", "trackerStarted",
+                                               "noChange")}},
+}
+# Who may create or remove an element of a keyed array: a lane's acceptance makes its queue element and removes its
+# planned one, and the delivery holder's reconcile may adopt a missed hand-off.
+ELEMENT_SCOPES = {"lanes": ("delivery",), "queue": (LANE, "delivery"), "planned": ("delivery", LANE),
+                  "followups": ("delivery", ANY_LANE), "leases": ("delivery",), "finish": ("delivery",)}
+
+
+def field_map_gaps(schema: dict) -> list[str]:
+    """Every delivery-state/1 property with no row in FIELD_MAP: at the top, in meta, and in the elements of lanes,
+    queue and planned."""
+    def items(name: str) -> dict:
+        node = schema["properties"][name]["items"]
+        return schema["$defs"][node["$ref"].rsplit("/", 1)[1]] if "$ref" in node else node
+    where = {"": schema["properties"], "meta": schema["properties"]["meta"]["properties"],
+             **{name: items(name)["properties"] for name in ("lanes", "queue", "planned")}}
+    return [f"{place or 'top'}: {name}" for place, properties in where.items() for name in properties
+            if name not in FIELD_MAP[place]]
+
+
+def _vector(journal: list[dict], at: dict) -> dict[str, int]:
+    """What the write at origin ``at`` had seen: the seen it carries, or else its entry's, and its own seat through its
+    seq."""
+    if isinstance(at.get("seen"), dict):
+        return {**at["seen"], at["seat"]: at["seq"]}
+    entry = next((item for item in journal if (item.get("origin") or {}).get("seat") == at["seat"]
+                  and item["origin"]["seq"] == at["seq"]), None)
+    return {**((entry or {}).get("origin") or {}).get("seen", {}), at["seat"]: at["seq"]}
+
+
+def scope_register(journal: list[dict], *, at: dict | None = None) -> tuple[str | None, dict[str, str]]:
+    """The record's first seat, and each scope passed on since, by its holder; as of origin ``at`` when given, from
+    the entries that write had seen. A transfer counts only when the scope's holder made it."""
+    through = None if at is None else _vector(journal, at)
+    first, held = None, {}
+    for entry in journal:
+        origin = entry.get("origin")
+        if origin is None or through is not None and through.get(origin["seat"], 0) < origin["seq"]:
+            continue
+        if entry["kind"] == "record.started" and first is None:
+            first = origin["seat"]
+        elif entry["kind"] == "scope.transferred":
+            scope = entry["data"]["scope"]
+            if _held_by(first, held, scope) == origin["seat"] == entry["data"]["from"]:
+                held[scope] = entry["data"]["to"]
+    return first, held
+
+
+def _held_by(first: str | None, held: dict[str, str], scope: str) -> str | None:
+    if scope in held:
+        return held[scope]
+    if scope.startswith("plan:"):
+        return held.get("delivery", first)
+    return first
+
+
+def holder(journal: list[dict], scope: str, *, at: dict | None = None) -> str | None:
+    """The seat holding ``scope``, as of origin ``at`` when given; None on an unshared record."""
+    return _held_by(*scope_register(journal, at=at), scope)
+
+
+def holds(journal: list[dict], seat: str | None, scope: str, *, at: dict | None = None) -> bool:
+    """Whether ``seat`` holds ``scope``; ``lane:*`` is any lane."""
+    if scope != ANY_LANE:
+        return seat is not None and holder(journal, scope, at=at) == seat
+    first, held = scope_register(journal, at=at)
+    return seat is not None and (seat == first or any(name.startswith("lane:") and owner == seat
+                                                      for name, owner in held.items()))
+
+
+def held_sections(journal: list[dict], seat: str, plan: str) -> list[str]:
+    """The plan sections ``seat`` holds, by name as region_ownership finds them: (preamble), then each heading."""
+    lines = plan.splitlines()
+    names = ["(preamble)", *(lines[line - 1].strip() for line in sorted(_region().markdown_headings(lines)))]
+    return [name for name in dict.fromkeys(names) if holds(journal, seat, f"plan:{name}")]
+
+
+def _region():
+    return _sibling("region_ownership")
+
+
+def path_scopes(state: dict, path: str, element: dict | None = None) -> tuple[str, ...] | str:
+    """The scopes that may write a partition path of ``state``, or "local", "tool" or "derived". ``element`` stands in
+    for a keyed element the record does not hold yet, for the lane it names."""
+    if path.startswith("meta/"):
+        return FIELD_MAP["meta"].get(path[len("meta/"):], ("delivery",))
+    matched = re.match(r"^(?P<array>[a-z]+)\[(?P<key>[A-Za-z]+)=(?P<value>[^\]]+)\](?:/(?P<field>.+))?$", path)
+    array = path[:-2] if path.endswith("[]") else matched.group("array") if matched else path
+    row = FIELD_MAP[""].get(array, ("delivery",))
+    if path.endswith("[]") or not matched:
+        return ELEMENT_SCOPES.get(array, row) if path.endswith("[]") else row
+    if element is None:
+        element = next((item for item in state.get(array, []) if isinstance(item, dict)
+                        and str(item.get(matched.group("key"))) == matched.group("value")), {})
+    scopes = ELEMENT_SCOPES.get(array, ("delivery",)) if matched.group("field") is None else \
+        FIELD_MAP[array].get(matched.group("field"), ("delivery",)) if array in ("lanes", "queue", "planned") else row
+    lane = matched.group("value") if array == "lanes" else element.get("lane")
+    return tuple(dict.fromkeys((f"lane:{lane}" if lane else "delivery") if scope == LANE else scope for scope in scopes))
+
+
+def scope_violations(directory: Path, before: dict, after: dict, writer: str = "lead") -> list[str]:
+    """What a local write to a shared record changed that this seat holds no scope to write, by D6's field map. The
+    runner writes only where its seat holds the queue. An element made or removed is judged by who may make it, and the
+    write that makes a queue element sets its runner fields only to their starting values. An unshared record has none."""
+    collab = collab_of(after)
+    if collab is None:
+        return []
+    journal = _raw_journal(directory)
+    seat = local_seat(directory, collab["key"])
+    if writer == "runner":
+        return [] if holds(journal, seat, "queue") else [
+            f"the runner writes only on the machine whose seat holds the queue, seat {holder(journal, 'queue')}"]
+    old, new = partition_paths(before), partition_paths(after)
+    made = {path for path in set(new) - set(old) if path.endswith("]")}
+    gone = {path for path in set(old) - set(new) if path.endswith("]")}
+    said = []
+    for path in sorted(set(old) | set(new)):
+        if old.get(path, ...) == new.get(path, ...):
+            continue
+        element, field = (path.split("]/", 1)[0] + "]", path.split("]/", 1)[1]) if "]/" in path else (None, None)
+        if element in gone:
+            continue  # the element's own removal stands for its fields
+        runner = element is not None and element.startswith("queue[") and FIELD_MAP["queue"].get(field) == ("queue",)
+        at_start = field in QUEUE_START and new.get(path, ...) == QUEUE_START[field]
+        # A re-hand-off is legal only for a stopped or queued element, or one checking whose failed run it ends at a
+        # new head.
+        was, now = before_element(before, element) or {}, before_element(after, element) or {}
+        ends = was.get("stage") == "checking" and now.get("head") != was.get("head") and any(
+            check.get("state") in ("failed", "timed_out") for check in was.get("checks", []))
+        reset = runner and at_start and (was.get("stage") in ("stopped", "queued") or ends)
+        if element in made and (not runner or field == "order" or at_start) or reset:
+            # Set by the write that makes the element, or put back to its starting value by a re-hand-off: judged as
+            # the element.
+            path, field = element, None
+        scopes = path_scopes(after if path in new or path in made else before, path)
+        if isinstance(scopes, str) or any(holds(journal, seat, scope) for scope in scopes):
+            continue
+        holders = ", ".join(f"{scope} by seat {holder(journal, scope) if scope != ANY_LANE else 'of a lane'}"
+                            for scope in scopes)
+        said.append(f"{path} is written only by the holder of {holders}")
+    return said
+
+
+def before_element(state: dict, selector: str | None) -> dict | None:
+    """The keyed element ``selector`` names in ``state``, or None."""
+    matched = re.match(r"^(?P<array>[a-z]+)\[(?P<key>[A-Za-z]+)=(?P<value>[^\]]+)\]$", selector or "")
+    if not matched:
+        return None
+    return next((item for item in state.get(matched.group("array"), []) if isinstance(item, dict)
+                 and str(item.get(matched.group("key"))) == matched.group("value")), None)
+
+
+def require_lane(directory: Path, state: dict, subject: str, lane: str | None = None) -> None:
+    """On a shared record, refuse a lane's hand-off of a story, or its acceptance or rejection, from a seat that does
+    not hold that story's lane, before anything is written: its peers would never see the write."""
+    collab = collab_of(state)
+    if collab is None:
+        return
+    if lane is None:
+        item = next((entry for entry in [*state["queue"], *state.get("planned", [])] if entry["subject"] == subject), {})
+        lane = item.get("assignedLane") or item.get("lane")
+    if lane is None:
+        return
+    journal = _raw_journal(directory)
+    if not holds(journal, local_seat(directory, collab["key"]), f"lane:{lane}"):
+        raise StateError("scope.not_held", f"{subject} is lane {lane}'s, whose holder, seat "
+                         f"{holder(journal, f'lane:{lane}')}, hands it off and accepts or rejects its hand-off")
+
+
+def partition_paths(state: dict) -> dict[str, object]:
+    """A record's values by partition path, in the record's order: ``meta/<field>``, a top-level field, a keyed
+    array's presence as ``<array>[]``, its elements by keyed selector, and their fields. Local and tool fields have none."""
+    paths: dict[str, object] = {}
+    for name, value in state.items():
+        if name in TOOL_OWNED:
+            continue
+        if name == "meta":
+            paths.update((f"meta/{field}", item) for field, item in value.items() if field not in LOCAL_META)
+        elif name in ELEMENT_KEYS and isinstance(value, list):
+            key = ELEMENT_KEYS[name]
+            paths[f"{name}[]"] = True
+            for element in value:
+                selector = f"{name}[{key}={element[key]}]"
+                paths[selector] = True
+                paths.update((f"{selector}/{field}", item) for field, item in element.items() if field != key)
+        else:
+            paths[name] = value
+    return paths
+
+
+def read_field_origins(directory: Path) -> dict[str, dict]:
+    try:
+        return json.loads((directory / FIELD_ORIGINS_FILE).read_bytes().decode("utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise StateError("state_invalid", f"{FIELD_ORIGINS_FILE} is not JSON") from None
+
+
+def _raw_journal(directory: Path) -> list[dict]:
+    """The journal's entries, read without checking them: for a writer under the lock, whose read already did."""
+    return [json.loads(line) for line in _journal_text(directory)[0].split("\n")[:-1]]
+
+
+def element_order(origins: dict[str, dict], journal: list[dict]) -> Callable[[str], tuple]:
+    """The order of a shared record's keyed elements, the same on every machine: by the causal clock of the entry each
+    element's creation names, its seat and seq; a tie keeps the order the elements already have."""
+    clocks = {}
+    for entry in journal:
+        origin = entry.get("origin")
+        if origin is not None:
+            clocks[(origin["seat"], origin["seq"])] = origin["seq"] + sum(origin["seen"].values())
+
+    def order(selector: str) -> tuple:
+        origin = origins.get(selector)
+        if origin is None:
+            return (0, "", 0)
+        return (clocks.get((origin["seat"], origin["seq"]), 0), origin["seat"], origin["seq"])
+    return order
+
+
+def sort_elements(state: dict, origins: dict[str, dict], journal: list[dict]) -> None:
+    order = element_order(origins, journal)
+    for name, key in ELEMENT_KEYS.items():
+        if isinstance(state.get(name), list):
+            state[name].sort(key=lambda element: order(f"{name}[{key}={element[key]}]"))
+
+
+def carried_value(path: str, value: object, origins_of: dict[int, dict]) -> object:
+    """A value as a partition carries it: a journal id it holds is named by its entry's origin, ``{seat, seq}``."""
+    if path == "regionsSettled" and isinstance(value, int) and value and value in origins_of:
+        return origins_of[value]
+    reuse = value.get("reuse") if path.endswith("/leadSelection") and isinstance(value, dict) else None
+    if isinstance(reuse, dict) and isinstance(reuse.get("decision"), int) and reuse["decision"] in origins_of:
+        value = copy.deepcopy(value)
+        value["reuse"]["decision"] = origins_of[reuse["decision"]]
+    return value
+
+
+# What a removed path's digest is taken over: no value has it.
+REMOVED_VALUE = {"removed": True, "by": "partition"}
+
+
+def value_digest(value: object) -> str:
+    """A short digest of a carried value, the same on every machine; a removal's is ``REMOVED_VALUE``'s."""
+    text = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("ascii")).hexdigest()[:16]
+
+
+def journal_origins(journal: list[dict]) -> dict[int, dict]:
+    """Each entry's origin, ``{seat, seq}``, by its local id."""
+    return {entry["id"]: {"seat": entry["origin"]["seat"], "seq": entry["origin"]["seq"]}
+            for entry in journal if "origin" in entry}
+
+
+def _store_state(directory: Path, updated: dict) -> None:
+    """Write ``updated`` as state.json, under the state lock the caller holds. On a shared record, the seat's own write
+    first records, for every value it changed, its origin and the value it replaced, and keyed elements take their
+    shared order."""
+    if collab_of(updated) is not None:
+        journal = _raw_journal(directory)
+        origins = read_field_origins(directory)
+        if not getattr(_COLLAB, "sync", False):
+            seat = local_seat(directory, updated["meta"]["collab"]["key"])
+            seq = seat_counts(journal).get(seat or "", 0)
+            try:
+                before = partition_paths(json.loads((directory / STATE_FILE).read_bytes().decode("utf-8")))
+            except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError):
+                before = {}
+            after = partition_paths(updated)
+            if seat is not None and seq:
+                origins_of = journal_origins(journal)
+                changed = False
+                written = [path for path, value in after.items()
+                           if path not in before or before[path] != value or origins.get(path, {}).get("removed")]
+                for path in [*written, *(path for path in before if path not in after)]:
+                    previous = origins.get(path)
+                    # What this seat had ingested of every other when it wrote, so a scope it took since its own last
+                    # entry counts for the write.
+                    origin: dict = {"seat": seat, "seq": seq, "seen": {other: count for other, count in
+                                                                       sorted(seat_counts(journal).items()) if other != seat}}
+                    if previous is not None and previous["seat"] == seat:
+                        if "replaces" in previous:
+                            origin["replaces"] = previous["replaces"]
+                    elif previous is not None:
+                        # The peer's value this write replaces, so every machine can tell this write follows it.
+                        held = REMOVED_VALUE if previous.get("removed") or path not in before else \
+                            carried_value(path, before[path], origins_of)
+                        origin["replaces"] = {"seat": previous["seat"], "seq": previous["seq"],
+                                              "digest": value_digest(held)}
+                    if path not in after:
+                        origin["removed"] = True
+                    origins[path] = origin
+                    changed = True
+                for path in list(origins):
+                    # A removed element's fields go with it: its removal stands for them.
+                    element = path.split("]/", 1)[0] + "]" if "]/" in path else None
+                    if element is not None and origins.get(element, {}).get("removed") and path not in after:
+                        del origins[path]
+                        changed = True
+                if changed:
+                    _write_atomically(directory / FIELD_ORIGINS_FILE, dumps(origins))
+        sort_elements(updated, origins, journal)
+    _write_atomically(directory / STATE_FILE, dumps(updated))
 
 
 def _journal_text(directory: Path) -> tuple[str, int]:
@@ -1204,6 +1701,8 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
         violations.append("/meta/writerGeneration is changed only by the lead writer transition")
     if meta_before.get("updatedAt") != meta_after.get("updatedAt"):
         violations.append("/meta/updatedAt is maintained by the tool")
+    if meta_before.get("collab") != meta_after.get("collab"):
+        violations.append("/meta/collab is maintained by the tool: a record is shared only when plan-open creates it")
     if writer == "runner":
         for field in set(before) | set(after):
             if field in TOOL_OWNED or field in ("meta", "queue", "lanes"):
@@ -1536,7 +2035,7 @@ def _tool_write(directory: Path, change: Callable[[dict], object]) -> tuple[dict
         if errors:
             raise StateError("patch_invalid", "; ".join(errors))
         _require_unicode(updated, "patch_invalid")
-        _write_atomically(directory / STATE_FILE, dumps(updated))
+        _store_state(directory, updated)
         _note_change(directory, "patch", version=updated["version"])
     return updated, outcome
 
@@ -1654,6 +2153,7 @@ def handoff(
     superseding = False
 
     def change(state: dict) -> dict:
+        require_lane(directory, state, subject, lane)
         nonlocal carried, stopped, superseding
         if lane not in [entry["id"] for entry in state["lanes"]]:
             raise StateError("writer_not_owned", f"there is no lane {lane}")
@@ -1854,6 +2354,7 @@ def _locked_write(directory: Path, change: Callable[[dict, list[dict]], tuple[ob
                 if not entry.get(link):
                     entry.pop(link, None)
             stamped.append(entry)
+        stamped = _originate(directory, state, journal, stamped)
         errors = journal_errors([*journal, *stamped])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
@@ -1889,6 +2390,7 @@ def _take_handed(directory: Path, subject: str, *, by: int | None = None, author
     """
 
     def change(state: dict, journal: list[dict]) -> tuple[dict, list[dict]]:
+        require_lane(directory, state, subject)
         if by is None:
             item = _pending(state, subject)
             view = handed_item(state, journal, subject)
@@ -1961,6 +2463,7 @@ def no_change_handoff(directory: Path, *, lane: str, subject: str, base_head: st
         raise StateError("handoff_invalid", "--base-head is the full commit the evidence ran at")
 
     def change(state: dict) -> dict:
+        require_lane(directory, state, subject, lane)
         if lane not in [entry["id"] for entry in state["lanes"]]:
             raise StateError("writer_not_owned", f"there is no lane {lane}")
         planned = next((entry for entry in state.get("planned", []) if entry["subject"] == subject), None)
@@ -2049,6 +2552,7 @@ def accept_handoff(directory: Path, subject: str, authorization: dict | None = N
     """The lead accepts a waiting hand-off; the runner may now take it."""
 
     def change(state: dict) -> dict:
+        require_lane(directory, state, subject)
         waiting = _pending_no_change(state, subject)
         if waiting is not None:
             # Settled, not removed: it stays in the record, counted as done, and never enters the queue.
@@ -2095,6 +2599,7 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
     """The lead rejects a waiting hand-off; the work goes back to its lane as planned."""
 
     def change(state: dict) -> dict:
+        require_lane(directory, state, subject)
         waiting = _pending_no_change(state, subject)
         if waiting is not None:
             # Back to its lane, building, without the evidence the lead didn't accept.
@@ -2760,6 +3265,9 @@ def patch(
     prepared, and before the lock is taken for the write: a deterministic seam
     for concurrency tests.
     """
+    if writer == SYNC_WRITER:
+        raise StateError("collab.sync_writer_reserved", "the sync writer is the tool's own, which applies a peer's "
+                         "partition: no patch writes as it")
     if writer not in WRITERS:
         raise StateError("writer_invalid", f"writer must be one of {', '.join(WRITERS)}")
     if writer == "lane" and not lane:
@@ -2783,6 +3291,9 @@ def patch(
             violations = lane_violations(current, updated, lane)
             if violations:
                 raise StateError("writer_not_owned", "; ".join(violations))
+            held = scope_violations(directory, current, updated, writer)
+            if held:
+                raise StateError("scope.not_held", "; ".join(held))
             _stamp_lane(current, updated, lane)
             # A lane speaks when it writes its focus, by --patch or by --set.
             speaks = _written_field(selector, changes, assignments, "focus") == lane
@@ -2799,6 +3310,9 @@ def patch(
             violations = ownership_violations(current, updated, writer)
             if violations:
                 raise StateError("field_not_owned", "; ".join(sorted(set(violations))))
+            held = scope_violations(directory, current, updated, writer)
+            if held:
+                raise StateError("scope.not_held", "; ".join(held))
             _stamp_waiting(current, updated, writer, _written_field(selector, changes, assignments, "waitingOn"))
             _stamp_focus(current, updated, writer, None)
             _stamp_wait_rows(current, updated)
@@ -2809,7 +3323,7 @@ def patch(
         if errors:
             raise StateError("patch_invalid", "; ".join(_explained(errors, updated)))
         _require_unicode(updated, "patch_invalid")
-        _write_atomically(directory / STATE_FILE, dumps(updated))
+        _store_state(directory, updated)
         _note_change(directory, "patch", version=updated["version"])
     return updated
 
@@ -2845,6 +3359,10 @@ def append_journal(
         raise StateError("kind_not_owned", f"the runner never writes {kind}: the lead or the lane records its review")
     with file_lock(directory / STATE_LOCK):
         current = read_state(directory, for_write=True)
+        if writer == "runner":
+            held = scope_violations(directory, current, current, writer)
+            if held:
+                raise StateError("scope.not_held", "; ".join(held))
         if writer == "lane":
             # A lane also notes the gaps it meets on its own story, as they happen.
             if kind not in LANE_REVIEW_KINDS and kind not in (AUTHORIZATION_KIND, "gap.noted"):
@@ -2893,10 +3411,22 @@ def append_journal(
 
 def _append_journal_locked(directory: Path, current: dict, entries: list[dict], entry: dict) -> dict:
     """Append validated evidence while the caller holds the state lock."""
+    entry = _originate(directory, current, entries, [entry])[0]
+    requesting = getattr(_COLLAB, "requesting", None)
+    if requesting is not None and (entry["kind"] != "seat.requested" or entry["data"].get("seat") != requesting
+                                   or entry["origin"]["seat"] != requesting):
+        raise StateError("collab.seat_not_admitted", f"seat {requesting} journals only its own seat.requested "
+                         "until it is admitted")
     errors = journal_errors([*entries, entry])
     if errors:
         raise StateError("entry_invalid", "; ".join(errors))
     _require_unicode(entry, "entry_invalid")
+    if entry["kind"] in SEAT_KINDS and collab_of(current) is not None:
+        # A shared record's seats are derived from these entries, never written directly: written first, as the
+        # close's mark is.
+        seated = copy.deepcopy(current)
+        seated["meta"]["collab"]["seats"] = derived_seats([*entries, entry])
+        current = _with_state(directory, current, seated)
     if entry["kind"] == CLOSED_KIND:
         # The close's started mark goes in with the entry, so a close journaled by hand carries it too. It is
         # written first: a delivery.closed line never stands without its mark.
@@ -2927,7 +3457,7 @@ def _with_state(directory: Path, current: dict, updated: dict) -> dict:
     errors = state_errors(updated)
     if errors:
         raise StateError("patch_invalid", "; ".join(errors))
-    _write_atomically(directory / STATE_FILE, dumps(updated))
+    _store_state(directory, updated)
     _note_change(directory, "patch", version=updated["version"])
     return updated
 
@@ -2941,7 +3471,7 @@ def _with_closing(directory: Path, current: dict, closing: dict) -> dict:
     errors = state_errors(updated)
     if errors:
         raise StateError("patch_invalid", "; ".join(errors))
-    _write_atomically(directory / STATE_FILE, dumps(updated))
+    _store_state(directory, updated)
     _note_change(directory, "patch", version=updated["version"])
     return updated
 
@@ -4334,7 +4864,7 @@ def _write_locked(directory: Path, state: dict, updated: dict) -> dict:
     if errors:
         raise StateError("patch_invalid", "; ".join(errors))
     _require_unicode(updated, "patch_invalid")
-    _write_atomically(directory / STATE_FILE, dumps(updated))
+    _store_state(directory, updated)
     _note_change(directory, "patch", version=updated["version"])
     return updated
 
@@ -5905,7 +6435,7 @@ def _cleanup_note(cleanup: list[dict]) -> dict:
 
 # The state directory's own files: a snapshot is never written over one of them.
 RECORD_NAMES = (STATE_FILE, JOURNAL_FILE, CHANGES_FILE, STATE_LOCK, QUEUE_LOCK, WRITER_LOCK, PUBLISHED_FILE,
-                OUTBOX_DIRECTORY, RECOVERY_FILE)
+                OUTBOX_DIRECTORY, RECOVERY_FILE, FIELD_ORIGINS_FILE)
 
 
 def _refuse_record_path(directory: Path, output: Path) -> None:
@@ -6286,7 +6816,9 @@ def _checks_argument(value: str) -> object:
 # What a running `wait` returns on: the journal kinds that need the lead. A blocked lane and machine pressure also end it.
 # A held runner wakes the lead as a blocker does: the queue writes its hold as serving.held.
 WAIT_KINDS = frozenset({"candidate.handed", "check.failed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded",
-                        "serving.held", "sibling.landed", "target.settled"})
+                        "serving.held", "sibling.landed", "target.settled",
+                        # On a shared record: a peer's feedback, request for a scope and request to join.
+                        "feedback.raised", "scope.requested", "seat.requested"})
 # 0 is a wake and 1 an error, so a lead can tell what ended a wait left running in the background.
 WAIT_EXPIRED_EXIT = 3
 WAIT_TIMEOUT_SECONDS = 1800.0
@@ -6634,7 +7166,7 @@ def main(argv: list[str] | None = None) -> int:
     start.add_argument("--seed", help="seed planned work, finish lines and lane ownership in the initial write")
     commands.add_parser("validate", help="validate the state and the journal")
     change = commands.add_parser("patch", help="apply a JSON merge patch, pinned to a version")
-    change.add_argument("--writer", choices=WRITERS, required=True)
+    change.add_argument("--writer", choices=(*WRITERS, SYNC_WRITER), required=True)
     change.add_argument("--lane", help="the lane a lane's write is for")
     change.add_argument("--version", type=int, help="the state version the patch was written against")
     change.add_argument("--element", help="apply the patch to one element, such as queue[subject=...]")
@@ -6771,6 +7303,31 @@ def main(argv: list[str] | None = None) -> int:
     upgrade.add_argument("--writer", choices=WRITERS, required=True)
     upgrade.add_argument("--expected", required=True, help="previous archive digest, or unpinned")
     upgrade.add_argument("--reason", required=True)
+    for name, said in (("collab-push", "push this seat's partition of a shared record to the base remote"),
+                       ("collab-fetch", "fetch every seat's partition of a shared record from the base remote"),
+                       ("collab-ingest", "ingest the fetched partitions into the record, as the sync writer")):
+        step = commands.add_parser(name, help=f"{said}; the sync loop runs it, and this is for tests and recovery")
+        if name != "collab-ingest":
+            step.add_argument("--remote", required=True, help="the binding's base remote, where the partitions live")
+        if name != "collab-push":
+            step.add_argument("--key", help="the shared record's key, for a checkout with no record yet")
+    scoped = commands.add_parser("scope", help="on a shared record: pass a scope on, ask for one, or keep one asked for")
+    scope_action = scoped.add_subparsers(dest="scope_action", required=True)
+    given = scope_action.add_parser("give", help="the holder passes a scope to an admitted seat")
+    given.add_argument("--scope", required=True, help="delivery, queue, lane:<lane> or plan:<section>")
+    given.add_argument("--to", required=True, help="the seat that takes it")
+    given.add_argument("--wait", type=float, default=60.0,
+                       help="for the queue: seconds to wait for it to be idle before refusing")
+    asked = scope_action.add_parser("request", help="ask the holder of a scope for it")
+    asked.add_argument("--scope", required=True, help="delivery, queue, lane:<lane> or plan:<section>")
+    asked.add_argument("--reason", required=True, help="why, in the person's words")
+    kept = scope_action.add_parser("decline", help="the holder keeps a scope another seat asked for")
+    kept.add_argument("--request", type=int, required=True, help="the scope.requested entry's id")
+    seated = commands.add_parser("seat", help="on a shared record: the delivery holder admits a seat")
+    seat_action = seated.add_subparsers(dest="seat_action", required=True)
+    admitted = seat_action.add_parser("admit", help="admit a requested seat, or change whether it approves the plan")
+    admitted.add_argument("--seat", required=True)
+    admitted.add_argument("--no-approver", action="store_true", help="the seat writes but does not approve the plan")
     moved = commands.add_parser("base-move", help="reconcile a published merge and its applied writer")
     moved.add_argument("--writer", choices=WRITERS, required=True)
     for flag in ("from-head", "to-head", "default-head", "expected-base", "expected-writer", "reason"):
@@ -6794,6 +7351,25 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "validate":
             show(args.dir)
             result = {"ok": True}
+        elif args.command == "scope":
+            module = _collab()
+            if args.scope_action == "give" and args.scope == "delivery":
+                # Delivery moves with this machine's publishers parked, which only run-delivery can do.
+                raise StateError("scope.handover_unparked", "delivery is handed over with run-delivery's `collab give "
+                                 "--scope delivery --to SEAT`, which parks this machine's tracker and hosted "
+                                 "publishers first; the state tool doesn't hand it over")
+            entry = (module.give_scope(args.dir, args.scope, args.to, wait=args.wait) if args.scope_action == "give"
+                     else module.request_scope(args.dir, args.scope, args.reason) if args.scope_action == "request"
+                     else module.decline_request(args.dir, args.request))
+            result = {"ok": True, "entry": entry}
+        elif args.command == "seat":
+            result = {"ok": True, "entry": _collab().admit_seat(args.dir, args.seat, approver=not args.no_approver)}
+        elif args.command == "collab-push":
+            result = _collab().push(args.dir, remote=args.remote)
+        elif args.command == "collab-fetch":
+            result = {"ok": True, "seats": _collab().fetch(args.dir, remote=args.remote, key=args.key)}
+        elif args.command == "collab-ingest":
+            result = _collab().ingest(args.dir, key=args.key)
         elif args.command == "patch":
             if args.patch is None and args.assignments is None:
                 raise StateError("patch_invalid", "give --patch, --set or both")
@@ -6936,6 +7512,9 @@ def journal_patched(directory: Path, *, version: int | None, selector: str, chan
         violations = ownership_violations(current, patched, "lead")
         if violations:
             raise StateError("field_not_owned", "; ".join(sorted(set(violations))))
+        held = scope_violations(directory, current, patched)
+        if held:
+            raise StateError("scope.not_held", "; ".join(held))
         _stamp_waiting(current, patched, "lead", _written_field(selector, changes, None, "waitingOn"))
         _stamp_focus(current, patched, "lead", None)
         _stamp_wait_rows(current, patched)

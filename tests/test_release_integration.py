@@ -119,6 +119,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
             "skills/run-delivery/references/config.md",
             "skills/run-delivery/scripts/pr_review_gates.py",
             "skills/run-delivery/scripts/gaps.py",
+            "skills/run-delivery/scripts/plan_sync.py",
             "skills/run-delivery/scripts/run_delivery.py",
             "skills/run-delivery/scripts/tracker_publisher.py",
             "skills/run-delivery/templates/evidence.html",

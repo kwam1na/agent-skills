@@ -517,3 +517,10 @@ preserve caller-supplied review accounting. Missing capabilities, signals or
 output remain explicit; observations do not grant delivery authority. See
 [host projections](docs/host-adapters.md) and
 [product generations](docs/product-generation.md) for installed use.
+
+## Two engineers, one delivery
+
+A delivery record can be shared between two engineers' clones through git alone:
+they write one plan together section by section, give feedback on it, approve it
+jointly, and then co-lead with split lanes or hand back to one lead. A record
+nobody shares is unchanged. See [two engineers, one delivery](docs/collaboration.md).

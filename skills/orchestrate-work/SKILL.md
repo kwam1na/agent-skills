@@ -738,6 +738,8 @@ it.
   that lists every kind of entry: its facts, typed or prose, its links, its
   altitude and tone, its words and its tracker update. The guide's "Journal
   entries" section says how an entry is shaped and how a kind is added.
+- `delivery-partition/1` describes one seat's partition of a shared record,
+  which "Shared records" below explains.
 
 Write both only through the state tool, `scripts/delivery_state.py`. Run it
 with `python3 -B` so no bytecode is written beside the skill:
@@ -900,3 +902,186 @@ writer and state locks it reconciles `meta.baseHead`, `meta.baseMove` and `meta.
 The `base.moved` journal event is idempotent, including retry after the state write succeeds and the journal
 append is interrupted. Ordinary patches cannot replace `meta.baseMove`. Use `run-delivery lead-sync --merge`
 to coordinate merge, publication, the writer transition and supervisor recovery.
+
+## Shared records
+
+A record is shared only when `run-delivery plan-open` creates it, with
+`meta.collab`. Every other record is unshared and behaves exactly as before:
+nothing below applies to it, and an existing record never becomes shared.
+
+- **Seats.** A seat is one writer of a shared record: a checkout, whose id
+  (`s-` and 12 hex characters) is made the first time and kept in its local git
+  configuration as `agent-skills.seat.<key>`. A checkout's worktrees share it,
+  and no environment variable sets or overrides it. Its label, from
+  `user.name`, is only shown. `meta.collab.seats` is derived from the
+  `seat.requested`, `seat.admitted` and `seat.labeled` entries and never
+  written directly.
+- **Refusals.** On a shared record a write from a checkout with no seat is
+  refused with `collab.seat_missing`, and one from a seat not yet admitted
+  with `collab.seat_not_admitted`, apart from that seat's own request. The
+  `sync` writer is the tool's own: `patch --writer sync` is refused with
+  `collab.sync_writer_reserved`.
+- **Origins.** Every entry of a shared record carries `origin`: its seat, its
+  seq, dense from 1 for each seat, and `seen`, the last seq of each other seat
+  it had ingested. Local ids keep their rule, dense from 1 in this machine's
+  order, so every reader of ids works unchanged. Machines hold the same set of
+  origins in an order that respects `seen`; their local ids may differ.
+- **Partitions.** `scripts/collab.py` keeps each seat's partition as a commit
+  chain at `refs/agent-skills/<key>/<seat>` on the base remote, holding its
+  `delivery-partition/1` document and the seat's own entries, their links by
+  origin. It is
+  pushed fast-forward only. Peers' chains are fetched by explicit refspec into
+  `refs/agent-skills-peers/<key>/<seat>`, so no branch, tag or configured
+  refspec changes. Each value's origin is kept beside the record, on this
+  machine only.
+- **Ingest.** The sync writer ingests a peer's entry once every entry its
+  `seen` names is here, translating its links to local ids, and an unadmitted
+  seat's only as far as its request. A value is applied when its writer may
+  write it and it follows the local one; between concurrent values, the higher
+  seat id wins on every machine. A removal wins over every write that does not
+  follow it. `regionsSettled` and a reuse grant's decision are carried by
+  origin; `meta.closing` is derived on each machine from its own
+  `delivery.closed`.
+- **Holds and splits.** A partition from another writer generation is held,
+  journalled as `partition.held`, and ingested once both machines run the same
+  one. A checkout whose push finds its seat's remote chain diverged, a copied
+  checkout, is split: the chain that reached the remote first is the seat's, the
+  other is kept at `refs/agent-skills-split/<key>/<seat>`, and every later write
+  from that checkout is refused with `collab.seat_split`.
+
+`collab.py serve` is the sync loop a supervisor runs: each poll it pushes this
+seat's partition when the record changed and fetches and ingests its peers'.
+The state tool runs each step alone, for tests and recovery; `REMOTE` is the binding's base remote:
+
+```bash
+python3 -B scripts/delivery_state.py --dir STATE collab-push --remote REMOTE
+python3 -B scripts/delivery_state.py --dir STATE collab-fetch --remote REMOTE [--key KEY]
+python3 -B scripts/delivery_state.py --dir STATE collab-ingest [--key KEY]
+```
+
+### Authority scopes
+
+A shared record's authority is split into scopes: `delivery`, `queue`,
+`lane:<lane>` and `plan:<section>`. Each has exactly one holder, derived from
+the journal and never stored. The seat that opened the record holds every scope
+until its holder passes one on with `scope.transferred`. A transfer counts only
+when the scope's holder made it, and a plan section nobody holds is the
+`delivery` holder's. The state tool's `holder`, `holds` and `held_sections`
+read them.
+
+- **Who writes what.** Every `delivery-state/1` field has one row in the state
+  tool's field map: the scopes that may write it, or `local`, `tool` or
+  `derived`. A lead or lane write on a shared record that changes a field its
+  seat holds no scope to write is refused with `scope.not_held`, naming the
+  holder: each lead writes its own lanes' rows and queue elements. The write
+  that makes a queue element, a lane's acceptance or the `delivery` holder's
+  adoption of a missed hand-off, sets its runner fields only to their starting
+  values, and a re-hand-off may put them back there. The runner writes only on
+  the machine whose seat holds `queue`, and `merge_queue.py serve` refuses
+  anywhere else with `queue.not_held`, and stops once the queue is handed on.
+  The sync writer applies a peer's value only if that seat held a scope that
+  may write it when it wrote it. A field two scopes may write, such as a lane
+  row's focus, goes to the write that replaced the other, and between
+  concurrent writes to the higher seat id.
+- **Admission.** Only the `delivery` holder admits a seat, and only its
+  `seat.admitted` counts. Admitting a seat again with another `--no-approver`
+  setting changes whether it approves the plan.
+- **The queue's handover.** `scope give --scope queue` waits, up to `--wait`
+  seconds, for the queue to be idle: no check running, no merge in progress and
+  no turn holding the queue lock. Busy past that, it refuses with
+  `scope.handover_busy`, naming the check or merge. Idle, holding the queue
+  lock, it journals `queue.stopped` and then `scope.transferred`.
+- **Delivery's handover.** `scope give --scope delivery` here refuses with
+  `scope.handover_unparked` and writes nothing: delivery moves only through
+  run-delivery's `collab give --scope delivery`, which parks this machine's
+  tracker and hosted publishers first.
+- **Requests.** Any seat may ask for a scope with `scope.requested`. Its
+  holder passes it on, or keeps it with `scope.declined`. With
+  `collab.autoGrant` on, the `delivery` holder passes a requested plan section
+  nobody holds to the seat that asked, and never any other scope.
+
+```bash
+python3 -B scripts/delivery_state.py --dir STATE scope give --scope SCOPE --to SEAT [--wait SECONDS]
+python3 -B scripts/delivery_state.py --dir STATE scope request --scope SCOPE --reason "<why>"
+python3 -B scripts/delivery_state.py --dir STATE scope decline --request ID
+python3 -B scripts/delivery_state.py --dir STATE seat admit --seat SEAT [--no-approver]
+```
+
+### Which machine runs what
+
+Every seat runs a supervisor on its own machine. It serves the live view and
+`collab.py serve`, the sync loop, which pushes this seat's partition within a
+poll of a local write and fetches and ingests its peers' every poll, so a write
+reaches a running peer's record within two polls and one push. It serves the
+queue only where its seat holds `queue`: a seat given the queue starts serving
+it on its supervisor's next pass, and one that passed it on drops its exited
+queue child, which is never restarted and is no blocker.
+
+On a shared record each pass step, and the close-out's, runs by this table; on
+an unshared record every step runs, as before. run-delivery's
+`SHARED_STEPS` holds the same rows.
+
+| Step | Runs on |
+| --- | --- |
+| `reconcile`, `regions`, `peers`, `target`, `grants`, `planView`, `finish`, `publish`, `cleanupBeforeClose`, `friction`, `closeOut`, `carried` | the machine whose seat holds `delivery` |
+| `fullHealth` | the machine whose seat holds `queue` |
+| `lenses`, `cleanup`, `deferrals` | every machine, for the stories of the lanes its seat holds, whose checkouts and review rounds are there |
+| `blockers` | every machine, journalling only blockers about its own supervisor's children |
+| `peerWaits`, `laneChanges`, `needs`, `render`, `latest` | every machine, writing only files beside its own record |
+| `inputs` | every machine: what its seat carries kept for its partition, and its peers' carried inputs taken in |
+
+- **Lead commands.** `lead-assign`, `lead-own` and `lead-add-lane` need
+  `delivery`, which arbitrates files and lanes, and `lead-accept` needs the
+  story's lane. Elsewhere each refuses with `scope.not_held` before it writes
+  anything, naming the holder's seat and label. The assignment message names
+  the seat its lane reports to, whose session accepts its hand-offs.
+- **Handing over delivery.** `run-delivery collab give --scope delivery --to
+  SEAT [--wait SECONDS]` waits for no tracker post in flight and no hosted
+  publication pending. Then, holding the tracker ledger's lock, it stops this
+  machine's hosted publisher, keeps the hosted identity and the ledger's
+  position (`trackerThrough`, each seat's last seq the ledger covered through)
+  in this seat's partition, and journals `scope.transferred`. Busy past
+  `--wait`, it refuses with `scope.handover_busy`, naming what is busy. The
+  seat taking delivery writes them as its own before it publishes anything,
+  and resumes the hosted session with the same identity, so the public link
+  stays. Each machine that may hold delivery needs the publishing token and
+  the tracker's access in its own environment.
+- **Handing over a lane.** `collab give --scope lane:<lane>` refuses with
+  `scope.handover_busy` while the lane has a merged or settled story whose
+  checkout is still on this machine, naming it; `lead-cleanup` removes it
+  first.
+- **The publishers.** The tracker and hosted publishers run only on the
+  machine whose seat holds `delivery`, once it has taken what the seat before
+  it carried. On a shared record a tracker marker names an entry by its origin,
+  `<seat>.<seq>`, and so does each ledger line, so moving `delivery` never
+  posts an update twice.
+
+Every file a supervisor step or lead command reads that lives on one machine
+has one of three rules on a shared record: local, read only by that machine's
+own steps; carried, by its holder's partition, which peers ingest; or
+replaced, by the journal.
+
+| Input | Rule |
+| --- | --- |
+| `state.json`, `journal.jsonl` | carried: the record itself, by each seat's partition |
+| `state.lock`, `lane-ownership.lock`, `plan.lock`, `queue.lock`, `supervisor.lock` | local |
+| flow logs `supervisor`, `prepares`, `suite`, `ship-gates`; `sessions.json`, `needs-you.json`, `lane-changes.json`, `peer-waits.json`, `live.json` and `supervisor.json` with their writes' temporary `.live.json.{pid}` and `.supervisor.json.{pid}`, `snapshots`; the peer registry and the machine ledger | local |
+| `flow-log` | local: the folder holding the flow logs, each by its own row here |
+| flow logs `acceptance`, `app-checks`, `lane-starts` | carried by the lane's holder: `acceptance` keyed by subject and head, `lane-starts` by subject and the assignment it follows, `app-checks` keeping every entry. Every seat's entries are read in the order of the lane tenure each was written in, then its writer's own order |
+| flow logs `{name}.peers` | local: each carried log's peers' entries as this machine took them from their partitions, with journal ids translated to its own |
+| lane checkouts and `evidence_dir` | local to the lane's holder, whose partition carries `checkoutsLeft`, its lanes' merged or settled stories whose checkout is still there, and which journals each merged story's deferred findings once as `deferral.held` for the close's follow-ups |
+| flow log `videos` | carried by the seat that recorded each entry, keyed by subject, clip and head; a lane's recordings never count for the close |
+| flow log `tracker-marks`, and the tracker ledger | carried by `delivery`'s holder, keyed by `<seat>.<seq>` |
+| flow log `full-health` | its `result` entries carried by `queue`'s holder, keyed by head; a rerun replaced by a `fullhealth.rerun` entry naming the result it reruns; `note_posture`'s dedupe replaced by the record's `posture.changed` and `fullhealth.skipped` entries |
+| `closed.json` | local to the closer, whose partition carries the closing entry's origin once its archive lands; a peer counts the delivery closed only then |
+| `evidence-page.json`, `evidence-notes.json` | written only by `delivery`'s holder, which carries the notes when it passes delivery on; the seat taking it sets its own earlier page and merged-base recordings aside |
+| `friction.md` | carried by `delivery`'s holder |
+| `full-health.lock`, `full-health.log`, `supervisor.blockers.json`, `supervisor.jsonl`, `supervisor.live.log`, `supervisor.log`, `supervisor.{name}.log`, `supervisor.stop`, `wait.json`, `lead-wait.json` | local |
+| flow log `resolutions` | carried by the resolving seat, keyed by the resolved entry's origin |
+| flow log `targets`, `target-quiet.json` | local to `delivery`'s holder, whose `target` step alone reads them; what it settles reaches peers as the record's `target.settled` entries |
+| flow logs `finish`, `peers` | replaced: by the record's `finish.met` and `peer.merged` entries, whatever their origin |
+| flow log `plan-changes`, `plan.json` | carried by `delivery`'s holder, whose built `plan.json` other seats use |
+| `hosted-identity.json`, `hosted-status.json`, `hosted-owner.json`, `hosted-retry.json`, `hosted-terminal.json` | carried by `delivery`'s holder: the identity; the owner, status, retry and terminal files are rebuilt by the publisher of the seat taking delivery |
+
+No reader orders entries written on different machines by their `at`: a
+tracker position is carried by origin, never by time.

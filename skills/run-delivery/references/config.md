@@ -155,6 +155,11 @@ checks may need no file at all.
   },
   "forge": { "mergeNeedsReady": true },       // optional: the binding's merge step refuses a draft pull request
   "supervisor": { "passSeconds": 60 },        // optional: how long the supervisor waits between passes
+  "collab": {                                 // optional: co-authoring ("Co-authored plans" below)
+    "pollSeconds": 5,                         // how often plan-watch fetches the plan's branch; at least 2
+    "autoGrant": false                        // true: the delivery holder's supervisor grants a requested
+                                              // plan section nobody holds on its next pass (default false)
+  },
   "hooks": {                                  // optional: each host hook's mode, off, warn or enforce (below)
     "lead.may-stop": "enforce",               // default warn
     "delivery.orient": "enforce"              // default enforce
@@ -289,6 +294,59 @@ with the stories whose brief asks for it.
   current, triaged and unchanged; and an optional one recorded absent whose review has since arrived sends the lane
   back to read it. It reads a record of the single shape as reviewer `review`. `pr-review-current` passes when every
   required reviewer is current; an optional one never blocks it.
+
+### Co-authored plans
+
+`plan-sync --plan P` and `plan-watch --plan P` let two engineers write one plan, each in their own clone, before or
+after a delivery adopts it. The plan's branch is `plan/<reviewSlug>`, named by its front matter, until a delivery file
+names the plan, and `lead/<key>` from then on. Both are pushed to the base remote, never forced, and no fetch setting
+changes: the branch comes down by an explicit refspec into its remote-tracking ref.
+
+- **Composing.** `plan-sync` runs in a checkout on that branch. It takes the working copy's plan, committed or not, and
+  composes it with the remote branch section by section, not by git's three-way merge. A section is a heading's own
+  text up to the next heading, found by the orchestration scripts' Markdown region rules, and the text before the
+  first heading, front matter included, is one more, `(preamble)`. A section changed on one side only takes that
+  side's text: an addition lands after its nearest earlier section that still exists on the other side, or right after
+  `(preamble)`. A section changed differently on both sides, or deleted on one and edited on the other, is refused
+  with `plan.sections_overlap`, naming each section with both diffs, before anything is committed; one found on a
+  retry puts the branch and the working copy back as they were. An uncommitted plan
+  edit is committed first, under the author's own git identity, and a composed result is a merge commit of both
+  heads.
+- **Retries.** A push rejected because a peer pushed first composes again and retries, up to 5 times. The sixth
+  rejection stops with `plan.push_exhausted`, leaving the branch at its last composed commit and the remote as the peer
+  left it: sync again.
+- **Watching.** `plan-watch [--timeout S] [--until RE]` fetches the branch once every `collab.pollSeconds` and prints
+  one flushed line per peer push, with its head, author, subject and the sections it changed, and nothing else, so a
+  host monitor or a terminal can follow it. A push is a peer's unless every commit it brings is one this clone's own
+  `plan-sync` pushed, which the clone records under its git common directory: seats, not people, so two clones under
+  one git identity are still each other's peers. A sync from here shows nothing, and a peer's push still shows when a
+  sync here composed over it first. With no `--until` it exits 0 at its timeout (default 1800 seconds); with `--until` it exits 0 after the
+  first matching line, and 3 at the timeout if none matched. A watch none of whose fetches reached the remote ends with
+  `plan.git_failed` instead. It never pushes.
+- **Sections a seat holds.** Once a plan has a shared record, the planning record `plan-open` opens or the delivery
+  record it becomes, `plan-sync` checks every change this clone makes, each of its commits the remote hasn't got and
+  the working copy's edit, against the sections its seat holds (`plan:<heading>` scopes, and every section nobody holds
+  is the `delivery` holder's). A change to any other section is refused with `plan.section_not_held` before anything is
+  committed or pushed, naming each section and the `scope request` command that asks for it. A composing merge is not
+  this clone's change. A commit a `plan.rekeyed` entry names, whose plan is its parent's with that map applied, is
+  exempt: the exemption is the commit's, so a later commit to the same sections is checked as any is.
+- **Joint approval.** On a shared record `lead-init` refuses, before anything is written, with the first of these the
+  plan fails: an admitted approver seat that hasn't endorsed it (`plan.endorsement_missing`); one whose endorsement is
+  of an older commit (`plan.endorsement_stale`); a current plan commit whose text is neither the one plan review aligned
+  on nor that text with each recorded re-keying applied in turn (`plan.not_aligned`); and open feedback that stops
+  approval (`plan.feedback_blocking`). A seat admitted with `--no-approver` holds nothing up. `lead-setup` then
+  `lead-init` take the planning record over in place: its journal, partitions and `hosted-identity.json` carry on,
+  `lead-init`'s entries follow the planning ones, and `meta.phase` becomes `delivery`, once. A delivery file whose
+  `stateDirectory` points elsewhere is refused with `collab.record_elsewhere`.
+- **Joining and feedback.** `collab join` builds a clone's record only from partitions, so every seat's journal starts
+  with the first seat's `record.started` and the tracker's init id agrees across machines. A seat that isn't admitted
+  writes only its own `seat.requested`; once admitted, each join journals `plan.seen` for the commit it showed. Where
+  its last join left off is kept in the clone's own git config, as `agent-skills.joined.<key>`. Feedback is on a
+  section, settled by the holder of that section's `plan:` scope, and blocking feedback is a Needs you item that holds
+  until it is.
+- **Settings.** `collab.pollSeconds` is a number of seconds, at least 2, default 5; `collab.autoGrant` is true or false,
+  default false: when true, on a shared record the `delivery` holder's supervisor grants a requested plan section
+  nobody holds on its next pass. Any other value is refused by both commands, naming the setting.
 
 ## `.agents/deliveries/<key>.json`
 

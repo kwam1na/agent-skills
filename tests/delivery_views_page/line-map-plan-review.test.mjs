@@ -10,7 +10,7 @@ import vm from "node:vm";
 import { JSDOM } from "jsdom";
 
 import { REPLAYED_RUNS, ROOT, block, expect, openPage, pageWithRuns } from "./support.mjs";
-import { LENSES, PREVIEW_CASES, planReviewDelivery, previewDelivery, recordOnlyDelivery, threeRoundReview } from "./plan-fixtures.mjs";
+import { LENSES, PLANNING_CASES, PREVIEW_CASES, planReviewDelivery, previewDelivery, recordOnlyDelivery, threeRoundReview } from "./plan-fixtures.mjs";
 
 const NOW = "2026-10-30T12:00:00Z";
 const CONFIG = { spec: "delivery-views-config/1", runs: REPLAYED_RUNS,
@@ -170,7 +170,7 @@ test("review text never becomes markup", async () => {
 const PREVIEW_PAGES = new Map();
 function previewPage(name) {
   if (!PREVIEW_PAGES.has(name)) {
-    const { document, plan } = PREVIEW_CASES[name]();
+    const { document, plan } = (PREVIEW_CASES[name] ?? PLANNING_CASES[name])();
     PREVIEW_PAGES.set(name, render(document, plan));
   }
   return PREVIEW_PAGES.get(name);
@@ -213,8 +213,24 @@ test("a preview's line says agent review only, how far it went, and that no pers
   expect(handed.querySelector("#plan").textContent).not.toContain("not approved by a person");
 });
 
+test("a planning record's line names its endorsements, says a stale one, and reads as endorsed only once all are in", async () => {
+  const shown = async (name) => {
+    const { document, plan } = PLANNING_CASES[name]();
+    return (await openPage(render(document, plan), { now: NOW, store: false })).at(-1).app;
+  };
+  const none = await shown("planning-none");
+  expect(line(none)).toBe("Agent review only · 2 review rounds · every lens aligned · not approved by a person");
+  expect(line(await shown("planning-partial"))).toBe(
+    "Agent review only · 2 review rounds · every lens aligned · endorsed by Ama · stale endorsement by Ben · not approved by a person");
+  const endorsed = await shown("planning-endorsed");
+  expect(line(endorsed)).toBe("Endorsed by Ama and Ben · 2 review rounds · every lens aligned");
+  // Endorsed is no person's approval of the delivery: the chapter never says a form of "approve".
+  assert.doesNotMatch(unapprovedText(endorsed), /approv/i);
+});
+
 test("no preview chapter reads as approved, at any round's ending, and none draws the switcher or the changes fold", async () => {
-  const names = [...Object.keys(PREVIEW_CASES)];
+  // A planning record's plan chapter is held to the same rule as any preview's.
+  const names = [...Object.keys(PREVIEW_CASES), ...Object.keys(PLANNING_CASES)];
   for (const name of names) {
     const app = await previewShown(name);
     const words = unapprovedText(app);
@@ -222,7 +238,7 @@ test("no preview chapter reads as approved, at any round's ending, and none draw
     expect([name, app.querySelector("#plan .plan-switch"), app.querySelector('#plan .plan-fold[data-fold="changes"]'),
       app.querySelector("#plan .plan-scoped"), app.querySelector("#plan .ps-when")]).toEqual([name, null, null, null, null]);
     // Every review fold is drawn whole, its newest round's card included, so each ending's pill and verdicts are read.
-    if (PREVIEW_CASES[name]().plan.planReview) expect([name, Boolean(app.querySelector(`${FOLD} .run-card-outcome`))]).toEqual([name, true]);
+    if ((PREVIEW_CASES[name] ?? PLANNING_CASES[name])().plan.planReview) expect([name, Boolean(app.querySelector(`${FOLD} .run-card-outcome`))]).toEqual([name, true]);
   }
   // The approving branches each fixture reaches: the round pill, the story head, and a lens's verdict beside the round's.
   expect((await previewShown("preview-aligned-first")).querySelector(`${FOLD} .run-story`).textContent).toBe("Lenses aligned on the first round · nothing raised");

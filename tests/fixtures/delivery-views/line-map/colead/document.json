@@ -1,0 +1,363 @@
+{
+  "state": {
+    "version": 3,
+    "meta": {
+      "headline": "Plan preview (agent review only): Saved addresses",
+      "updatedAt": "2026-10-30T11:59:00Z",
+      "collab": {
+        "key": "SHOP-90",
+        "seats": {
+          "s-aaaaaaaaaaaa": {
+            "label": "Ama",
+            "admitted": true,
+            "approver": true
+          },
+          "s-bbbbbbbbbbbb": {
+            "label": "Ben",
+            "admitted": true,
+            "approver": true
+          },
+          "s-cccccccccccc": {
+            "label": "Cy",
+            "admitted": true,
+            "approver": false
+          },
+          "s-dddddddddddd": {
+            "label": "Di",
+            "admitted": false,
+            "approver": false
+          }
+        },
+        "peers": {
+          "s-bbbbbbbbbbbb": {
+            "through": 3,
+            "fetchedAt": "2026-10-30T11:50:00Z",
+            "heldReason": "slice_invalid"
+          },
+          "s-cccccccccccc": {
+            "through": 1,
+            "fetchedAt": "2026-10-30T11:56:00Z",
+            "heldReason": null
+          }
+        },
+        "heldReason": "seat_split"
+      },
+      "phase": "planning"
+    },
+    "lanes": [
+      {
+        "id": "lane-1",
+        "title": "Lane one",
+        "focus": "",
+        "state": "working",
+        "waitingOn": null,
+        "since": "2026-10-30T06:00:00Z"
+      },
+      {
+        "id": "lane-2",
+        "title": "Lane two",
+        "focus": "",
+        "state": "idle",
+        "waitingOn": null,
+        "since": "2026-10-30T06:00:00Z"
+      }
+    ],
+    "queue": [
+      {
+        "order": 1,
+        "subject": "SHOP-91",
+        "title": "Work SHOP-91",
+        "lane": "lane-1",
+        "stage": "queued",
+        "head": "777a0238f4a2b17171cb60aaeef40fe36c1cbf1c",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      }
+    ],
+    "planned": [
+      {
+        "subject": "SHOP-91",
+        "title": "Saved addresses",
+        "lane": "lane-1",
+        "stage": "planned"
+      },
+      {
+        "subject": "SHOP-92",
+        "title": "Address book export",
+        "lane": "lane-1",
+        "stage": "planned"
+      }
+    ],
+    "finish": [
+      {
+        "id": "finish-1",
+        "text": "Every saved address survives a sign-out",
+        "met": false
+      }
+    ],
+    "followups": [],
+    "leases": []
+  },
+  "journal": [
+    {
+      "id": 1,
+      "at": "2026-10-30T06:01:00Z",
+      "kind": "record.started",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "base": {
+          "ref": "origin/main",
+          "head": "01c0fec00256acd102ec5ae2038208f30417b704"
+        }
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 1,
+        "seen": {}
+      }
+    },
+    {
+      "id": 2,
+      "at": "2026-10-30T06:02:00Z",
+      "kind": "seat.admitted",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-aaaaaaaaaaaa",
+        "label": "Ama",
+        "approver": true
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 2,
+        "seen": {}
+      }
+    },
+    {
+      "id": 3,
+      "at": "2026-10-30T06:03:00Z",
+      "kind": "seat.requested",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-bbbbbbbbbbbb",
+        "label": "Ben"
+      },
+      "origin": {
+        "seat": "s-bbbbbbbbbbbb",
+        "seq": 1,
+        "seen": {
+          "s-aaaaaaaaaaaa": 2
+        }
+      }
+    },
+    {
+      "id": 4,
+      "at": "2026-10-30T06:04:00Z",
+      "kind": "seat.admitted",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-bbbbbbbbbbbb",
+        "label": "Ben",
+        "approver": true
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 3,
+        "seen": {
+          "s-bbbbbbbbbbbb": 1
+        }
+      },
+      "answers": [
+        3
+      ]
+    },
+    {
+      "id": 5,
+      "at": "2026-10-30T06:05:00Z",
+      "kind": "seat.requested",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-cccccccccccc",
+        "label": "Cy"
+      },
+      "origin": {
+        "seat": "s-cccccccccccc",
+        "seq": 1,
+        "seen": {
+          "s-aaaaaaaaaaaa": 3,
+          "s-bbbbbbbbbbbb": 1
+        }
+      }
+    },
+    {
+      "id": 6,
+      "at": "2026-10-30T06:06:00Z",
+      "kind": "seat.admitted",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-cccccccccccc",
+        "label": "Cy",
+        "approver": false
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 4,
+        "seen": {
+          "s-bbbbbbbbbbbb": 1,
+          "s-cccccccccccc": 1
+        }
+      },
+      "answers": [
+        5
+      ]
+    },
+    {
+      "id": 7,
+      "at": "2026-10-30T06:07:00Z",
+      "kind": "scope.transferred",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "scope": "lane:lane-2",
+        "from": "s-aaaaaaaaaaaa",
+        "to": "s-bbbbbbbbbbbb"
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 5,
+        "seen": {
+          "s-bbbbbbbbbbbb": 1,
+          "s-cccccccccccc": 1
+        }
+      }
+    },
+    {
+      "id": 8,
+      "at": "2026-10-30T06:08:00Z",
+      "kind": "plan.endorsed",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "commit": "01c58f10025cc29102f3f612038b299304225d14"
+      },
+      "origin": {
+        "seat": "s-bbbbbbbbbbbb",
+        "seq": 2,
+        "seen": {
+          "s-aaaaaaaaaaaa": 5,
+          "s-cccccccccccc": 1
+        }
+      }
+    },
+    {
+      "id": 9,
+      "at": "2026-10-30T06:09:00Z",
+      "kind": "plan.endorsed",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "commit": "01c58f10025cc29102f3f612038b299304225d14"
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 6,
+        "seen": {
+          "s-bbbbbbbbbbbb": 2,
+          "s-cccccccccccc": 1
+        }
+      }
+    },
+    {
+      "id": 10,
+      "at": "2026-10-30T06:10:00Z",
+      "kind": "queue.stopped",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-aaaaaaaaaaaa"
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 7,
+        "seen": {
+          "s-bbbbbbbbbbbb": 2,
+          "s-cccccccccccc": 1
+        }
+      }
+    },
+    {
+      "id": 11,
+      "at": "2026-10-30T06:11:00Z",
+      "kind": "scope.transferred",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "scope": "queue",
+        "from": "s-aaaaaaaaaaaa",
+        "to": "s-bbbbbbbbbbbb"
+      },
+      "origin": {
+        "seat": "s-aaaaaaaaaaaa",
+        "seq": 8,
+        "seen": {
+          "s-bbbbbbbbbbbb": 2,
+          "s-cccccccccccc": 1
+        }
+      }
+    },
+    {
+      "id": 12,
+      "at": "2026-10-30T06:12:00Z",
+      "kind": "seat.labeled",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-cccccccccccc",
+        "label": "Cyrus"
+      },
+      "origin": {
+        "seat": "s-cccccccccccc",
+        "seq": 2,
+        "seen": {
+          "s-aaaaaaaaaaaa": 8,
+          "s-bbbbbbbbbbbb": 2
+        }
+      }
+    },
+    {
+      "id": 13,
+      "at": "2026-10-30T06:13:00Z",
+      "kind": "seat.requested",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-dddddddddddd",
+        "label": "Di"
+      },
+      "origin": {
+        "seat": "s-dddddddddddd",
+        "seq": 1,
+        "seen": {
+          "s-aaaaaaaaaaaa": 8,
+          "s-bbbbbbbbbbbb": 2,
+          "s-cccccccccccc": 2
+        }
+      }
+    }
+  ],
+  "stats": {},
+  "estimates": {},
+  "status": {
+    "source": "derived",
+    "text": ""
+  },
+  "focus": {}
+}

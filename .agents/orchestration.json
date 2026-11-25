@@ -161,6 +161,114 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_collab_colead",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_collab_colead.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_collab_colead.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_collab_colead_runtime",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_collab_colead_runtime.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_collab_colead_runtime.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_collab_join",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_collab_join.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_collab_join.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_collab_partitions",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_collab_partitions.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_collab_partitions.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_collab_scopes",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_collab_scopes.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_collab_scopes.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_collab_two_machines",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_collab_two_machines.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_collab_two_machines.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_compound_learning_corpus",
         "argv": [
           ".venv/bin/python",
@@ -1146,6 +1254,42 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_ownership_lock_race.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_plan_sync",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_plan_sync.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_plan_sync.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_planning_record",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_planning_record.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_planning_record.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600

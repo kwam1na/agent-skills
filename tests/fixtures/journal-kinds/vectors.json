@@ -2480,23 +2480,227 @@
       "line": "At 4e66a05, touching skills/orchestrate-work/SKILL.md"
     },
     {
-      "kind": "target.settled",
+      "kind": "seat.requested",
       "lane": null,
-      "subject": "APP-10",
+      "subject": null,
       "data": {
-        "target": "main",
-        "peers": [
-          "APP-30",
-          "APP-31"
-        ],
-        "stories": [
-          "APP-32",
-          "APP-33"
-        ],
-        "seconds": 600
+        "seat": "s-0a1b2c3d4e5f",
+        "label": "Ama"
       },
-      "head": "main settled",
-      "line": "Quiet for 10m after APP-30 and APP-31 merged APP-32 and APP-33"
+      "head": "Ama asked to join the delivery",
+      "line": "As seat s-0a1b2c3d4e5f"
+    },
+    {
+      "kind": "seat.admitted",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-0a1b2c3d4e5f",
+        "label": "Ama",
+        "approver": true
+      },
+      "head": "Ama joined the delivery",
+      "line": "As seat s-0a1b2c3d4e5f, approving the plan"
+    },
+    {
+      "kind": "seat.admitted",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-0a1b2c3d4e5f",
+        "label": "Ama",
+        "approver": false
+      },
+      "head": "Ama joined the delivery",
+      "line": "As seat s-0a1b2c3d4e5f, without approving the plan"
+    },
+    {
+      "kind": "seat.labeled",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-0a1b2c3d4e5f",
+        "label": "Ama M."
+      },
+      "head": "Seat s-0a1b2c3d4e5f is now shown as Ama M.",
+      "line": "A label is only shown, never read to decide anything"
+    },
+    {
+      "kind": "partition.held",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-0a1b2c3d4e5f",
+        "reason": "generation_differs"
+      },
+      "head": "Seat s-0a1b2c3d4e5f's updates are held",
+      "line": "It writes with another release's writer: its updates are read once both machines run the same one"
+    },
+    {
+      "kind": "partition.held",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-0a1b2c3d4e5f",
+        "reason": "slice_invalid"
+      },
+      "head": "Seat s-0a1b2c3d4e5f's updates are held",
+      "line": "Its updates would leave this record invalid"
+    },
+    {
+      "kind": "partition.resumed",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-0a1b2c3d4e5f"
+      },
+      "head": "Seat s-0a1b2c3d4e5f's updates are read again",
+      "line": "What was held is in this record now"
+    },
+    {
+      "kind": "scope.transferred",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "scope": "lane:lane-2",
+        "from": "s-0a1b2c3d4e5f",
+        "to": "s-6a7b8c9d0e1f"
+      },
+      "head": "lane:lane-2 passed to seat s-6a7b8c9d0e1f",
+      "line": "From seat s-0a1b2c3d4e5f"
+    },
+    {
+      "kind": "scope.requested",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "scope": "queue",
+        "reason": "I'll be the one at my desk tonight."
+      },
+      "head": "A seat asked for queue",
+      "line": "I'll be the one at my desk tonight."
+    },
+    {
+      "kind": "scope.declined",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "scope": "queue"
+      },
+      "head": "The request for queue was declined",
+      "line": "Its holder keeps it"
+    },
+    {
+      "kind": "plan.endorsed",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "commit": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "A seat endorsed the plan",
+      "line": "At 4e66a05"
+    },
+    {
+      "kind": "plan.seen",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "commit": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "A seat read the plan",
+      "line": "At 4e66a05"
+    },
+    {
+      "kind": "plan.rekeyed",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "from": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "to": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+        "map": {
+          "S1": "APP-12"
+        }
+      },
+      "head": "The plan's story keys were replaced",
+      "line": "From 4e66a05 to 9f3c2b1"
+    },
+    {
+      "kind": "deferral.held",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "finding": "F-3",
+        "title": "Name the lease in the error."
+      },
+      "head": "F-3 was deferred",
+      "line": "Name the lease in the error."
+    },
+    {
+      "kind": "feedback.raised",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "anchor": "## Scope",
+        "text": "This leaves out Windows.",
+        "blocking": true
+      },
+      "head": "Feedback on ## Scope that stops approval",
+      "line": "This leaves out Windows."
+    },
+    {
+      "kind": "feedback.raised",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "anchor": "(preamble)",
+        "text": "Typo in the title.",
+        "blocking": false
+      },
+      "head": "Feedback on (preamble)",
+      "line": "Typo in the title."
+    },
+    {
+      "kind": "feedback.resolved",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "outcome": "accepted",
+        "reason": "Added."
+      },
+      "head": "Feedback was accepted",
+      "line": "Added."
+    },
+    {
+      "kind": "feedback.resolved",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "outcome": "declined",
+        "reason": "Out of scope."
+      },
+      "head": "Feedback was declined",
+      "line": "Out of scope."
+    },
+    {
+      "kind": "feedback.resolved",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "outcome": "answered",
+        "reason": "It's in D3."
+      },
+      "head": "Feedback was answered",
+      "line": "It's in D3."
+    },
+    {
+      "kind": "queue.stopped",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "seat": "s-0a1b2c3d4e5f"
+      },
+      "head": "Seat s-0a1b2c3d4e5f's queue takes no more work",
+      "line": "Its queue is being handed to another seat"
     },
     {
       "kind": "delivery.closed",
@@ -2751,6 +2955,25 @@
       },
       "head": "A follow-up was filed",
       "line": "APP-41: Keep facts in the journal"
+    },
+    {
+      "kind": "target.settled",
+      "lane": null,
+      "subject": "APP-10",
+      "data": {
+        "target": "main",
+        "peers": [
+          "APP-30",
+          "APP-31"
+        ],
+        "stories": [
+          "APP-32",
+          "APP-33"
+        ],
+        "seconds": 600
+      },
+      "head": "main settled",
+      "line": "Quiet for 10m after APP-30 and APP-31 merged APP-32 and APP-33"
     }
   ]
 }

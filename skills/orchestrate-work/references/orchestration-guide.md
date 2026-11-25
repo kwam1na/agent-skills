@@ -166,10 +166,22 @@ instant is its `occurredAt` when it has one, and its `at` otherwise.
   | `blocker.resolved` | `deferral.breached` |
   | `lease.released` | `lease.granted` |
   | `story.unheld` | `story.held` |
+  | `seat.admitted` | `seat.requested` |
+  | `partition.resumed` | `partition.held` |
+  | `scope.declined` | `scope.requested` |
+  | `feedback.resolved` | `feedback.raised` |
 
   `candidate.stopped`, `base.broken` and `blocker.recorded` open a thread, a
   stop only when it leaves the piece stopped, and the first entry answering the
   opening closes it.
+- **A shared record's entries carry their origin.** On a record `plan-open`
+  made shared, every entry also has `origin`, `{seat, seq, seen}`: the seat that
+  wrote it, that seat's own seq, dense from 1, and the last seq of each other
+  seat it had ingested. Ids stay local and dense from 1, and links still name
+  local ids: a seat's partition carries them by origin, and the sync writer
+  translates them as it ingests a peer's entry, once every entry its `seen`
+  names is here. The skill page's "Shared records" says how seats, partitions
+  and the sync loop work.
 - **A person's decision says why.** `decision.recorded` needs `data.text` and
   `data.why`, and `blocker.recorded` needs `data.text`; none may be empty or
   only spaces. Give them with `--text` and `--why`.
@@ -283,6 +295,21 @@ the lead and the lanes make them instead, as the commands print them.
 | `hook.held` | None: a host hook held, or warned about, a lead's stop while no listener ran, and the entry shows in the record and the views. | nowhere | - |
 | `peer.merged` | None: the supervisor journals a merge by another delivery on the base that changed a file one of this delivery's open stories names, and the entry shows in the record and the views. | nowhere | - |
 | `target.settled` | None: the supervisor journals that the deliveries merging into the integration target went quiet once a merge landed there, and the entry shows in the record and the views. | nowhere | - |
+| `seat.requested` | None: a checkout joined a shared record's catch-up as a new seat, and the entry shows in the record and the views. | nowhere | - |
+| `seat.admitted` | None: the delivery holder admitted a seat to the shared record, and the entry shows in the record and the views. | nowhere | - |
+| `seat.labeled` | None: a seat's label is display only, and the entry shows in the record and the views. | nowhere | - |
+| `partition.held` | None: Needs you names a held peer partition on the machine that reads it, and the entry shows in the record and the views. | nowhere | - |
+| `partition.resumed` | None: the partition held earlier is ingested again, and the entry shows in the record and the views. | nowhere | - |
+| `scope.transferred` | None: a scope moved between seats of a shared record, and the entry shows in the record and the views. | nowhere | - |
+| `scope.requested` | None: a request for a scope goes to its holder's session, and the entry shows in the record and the views. | nowhere | - |
+| `scope.declined` | None: the holder kept its scope, and the entry shows in the record and the views. | nowhere | - |
+| `plan.endorsed` | None: endorsements show on the plan's own page and in the record. | nowhere | - |
+| `plan.seen` | None: reading the plan is bookkeeping, and the entry shows in the record and the views. | nowhere | - |
+| `plan.rekeyed` | None: the new keys show in the plan itself, and the entry shows in the record and the views. | nowhere | - |
+| `deferral.held` | None: the close-out files the follow-up, and the entry shows in the record and the views. | nowhere | - |
+| `feedback.raised` | None: feedback shows on the plan's own page and in the record. | nowhere | - |
+| `feedback.resolved` | None: settled feedback shows on the plan's own page and in the record. | nowhere | - |
+| `queue.stopped` | None: the queue's handover journals it just ahead of the transfer, and the entry shows in the record and the views. | nowhere | - |
 | `delivery.closed` | On the epic: the close-out summary; the epic moves to its final state. | the epic | Delivery closed |
 
 The lead posts the updates in this table, including every cross-lane
@@ -1231,9 +1258,12 @@ file, and reads no CI or forge. It returns on the first thing needing the lead:
 
 - a journal entry after `--after` of kind `candidate.handed`, `check.failed`,
   `candidate.merged`, `candidate.stopped`, `base.broken`, `blocker.recorded`,
-  `serving.held`, `sibling.landed` or `target.settled`; `sibling.landed` frees a story
-  that waits on a sibling delivery's story, and `target.settled` says the deliveries
-  merging into the integration target have gone quiet;
+  `serving.held`, `sibling.landed`, `target.settled`, `feedback.raised`,
+  `scope.requested` or `seat.requested`; `sibling.landed` frees a story that waits
+  on a sibling delivery's story, `target.settled` says the deliveries merging into
+  the integration target have gone quiet, and the last three, on a shared record,
+  are a peer's feedback, request for a scope or request to join, which only this
+  seat may answer;
 - a lane in the `blocked` state. A lane in the `waiting` state waits on a story, which goes on by itself when it
   lands: it wakes no wait, is never reported quiet, isn't in "Needs you" and doesn't hold the close;
 - machine pressure: five-minute load above `--load-multiple` times the cores

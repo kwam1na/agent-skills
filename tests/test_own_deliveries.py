@@ -18,7 +18,7 @@ TOOL = ".agent-skills/current/skills/run-delivery/scripts/run_delivery.py"
 # Every test module, by its module name: the lead selects checks by these ids. A story that adds a module adds its
 # entry here and in the binding in the same diff, and both its hand-off and its acceptance can name it from its head.
 CATALOGUE_MODULES = (
-    "adoption", "bootstrap_qualification", "catalog", "compound_learning_corpus", "core_boundary", "corpus_copy",
+    "adoption", "bootstrap_qualification", "catalog", "collab_colead", "collab_colead_runtime", "collab_partitions", "collab_scopes", "compound_learning_corpus", "core_boundary", "corpus_copy",
     "cut_release", "declared_mechanics_corpus", "delivery_key_collision", "delivery_posture_vectors", "delivery_provider",
     "delivery_provider_rails_contract", "delivery_views", "delivery_views_adopter", "delivery_views_history",
     "delivery_views_hosted", "delivery_views_hosted_projection", "delivery_views_page", "delivery_views_plan", "delivery_views_plan_fixtures", "delivery_views_render",
@@ -28,6 +28,10 @@ CATALOGUE_MODULES = (
     "measure_test_writes",
     "merge_occurrence", "merge_queue", "narrator", "no_current_set_names", "orchestration_adopter", "orchestration_render",
     "orchestration_state", "own_deliveries", "ownership_lock_race", "product_descriptors", "product_launcher", "product_release",
+    "plan_sync",
+    "planning_record",
+    "collab_join",
+    "collab_two_machines",
     "profile_inventory", "provenance", "provider_qualification", "qualification", "readme", "receipt", "region_claims", "region_grants", "registry",
     "release_archive", "release_channel", "release_entry_budget", "release_integration", "review_and_compounding",
     "review_base_reopening", "review_bound_corpus", "review_grace", "review_orchestration", "round_brief_template_corpus",

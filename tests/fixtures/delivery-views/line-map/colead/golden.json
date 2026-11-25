@@ -1,0 +1,969 @@
+{
+  "now": "2026-10-30T12:00:00Z",
+  "blocks": {
+    "delivery-state": {
+      "state": {
+        "version": 3,
+        "meta": {
+          "headline": "Plan preview (agent review only): Saved addresses",
+          "updatedAt": "2026-10-30T11:59:00Z",
+          "collab": {
+            "key": "SHOP-90",
+            "seats": {
+              "s-aaaaaaaaaaaa": {
+                "label": "Ama",
+                "admitted": true,
+                "approver": true
+              },
+              "s-bbbbbbbbbbbb": {
+                "label": "Ben",
+                "admitted": true,
+                "approver": true
+              },
+              "s-cccccccccccc": {
+                "label": "Cy",
+                "admitted": true,
+                "approver": false
+              },
+              "s-dddddddddddd": {
+                "label": "Di",
+                "admitted": false,
+                "approver": false
+              }
+            },
+            "peers": {
+              "s-bbbbbbbbbbbb": {
+                "through": 3,
+                "fetchedAt": "2026-10-30T11:50:00Z",
+                "heldReason": "slice_invalid"
+              },
+              "s-cccccccccccc": {
+                "through": 1,
+                "fetchedAt": "2026-10-30T11:56:00Z",
+                "heldReason": null
+              }
+            },
+            "heldReason": "seat_split"
+          },
+          "phase": "planning"
+        },
+        "lanes": [
+          {
+            "id": "lane-1",
+            "title": "Lane one",
+            "focus": "",
+            "state": "working",
+            "waitingOn": null,
+            "since": "2026-10-30T06:00:00Z"
+          },
+          {
+            "id": "lane-2",
+            "title": "Lane two",
+            "focus": "",
+            "state": "idle",
+            "waitingOn": null,
+            "since": "2026-10-30T06:00:00Z"
+          }
+        ],
+        "queue": [
+          {
+            "order": 1,
+            "subject": "SHOP-91",
+            "title": "Work SHOP-91",
+            "lane": "lane-1",
+            "stage": "queued",
+            "head": "777a0238f4a2b17171cb60aaeef40fe36c1cbf1c",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          }
+        ],
+        "planned": [
+          {
+            "subject": "SHOP-91",
+            "title": "Saved addresses",
+            "lane": "lane-1",
+            "stage": "planned"
+          },
+          {
+            "subject": "SHOP-92",
+            "title": "Address book export",
+            "lane": "lane-1",
+            "stage": "planned"
+          }
+        ],
+        "finish": [
+          {
+            "id": "finish-1",
+            "text": "Every saved address survives a sign-out",
+            "met": false
+          }
+        ],
+        "followups": [],
+        "leases": []
+      },
+      "journal": [
+        {
+          "id": 1,
+          "at": "2026-10-30T06:01:00Z",
+          "kind": "record.started",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "base": {
+              "ref": "origin/main",
+              "head": "01c0fec00256acd102ec5ae2038208f30417b704"
+            }
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 1,
+            "seen": {}
+          }
+        },
+        {
+          "id": 2,
+          "at": "2026-10-30T06:02:00Z",
+          "kind": "seat.admitted",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "seat": "s-aaaaaaaaaaaa",
+            "label": "Ama",
+            "approver": true
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 2,
+            "seen": {}
+          }
+        },
+        {
+          "id": 3,
+          "at": "2026-10-30T06:03:00Z",
+          "kind": "seat.requested",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "seat": "s-bbbbbbbbbbbb",
+            "label": "Ben"
+          },
+          "origin": {
+            "seat": "s-bbbbbbbbbbbb",
+            "seq": 1,
+            "seen": {
+              "s-aaaaaaaaaaaa": 2
+            }
+          }
+        },
+        {
+          "id": 4,
+          "at": "2026-10-30T06:04:00Z",
+          "kind": "seat.admitted",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "seat": "s-bbbbbbbbbbbb",
+            "label": "Ben",
+            "approver": true
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 3,
+            "seen": {
+              "s-bbbbbbbbbbbb": 1
+            }
+          },
+          "answers": [
+            3
+          ]
+        },
+        {
+          "id": 5,
+          "at": "2026-10-30T06:05:00Z",
+          "kind": "seat.requested",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "seat": "s-cccccccccccc",
+            "label": "Cy"
+          },
+          "origin": {
+            "seat": "s-cccccccccccc",
+            "seq": 1,
+            "seen": {
+              "s-aaaaaaaaaaaa": 3,
+              "s-bbbbbbbbbbbb": 1
+            }
+          }
+        },
+        {
+          "id": 6,
+          "at": "2026-10-30T06:06:00Z",
+          "kind": "seat.admitted",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "seat": "s-cccccccccccc",
+            "label": "Cy",
+            "approver": false
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 4,
+            "seen": {
+              "s-bbbbbbbbbbbb": 1,
+              "s-cccccccccccc": 1
+            }
+          },
+          "answers": [
+            5
+          ]
+        },
+        {
+          "id": 7,
+          "at": "2026-10-30T06:07:00Z",
+          "kind": "scope.transferred",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "scope": "lane:lane-2",
+            "from": "s-aaaaaaaaaaaa",
+            "to": "s-bbbbbbbbbbbb"
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 5,
+            "seen": {
+              "s-bbbbbbbbbbbb": 1,
+              "s-cccccccccccc": 1
+            }
+          }
+        },
+        {
+          "id": 8,
+          "at": "2026-10-30T06:08:00Z",
+          "kind": "plan.endorsed",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "commit": "01c58f10025cc29102f3f612038b299304225d14"
+          },
+          "origin": {
+            "seat": "s-bbbbbbbbbbbb",
+            "seq": 2,
+            "seen": {
+              "s-aaaaaaaaaaaa": 5,
+              "s-cccccccccccc": 1
+            }
+          }
+        },
+        {
+          "id": 9,
+          "at": "2026-10-30T06:09:00Z",
+          "kind": "plan.endorsed",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "commit": "01c58f10025cc29102f3f612038b299304225d14"
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 6,
+            "seen": {
+              "s-bbbbbbbbbbbb": 2,
+              "s-cccccccccccc": 1
+            }
+          }
+        },
+        {
+          "id": 10,
+          "at": "2026-10-30T06:10:00Z",
+          "kind": "queue.stopped",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "seat": "s-aaaaaaaaaaaa"
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 7,
+            "seen": {
+              "s-bbbbbbbbbbbb": 2,
+              "s-cccccccccccc": 1
+            }
+          }
+        },
+        {
+          "id": 11,
+          "at": "2026-10-30T06:11:00Z",
+          "kind": "scope.transferred",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "scope": "queue",
+            "from": "s-aaaaaaaaaaaa",
+            "to": "s-bbbbbbbbbbbb"
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 8,
+            "seen": {
+              "s-bbbbbbbbbbbb": 2,
+              "s-cccccccccccc": 1
+            }
+          }
+        },
+        {
+          "id": 12,
+          "at": "2026-10-30T06:12:00Z",
+          "kind": "seat.labeled",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "seat": "s-cccccccccccc",
+            "label": "Cyrus"
+          },
+          "origin": {
+            "seat": "s-cccccccccccc",
+            "seq": 2,
+            "seen": {
+              "s-aaaaaaaaaaaa": 8,
+              "s-bbbbbbbbbbbb": 2
+            }
+          }
+        },
+        {
+          "id": 13,
+          "at": "2026-10-30T06:13:00Z",
+          "kind": "seat.requested",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "seat": "s-dddddddddddd",
+            "label": "Di"
+          },
+          "origin": {
+            "seat": "s-dddddddddddd",
+            "seq": 1,
+            "seen": {
+              "s-aaaaaaaaaaaa": 8,
+              "s-bbbbbbbbbbbb": 2,
+              "s-cccccccccccc": 2
+            }
+          }
+        }
+      ],
+      "stats": {},
+      "estimates": {},
+      "status": {
+        "source": "derived",
+        "text": ""
+      },
+      "focus": {},
+      "story": {
+        "schemaVersion": "story/1",
+        "state": "open",
+        "digest": {
+          "landed": 0,
+          "pieces": 2,
+          "startedAt": "2026-10-30T06:01:00Z",
+          "closedAt": null,
+          "took": null,
+          "setbacks": {
+            "closed": 0,
+            "cost": 0,
+            "standing": []
+          },
+          "decisions": 0,
+          "words": {
+            "head": "Nothing has landed yet.",
+            "line": "No setbacks."
+          }
+        },
+        "chapters": [
+          {
+            "id": "c1",
+            "form": "start",
+            "subject": null,
+            "pieceTitle": null,
+            "at": "2026-10-30T06:01:00Z",
+            "entries": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "beats": [
+              "b1",
+              "b2",
+              "b3",
+              "b4",
+              "b5",
+              "b6",
+              "b7",
+              "b8"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "Getting started",
+              "line": "",
+              "standing": []
+            },
+            "setbacks": []
+          }
+        ],
+        "beats": [
+          {
+            "id": "b1",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:01:00Z",
+            "entries": [
+              1
+            ],
+            "thread": null,
+            "kind": "record.started",
+            "tone": "note",
+            "label": "Started",
+            "words": {
+              "head": "The delivery started",
+              "line": "By Ama. On origin/main at 01c0fec"
+            },
+            "explain": "The lead opened the record. Everything after it happened in this delivery.",
+            "items": []
+          },
+          {
+            "id": "b2",
+            "chapter": "c1",
+            "form": "bookkeeping",
+            "altitudes": [
+              "everything"
+            ],
+            "at": "2026-10-30T06:02:00Z",
+            "entries": [
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            "thread": null,
+            "kind": null,
+            "tone": "note",
+            "label": "Bookkeeping",
+            "words": {
+              "head": "Bookkeeping",
+              "line": "Seat admitted (3) and Seat asked (2)"
+            },
+            "explain": null,
+            "items": [
+              {
+                "entry": 2,
+                "words": {
+                  "head": "Ama joined the delivery",
+                  "line": "As seat s-aaaaaaaaaaaa, approving the plan"
+                }
+              },
+              {
+                "entry": 3,
+                "words": {
+                  "head": "Ben asked to join the delivery",
+                  "line": "As seat s-bbbbbbbbbbbb"
+                }
+              },
+              {
+                "entry": 4,
+                "words": {
+                  "head": "Ben joined the delivery",
+                  "line": "By Ama. As seat s-bbbbbbbbbbbb, approving the plan"
+                }
+              },
+              {
+                "entry": 5,
+                "words": {
+                  "head": "Cy asked to join the delivery",
+                  "line": "As seat s-cccccccccccc"
+                }
+              },
+              {
+                "entry": 6,
+                "words": {
+                  "head": "Cy joined the delivery",
+                  "line": "By Ama. As seat s-cccccccccccc, without approving the plan"
+                }
+              }
+            ]
+          },
+          {
+            "id": "b3",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:07:00Z",
+            "entries": [
+              7
+            ],
+            "thread": null,
+            "kind": "scope.transferred",
+            "tone": "decision",
+            "label": "Scope passed",
+            "words": {
+              "head": "lane:lane-2 passed to Ben",
+              "line": "From Ama"
+            },
+            "explain": "A scope's holder gave it to another seat, which alone writes its fields now.",
+            "items": []
+          },
+          {
+            "id": "b4",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:08:00Z",
+            "entries": [
+              8
+            ],
+            "thread": null,
+            "kind": "plan.endorsed",
+            "tone": "decision",
+            "label": "Plan endorsed",
+            "words": {
+              "head": "Ben endorsed the plan",
+              "line": "At 01c58f1"
+            },
+            "explain": "A seat approved the plan as it stands at one commit.",
+            "items": []
+          },
+          {
+            "id": "b5",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:09:00Z",
+            "entries": [
+              9
+            ],
+            "thread": null,
+            "kind": "plan.endorsed",
+            "tone": "decision",
+            "label": "Plan endorsed",
+            "words": {
+              "head": "Ama endorsed the plan",
+              "line": "At 01c58f1"
+            },
+            "explain": "A seat approved the plan as it stands at one commit.",
+            "items": []
+          },
+          {
+            "id": "b6",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:10:00Z",
+            "entries": [
+              10
+            ],
+            "thread": null,
+            "kind": "queue.stopped",
+            "tone": "note",
+            "label": "Queue stopped",
+            "words": {
+              "head": "Seat Ama's queue takes no more work",
+              "line": "Its queue is being handed to another seat"
+            },
+            "explain": "The queue's holder stopped its queue, idle, so it can pass the queue to another seat.",
+            "items": []
+          },
+          {
+            "id": "b7",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:11:00Z",
+            "entries": [
+              11
+            ],
+            "thread": null,
+            "kind": "scope.transferred",
+            "tone": "decision",
+            "label": "Scope passed",
+            "words": {
+              "head": "queue passed to Ben",
+              "line": "From Ama"
+            },
+            "explain": "A scope's holder gave it to another seat, which alone writes its fields now.",
+            "items": []
+          },
+          {
+            "id": "b8",
+            "chapter": "c1",
+            "form": "bookkeeping",
+            "altitudes": [
+              "everything"
+            ],
+            "at": "2026-10-30T06:12:00Z",
+            "entries": [
+              12,
+              13
+            ],
+            "thread": null,
+            "kind": null,
+            "tone": "note",
+            "label": "Bookkeeping",
+            "words": {
+              "head": "Bookkeeping",
+              "line": "Seat renamed (1) and Seat asked (1)"
+            },
+            "explain": null,
+            "items": [
+              {
+                "entry": 12,
+                "words": {
+                  "head": "Seat s-cccccccccccc is now shown as Cyrus",
+                  "line": "A label is only shown, never read to decide anything"
+                }
+              },
+              {
+                "entry": 13,
+                "words": {
+                  "head": "Di asked to join the delivery",
+                  "line": "As seat s-dddddddddddd"
+                }
+              }
+            ]
+          }
+        ],
+        "threads": [],
+        "ledger": [],
+        "tones": [
+          {
+            "tone": "landed",
+            "word": "Landed"
+          },
+          {
+            "tone": "ready",
+            "word": "Ready to check"
+          },
+          {
+            "tone": "decision",
+            "word": "Decision"
+          },
+          {
+            "tone": "problem",
+            "word": "Setback"
+          },
+          {
+            "tone": "note",
+            "word": "Other update"
+          }
+        ]
+      }
+    },
+    "delivery-runs": {},
+    "delivery-plan": {
+      "plan": {
+        "schemaVersion": "delivery-plan/1",
+        "updated": "2026-10-30T11:00:00Z",
+        "outcome": {
+          "summary": "Plan preview (agent review only): Saved addresses",
+          "text": "Shoppers keep their addresses between visits."
+        },
+        "requiredLenses": [],
+        "proofKinds": [
+          {
+            "id": "review",
+            "label": "Review",
+            "source": "record"
+          },
+          {
+            "id": "handed",
+            "label": "Handed off",
+            "source": "record"
+          },
+          {
+            "id": "merged",
+            "label": "Merged",
+            "source": "record"
+          }
+        ],
+        "units": [
+          {
+            "subject": "SHOP-91",
+            "title": "Saved addresses",
+            "criteria": [
+              {
+                "id": "SHOP-91.1",
+                "text": "Criterion 1 of SHOP-91"
+              },
+              {
+                "id": "SHOP-91.2",
+                "text": "Criterion 2 of SHOP-91"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged"
+            ]
+          },
+          {
+            "subject": "SHOP-92",
+            "title": "Address book export",
+            "criteria": [
+              {
+                "id": "SHOP-92.1",
+                "text": "Criterion 1 of SHOP-92"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged"
+            ]
+          }
+        ],
+        "finish": [
+          {
+            "id": "finish-1",
+            "label": "Finish 1",
+            "text": "Every saved address survives a sign-out",
+            "at": "2026-10-30T06:00:00Z",
+            "covers": {
+              "criteria": [],
+              "proofs": []
+            }
+          }
+        ],
+        "approved": {
+          "at": "2026-10-29T23:20:00Z",
+          "snapshot": {
+            "units": [
+              {
+                "subject": "SHOP-91",
+                "title": "Saved addresses",
+                "criteria": [
+                  {
+                    "id": "SHOP-91.1",
+                    "text": "Criterion 1 of SHOP-91"
+                  },
+                  {
+                    "id": "SHOP-91.2",
+                    "text": "Criterion 2 of SHOP-91"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged"
+                ]
+              },
+              {
+                "subject": "SHOP-92",
+                "title": "Address book export",
+                "criteria": [
+                  {
+                    "id": "SHOP-92.1",
+                    "text": "Criterion 1 of SHOP-92"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged"
+                ]
+              }
+            ],
+            "finish": [
+              {
+                "id": "finish-1",
+                "label": "Finish 1",
+                "text": "Every saved address survives a sign-out",
+                "at": "2026-10-30T06:00:00Z",
+                "covers": {
+                  "criteria": [],
+                  "proofs": []
+                }
+              }
+            ]
+          }
+        },
+        "changes": [],
+        "evidence": {},
+        "approvals": [
+          {
+            "text": "Product Owner signs off the copy",
+            "state": "waiting"
+          },
+          {
+            "text": "The operator approves the plan",
+            "state": "waiting"
+          }
+        ],
+        "outOfScope": [
+          "Importing addresses"
+        ],
+        "preview": {
+          "plan": "docs/plans/saved-addresses.md",
+          "commit": "01c58f10025cc29102f3f612038b299304225d14",
+          "approval": "endorsed",
+          "layout": "delivery",
+          "decisions": [
+            "Addresses are kept per account, never per device.",
+            "No new renderer version."
+          ],
+          "endorsements": [
+            {
+              "seat": "s-aaaaaaaaaaaa",
+              "label": "Ama",
+              "commit": "01c58f10025cc29102f3f612038b299304225d14"
+            },
+            {
+              "seat": "s-bbbbbbbbbbbb",
+              "label": "Ben",
+              "commit": "01c58f10025cc29102f3f612038b299304225d14"
+            }
+          ]
+        },
+        "planReview": {
+          "lenses": [
+            "lens.outcome-correctness",
+            "lens.adversarial-testing"
+          ],
+          "state": "aligned",
+          "rounds": [
+            {
+              "round": 1,
+              "candidateRef": "1111111111111111111111111111111111111111",
+              "at": "2026-10-30T03:00:00Z",
+              "outcome": "changes",
+              "verdicts": {
+                "lens.outcome-correctness": "changes",
+                "lens.adversarial-testing": "approve"
+              },
+              "findings": {
+                "P0": 0,
+                "P1": 1,
+                "P2": 0,
+                "P3": 0
+              },
+              "raised": [
+                {
+                  "id": "c1-1",
+                  "lens": "lens.outcome-correctness",
+                  "severity": "P1",
+                  "summary": "Round 1 found a gap in the plan.",
+                  "state": "resolved"
+                }
+              ],
+              "settled": []
+            },
+            {
+              "round": 2,
+              "candidateRef": "2222222222222222222222222222222222222222",
+              "at": "2026-10-30T04:00:00Z",
+              "outcome": "changes",
+              "verdicts": {
+                "lens.outcome-correctness": "changes",
+                "lens.adversarial-testing": "approve"
+              },
+              "findings": {
+                "P0": 0,
+                "P1": 1,
+                "P2": 0,
+                "P3": 0
+              },
+              "raised": [
+                {
+                  "id": "c2-1",
+                  "lens": "lens.outcome-correctness",
+                  "severity": "P1",
+                  "summary": "Round 2 found a gap in the plan.",
+                  "state": "resolved"
+                }
+              ],
+              "settled": [
+                {
+                  "id": "c1-1",
+                  "lens": "lens.outcome-correctness",
+                  "state": "fixed",
+                  "fixCommit": "2222222222222222222222222222222222222222",
+                  "resolution": "Fixed in round 2."
+                }
+              ]
+            },
+            {
+              "round": 3,
+              "candidateRef": "3333333333333333333333333333333333333333",
+              "at": "2026-10-30T05:00:00Z",
+              "outcome": "approve",
+              "verdicts": {
+                "lens.outcome-correctness": "approve",
+                "lens.adversarial-testing": "approve"
+              },
+              "findings": {
+                "P0": 0,
+                "P1": 0,
+                "P2": 0,
+                "P3": 0
+              },
+              "raised": [],
+              "settled": [
+                {
+                  "id": "c2-1",
+                  "lens": "lens.outcome-correctness",
+                  "state": "fixed",
+                  "fixCommit": "3333333333333333333333333333333333333333",
+                  "resolution": "Fixed in round 3."
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "initialText": "NowThe lineWhoSeatsWhat's leftThe planWhat happenedParkedStarted 5 h 59 min ago · Updated a minute agoPlan preview (agent review only): Saved addresses0 of 3 stories are in. SHOP-91 is in the queue.Lane 1 · 0 of 3, nowLanded, to come3pieces to land1lane3criteria to prove1finish lineReady to startSHOP-91 · Work SHOP-91SHOP-91 · Saved addressesSHOP-92 · Address book exportFinish lineReady to be checkedWork SHOP-91Handed over; each is checked and merged in turn, in this order.The lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Lane one0 of 3 landed9191920 of 3 landednext: SHOP-91Finish line0/1Lane 1Work SHOP-91SHOP-91 · Ready, waiting to be checked · Handed over · time unknownBeing checked before it landsSee in the planLandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedWho's doing what1 of 2 lanes are working right now.Each lane is a separate session working in parallel on its own part of the work.Lane oneBuildingfor 6hLane twoStanding byfor 6hSeats3 seats write this delivery, and its queue is moving to Ben.This checkout's seat split from its chain: it writes nothing more here.Who writess-aaaaaaaaaaaaAmaendorses the plans-bbbbbbbbbbbbBenendorses the plans-ccccccccccccCyruswrites, doesn't endorses-ddddddddddddDiwaiting to be admittedWho holds whatdeliveryAmaqueueBenqueue moving to Benlane:lane-1Amalane:lane-2BenEvery other plan section is Ama's, as the delivery's holder.PeersBen held: its updates don't fit this recordCyrus as of 4mWhat's left3pieces to go0 of 3 pieces have landed.SHOP-91Work SHOP-91Ready, waiting to be checkedSHOP-91Saved addressesNot startedSHOP-92Address book exportNot startedThe finish lineFinish 1Not yetThe lead marks this oneThe plan0 of 3 criteria proven.Plan preview (agent review only): Saved addressesEndorsed by Ama and Ben · 3 review rounds · every lens alignedNothing in the plan needs attention right now.SHOP-91Saved addresses2 proofs left · No review is recorded for it.SHOP-92Address book export3 proofs left · No review is recorded for it. It hasn't been handed off yet.All units2UnitCriteriaStatusSHOP-91Saved addressesCriterion 1 of SHOP-91 SHOP-91.1Criterion 2 of SHOP-91 SHOP-91.22 proofs leftNo review is recorded for it.It still has to merge.Done: handed offSHOP-92Address book exportCriterion 1 of SHOP-92 SHOP-92.13 proofs leftNo review is recorded for it.It hasn't been handed off yet.It still has to merge.Plan review (3 rounds)The plan's review has no round bound: it runs until every lens aligns or the operator ends it.Lenses aligned on round 3 · 2 serious notes raised113:00 am211 h later31 h laterReviewed at 3333333Round 3AlignedTestingCorrectnessNothing new raisedThis round confirmed 1 earlier note: 1 fixed in 3333333.Correctness · 1 fixedRound 2 found a gap in the plan.seriousfixedFixed in 3333333Fixed in round 3.Decisions2Addresses are kept per account, never per device.No new renderer version.Waived proofs0No proof was waived.Approvals ahead2Waiting Product Owner signs off the copyWaiting The operator approves the planOut of scope1Importing addressesThe full outcomeShoppers keep their addresses between visits.What happenedNothing has landed yet.No setbacks.DecisionOther updateHeadlinesStoryEverythingAllDecisionsLandingsSetbacksGetting started6:01 am6:11 amqueue passed to BenFrom AmaScope passed6:10 amSeat Ama's queue takes no more workIts queue is being handed to another seatQueue stopped6:09 amAma endorsed the planAt 01c58f1Plan endorsed6:08 amBen endorsed the planAt 01c58f1Plan endorsed6:07 amlane:lane-2 passed to BenFrom AmaScope passed6:01 amThe delivery startedBy Ama. On origin/main at 01c0fecStarted",
+  "folds": {
+    "units": "All units2UnitCriteriaStatusSHOP-91Saved addressesCriterion 1 of SHOP-91 SHOP-91.1Criterion 2 of SHOP-91 SHOP-91.22 proofs leftNo review is recorded for it.It still has to merge.Done: handed offSHOP-92Address book exportCriterion 1 of SHOP-92 SHOP-92.13 proofs leftNo review is recorded for it.It hasn't been handed off yet.It still has to merge."
+  },
+  "chapters": {
+    "seats": "Seats3 seats write this delivery, and its queue is moving to Ben.This checkout's seat split from its chain: it writes nothing more here.Who writess-aaaaaaaaaaaaAmaendorses the plans-bbbbbbbbbbbbBenendorses the plans-ccccccccccccCyruswrites, doesn't endorses-ddddddddddddDiwaiting to be admittedWho holds whatdeliveryAmaqueueBenqueue moving to Benlane:lane-1Amalane:lane-2BenEvery other plan section is Ama's, as the delivery's holder.PeersBen held: its updates don't fit this recordCyrus as of 4m",
+    "plan": "The plan0 of 3 criteria proven.Plan preview (agent review only): Saved addressesEndorsed by Ama and Ben · 3 review rounds · every lens alignedNothing in the plan needs attention right now.SHOP-91Saved addresses2 proofs left · No review is recorded for it.SHOP-92Address book export3 proofs left · No review is recorded for it. It hasn't been handed off yet.All units2UnitCriteriaStatusSHOP-91Saved addressesCriterion 1 of SHOP-91 SHOP-91.1Criterion 2 of SHOP-91 SHOP-91.22 proofs leftNo review is recorded for it.It still has to merge.Done: handed offSHOP-92Address book exportCriterion 1 of SHOP-92 SHOP-92.13 proofs leftNo review is recorded for it.It hasn't been handed off yet.It still has to merge.Plan review (3 rounds)The plan's review has no round bound: it runs until every lens aligns or the operator ends it.Lenses aligned on round 3 · 2 serious notes raised113:00 am211 h later31 h laterReviewed at 3333333Round 3AlignedTestingCorrectnessNothing new raisedThis round confirmed 1 earlier note: 1 fixed in 3333333.Correctness · 1 fixedRound 2 found a gap in the plan.seriousfixedFixed in 3333333Fixed in round 3.Decisions2Addresses are kept per account, never per device.No new renderer version.Waived proofs0No proof was waived.Approvals ahead2Waiting Product Owner signs off the copyWaiting The operator approves the planOut of scope1Importing addressesThe full outcomeShoppers keep their addresses between visits."
+  },
+  "details": {}
+}

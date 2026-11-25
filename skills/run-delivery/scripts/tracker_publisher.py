@@ -164,8 +164,29 @@ def flow_file(flow_log: Path, delivery: str, name: str) -> Path:
     return flow_log / f"{delivery}.{name}.jsonl"
 
 
-def read_flow(flow_log: Path, delivery: str, name: str) -> list[dict]:
-    path = flow_file(flow_log, delivery, name)
+# Each flow log a shared record carries (D21): the scope whose holder writes its entries, so its entries are ordered by
+# that holder's tenure; the fields an entry is known by, the latest one with them winning (none keeps every entry, in
+# order); the fields naming journal entries, which travel by origin; and which entries it carries. On a shared record
+# each entry written here is stamped with its seat (`by`) and the local id of the transfer that began its writer's
+# tenure (`tenureId`); peers' carried entries are kept beside each log, in a file ending PEERS, already translated.
+CARRIED_LOGS = {
+    "acceptance": {"scope": "lane", "key": ("head",), "journal": ()},
+    "app-checks": {"scope": "lane", "key": None, "journal": ()},
+    LANE_STARTS: {"scope": "lane", "key": ("subject", "assigned"), "journal": ("assigned",)},
+    "videos": {"scope": "lane", "key": ("name", "head"), "journal": ()},
+    MARKS: {"scope": "delivery", "key": ("journal",), "journal": ("journal",)},
+    "full-health": {"scope": "queue", "key": None, "journal": (), "only": "result"},
+    "resolutions": {"scope": None, "key": ("journal",), "journal": ("journal",)},
+}
+PEERS = ".peers"
+
+
+def peers_file(flow_log: Path, delivery: str, name: str) -> Path:
+    """Where a carried log's peers' entries are kept beside this machine's own."""
+    return flow_log / f"{delivery}.{name}{PEERS}.jsonl"
+
+
+def read_lines(path: Path) -> list[dict]:
     if not path.exists():
         return []
     entries = []
@@ -175,6 +196,32 @@ def read_flow(flow_log: Path, delivery: str, name: str) -> list[dict]:
             if isinstance(entry, dict):
                 entries.append(entry)
     return entries
+
+
+def carried_order(name: str, entries: list[dict]) -> list[dict]:
+    """A carried log's entries from every seat in causal order: by the tenure each was written in, which only its
+    scope's holder writes in and which passes only by transfer, then in its writer's own order; never by `at`. Where the
+    log is keyed, the latest entry for each key stands, in its place."""
+    rule = CARRIED_LOGS[name]
+    ordered = sorted(enumerate(entries), key=lambda pair: (pair[1].get("tenureId") or 0, pair[0]))
+    entries = [entry for _, entry in ordered]
+    if rule["key"] is None:
+        return entries
+    last = {tuple(entry.get(field) for field in rule["key"]): at for at, entry in enumerate(entries)}
+    return [entry for at, entry in enumerate(entries) if last[tuple(entry.get(field) for field in rule["key"])] == at]
+
+
+def read_flow(flow_log: Path, delivery: str, name: str, *, peers: bool = True) -> list[dict]:
+    """A flow log's entries; on a shared record a carried log's also hold every peer's, in their carried order.
+    ``peers`` false reads this machine's own entries only, as its partition carries them."""
+    path = flow_file(flow_log, delivery, name)
+    entries = read_lines(path)
+    if not peers or name not in CARRIED_LOGS:
+        return entries
+    theirs = peers_file(flow_log, delivery, name)
+    if not theirs.exists():
+        return entries
+    return carried_order(name, [*entries, *read_lines(theirs)])
 
 
 def append_flow(flow_log: Path, delivery: str, name: str, entry: dict) -> dict:
@@ -187,18 +234,24 @@ def append_flow(flow_log: Path, delivery: str, name: str, entry: dict) -> dict:
     return entry
 
 
-def mark(flow_log: Path, delivery: str, journal_id: int, followup: dict | None = None) -> dict:
+def mark(flow_log: Path, delivery: str, journal_id: int, followup: dict | None = None,
+         stamp: dict | None = None) -> dict:
     """Mark a `decision.recorded` entry as one to post: the marking command holds the ledger's lock, waiting for it,
-    across its journal write and this mark. A deferral names its follow-up, {story, finding, title}, to be filed."""
-    entry: dict = {"journal": journal_id}
+    across its journal write and this mark. A deferral names its follow-up, {story, finding, title}, to be filed.
+    ``stamp``: on a shared record, the writer's seat and tenure (CARRIED_LOGS)."""
+    entry: dict = {"journal": journal_id, **(stamp or {})}
     if followup is not None:
         entry["followup"] = {key: followup[key] for key in ("story", "finding", "title")}
     return append_flow(flow_log, delivery, MARKS, entry)
 
 
-def record_lane_start(flow_log: Path, delivery: str, subject: str, lane: str | None = None) -> dict:
-    """A story's start: what its `lane.assigned` waits for before its start move and update."""
-    return append_flow(flow_log, delivery, LANE_STARTS, {"subject": subject, **({"lane": lane} if lane else {})})
+def record_lane_start(flow_log: Path, delivery: str, subject: str, lane: str | None = None,
+                      assigned: int | None = None, stamp: dict | None = None) -> dict:
+    """A story's start: what its `lane.assigned` waits for before its start move and update. On a shared record it
+    names that assignment, by its journal id, and carries the writer's ``stamp``: no reader compares clocks."""
+    return append_flow(flow_log, delivery, LANE_STARTS, {"subject": subject, **({"lane": lane} if lane else {}),
+                                                         **({"assigned": assigned} if assigned is not None else {}),
+                                                         **(stamp or {})})
 
 
 def followup_label(story: str, finding: str) -> str:
@@ -207,12 +260,58 @@ def followup_label(story: str, finding: str) -> str:
 
 
 def init_id(journal: list[dict]) -> str:
-    """The record's init id: the time of its first journal entry, the "Record starts at base" decision."""
-    return re.sub(r"[^0-9A-Za-z]", "", journal[0]["at"]) if journal else "0"
+    """The record's init id: the time of its first journal entry, the "Record starts at base" decision. On a shared
+    record, the time of its `record.started`, which every seat's journal holds as its opener wrote it."""
+    started = next((entry for entry in journal if entry.get("origin") and entry["kind"] == "record.started"), None)
+    first = started or (journal[0] if journal else None)
+    return re.sub(r"[^0-9A-Za-z]", "", first["at"]) if first else "0"
 
 
-def marker(delivery: str, init: str, journal_id: int, action: str) -> str:
-    return f"agent-delivery:{delivery}:{init}:{journal_id}:{action}"
+def entry_ref(entry: dict) -> int | str:
+    """How a marker and a ledger line name an entry: its journal id, or on a shared record its origin, `<seat>.<seq>`,
+    which is the same on every seat's machine."""
+    origin = entry.get("origin")
+    return f"{origin['seat']}.{origin['seq']}" if isinstance(origin, dict) else entry["id"]
+
+
+def marker(delivery: str, init: str, ref: int | str, action: str) -> str:
+    return f"agent-delivery:{delivery}:{init}:{ref}:{action}"
+
+
+# Delivery passed between the seats of a shared record: how far one seat's ledger covered, for the seat that takes it.
+
+TAKEN = "posted by the seat that passed delivery on"
+
+
+def through_by_seat(journal: list[dict], ledger: list[dict]) -> dict[str, int]:
+    """For each seat, the last seq up to which this ledger covers every entry of that seat: what a seat that passes
+    delivery on carries, so the seat taking it posts none of them again."""
+    done, through, stopped = covered(ledger, init_id(journal)), {}, set()
+    for entry in sorted(journal, key=lambda e: e["id"]):
+        origin = entry.get("origin")
+        if not isinstance(origin, dict) or origin["seat"] in stopped:
+            continue
+        if entry["id"] in done:
+            through[origin["seat"]] = origin["seq"]
+        else:
+            stopped.add(origin["seat"])
+    return through
+
+
+def take_through(state_dir: Path, journal: list[dict], through: dict[str, int], giver: str) -> int:
+    """Cover in this seat's ledger every entry the seat ``giver`` had posted, by the position it carried: each one
+    this ledger doesn't cover yet gets a final skip. The caller holds the ledger's lock. Returns how many."""
+    init, ledger = init_id(journal), read_ledger(state_dir)
+    done, taken = covered(ledger, init), 0
+    for entry in sorted(journal, key=lambda e: e["id"]):
+        origin = entry.get("origin")
+        if entry["id"] in done or not isinstance(origin, dict) or origin["seq"] > through.get(origin["seat"], 0):
+            continue
+        append_ledger(state_dir, {"journal": entry["id"], "init": init, "outcome": "skip", "writer": "publisher",
+                                  "kind": entry["kind"], "final": True, "origin": entry_ref(entry), "reason": TAKEN,
+                                  "from": giver})
+        taken += 1
+    return taken
 
 
 # Settings: `tracker` in .agents/run-delivery.json, with Jira's derived from the binding's tracker snapshot.
@@ -512,6 +611,7 @@ class Publisher:
     def write(self, entry: dict, outcome: str, final: bool = False, **detail) -> dict:
         line = append_ledger(self.state_dir, {"journal": entry["id"], "init": self.init, "outcome": outcome,
                                               "writer": self.writer, "kind": entry["kind"],
+                                              **({"origin": entry_ref(entry)} if entry.get("origin") else {}),
                                               **({"final": True} if final else {}), **detail})
         self.ledger.append(line)
         return line
@@ -536,9 +636,18 @@ class Publisher:
                 return "the story is already in review"
             if line.get("ticket") == subject and line.get("move") == "start" and line["outcome"] == "transition":
                 return "the story already started"
+        later = [e for e in self.journal if e["id"] > entry["id"] and e.get("subject") == subject]
+        if entry.get("origin"):
+            # A shared record's start names the assignment it follows, so no clocks from two machines are compared.
+            if any(s.get("subject") == subject and s.get("assigned") == entry["id"] for s in self.starts):
+                return None
+            if any(e["kind"] == "lane.assigned" for e in later):
+                return "reassigned before it started"
+            if any(e["kind"] in PAST_START for e in later):
+                return "start never recorded: the story was handed off or merged first"
+            return "wait" if subject in self.held else "removed before it started"
         at = moment(entry["at"])
         started = [moment(s["at"]) for s in self.starts if s.get("subject") == subject and moment(s["at"]) >= at]
-        later = [e for e in self.journal if e["id"] > entry["id"] and e.get("subject") == subject]
         past = [moment(e["at"]) for e in later if e["kind"] in PAST_START]
         reassigned = [moment(e["at"]) for e in later if e["kind"] == "lane.assigned"]
         # Only the story's last assignment before its first start takes that start.
@@ -582,7 +691,7 @@ class Publisher:
 
     def started_before(self, entry: dict, names: list[str], markers: set[str]) -> bool:
         """The ticket carries this delivery's start marker from another entry, under this init id or an earlier one."""
-        own = marker(self.delivery, self.init, entry["id"], "")
+        own = marker(self.delivery, self.init, entry_ref(entry), "")
         return any(m.startswith(f"agent-delivery:{self.delivery}:") and not m.startswith(own)
                    and ":transition:" in m and m.split(":transition:", 1)[1] in names for m in markers)
 
@@ -597,7 +706,7 @@ class Publisher:
         if earlier:
             notes.append(f"Its move to {earlier.get('status')} was already made by someone else.")
             return
-        ours = any(marker(self.delivery, self.init, entry["id"], f"transition:{name}") in markers for name in names)
+        ours = any(marker(self.delivery, self.init, entry_ref(entry), f"transition:{name}") in markers for name in names)
         last = target(names[-1])
         if last is not None and last == status.get("status") and not ours and not any(
                 self.done(entry, f"transition:{name}") for name in names):
@@ -607,7 +716,7 @@ class Publisher:
             return
         for name in names:
             action = f"transition:{name}"
-            stamp = marker(self.delivery, self.init, entry["id"], action)
+            stamp = marker(self.delivery, self.init, entry_ref(entry), action)
             line = self.done(entry, action)
             if line is None and stamp in markers:
                 line = self.write(entry, "transition", move=move, ticket=ticket, transition=name, action=action,
@@ -696,7 +805,7 @@ class Publisher:
             notes.append("No start move is configured: moving the ticket belongs to people.")
         elif entry["kind"] in MOVING:
             notes.append("No move is configured for this: moving the ticket belongs to people.")
-        stamp = marker(self.delivery, self.init, entry["id"], "comment")
+        stamp = marker(self.delivery, self.init, entry_ref(entry), "comment")
         if stamp in markers:
             self.write(entry, "comment", final=True, ticket=ticket, action="comment", found=True)
             return
@@ -795,6 +904,14 @@ class Publisher:
         return 0, None
 
 
+def ready_to_publish(state_dir: Path) -> bool:
+    """On a shared record, whether this machine's seat holds delivery and has taken what the seat that passed it here
+    carried; an unshared record is always ready."""
+    import delivery_state  # beside journal_words
+
+    return delivery_state._collab().delivery_taken(state_dir) is not False
+
+
 def write_error(state_dir: Path, error: str | None) -> None:
     path = state_dir / ERROR_FILE
     if error is None:
@@ -887,9 +1004,14 @@ def main(argv: list[str] | None = None) -> int:
               "(meta.trackerParent); pass --delivery"), file=sys.stderr)
         return 2
     state_dir = args.state_dir
+    shared = bool(doc["state"].get("meta", {}).get("collab"))
     with ledger_lock(state_dir, wait=False) as taken:
         if not taken:
             return 0  # Another run holds the ledger: it, or the next pass, posts these.
+        if shared and not ready_to_publish(state_dir):
+            # Under the lock, which a delivery handover holds while it journals the transfer: a shared record's updates
+            # are posted only by the seat holding delivery, once it has taken it.
+            return 0
         publisher = Publisher(doc, state_dir, conf, Adapter(conf, root), delivery, state_dir.parent / "flow-log")
         code, error = publisher.run()
         write_error(state_dir, error)

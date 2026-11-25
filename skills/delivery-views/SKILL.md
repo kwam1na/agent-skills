@@ -364,7 +364,7 @@ any value.
 | `outOfScope` | Optional list of texts. |
 | `planReview` | Optional: how the plan came to be approved. `{lenses, state, endedReason?, rounds}`, below. |
 | `closeOut` | Optional: `{fullHealth: "skipped", posture: "focused", source, reason}`, when the close-out's `fullHealth` run was skipped under the base's declared posture. It renders as skipped, and no approval state stands in for it. |
-| `preview` | Optional, written only by a plan's preview builder, never by a delivery's producer: `{plan, commit, approval: agents-only \| handed, delivery?, layout: delivery \| other, decisions}`. `delivery` is given exactly when `approval` is `handed`; `decisions` holds at most 100 texts. With it, the plan chapter says the review is agent-only and never reads as approved. |
+| `preview` | Optional, written only by a plan's preview builder, never by a delivery's producer: `{plan, commit, approval: agents-only \| handed \| endorsed, delivery?, layout: delivery \| other, decisions, endorsements?}`. `delivery` is given exactly when `approval` is `handed`; `decisions` holds at most 100 texts. With it, the plan chapter says the review is agent-only and never reads as approved. A planning record's plan, the one shared delivery record that exists from a plan's first draft, always carries `endorsements`, possibly empty: each seat's latest endorsement, `{seat, label, commit}`, at most 20, never with `handed`. `endorsed` means every approver seat endorsed `commit`, and needs at least one endorsement; its line reads "Endorsed by <labels> · N review rounds · <ending>". An endorsement of an older commit is shown as stale. A reader that knows its record isn't shared refuses `endorsements`. |
 
 Texts are capped at 600 characters, `outcome.text` at 2,000 and labels at 200;
 lists at 200 units, 1,000 criteria, 500 changes and 30 finish lines. Ids match
@@ -1210,6 +1210,32 @@ terminal cut: the last of `delivery.closed`, `lane.assigned`,
 `current`, read again, names no newer cut. That reads as `read` with
 `terminal: true`, as the viewer retains a completed delivery, so a closed
 sibling's last stories still land.
+
+### What the line map shows of a shared record
+
+A shared record, one with `meta.collab`, gets two chapters, made the first time
+its record is shared. A record nobody shares draws exactly as before. Both read
+the record's journal and `meta.collab`, and no label decides anything.
+
+- **Seats**, after Who. Who writes the record, each seat by its latest label:
+  whether it endorses the plan, writes without endorsing, or waits to be
+  admitted. Who holds each scope: `delivery`, `queue`, each lane, and each plan
+  section passed on, with every other plan section the `delivery` holder's. A
+  transfer counts only when the scope's holder made it. A queue handed to
+  another seat says "queue moving to <label>" until that seat writes an entry
+  that has seen the handover. Each peer's freshness, as the sync loop last read
+  it: "<label> as of 4s", "<label> held: generation differs" or "held: its
+  updates don't fit this record". A split is the record's own, never a peer's:
+  a checkout whose seat split says so at the chapter's head.
+- **Feedback**, before What happened, once any is raised. A thread per section
+  it is on, in the order first raised: each feedback's writer and text, and
+  whether it is open, open and blocking, or settled, with its outcome, who
+  settled it and why.
+
+A planning record's plan chapter keeps the preview's line: "Endorsed by
+<labels>" once every approver seat endorsed its commit, and each endorsement,
+current or stale, before that. Like any preview's, it says no form of
+"approve".
 
 ### What the views show of siblings
 

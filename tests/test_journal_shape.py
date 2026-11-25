@@ -23,9 +23,13 @@ SCRIPTS = {
     "delivery_state.py": ROOT / "skills/orchestrate-work/scripts/delivery_state.py",
     "merge_queue.py": ROOT / "skills/orchestrate-work/scripts/merge_queue.py",
     "run_delivery.py": ROOT / "skills/run-delivery/scripts/run_delivery.py",
+    "collab.py": ROOT / "skills/orchestrate-work/scripts/collab.py",
 }
 # The journal command's own call: the state tool checks the kind it is given when it runs.
-EXEMPT = {("delivery_state.py", "main")}
+EXEMPT = {("delivery_state.py", "main"),
+          # A shared record's ingest copies a peer's entries, each written and walked where that peer wrote it, and
+          # checks each one's kind against the registry as it appends it.
+          ("collab.py", "ingest")}
 SENTENCE = "summary"
 # The state tool's append under its own lock: append_journal makes each entry with it, and a writer that already
 # holds the lock builds the entry itself.
@@ -97,6 +101,12 @@ INVENTORY = {
         _key("lead_plan", {"story.approved"}): 1,
         _key("lead_init", {"record.started"}): 1,
         _key("lead_init", {"story.approved"}): 1,
+        _key("lead_plan_endorse", {"plan.endorsed"}): 1,
+        _key("plan_rekey", {"plan.rekeyed"}): 1,
+        _key("collab_feedback", {"feedback.raised"}): 1,
+        _key("collab_feedback", {"feedback.resolved"}): 1,
+        _key("collab_join", {"plan.seen"}): 1,
+        _key("rebuild_planning_plan", {"plan.updated"}): 1,
         _key("suite_run", {"integration.suite"}): 2,
         _key("suite_started", {"integration.suite.started"}): 1,
         # A run that steps off the machine's wait with --now --why: claim's and lead-suite's.
@@ -131,6 +141,7 @@ INVENTORY = {
         _key("record_focused", {"fullhealth.skipped"}): 1,
         _key("record_full_health", {"base.broken", "base.flaky", "base.repaired", "base.verified"}): 1,
         _key("deferral_breaches", {"deferral.breached"}): 1,
+        _key("journal_deferrals", {"deferral.held"}): 1,
         _key("followups_step", {"followup.filed"}): 1,
         _key("note_gap", {"gap.noted"}): 1,
         _key("closed_step", {"delivery.closed"}): 1,
@@ -145,6 +156,19 @@ INVENTORY = {
         _key("lead_resolve", {"fullhealth.rerun"}): 1,
         _key("lead_resolve", {"blocker.resolved"}): 1,
         _key("requeue", {"handoff.requeued"}): 1,
+    }),
+    "collab.py": Counter({
+        _key("open_record", {"record.started"}): 1,
+        _key("open_record", {"seat.admitted"}): 1,
+        _key("request_seat", {"seat.requested"}): 1,
+        _key("admit_seat", {"seat.admitted"}): 1,
+        _key("label_seat", {"seat.labeled"}): 1,
+        _key("_journal_hold", {"partition.held", "partition.resumed"}): 1,
+        _key("give_scope", {"scope.transferred"}): 1,
+        _key("request_scope", {"scope.requested"}): 1,
+        _key("decline_request", {"scope.declined"}): 1,
+        _key("_hand_over_queue", {"queue.stopped"}): 1,
+        _key("_hand_over_queue", {"scope.transferred"}): 1,
     }),
 }
 

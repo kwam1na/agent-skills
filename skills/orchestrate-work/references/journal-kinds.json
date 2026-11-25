@@ -614,6 +614,51 @@
         "failed",
         "unreadable"
       ]
+    },
+    "seat": {
+      "description": "A seat of a shared record: s- and 12 lowercase hex characters.",
+      "type": "string",
+      "pattern": "^s-[0-9a-f]{12}$"
+    },
+    "partitionHeld": {
+      "description": "Why a peer's partition is held: its writer generation differs, or its slice would leave the record invalid.",
+      "enum": [
+        "generation_differs",
+        "slice_invalid"
+      ]
+    },
+    "scope": {
+      "description": "An authority scope of a shared record: delivery, queue, lane:<lane> or plan:<section>.",
+      "type": "string",
+      "pattern": "^(delivery|queue|lane:\\S.*|plan:\\S.*)$",
+      "maxLength": 2048
+    },
+    "statement": {
+      "description": "What a person states, such as why they ask; shown, never read to decide anything.",
+      "type": "string",
+      "pattern": "\\S",
+      "maxLength": 4096
+    },
+    "keyMap": {
+      "description": "Placeholder story keys and the tracker keys that replace them.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/name"
+      }
+    },
+    "anchor": {
+      "description": "Where in the plan a piece of feedback points: a section by its heading, or (preamble).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "feedbackOutcome": {
+      "description": "How feedback was settled.",
+      "enum": [
+        "accepted",
+        "declined",
+        "answered"
+      ]
     }
   },
   "kinds": {
@@ -2558,6 +2603,10 @@
         },
         "why": {
           "type": "prose"
+        },
+        "at": {
+          "type": "instant",
+          "optional": true
         }
       },
       "because": {
@@ -3125,6 +3174,411 @@
       "explain": "The deliveries merging into the integration target have been quiet for a while after a merge, so a review round or full run there can start.",
       "tracker": null,
       "instruction": "None: the supervisor journals that the deliveries merging into the integration target went quiet once a merge landed there, and the entry shows in the record and the views."
+    },
+    "seat.requested": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Seat asked",
+      "data": {
+        "seat": {
+          "type": "seat"
+        },
+        "label": {
+          "type": "name"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{label} asked to join the delivery",
+        "line": "As seat {seat}"
+      },
+      "explain": "A checkout asked to write this shared record, as a new seat the delivery holder admits.",
+      "tracker": null,
+      "instruction": "None: a checkout joined a shared record's catch-up as a new seat, and the entry shows in the record and the views."
+    },
+    "seat.admitted": {
+      "altitude": "bookkeeping",
+      "tone": "decision",
+      "label": "Seat admitted",
+      "data": {
+        "seat": {
+          "type": "seat"
+        },
+        "label": {
+          "type": "name"
+        },
+        "approver": {
+          "type": "flag"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [
+        "seat.requested"
+      ],
+      "opensThread": false,
+      "words": {
+        "head": "{label} joined the delivery",
+        "line": {
+          "by": "approver",
+          "cases": {
+            "true": "As seat {seat}, approving the plan"
+          },
+          "otherwise": "As seat {seat}, without approving the plan"
+        }
+      },
+      "explain": "The delivery holder admitted a seat, which may now write the shared record.",
+      "tracker": null,
+      "instruction": "None: the delivery holder admitted a seat to the shared record, and the entry shows in the record and the views."
+    },
+    "seat.labeled": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Seat renamed",
+      "data": {
+        "seat": {
+          "type": "seat"
+        },
+        "label": {
+          "type": "name"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "Seat {seat} is now shown as {label}",
+        "line": "A label is only shown, never read to decide anything"
+      },
+      "explain": "A seat changed the label the views show for it.",
+      "tracker": null,
+      "instruction": "None: a seat's label is display only, and the entry shows in the record and the views."
+    },
+    "partition.held": {
+      "altitude": "story",
+      "tone": "problem",
+      "label": "Seat held",
+      "data": {
+        "seat": {
+          "type": "seat"
+        },
+        "reason": {
+          "type": "partitionHeld"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "Seat {seat}'s updates are held",
+        "line": {
+          "by": "reason",
+          "cases": {
+            "generation_differs": "It writes with another release's writer: its updates are read once both machines run the same one"
+          },
+          "otherwise": "Its updates would leave this record invalid"
+        }
+      },
+      "explain": "This machine stopped reading a peer seat's updates, and names why.",
+      "tracker": null,
+      "instruction": "None: Needs you names a held peer partition on the machine that reads it, and the entry shows in the record and the views."
+    },
+    "partition.resumed": {
+      "altitude": "story",
+      "tone": "landed",
+      "label": "Seat read again",
+      "data": {
+        "seat": {
+          "type": "seat"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [
+        "partition.held"
+      ],
+      "opensThread": false,
+      "words": {
+        "head": "Seat {seat}'s updates are read again",
+        "line": "What was held is in this record now"
+      },
+      "explain": "This machine reads a peer seat's updates again, after holding them.",
+      "tracker": null,
+      "instruction": "None: the partition held earlier is ingested again, and the entry shows in the record and the views."
+    },
+    "scope.transferred": {
+      "altitude": "story",
+      "tone": "decision",
+      "label": "Scope passed",
+      "data": {
+        "scope": {
+          "type": "scope"
+        },
+        "from": {
+          "type": "seat"
+        },
+        "to": {
+          "type": "seat"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{scope} passed to seat {to}",
+        "line": "From seat {from}"
+      },
+      "explain": "A scope's holder gave it to another seat, which alone writes its fields now.",
+      "tracker": null,
+      "instruction": "None: a scope moved between seats of a shared record, and the entry shows in the record and the views."
+    },
+    "scope.requested": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Scope asked for",
+      "data": {
+        "scope": {
+          "type": "scope"
+        },
+        "reason": {
+          "type": "statement"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "A seat asked for {scope}",
+        "line": "{reason}"
+      },
+      "explain": "A seat asked the holder of a scope to pass it on.",
+      "tracker": null,
+      "instruction": "None: a request for a scope goes to its holder's session, and the entry shows in the record and the views."
+    },
+    "scope.declined": {
+      "altitude": "story",
+      "tone": "decision",
+      "label": "Scope kept",
+      "data": {
+        "scope": {
+          "type": "scope"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [
+        "scope.requested"
+      ],
+      "opensThread": false,
+      "words": {
+        "head": "The request for {scope} was declined",
+        "line": "Its holder keeps it"
+      },
+      "explain": "A scope's holder kept the scope another seat asked for.",
+      "tracker": null,
+      "instruction": "None: the holder kept its scope, and the entry shows in the record and the views."
+    },
+    "plan.endorsed": {
+      "altitude": "headline",
+      "tone": "decision",
+      "label": "Plan endorsed",
+      "data": {
+        "commit": {
+          "type": "commit"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "A seat endorsed the plan",
+        "line": "At {commit:commit}"
+      },
+      "explain": "A seat approved the plan as it stands at one commit.",
+      "tracker": null,
+      "instruction": "None: endorsements show on the plan's own page and in the record."
+    },
+    "plan.seen": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Plan read",
+      "data": {
+        "commit": {
+          "type": "commit"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "A seat read the plan",
+        "line": "At {commit:commit}"
+      },
+      "explain": "A seat read the plan as it stands at one commit.",
+      "tracker": null,
+      "instruction": "None: reading the plan is bookkeeping, and the entry shows in the record and the views."
+    },
+    "plan.rekeyed": {
+      "altitude": "story",
+      "tone": "decision",
+      "label": "Story keys set",
+      "data": {
+        "from": {
+          "type": "commit"
+        },
+        "to": {
+          "type": "commit"
+        },
+        "map": {
+          "type": "keyMap"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "The plan's story keys were replaced",
+        "line": "From {from:commit} to {to:commit}"
+      },
+      "explain": "The delivery holder replaced the plan's placeholder story keys with tracker keys.",
+      "tracker": null,
+      "instruction": "None: the new keys show in the plan itself, and the entry shows in the record and the views."
+    },
+    "deferral.held": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Finding deferred",
+      "data": {
+        "finding": {
+          "type": "name"
+        },
+        "title": {
+          "type": "prose"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "{finding} was deferred",
+        "line": "{title}"
+      },
+      "explain": "A lane recorded a deferred review finding of a merged story, for the close-out's follow-ups.",
+      "tracker": null,
+      "instruction": "None: the close-out files the follow-up, and the entry shows in the record and the views."
+    },
+    "feedback.raised": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Feedback raised",
+      "data": {
+        "anchor": {
+          "type": "anchor"
+        },
+        "text": {
+          "type": "prose"
+        },
+        "blocking": {
+          "type": "flag"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": {
+          "by": "blocking",
+          "cases": {
+            "true": "Feedback on {anchor} that stops approval"
+          },
+          "otherwise": "Feedback on {anchor}"
+        },
+        "line": "{text}"
+      },
+      "explain": "A seat raised feedback on a section of the plan.",
+      "tracker": null,
+      "instruction": "None: feedback shows on the plan's own page and in the record."
+    },
+    "feedback.resolved": {
+      "altitude": "story",
+      "tone": "decision",
+      "label": "Feedback settled",
+      "data": {
+        "outcome": {
+          "type": "feedbackOutcome"
+        },
+        "reason": {
+          "type": "statement"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [
+        "feedback.raised"
+      ],
+      "opensThread": false,
+      "words": {
+        "head": {
+          "by": "outcome",
+          "cases": {
+            "accepted": "Feedback was accepted",
+            "declined": "Feedback was declined"
+          },
+          "otherwise": "Feedback was answered"
+        },
+        "line": "{reason}"
+      },
+      "explain": "Feedback on the plan was settled, and the entry says how.",
+      "tracker": null,
+      "instruction": "None: settled feedback shows on the plan's own page and in the record."
+    },
+    "queue.stopped": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Queue stopped",
+      "data": {
+        "seat": {
+          "type": "seat"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "Seat {seat}'s queue takes no more work",
+        "line": "Its queue is being handed to another seat"
+      },
+      "explain": "The queue's holder stopped its queue, idle, so it can pass the queue to another seat.",
+      "tracker": null,
+      "instruction": "None: the queue's handover journals it just ahead of the transfer, and the entry shows in the record and the views."
     },
     "delivery.closed": {
       "altitude": "headline",

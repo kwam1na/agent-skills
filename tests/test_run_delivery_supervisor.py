@@ -3971,6 +3971,34 @@ def run_delivery_module(name: str):
 LISTENER = "can't reach the lead"
 
 
+# A queued candidate keeps the lead listening at every stage short of merged. The supervisor's serve can move it on
+# between the queue's write and a lead command's print, so a wake line is read for the candidate at any such stage.
+LISTENING_STAGES = ("queued", "syncing", "synced", "checking", "checked")
+
+
+def assert_wakes_on(case: unittest.TestCase, out: str, subject: str) -> None:
+    """That the printed wake names `subject` at a stage that keeps the lead listening."""
+    stages = "|".join(LISTENING_STAGES)
+    case.assertRegex(out, rf"The lead's wake: [^\n]*\b{re.escape(subject)} \(({stages})\)")
+
+
+class WakeLineReadingTests(unittest.TestCase):
+    """The wake line's reading takes any listening stage, and still fails when the candidate is missing."""
+
+    LINE = "The lead's wake: lane-1 (assigned), {} (queued), and no lead-wait is listening."
+
+    def test_each_listening_stage_is_read_as_the_candidate(self) -> None:
+        for stage in LISTENING_STAGES:
+            with self.subTest(stage=stage):
+                assert_wakes_on(self, self.LINE.replace("(queued)", f"({stage})").format("FX-2"), "FX-2")
+
+    def test_a_missing_or_merged_candidate_fails(self) -> None:
+        for out in (self.LINE.format("FX-3"), self.LINE.replace("(queued)", "(merged)").format("FX-2"),
+                    "FX-2 (queued) with no wake line", "The lead's wake: lane-1 (assigned)\nFX-2 (queued)"):
+            with self.subTest(out=out), self.assertRaises(AssertionError):
+                assert_wakes_on(self, out, "FX-2")
+
+
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class LeadListenerTests(unittest.TestCase):
     """The lead's listener: the lead commands print the lead-wait to start, and while none runs the supervisor's "Needs
@@ -4069,7 +4097,7 @@ class LeadListenerTests(unittest.TestCase):
         self.assertGreater(handed, result["through"])
         code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
         self.assertEqual(code, 0, out)
-        self.assertIn("FX-2 (queued)", out)
+        assert_wakes_on(self, out, "FX-2")
         words = self.printed(out)
         self.assertEqual(words[words.index("lead-wait") + 1:], result["restart"])
         self.assertEqual(words[words.index("--after") + 1], str(result["through"]))
@@ -4084,7 +4112,7 @@ class LeadListenerTests(unittest.TestCase):
                                                                            f"--output={output}"]}))
         code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
         self.assertEqual(code, 0, out)
-        self.assertIn("FX-2 (queued)", out)
+        assert_wakes_on(self, out, "FX-2")
         words = self.printed(out)
         after = int(words[words.index("--after") + 1])
         # The supervisor it starts may journal as it goes, so the last entry is read on either side of the print.

@@ -226,6 +226,7 @@ def test_core_profile_is_exact_and_deterministic() -> None:
             "skills/orchestrate-work/references/schemas.json",
             "skills/orchestrate-work/references/story.schema.json",
             "skills/orchestrate-work/references/wait-words.json",
+            "skills/orchestrate-work/scripts/collab.py",
             "skills/orchestrate-work/scripts/delivery_state.py",
             "skills/orchestrate-work/scripts/journal_words.py",
             "skills/orchestrate-work/scripts/machine.py",

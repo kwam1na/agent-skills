@@ -1,0 +1,935 @@
+{
+  "now": "2026-10-30T12:00:00Z",
+  "blocks": {
+    "delivery-state": {
+      "state": {
+        "version": 3,
+        "meta": {
+          "headline": "Plan preview (agent review only): Saved addresses",
+          "updatedAt": "2026-10-30T11:59:00Z",
+          "collab": {
+            "key": "SHOP-90",
+            "seats": {
+              "s-aaaaaaaaaaaa": {
+                "label": "Ama",
+                "admitted": true,
+                "approver": true
+              },
+              "s-bbbbbbbbbbbb": {
+                "label": "Ben <b>B</b>",
+                "admitted": true,
+                "approver": true
+              }
+            },
+            "peers": {
+              "s-bbbbbbbbbbbb": {
+                "through": 4,
+                "fetchedAt": "2026-10-30T11:55:00Z",
+                "heldReason": "generation_differs"
+              }
+            }
+          },
+          "phase": "planning"
+        },
+        "lanes": [
+          {
+            "id": "lane-1",
+            "title": "Lane one",
+            "focus": "",
+            "state": "working",
+            "waitingOn": null,
+            "since": "2026-10-30T06:00:00Z"
+          }
+        ],
+        "queue": [],
+        "planned": [
+          {
+            "subject": "SHOP-91",
+            "title": "Saved addresses",
+            "lane": "lane-1",
+            "stage": "planned"
+          },
+          {
+            "subject": "SHOP-92",
+            "title": "Address book export",
+            "lane": "lane-1",
+            "stage": "planned"
+          }
+        ],
+        "finish": [
+          {
+            "id": "finish-1",
+            "text": "Every saved address survives a sign-out",
+            "met": false
+          }
+        ],
+        "followups": [],
+        "leases": []
+      },
+      "journal": [
+        {
+          "id": 1,
+          "at": "2026-10-30T06:01:00Z",
+          "kind": "record.started",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "base": {
+              "ref": "origin/main",
+              "head": "01c0fec00256acd102ec5ae2038208f30417b704"
+            }
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 1,
+            "seen": {}
+          }
+        },
+        {
+          "id": 2,
+          "at": "2026-10-30T06:02:00Z",
+          "kind": "seat.admitted",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "seat": "s-aaaaaaaaaaaa",
+            "label": "Ama",
+            "approver": true
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 2,
+            "seen": {}
+          }
+        },
+        {
+          "id": 3,
+          "at": "2026-10-30T06:03:00Z",
+          "kind": "seat.requested",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "seat": "s-bbbbbbbbbbbb",
+            "label": "Ben <b>B</b>"
+          },
+          "origin": {
+            "seat": "s-bbbbbbbbbbbb",
+            "seq": 1,
+            "seen": {
+              "s-aaaaaaaaaaaa": 2
+            }
+          }
+        },
+        {
+          "id": 4,
+          "at": "2026-10-30T06:04:00Z",
+          "kind": "seat.admitted",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "seat": "s-bbbbbbbbbbbb",
+            "label": "Ben <b>B</b>",
+            "approver": true
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 3,
+            "seen": {
+              "s-bbbbbbbbbbbb": 1
+            }
+          },
+          "answers": [
+            3
+          ]
+        },
+        {
+          "id": 5,
+          "at": "2026-10-30T06:05:00Z",
+          "kind": "scope.transferred",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "scope": "plan:### SHOP-92. Address book export",
+            "from": "s-aaaaaaaaaaaa",
+            "to": "s-bbbbbbbbbbbb"
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 4,
+            "seen": {
+              "s-bbbbbbbbbbbb": 1
+            }
+          }
+        },
+        {
+          "id": 6,
+          "at": "2026-10-30T06:06:00Z",
+          "kind": "feedback.raised",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "anchor": "## Decisions",
+            "text": "Per account <script>alert(1)</script>, or per device?",
+            "blocking": true
+          },
+          "origin": {
+            "seat": "s-bbbbbbbbbbbb",
+            "seq": 2,
+            "seen": {
+              "s-aaaaaaaaaaaa": 4
+            }
+          }
+        },
+        {
+          "id": 7,
+          "at": "2026-10-30T06:07:00Z",
+          "kind": "feedback.raised",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "anchor": "### SHOP-91. Saved addresses",
+            "text": "Name the cap on saved addresses.",
+            "blocking": false
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 5,
+            "seen": {
+              "s-bbbbbbbbbbbb": 2
+            }
+          }
+        },
+        {
+          "id": 8,
+          "at": "2026-10-30T06:08:00Z",
+          "kind": "feedback.raised",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "anchor": "### SHOP-92. Address book export",
+            "text": "CSV first.",
+            "blocking": false
+          },
+          "origin": {
+            "seat": "s-bbbbbbbbbbbb",
+            "seq": 3,
+            "seen": {
+              "s-aaaaaaaaaaaa": 5
+            }
+          }
+        },
+        {
+          "id": 9,
+          "at": "2026-10-30T06:09:00Z",
+          "kind": "feedback.resolved",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "outcome": "accepted",
+            "reason": "CSV it is <img src=x onerror=alert(1)>."
+          },
+          "origin": {
+            "seat": "s-bbbbbbbbbbbb",
+            "seq": 4,
+            "seen": {
+              "s-aaaaaaaaaaaa": 5
+            }
+          },
+          "answers": [
+            8
+          ]
+        },
+        {
+          "id": 10,
+          "at": "2026-10-30T06:10:00Z",
+          "kind": "plan.endorsed",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "commit": "01efd59302952095033a6b9703dfb6990485019b"
+          },
+          "origin": {
+            "seat": "s-bbbbbbbbbbbb",
+            "seq": 5,
+            "seen": {
+              "s-aaaaaaaaaaaa": 5
+            }
+          }
+        },
+        {
+          "id": 11,
+          "at": "2026-10-30T06:11:00Z",
+          "kind": "plan.endorsed",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "commit": "01c58f10025cc29102f3f612038b299304225d14"
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 6,
+            "seen": {
+              "s-bbbbbbbbbbbb": 5
+            }
+          }
+        },
+        {
+          "id": 12,
+          "at": "2026-10-30T06:12:00Z",
+          "kind": "feedback.raised",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "anchor": "### SHOP-91. Saved addresses",
+            "text": "Drop the cap?",
+            "blocking": false
+          },
+          "origin": {
+            "seat": "s-bbbbbbbbbbbb",
+            "seq": 6,
+            "seen": {
+              "s-aaaaaaaaaaaa": 6
+            }
+          }
+        },
+        {
+          "id": 13,
+          "at": "2026-10-30T06:13:00Z",
+          "kind": "feedback.resolved",
+          "lane": null,
+          "subject": null,
+          "data": {
+            "outcome": "declined",
+            "reason": "The cap stays."
+          },
+          "origin": {
+            "seat": "s-aaaaaaaaaaaa",
+            "seq": 7,
+            "seen": {
+              "s-bbbbbbbbbbbb": 6
+            }
+          },
+          "answers": [
+            12
+          ]
+        }
+      ],
+      "stats": {},
+      "estimates": {},
+      "status": {
+        "source": "derived",
+        "text": ""
+      },
+      "focus": {},
+      "story": {
+        "schemaVersion": "story/1",
+        "state": "open",
+        "digest": {
+          "landed": 0,
+          "pieces": 2,
+          "startedAt": "2026-10-30T06:01:00Z",
+          "closedAt": null,
+          "took": null,
+          "setbacks": {
+            "closed": 0,
+            "cost": 0,
+            "standing": []
+          },
+          "decisions": 0,
+          "words": {
+            "head": "Nothing has landed yet.",
+            "line": "No setbacks."
+          }
+        },
+        "chapters": [
+          {
+            "id": "c1",
+            "form": "start",
+            "subject": null,
+            "pieceTitle": null,
+            "at": "2026-10-30T06:01:00Z",
+            "entries": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "beats": [
+              "b1",
+              "b2",
+              "b3",
+              "b4",
+              "b5",
+              "b6",
+              "b7",
+              "b8",
+              "b9",
+              "b10",
+              "b11"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "Getting started",
+              "line": "",
+              "standing": []
+            },
+            "setbacks": []
+          }
+        ],
+        "beats": [
+          {
+            "id": "b1",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:01:00Z",
+            "entries": [
+              1
+            ],
+            "thread": null,
+            "kind": "record.started",
+            "tone": "note",
+            "label": "Started",
+            "words": {
+              "head": "The delivery started",
+              "line": "By Ama. On origin/main at 01c0fec"
+            },
+            "explain": "The lead opened the record. Everything after it happened in this delivery.",
+            "items": []
+          },
+          {
+            "id": "b2",
+            "chapter": "c1",
+            "form": "bookkeeping",
+            "altitudes": [
+              "everything"
+            ],
+            "at": "2026-10-30T06:02:00Z",
+            "entries": [
+              2,
+              3,
+              4
+            ],
+            "thread": null,
+            "kind": null,
+            "tone": "note",
+            "label": "Bookkeeping",
+            "words": {
+              "head": "Bookkeeping",
+              "line": "Seat admitted (2) and Seat asked (1)"
+            },
+            "explain": null,
+            "items": [
+              {
+                "entry": 2,
+                "words": {
+                  "head": "Ama joined the delivery",
+                  "line": "As seat s-aaaaaaaaaaaa, approving the plan"
+                }
+              },
+              {
+                "entry": 3,
+                "words": {
+                  "head": "Ben <b>B</b> asked to join the delivery",
+                  "line": "As seat s-bbbbbbbbbbbb"
+                }
+              },
+              {
+                "entry": 4,
+                "words": {
+                  "head": "Ben <b>B</b> joined the delivery",
+                  "line": "By Ama. As seat s-bbbbbbbbbbbb, approving the plan"
+                }
+              }
+            ]
+          },
+          {
+            "id": "b3",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:05:00Z",
+            "entries": [
+              5
+            ],
+            "thread": null,
+            "kind": "scope.transferred",
+            "tone": "decision",
+            "label": "Scope passed",
+            "words": {
+              "head": "plan:### SHOP-92. Address book export passed to Ben <b>B</b>",
+              "line": "From Ama"
+            },
+            "explain": "A scope's holder gave it to another seat, which alone writes its fields now.",
+            "items": []
+          },
+          {
+            "id": "b4",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:06:00Z",
+            "entries": [
+              6
+            ],
+            "thread": null,
+            "kind": "feedback.raised",
+            "tone": "note",
+            "label": "Feedback raised",
+            "words": {
+              "head": "Feedback on ## Decisions that stops approval",
+              "line": "By Ben <b>B</b>. Per account <script>alert(1)</script>, or per device?"
+            },
+            "explain": "A seat raised feedback on a section of the plan.",
+            "items": []
+          },
+          {
+            "id": "b5",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:07:00Z",
+            "entries": [
+              7
+            ],
+            "thread": null,
+            "kind": "feedback.raised",
+            "tone": "note",
+            "label": "Feedback raised",
+            "words": {
+              "head": "Feedback on ### SHOP-91. Saved addresses",
+              "line": "By Ama. Name the cap on saved addresses."
+            },
+            "explain": "A seat raised feedback on a section of the plan.",
+            "items": []
+          },
+          {
+            "id": "b6",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:08:00Z",
+            "entries": [
+              8
+            ],
+            "thread": null,
+            "kind": "feedback.raised",
+            "tone": "note",
+            "label": "Feedback raised",
+            "words": {
+              "head": "Feedback on ### SHOP-92. Address book export",
+              "line": "By Ben <b>B</b>. CSV first."
+            },
+            "explain": "A seat raised feedback on a section of the plan.",
+            "items": []
+          },
+          {
+            "id": "b7",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:09:00Z",
+            "entries": [
+              9
+            ],
+            "thread": null,
+            "kind": "feedback.resolved",
+            "tone": "decision",
+            "label": "Feedback settled",
+            "words": {
+              "head": "Feedback was accepted",
+              "line": "By Ben <b>B</b>. CSV it is <img src=x onerror=alert(1)>."
+            },
+            "explain": "Feedback on the plan was settled, and the entry says how.",
+            "items": []
+          },
+          {
+            "id": "b8",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:10:00Z",
+            "entries": [
+              10
+            ],
+            "thread": null,
+            "kind": "plan.endorsed",
+            "tone": "decision",
+            "label": "Plan endorsed",
+            "words": {
+              "head": "Ben <b>B</b> endorsed the plan",
+              "line": "At 01efd59"
+            },
+            "explain": "A seat approved the plan as it stands at one commit.",
+            "items": []
+          },
+          {
+            "id": "b9",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:11:00Z",
+            "entries": [
+              11
+            ],
+            "thread": null,
+            "kind": "plan.endorsed",
+            "tone": "decision",
+            "label": "Plan endorsed",
+            "words": {
+              "head": "Ama endorsed the plan",
+              "line": "At 01c58f1"
+            },
+            "explain": "A seat approved the plan as it stands at one commit.",
+            "items": []
+          },
+          {
+            "id": "b10",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:12:00Z",
+            "entries": [
+              12
+            ],
+            "thread": null,
+            "kind": "feedback.raised",
+            "tone": "note",
+            "label": "Feedback raised",
+            "words": {
+              "head": "Feedback on ### SHOP-91. Saved addresses",
+              "line": "By Ben <b>B</b>. Drop the cap?"
+            },
+            "explain": "A seat raised feedback on a section of the plan.",
+            "items": []
+          },
+          {
+            "id": "b11",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:13:00Z",
+            "entries": [
+              13
+            ],
+            "thread": null,
+            "kind": "feedback.resolved",
+            "tone": "decision",
+            "label": "Feedback settled",
+            "words": {
+              "head": "Feedback was declined",
+              "line": "By Ama. The cap stays."
+            },
+            "explain": "Feedback on the plan was settled, and the entry says how.",
+            "items": []
+          }
+        ],
+        "threads": [],
+        "ledger": [],
+        "tones": [
+          {
+            "tone": "landed",
+            "word": "Landed"
+          },
+          {
+            "tone": "ready",
+            "word": "Ready to check"
+          },
+          {
+            "tone": "decision",
+            "word": "Decision"
+          },
+          {
+            "tone": "problem",
+            "word": "Setback"
+          },
+          {
+            "tone": "note",
+            "word": "Other update"
+          }
+        ]
+      }
+    },
+    "delivery-runs": {},
+    "delivery-plan": {
+      "plan": {
+        "schemaVersion": "delivery-plan/1",
+        "updated": "2026-10-30T11:00:00Z",
+        "outcome": {
+          "summary": "Plan preview (agent review only): Saved addresses",
+          "text": "Shoppers keep their addresses between visits."
+        },
+        "requiredLenses": [],
+        "proofKinds": [
+          {
+            "id": "review",
+            "label": "Review",
+            "source": "record"
+          },
+          {
+            "id": "handed",
+            "label": "Handed off",
+            "source": "record"
+          },
+          {
+            "id": "merged",
+            "label": "Merged",
+            "source": "record"
+          }
+        ],
+        "units": [
+          {
+            "subject": "SHOP-91",
+            "title": "Saved addresses",
+            "criteria": [
+              {
+                "id": "SHOP-91.1",
+                "text": "Criterion 1 of SHOP-91"
+              },
+              {
+                "id": "SHOP-91.2",
+                "text": "Criterion 2 of SHOP-91"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged"
+            ]
+          },
+          {
+            "subject": "SHOP-92",
+            "title": "Address book export",
+            "criteria": [
+              {
+                "id": "SHOP-92.1",
+                "text": "Criterion 1 of SHOP-92"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged"
+            ]
+          }
+        ],
+        "finish": [
+          {
+            "id": "finish-1",
+            "label": "Finish 1",
+            "text": "Every saved address survives a sign-out",
+            "at": "2026-10-30T06:00:00Z",
+            "covers": {
+              "criteria": [],
+              "proofs": []
+            }
+          }
+        ],
+        "approved": {
+          "at": "2026-10-29T23:20:00Z",
+          "snapshot": {
+            "units": [
+              {
+                "subject": "SHOP-91",
+                "title": "Saved addresses",
+                "criteria": [
+                  {
+                    "id": "SHOP-91.1",
+                    "text": "Criterion 1 of SHOP-91"
+                  },
+                  {
+                    "id": "SHOP-91.2",
+                    "text": "Criterion 2 of SHOP-91"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged"
+                ]
+              },
+              {
+                "subject": "SHOP-92",
+                "title": "Address book export",
+                "criteria": [
+                  {
+                    "id": "SHOP-92.1",
+                    "text": "Criterion 1 of SHOP-92"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged"
+                ]
+              }
+            ],
+            "finish": [
+              {
+                "id": "finish-1",
+                "label": "Finish 1",
+                "text": "Every saved address survives a sign-out",
+                "at": "2026-10-30T06:00:00Z",
+                "covers": {
+                  "criteria": [],
+                  "proofs": []
+                }
+              }
+            ]
+          }
+        },
+        "changes": [],
+        "evidence": {},
+        "approvals": [
+          {
+            "text": "Product Owner signs off the copy",
+            "state": "waiting"
+          },
+          {
+            "text": "The operator approves the plan",
+            "state": "waiting"
+          }
+        ],
+        "outOfScope": [
+          "Importing addresses"
+        ],
+        "preview": {
+          "plan": "docs/plans/saved-addresses.md",
+          "commit": "01c58f10025cc29102f3f612038b299304225d14",
+          "approval": "agents-only",
+          "layout": "delivery",
+          "decisions": [
+            "Addresses are kept per account, never per device.",
+            "No new renderer version."
+          ],
+          "endorsements": [
+            {
+              "seat": "s-aaaaaaaaaaaa",
+              "label": "Ama",
+              "commit": "01c58f10025cc29102f3f612038b299304225d14"
+            },
+            {
+              "seat": "s-bbbbbbbbbbbb",
+              "label": "Ben <b>B</b>",
+              "commit": "01efd59302952095033a6b9703dfb6990485019b"
+            }
+          ]
+        },
+        "planReview": {
+          "lenses": [
+            "lens.outcome-correctness",
+            "lens.adversarial-testing"
+          ],
+          "state": "aligned",
+          "rounds": [
+            {
+              "round": 1,
+              "candidateRef": "1111111111111111111111111111111111111111",
+              "at": "2026-10-30T04:00:00Z",
+              "outcome": "changes",
+              "verdicts": {
+                "lens.outcome-correctness": "changes",
+                "lens.adversarial-testing": "approve"
+              },
+              "findings": {
+                "P0": 0,
+                "P1": 1,
+                "P2": 0,
+                "P3": 0
+              },
+              "raised": [
+                {
+                  "id": "c1-1",
+                  "lens": "lens.outcome-correctness",
+                  "severity": "P1",
+                  "summary": "Round 1 found a gap in the plan.",
+                  "state": "resolved"
+                }
+              ],
+              "settled": []
+            },
+            {
+              "round": 2,
+              "candidateRef": "2222222222222222222222222222222222222222",
+              "at": "2026-10-30T05:00:00Z",
+              "outcome": "approve",
+              "verdicts": {
+                "lens.outcome-correctness": "approve",
+                "lens.adversarial-testing": "approve"
+              },
+              "findings": {
+                "P0": 0,
+                "P1": 0,
+                "P2": 0,
+                "P3": 0
+              },
+              "raised": [],
+              "settled": [
+                {
+                  "id": "c1-1",
+                  "lens": "lens.outcome-correctness",
+                  "state": "fixed",
+                  "fixCommit": "2222222222222222222222222222222222222222",
+                  "resolution": "Fixed in round 2."
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "initialText": "NowThe lineWhoSeatsWhat's leftThe planFeedbackWhat happenedParkedStarted 5 h 59 min ago · Updated a minute agoPlan preview (agent review only): Saved addresses0 of 2 stories are in.Lane 1 · 0 of 2, to comeLanded, to come2pieces to land1lane3criteria to prove1finish lineReady to startSHOP-91 · Saved addressesSHOP-92 · Address book exportFinish lineThe lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Lane one0 of 2 landed91920 of 2 landedFinish line0/1Lane 1Saved addressesSHOP-91 · Not started3 proofs leftNo review is recorded for it.See in the planNo review rounds yet. Each round shows here as soon as the lane reduces it, before the hand-off.LandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedWho's doing what1 lane is working on this.Each lane is a separate session working in parallel on its own part of the work.Lane oneBuildingfor 6hSeats2 seats write this delivery.Who writess-aaaaaaaaaaaaAmaendorses the plans-bbbbbbbbbbbbBen <b>B</b>endorses the planWho holds whatdeliveryAmaqueueAmalane:lane-1Amaplan:### SHOP-92. Address book exportBen <b>B</b>Every other plan section is Ama's, as the delivery's holder.PeersBen <b>B</b> held: generation differsWhat's left2pieces to go0 of 2 pieces have landed.SHOP-91Saved addressesNot startedSHOP-92Address book exportNot startedThe finish lineFinish 1Not yetThe lead marks this oneThe plan0 of 3 criteria proven.Plan preview (agent review only): Saved addressesAgent review only · 2 review rounds · every lens aligned · endorsed by Ama · stale endorsement by Ben <b>B</b> · not approved by a personNothing in the plan needs attention right now.SHOP-91Saved addresses3 proofs left · No review is recorded for it. It hasn't been handed off yet.SHOP-92Address book export3 proofs left · No review is recorded for it. It hasn't been handed off yet.All units2UnitCriteriaStatusSHOP-91Saved addressesCriterion 1 of SHOP-91 SHOP-91.1Criterion 2 of SHOP-91 SHOP-91.23 proofs leftNo review is recorded for it.It hasn't been handed off yet.It still has to merge.SHOP-92Address book exportCriterion 1 of SHOP-92 SHOP-92.13 proofs leftNo review is recorded for it.It hasn't been handed off yet.It still has to merge.Plan review (2 rounds)The plan's review has no round bound: it runs until every lens aligns or the operator ends it.Lenses aligned on round 2 · 1 serious note raised114:00 am21 h laterReviewed at 2222222Round 2AlignedTestingCorrectnessNothing new raisedThis round confirmed 1 earlier note: 1 fixed in 2222222.Correctness · 1 fixedRound 1 found a gap in the plan.seriousfixedFixed in 2222222Fixed in round 2.Decisions2Addresses are kept per account, never per device.No new renderer version.Waived proofs0No proof was waived.Approvals ahead2Waiting Product Owner signs off the copyWaiting The operator approves the planOut of scope1Importing addressesThe full outcomeShoppers keep their addresses between visits.Feedback2 open, 1 blocking · 4 raised on 3 sections.## DecisionsBen <b>B</b>Per account <script>alert(1)</script>, or per device?Open, blocking### SHOP-91. Saved addressesAmaName the cap on saved addresses.OpenBen <b>B</b>Drop the cap?Declined by Ama: The cap stays.### SHOP-92. Address book exportBen <b>B</b>CSV first.Accepted by Ben <b>B</b>: CSV it is <img src=x onerror=alert(1)>.What happenedNothing has landed yet.No setbacks.DecisionOther updateHeadlinesStoryEverythingAllDecisionsLandingsSetbacksGetting started6:01 am6:13 amFeedback was declinedBy Ama. The cap stays.Feedback settled6:12 amFeedback on ### SHOP-91. Saved addressesBy Ben <b>B</b>. Drop the cap?Feedback raised6:11 amAma endorsed the planAt 01c58f1Plan endorsed6:10 amBen <b>B</b> endorsed the planAt 01efd59Plan endorsed6:09 amFeedback was acceptedBy Ben <b>B</b>. CSV it is <img src=x onerror=alert(1)>.Feedback settled6:08 amFeedback on ### SHOP-92. Address book exportBy Ben <b>B</b>. CSV first.Feedback raised6:07 amFeedback on ### SHOP-91. Saved addressesBy Ama. Name the cap on saved addresses.Feedback raised6:06 amFeedback on ## Decisions that stops approvalBy Ben <b>B</b>. Per account <script>alert(1)</script>, or per device?Feedback raised6:05 amplan:### SHOP-92. Address book export passed to Ben <b>B</b>From AmaScope passed6:01 amThe delivery startedBy Ama. On origin/main at 01c0fecStarted",
+  "folds": {
+    "units": "All units2UnitCriteriaStatusSHOP-91Saved addressesCriterion 1 of SHOP-91 SHOP-91.1Criterion 2 of SHOP-91 SHOP-91.23 proofs leftNo review is recorded for it.It hasn't been handed off yet.It still has to merge.SHOP-92Address book exportCriterion 1 of SHOP-92 SHOP-92.13 proofs leftNo review is recorded for it.It hasn't been handed off yet.It still has to merge."
+  },
+  "chapters": {
+    "seats": "Seats2 seats write this delivery.Who writess-aaaaaaaaaaaaAmaendorses the plans-bbbbbbbbbbbbBen <b>B</b>endorses the planWho holds whatdeliveryAmaqueueAmalane:lane-1Amaplan:### SHOP-92. Address book exportBen <b>B</b>Every other plan section is Ama's, as the delivery's holder.PeersBen <b>B</b> held: generation differs",
+    "feedback": "Feedback2 open, 1 blocking · 4 raised on 3 sections.## DecisionsBen <b>B</b>Per account <script>alert(1)</script>, or per device?Open, blocking### SHOP-91. Saved addressesAmaName the cap on saved addresses.OpenBen <b>B</b>Drop the cap?Declined by Ama: The cap stays.### SHOP-92. Address book exportBen <b>B</b>CSV first.Accepted by Ben <b>B</b>: CSV it is <img src=x onerror=alert(1)>.",
+    "plan": "The plan0 of 3 criteria proven.Plan preview (agent review only): Saved addressesAgent review only · 2 review rounds · every lens aligned · endorsed by Ama · stale endorsement by Ben <b>B</b> · not approved by a personNothing in the plan needs attention right now.SHOP-91Saved addresses3 proofs left · No review is recorded for it. It hasn't been handed off yet.SHOP-92Address book export3 proofs left · No review is recorded for it. It hasn't been handed off yet.All units2UnitCriteriaStatusSHOP-91Saved addressesCriterion 1 of SHOP-91 SHOP-91.1Criterion 2 of SHOP-91 SHOP-91.23 proofs leftNo review is recorded for it.It hasn't been handed off yet.It still has to merge.SHOP-92Address book exportCriterion 1 of SHOP-92 SHOP-92.13 proofs leftNo review is recorded for it.It hasn't been handed off yet.It still has to merge.Plan review (2 rounds)The plan's review has no round bound: it runs until every lens aligns or the operator ends it.Lenses aligned on round 2 · 1 serious note raised114:00 am21 h laterReviewed at 2222222Round 2AlignedTestingCorrectnessNothing new raisedThis round confirmed 1 earlier note: 1 fixed in 2222222.Correctness · 1 fixedRound 1 found a gap in the plan.seriousfixedFixed in 2222222Fixed in round 2.Decisions2Addresses are kept per account, never per device.No new renderer version.Waived proofs0No proof was waived.Approvals ahead2Waiting Product Owner signs off the copyWaiting The operator approves the planOut of scope1Importing addressesThe full outcomeShoppers keep their addresses between visits."
+  },
+  "details": {}
+}
