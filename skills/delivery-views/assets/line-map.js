@@ -507,7 +507,20 @@
   tabIcon.setAttribute("viewBox", "0 0 24 24");
   tabIcon.setAttribute("aria-hidden", "true");
   tabIcon.innerHTML = '<path d="M9 6h11M9 12h11M9 18h11M5 6h.01M5 12h.01M5 18h.01"/>';
-  var tabLabel = el("span", "chapter-tab-label", "Now");
+  // The label holds every chapter's name in one cell, only the current one seen, so the tab is as wide as the longest
+  // name and stepping between pages never moves the corner.
+  var tabLabel = el("span", "chapter-tab-label");
+  var tabName = el("span", "chapter-tab-name", "Now");
+  tabLabel.appendChild(tabName);
+  function nameTab(id) {
+    tabName.textContent = chapterName(id);
+    var sizers = chapterIds().map(function (one) {
+      var sizer = el("span", "chapter-tab-sizer", chapterName(one));
+      sizer.setAttribute("aria-hidden", "true");
+      return sizer;
+    });
+    tabLabel.replaceChildren.apply(tabLabel, [tabName].concat(sizers));
+  }
   var tabChevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   tabChevron.setAttribute("viewBox", "0 0 24 24");
   tabChevron.setAttribute("aria-hidden", "true");
@@ -653,7 +666,7 @@
     Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
       link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + id));
     });
-    tabLabel.textContent = chapterName(id);
+    nameTab(id);
     tabButton.setAttribute("aria-label", "Chapters: " + chapterName(id));
     var heading = document.querySelector("h1");
     fillWhere(heading ? heading.textContent : document.title);
@@ -966,7 +979,7 @@
   function followScroll(id) {
     if (id !== currentPage && history.replaceState) { history.replaceState(null, "", "#" + id); }
     currentPage = id;
-    tabLabel.textContent = chapterName(id);
+    nameTab(id);
     tabButton.setAttribute("aria-label", "Chapters: " + chapterName(id));
   }
 

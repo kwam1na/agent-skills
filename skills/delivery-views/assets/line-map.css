@@ -1098,7 +1098,10 @@ body.paged .rail { display: none; }
 .chapter-tab-button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .chapter-tab-button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .chapter-tab-button .chapter-tab-chevron { width: 12px; height: 12px; }
-.chapter-tab-label { color: var(--ink); white-space: nowrap; }
+.chapter-tab-label { display: inline-grid; grid-template-columns: minmax(0, 1fr); justify-items: start; color: var(--ink); white-space: nowrap; }
+/* Every chapter's name sits in the one cell, so the label keeps the longest one's width; only the current one shows. */
+.chapter-tab-name, .chapter-tab-sizer { grid-area: 1 / 1; }
+.chapter-tab-sizer { visibility: hidden; }
 .chapter-tab-list { position: absolute; top: calc(100% + 8px); right: -3px; min-width: 220px; margin: 0; padding: 6px; list-style: none;
   border: 1px solid var(--hair); border-radius: 12px; background: var(--lift); box-shadow: 0 12px 32px rgba(0, 0, 0, .18); }
 .chapter-tab-list[hidden] { display: none; }
@@ -1122,7 +1125,8 @@ body:not(.paged) .chapter-tab-hint { display: none; }
 @media (max-width: 720px) {
   body.paged .chapter { padding-top: 72px; min-height: max(480px, 64dvh); }
   body.paged .chapter > .inner { margin-bottom: 56px; }
-  .chapter-tab-label { max-width: 9ch; overflow: hidden; text-overflow: ellipsis; }
+  .chapter-tab-label { max-width: 9ch; overflow: hidden; }
+  .chapter-tab-name { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .page-where { display: none; }
 }
 

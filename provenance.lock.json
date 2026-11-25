@@ -210,11 +210,11 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.css",
-          "sha256": "e08a499142aac53ffbf7197a1703cd2524ac8db659bd72698f6a8807100a911d"
+          "sha256": "25b995a764bf61a0c048e045e613c7dcbcbbec993c9274a4779db1eac691a399"
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "4e4f4d6481e7af2cb78a44b21fc3ae3ef08afab67f40959466c912dd0314ecab"
+          "sha256": "f07ca10ccfef4d3949adc11296100f74b12a179e36ac5784edb18f18c6e4485e"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",

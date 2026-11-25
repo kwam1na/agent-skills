@@ -75,3 +75,19 @@ test("the finish post's label never sits on the tally of what has landed", async
   expect(tallyEnd > postX - LABEL_HALF).toBe(true);
   expect(Number(label.getAttribute("y")) <= Number(tally.getAttribute("y")) - TALLY_SIZE - 2).toBe(true);
 });
+
+test("the chapter tab holds every chapter's name in one cell, so stepping between pages never changes its width", async () => {
+  let seen = null;
+  await openPage(pageWithRuns(waited(record()), {}, { config: CONFIG }), { now: NOW, steps: [{ run(window) {
+    window.location.hash = "#left";
+    window.dispatchEvent(new window.HashChangeEvent("hashchange"));
+    const label = window.document.querySelector(".chapter-tab-label");
+    const chapters = [...window.document.querySelectorAll(".chapter-tab-list a")].map((link) => link.textContent.replace(/^\d+/, ""));
+    seen = { name: label.querySelector(".chapter-tab-name").textContent, sizers: [...label.querySelectorAll(".chapter-tab-sizer")]
+      .map((sizer) => [sizer.textContent, sizer.getAttribute("aria-hidden")]), chapters,
+      aria: window.document.querySelector(".chapter-tab-button").getAttribute("aria-label") };
+  } }] });
+  expect(seen.name).toBe("What's left");
+  expect(seen.aria).toBe("Chapters: What's left");
+  expect(seen.sizers).toEqual(seen.chapters.map((name) => [name, "true"]));
+});
