@@ -541,6 +541,10 @@
           "sha256": "9032d4955901d36db736d4523ea313f1a6b5ee56942bf2ba089db4777805b32f"
         },
         {
+          "path": "skills/orchestrate-work/scripts/collab.py",
+          "sha256": "b3de36f78869f1267b772f585ccb915c16c741d63e964f0a42c25244c1c41dc5"
+        },
+        {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
           "sha256": "55150d0d43fa9fa16a243dc0eddf769de152d0cba092e7c64f26de82a40b29dc"
         },
@@ -1132,6 +1136,10 @@
         {
           "path": "skills/run-delivery/scripts/gaps.py",
           "sha256": "5737a6a012a99c7c7d4b74fe92bd0ac1c7ecb02cc630a1c2e0972153b4c42ee8"
+        },
+        {
+          "path": "skills/run-delivery/scripts/plan_sync.py",
+          "sha256": "d0dd2299c57d7c7b12fbc484e18bbe9a3a9f2c63d1440be54fbf0c2b9459aa68"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
