@@ -46,7 +46,7 @@ RUN_QUIETLY = True  # two supervisors, each with its live view and sync loop, an
 # A write on one machine shows on the other within this many seconds: two ticks of the sync loop and one push.
 REACH_SECONDS = 10
 # The fields a record keeps for its own machine only, which the two machines never compare (D6's `local` rows).
-LOCAL_META = ("updatedAt", "writerGeneration", "closing", "collab")
+LOCAL_META = ("updatedAt", "writerGeneration", "closing")
 
 
 def tracker_publisher_entry() -> dict:
@@ -91,13 +91,14 @@ def own_log(folder: Path, name: str) -> list[dict]:
 
 
 def shared_state(folder: Path) -> dict:
-    """The record's state as both machines must agree on it: everything but the machine-local fields, with the entry
-    regionsSettled names by its origin."""
+    """The record's state as both machines must agree on it: everything but the machine-local fields, each seat's
+    view of its peers among them, with the entry regionsSettled names by its origin."""
     state = record(folder)
     state.pop("version", None)
     if state.get("regionsSettled"):
         state["regionsSettled"] = settled_origin(folder)
     state["meta"] = {name: value for name, value in state["meta"].items() if name not in LOCAL_META}
+    state["meta"].get("collab", {}).pop("peers", None)
     return state
 
 
@@ -320,7 +321,7 @@ class TwoMachinesTests(PlanningRecordCase):
         self.converged("after a's queue merged b's candidate")
         # Only the delivery holder records evidence: b's recording is refused while a holds delivery.
         out = self.run_at(b_repo, "lead-evidence", "record", "FX-3", "--after-build", self.base_build(b_repo), code=2)
-        self.assertIn("delivery", out)
+        self.assertIn("scope.not_held: only the holder of delivery", out)
         # The queue moves to b, whose supervisor starts serving it; a's lane hands off, a accepts, and b's queue merges.
         self.run_at(fx.main, "collab", "give", "--scope", "queue", "--to", seat_b, "--wait", "60")
         self.reaches(self.b, "scope.transferred", "the queue reaches b", scope="queue")
@@ -331,10 +332,11 @@ class TwoMachinesTests(PlanningRecordCase):
         # delivery moves to b, whose supervisor takes the hosted identity a carried and publishes as it: the public
         # link is unchanged, and no tracker update is posted twice.
         identity = json.loads((self.a / "hosted-identity.json").read_text())
+        published = self.snapshots()
         self.run_at(fx.main, "collab", "give", "--scope", "delivery", "--to", seat_b, "--wait", "60")
         self.reaches(self.b, "scope.transferred", "delivery reaches b", scope="delivery")
         self.converged("after delivery moved to b")
-        self.taken(identity)
+        self.taken(identity, published)
         self.posted_once()
         for scope in ("delivery", "queue", "lane:lane-2"):
             self.run_at(b_repo, "collab", "give", "--scope", scope, "--to", seat_a, "--wait", "60")
@@ -351,12 +353,16 @@ class TwoMachinesTests(PlanningRecordCase):
         # The close: both lanes done and the learning decided, a's supervisor closes the delivery and pushes the
         # archived close, b counts it closed and its supervisor stops.
         self.close()
+        self.converged("after the close")
+        self.posted_once()
         # Full health ran once a head, across both machines: whichever seat held the queue ran it, and neither ran a
         # head the other had.
         runs = [entry for folder in (self.a, self.b) for entry in own_log(folder, "full-health")]
         self.assertTrue(runs, "full health never ran")
         self.assertEqual(sorted(entry["head"] for entry in runs), sorted({entry["head"] for entry in runs}), runs)
         self.assertEqual(len((fx.tmp / "health.runs").read_text().splitlines()), len(runs))
+        self.assertTrue(own_log(self.b, "full-health"), "b held the queue, not delivery, when FX-2 merged, so b ran "
+                        "full health for that base head")
         # Entries the two machines name by local id are the same entries on both, by origin.
         self.assertEqual(settled_origin(self.a), settled_origin(self.b))
         self.assertIsNotNone(settled_origin(self.a), "no landing settled the regions")
@@ -407,13 +413,21 @@ class TwoMachinesTests(PlanningRecordCase):
                 self.fail(f"b's supervisor ({pid}) didn't stop once a's archived close reached it")
             time.sleep(0.5)
 
-    def taken(self, identity: dict) -> None:
+    def snapshots(self) -> int:
+        """How many snapshots the hosted origin has received, from either machine."""
+        return [operation for operation, _, _ in self.origin.observed].count("snapshots")
+
+    def taken(self, identity: dict, published: int) -> None:
         """b's supervisor writes the identity a carried as its own and publishes under it, within its next passes."""
         deadline = time.monotonic() + 60
         path = self.b / "hosted-identity.json"
         while not (path.is_file() and json.loads(path.read_text()).get("publicId") == identity["publicId"]):
             if time.monotonic() >= deadline:
                 self.fail(f"b didn't take a's hosted identity within 60s: {path.read_text() if path.is_file() else None}")
+            time.sleep(0.5)
+        while self.snapshots() <= published:
+            if time.monotonic() >= deadline:
+                self.fail("b never published under the identity it took")
             time.sleep(0.5)
 
     def posted_once(self) -> None:
