@@ -11345,6 +11345,75 @@ class SupervisorLineFallbackTests(unittest.TestCase):
         self.assertEqual(self.line(quiet), "supervisor: running (pid 42); live view http://127.0.0.1:1")
 
 
+class OpenTheLiveViewTests(unittest.TestCase):
+    """lead-init and lead-run --resume end with the one live view the lead opens in the host's browser pane, unasked:
+    the hosted view when hosted is enabled and the watcher has a URL, the local view's address otherwise, and nothing
+    while no supervisor runs."""
+
+    LOCAL = "http://127.0.0.1:4417/"
+    HOSTED = "https://views.example.test/d/" + "ab" * 32
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location("run_delivery_for_open", ROOT / "skills/run-delivery/scripts/run_delivery.py")
+        cls.tool = importlib.util.module_from_spec(spec)
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(cls.tool)
+        finally:
+            sys.dont_write_bytecode = previous
+
+    def said(self, argv: list[str], *, held: bool, hosted: dict) -> list[str]:
+        """What the command prints after its own work, which is stubbed: the wake line, then any open step."""
+        c = types.SimpleNamespace(state=Path("/nowhere/state"), delivery="FX-1")
+        out = io.StringIO()
+        with mock.patch.object(self.tool, "lead_init", lambda args: None), \
+                mock.patch.object(self.tool, "lead_run", lambda args: None), \
+                mock.patch.object(self.tool, "cfg", lambda: c), \
+                mock.patch.object(self.tool, "quarantine_hosted_checkout", lambda *a: None), \
+                mock.patch.object(self.tool, "listener_lines", lambda _: ["The lead's wake: lane-1 works"]), \
+                mock.patch.object(self.tool, "supervisor_lock_path", lambda _: Path("/nowhere/lock")), \
+                mock.patch.object(self.tool, "read_lock", lambda _: (held, {"pid": 42, "address": self.LOCAL})), \
+                mock.patch.object(self.tool, "hosted_info", lambda *a, **k: hosted), \
+                mock.patch.object(self.tool.signal, "signal"), contextlib.redirect_stdout(out):
+            self.tool.main(argv)
+        return out.getvalue().splitlines()
+
+    def test_each_start_ends_by_naming_the_one_view_to_open(self) -> None:
+        cases = {"hosted": ({"state": "published", "url": self.HOSTED}, self.HOSTED),
+                 "hosted, no url yet": ({"state": "pending"}, self.LOCAL),
+                 "not enabled": ({"state": "disabled"}, self.LOCAL)}
+        for argv in (["lead-init"], ["lead-run", "--resume"]):
+            for name, (hosted, url) in cases.items():
+                with self.subTest(command=argv[0], hosted=name):
+                    lines = self.said(argv, held=True, hosted=hosted)
+                    self.assertEqual(lines[-1], f"Next step: open {url} in the host's browser pane now, unasked.")
+                    self.assertEqual(lines[0], "The lead's wake: lane-1 works")
+                    if url == self.HOSTED:
+                        self.assertNotIn(self.LOCAL, "\n".join(lines))
+
+    def test_no_supervisor_names_nothing_to_open(self) -> None:
+        for argv in (["lead-init", "--no-supervisor"], ["lead-run", "--resume"]):
+            with self.subTest(command=argv):
+                lines = self.said(argv, held=False, hosted={"state": "published", "url": self.HOSTED})
+                self.assertEqual(lines, ["The lead's wake: lane-1 works"])
+
+    def test_other_lead_commands_name_no_open_step(self) -> None:
+        # lead-assign and lead-accept end with the same listener lines as the two starts, but name no view to open.
+        others = (["lead-run", "--once"], ["lead-assign", "FX-2", "--lane", "lane-1", "--title", "lane-1"],
+                  ["lead-accept", "FX-2"])
+        for argv in others:
+            with self.subTest(command=argv[0]), mock.patch.object(self.tool, "supervisor_line", lambda _: None), \
+                    mock.patch.object(self.tool, "lead_assign", lambda args: None), \
+                    mock.patch.object(self.tool, "lead_accept", lambda args: None), \
+                    mock.patch.object(self.tool, "hosted_line", lambda *a, **k: None):
+                lines = self.said(argv, held=True, hosted={"state": "published", "url": self.HOSTED})
+                self.assertFalse(any(line.startswith("Next step: open") for line in lines), lines)
+                if argv[0] != "lead-run":
+                    self.assertIn("The lead's wake: lane-1 works", lines)
+
+
 class SupervisorLineListenerTests(unittest.TestCase):
     """The status line names a missing listener from the record it is given, never from another delivery's."""
 
@@ -11989,6 +12058,36 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         code, out = fx.flow(*move, cwd=fx.main)
         self.assertEqual(code, 0, out)
+
+    def test_on_a_legacy_record_own_co_changed_and_take_are_refused_writing_nothing(self) -> None:
+        from tests.test_run_delivery_supervisor import hand_off
+        fx = self.delivery()
+        state = fx.tmp / "record/state.json"
+        legacy = json.loads(state.read_text())
+        legacy.pop("laneOwnership")
+        state.write_text(json.dumps(legacy, indent=2) + "\n")
+        journal = fx.tmp / "record/journal.jsonl"
+
+        def written() -> tuple[bytes, bytes]:
+            return state.read_bytes(), journal.read_bytes()
+
+        before = written()
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", "--own-co-changed",
+                            cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("--own-co-changed claims files in the record: seed this record with lead-own --seed first", out)
+        self.assertEqual(written(), before)
+        hand_off(fx, "FX-3", "lane-2", assign=False)
+        self.assertNotIn("laneOwnership", json.loads(state.read_text()))
+        before = written()
+        code, out = fx.flow("lead-accept", "FX-3", "--take", "src/one.txt", "--why", "a pin", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("--take grants a claim in the record: seed this record with lead-own --seed first", out)
+        self.assertEqual(written(), before)
+        # The refusal is the flag's alone: without it, the legacy record still takes an assignment, left unseeded.
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("laneOwnership", json.loads(state.read_text()))
 
     def test_lead_ownership_rejects_duplicate_grants_and_lane_checkouts(self) -> None:
         fx = self.delivery(assign=False)

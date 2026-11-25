@@ -342,6 +342,13 @@ opens the address there, and also presents it as a card that opens it in that pa
 the host has no such pane, the agent opens the address in the operator's own browser, and only prints it when it can
 open it in neither. Opening is the agent's step, through whatever the host offers; no command opens anything.
 
+**The live view opens when a delivery begins.** `lead-init` and `lead-run --resume` end with one next step, `Next
+step: open <url> in the host's browser pane now, unasked.`, and the lead opens that view in the same turn, without
+being asked: the hosted view's URL when `.agents/delivery-views.json` enables `hosted` and the watcher has one, the
+local live view's address otherwise. The `delivery.orient` hook names the same view to a lead session that starts,
+resumes or compacts. With no supervisor running, as after `--no-supervisor`, there is no view and nothing is named.
+Lanes never open it.
+
 ## Where lanes read the delivery
 
 A lane reads the delivery's settings, plan and brief notes from the delivery base on the remote, not from its

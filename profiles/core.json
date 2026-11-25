@@ -1,5 +1,6 @@
 {
   "description": [
+    "The lead opens the live view in the host's browser pane, unasked, when a delivery begins: the hosted view first when hosted is enabled and has a URL, else the local live view's address; lanes never open it.",
     "Minimal tracker-neutral delivery posture.",
     "Review acquisition supports native subagents without Python helpers and exact content-based base-move reopening.",
     "Declared delivery-product gates, recovery and honest cost coverage remain host-native.",

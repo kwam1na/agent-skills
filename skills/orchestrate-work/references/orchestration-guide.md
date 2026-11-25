@@ -519,9 +519,12 @@ supervisor's.
 With run-delivery's supervisor running, it keeps the live view running and
 renders, publishers included, after each of its own writes.
 
-- Start the live view at the beginning of the delivery and point the
-  operator at its address; it re-renders on every record write, so it is
-  never stale.
+- Start the live view at the beginning of the delivery and open it for the
+  operator in the same turn, unasked; it re-renders on every record write, so
+  it is never stale. The lead opens the one view run-delivery's `lead-init`
+  and `lead-run --resume` name as their next step, in the host's browser pane:
+  the hosted view first, when hosted is enabled and has a URL, and the local
+  live view's address otherwise. Lanes never open it.
 - `render_state.py live --status-file PATH` re-reads a supervisor's status
   file on every page it serves: `pid`, `state` (`running` or `stopped`),
   `at`, and optionally `why`, `said` and `restart`. While it says `running`
