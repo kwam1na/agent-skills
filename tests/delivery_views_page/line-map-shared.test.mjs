@@ -60,6 +60,16 @@ test("once the queue's new holder writes an entry that has seen the handover, th
   expect(rows(seats, ".scope-row")[1]).toBe("queueBen");
 });
 
+test("a scope passed on by a seat that doesn't hold it stays with its holder", async () => {
+  const usurped = (document) => {
+    const last = document.journal.at(-1);
+    document.journal.push({ id: last.id + 1, at: last.at, kind: "scope.transferred", lane: null, subject: null,
+      data: { scope: "delivery", from: "s-bbbbbbbbbbbb", to: "s-bbbbbbbbbbbb" }, origin: { seat: "s-bbbbbbbbbbbb", seq: 9, seen: {} } });
+    return document;
+  };
+  expect(rows(await chapter("plan-shared", "seats", usurped), ".scope-row")[0]).toBe("deliveryAma");
+});
+
 test("Feedback threads each section's feedback: open, blocking, and settled by its section's holder", async () => {
   const feedback = await chapter("plan-shared", "feedback");
   expect(feedback.querySelector(".title").textContent).toBe("2 open, 1 blocking · 3 raised on 3 sections.");
