@@ -89,10 +89,12 @@ def full_record():
     return doc, runs, plan, needs, files
 
 
+CHECKS = {'checks': {'pending': 0, 'failing': [{'name': 'lint', 'onTarget': True}]}}
+
+
 def project_full(**kw):
     doc, runs, plan, needs, files = full_record()
-    with mock.patch.object(public.render, 'integration_drift', return_value={'moved': 3, 'behind': 1}):
-        return public.project(doc, runs, FORGE, source_fingerprint='1' * 64, plan=plan, needs=needs, files=files, **kw)
+    return public.project(doc, runs, FORGE, source_fingerprint='1' * 64, plan=plan, needs=needs, files=files, forge=CHECKS, **kw)
 
 
 class ProjectionTests(unittest.TestCase):
@@ -102,10 +104,9 @@ class ProjectionTests(unittest.TestCase):
 
     def test_the_snapshot_is_the_local_live_views_own_cut(self):
         doc, runs, plan, needs, files = full_record()
-        with mock.patch.object(public.render, 'integration_drift', return_value={'moved': 3, 'behind': 1}):
-            local = render.line_map_data(doc, runs, FORGE, theme_key='hosted-delivery', history=None,
-                                         plan=plan, needs=needs, files=files)
-            value = public.project(doc, runs, FORGE, source_fingerprint='1' * 64, plan=plan, needs=needs, files=files)
+        local = render.line_map_data(doc, runs, FORGE, theme_key='hosted-delivery', history=None,
+                                     plan=plan, needs=needs, files=files, forge=CHECKS)
+        value = public.project(doc, runs, FORGE, source_fingerprint='1' * 64, plan=plan, needs=needs, files=files, forge=CHECKS)
         # Every block the local page embeds is published as the local page has it. The differences are the sibling's
         # hosted link, a read capability, and a base merge's nonce, which the local page takes for a commit.
         expected = copy.deepcopy(local)
@@ -126,9 +127,10 @@ class ProjectionTests(unittest.TestCase):
         public.validate(value)
         # The local page's own blocks are the same construction.
         page = render.render_line_map(doc, runs, FORGE, theme_key='hosted-delivery', history=None, plan=plan,
-                                      needs=needs, files=files)
+                                      needs=needs, files=files, forge=CHECKS)
         for key, element in [('document', 'delivery-state'), ('runs', 'delivery-runs'), ('reviews', 'delivery-reviews'),
-                             ('links', 'delivery-links'), ('needs', 'delivery-needs'), ('files', 'delivery-files')]:
+                             ('links', 'delivery-links'), ('needs', 'delivery-needs'), ('files', 'delivery-files'),
+                             ('integration', 'delivery-integration')]:
             self.assertEqual(local[key], block(page, element))
 
     def test_the_full_record_publishes_its_story_facts_paths_evidence_and_integration(self):
@@ -138,7 +140,7 @@ class ProjectionTests(unittest.TestCase):
         self.assertIsInstance(document.get('story'), dict)
         self.assertEqual(document['state']['meta']['integration'],
                          {'base': 'integrate/app', 'target': 'main', 'remote': 'origin'})
-        self.assertEqual(value['integration'], {'drift': {'moved': 3, 'behind': 1}})
+        self.assertEqual(value['integration'], CHECKS)
         decided = document['journal'][-2]
         self.assertEqual((decided['kind'], decided['because'], decided['data']['why']),
                          ('decision.recorded', [decided['because'][0]],
@@ -154,6 +156,30 @@ class ProjectionTests(unittest.TestCase):
                          {'text': 'Read docs/plans/approved.md first'})
         self.assertNotIn(SIBLING, encoded)
         self.assertEqual(document['state']['siblings'], [{'name': 'web', 'addedAt': document['journal'][-1]['at']}])
+
+    def test_each_now_fixture_publishes_exactly_what_the_local_page_draws_its_now_from(self):
+        """Both pages draw Now with the same line-map.js from the record, the Needs you list and the forge's checks: the
+        hosted cut of each stage and override carries those as the local page embeds them."""
+        fixtures = sorted((ROOT / 'tests/fixtures/delivery-views/now').glob('*.json'))
+        self.assertEqual(len(fixtures), 16)
+        for path in fixtures:
+            fixture = json.loads(path.read_text(encoding='utf-8'))
+            with self.subTest(fixture=path.stem), tempfile.TemporaryDirectory() as folder:
+                state = Path(folder)
+                needs = None
+                if fixture['needs'] is not None:
+                    (state / render.NEEDS_FILE).write_text(json.dumps(fixture['needs']))
+                    needs = render.read_needs_block(state)
+                page = render.render_line_map(fixture['document'], {}, FORGE, theme_key='hosted-delivery', history=None,
+                                              needs=needs, forge=fixture['integration'])
+                value = public.project(fixture['document'], {}, FORGE, source_fingerprint='1' * 64, needs=needs,
+                                       forge=fixture['integration'])
+                for key, element in [('document', 'delivery-state'), ('needs', 'delivery-needs'), ('links', 'delivery-links'),
+                                     ('integration', 'delivery-integration'), ('view', 'delivery-view')]:
+                    expected = block(page, element)
+                    if key == 'view':
+                        expected = {**expected, 'history': None}
+                    self.assertEqual(value.get(key), expected, key)
 
     def test_a_base_merge_authorization_publishes_without_its_nonce(self):
         doc, runs, plan, needs, files = full_record()

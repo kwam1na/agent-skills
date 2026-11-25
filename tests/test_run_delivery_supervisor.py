@@ -3474,6 +3474,48 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("still waits for acceptance", out)
 
+    def test_a_requeue_drops_the_stop_from_the_status_line_and_the_close_hold(self) -> None:
+        """After the lead requeues a stopped candidate, the lane row no longer says it stopped and waits on the lead,
+        so neither the close's hold nor a lead command's status line names the resolved stop. check.started writes no
+        lane row, so the row the requeue put back is the one the status line reads until the outcome. The requeue
+        leaves every other candidate in the queue as it was."""
+        fx = self.fixture(grant_ready=False, merge_needs_ready=False)
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        self.assertEqual([e["data"]["reason"] for e in kinds(fx, "candidate.stopped")], ["merge_refused"])
+        stopped = "lane-1 waits on you: FX-2 stopped: merge_refused"
+        self.assertTrue(any(stopped in h for h in self.once(fx)["closeHeldBy"]))
+        # Another candidate stands in the queue, accepted and not yet run.
+        hand_off(fx, "FX-3", "lane-2")
+        code, out = fx.flow("lead-accept", "FX-3", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        # Held at a stage the requeue would write differently, so a requeue that resets every item is seen.
+        state_tool(fx, "patch", "--writer", "runner", "--version", str(record(fx)["state"]["version"]), "--element",
+                   "queue[subject=FX-3]", "--set", json.dumps({"/stage": "checking"}))
+        other = next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-3")
+        self.assertEqual(other["stage"], "checking", other)
+        forge = json.loads((fx.tmp / "forge.json").read_text())
+        forge["https://forge.test/pr/1"]["draft"] = False  # the lead marks it ready by hand
+        (fx.tmp / "forge.json").write_text(json.dumps(forge))
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-3"), other)
+        state_tool(fx, "patch", "--writer", "runner", "--version", str(record(fx)["state"]["version"]), "--element",
+                   "queue[subject=FX-3]", "--set", json.dumps({"/stage": "queued"}))
+        row = next(lane for lane in record(fx)["state"]["lanes"] if lane["id"] == "lane-1")
+        self.assertFalse(row.get("focus", "").startswith("FX-2 stopped:"), row)
+        self.assertNotEqual(row.get("waitingOn"), "lead", row)
+        self.assertFalse(any("waits on you" in h for h in self.once(fx)["closeHeldBy"]))
+        code, out = fx.flow("lead-hints", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("FX-2 stopped", out)
+        queue_run(fx, "FX-2")
+        requeued = kinds(fx, "handoff.requeued")[-1]["id"]
+        self.assertTrue([e for e in kinds(fx, "check.started") if e["subject"] == "FX-2" and e["id"] > requeued])
+        self.assertFalse(any("FX-2 stopped" in h for h in self.once(fx)["closeHeldBy"]))
+
     def test_a_stop_the_lead_requeues_narrates_to_one_setback_closed_at_the_requeue(self) -> None:
         fx = self.fixture(grant_ready=False, merge_needs_ready=False)
         hand_off(fx, "FX-2", "lane-1")

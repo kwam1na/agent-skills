@@ -13,7 +13,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from tests.quiet_git import quiet_clone, quieten
+from tests.quiet_git import quieten
 from tests.delivery_views_fixtures import (
     FIX, LISTED, RUN_ID, VIEW, Repository, Runs, block, config, document_naming, reading, readings, reference,
     render, report, report_view, table, views_common,
@@ -1098,6 +1098,35 @@ class NeedsBlockTests(unittest.TestCase):
         self.assertEqual(len(row["said"]["why"]), render.NEEDS_TEXT)
         self.assertEqual((block["summary"], block["words"]), ("1 thing needs the lead.", {"heading": "H", "holding": "M", "age": "for {age}"}))
 
+    def test_a_tracker_lag_keeps_its_row_and_stops_claiming_to_hold_up_the_finish(self) -> None:
+        lag = {"holding": True, "source": "tracker publisher", "text": "behind", "clears": "c", "kind": "trackerLag", "who": "lead"}
+        blocked = {"holding": True, "source": "lane-2's state", "text": "blocked", "clears": "c", "kind": "laneBlocked", "who": "lead"}
+        asks = {"holding": False, "source": "acceptance", "text": "drafts", "clears": "c", "kind": "drafts", "who": "operator"}
+        cases = [([lag], "1 thing needs the lead. Nothing is holding up the finish.", [False]),
+                 ([lag, blocked], "2 things need the lead, and 1 of them is holding up the finish.", [False, True]),
+                 ([asks, lag], "1 thing needs you and 1 thing needs the lead. Nothing is holding up the finish.", [False, False])]
+        for items, summary, holding in cases:
+            with self.subTest(summary=summary):
+                written = self.listed(items)
+                written["summary"] = "the supervisor's own sentence, and it's holding up the finish."
+                self.write(written)
+                block = render.read_needs_block(self.state)
+                self.assertEqual(block["summary"], summary)
+                self.assertEqual([row["holding"] for row in block["items"]], holding)
+        # A list with no tracker lag keeps the supervisor's sentence as it wrote it.
+        written = self.listed([blocked])
+        written["summary"] = "1 thing needs the lead, and it's holding up the finish."
+        self.write(written)
+        self.assertEqual(render.read_needs_block(self.state)["summary"], written["summary"])
+        # When the table can't say the sentence again, the list goes without one rather than keep the claim.
+        written = self.listed([lag])
+        written["summary"] = "1 thing needs the lead, and it's holding up the finish."
+        self.write(written)
+        with mock.patch.object(render.review_state, "load_wait_words", side_effect=OSError("gone")):
+            block = render.read_needs_block(self.state)
+        self.assertNotIn("summary", block)
+        self.assertEqual(block["items"][0]["holding"], False)
+
     def test_a_stopped_list_needs_no_stale_after(self) -> None:
         written = self.listed([], running=False)
         del written["staleAfter"]
@@ -1175,111 +1204,66 @@ def narrated(name: str) -> bytes:
     return (json.dumps(story, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-class IntegrationDriftTests(unittest.TestCase):
-    """How far the target moved while the delivery worked, and how far the integration's current head is behind it,
-    counted at render time against the remote-tracking ref, and absent whenever git can't say."""
+class ForgeChecksTests(unittest.TestCase):
+    """The forge's checks on the integration's latest change request, read from the forge snapshot kept beside the
+    record, for Now's sentence and fact; absent whenever the record, the snapshot or the item can't say."""
 
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.folder = Path(tempfile.mkdtemp(prefix="integration-drift-"))
-        cls.addClassCleanup(lambda: __import__("shutil").rmtree(cls.folder, ignore_errors=True))
-        origin, cls.repo, other = cls.folder / "origin.git", cls.folder / "lead", cls.folder / "other"
-        git = lambda where, *argv: subprocess.run(["git", *argv], cwd=where, check=True, capture_output=True,
-                                                  text=True).stdout.strip()
-        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
-        quieten(origin)
-        cls.folder.joinpath("seed").mkdir()
-        seed = cls.folder / "seed"
-        git(seed, "init", "-q", "-b", "main")
-        quieten(seed)
+    REQUEST = "https://github.com/acme/app/pull/7"
 
-        def change(where: Path, name: str) -> str:
-            (where / name).write_text(name + "\n")
-            git(where, "add", name)
-            git(where, "-c", "user.name=F", "-c", "user.email=f@example.test", "commit", "-q", "-m", name)
-            return git(where, "rev-parse", "HEAD")
-        cls.started = change(seed, "start")
-        git(seed, "push", "-q", str(origin), "main")
-        quiet_clone(origin, cls.repo)
-        quiet_clone(origin, other)
-        # The integration base works beside the target, which moves twice; the lead catches up, then fixes.
-        git(cls.repo, "checkout", "-q", "-b", "integrate/app")
-        change(cls.repo, "story")
-        change(other, "target-1")
-        change(other, "target-2")
-        git(other, "push", "-q", "origin", "main")
-        git(cls.repo, "fetch", "-q", "origin")
-        git(cls.repo, "-c", "user.name=F", "-c", "user.email=f@example.test", "merge", "-q", "--no-ff", "-m", "catch up",
-            "origin/main")
-        cls.merge = git(cls.repo, "rev-parse", "HEAD")
-        cls.fix = change(cls.repo, "fix")
-        # The target moves again after the catch-up; the lead's local main stays where it started.
-        change(other, "target-3")
-        git(other, "push", "-q", "origin", "main")
-        git(cls.repo, "fetch", "-q", "origin")
-        assert git(cls.repo, "rev-parse", "main") == cls.started
+    def setUp(self) -> None:
+        self.state = Path(tempfile.mkdtemp(prefix="forge-checks-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.state, ignore_errors=True))
 
-    def document(self, *facts: tuple[str, dict], target: str = "main", base_head: str | None = None) -> dict:
-        journal = [{"id": 1, "at": "2026-11-18T10:00:00Z", "kind": "record.started", "lane": None, "subject": None,
-                    "data": {"base": {"ref": "integrate/app", "head": self.started}}}]
-        for number, (kind, data) in enumerate(facts, start=2):
-            journal.append({"id": number, "at": "2026-11-18T10:00:00Z", "kind": kind, "lane": None, "subject": "APP",
-                            "data": data})
-        return {"state": {"meta": {"headline": "App", "trackerParent": "APP", "baseHead": base_head or self.merge,
-                                   "integration": {"base": "integrate/app", "target": target, "remote": "origin"}},
-                          "queue": [], "planned": []}, "journal": journal}
+    def document(self, *requests: str, integration: bool = True) -> dict:
+        journal = [{"id": number, "at": "2026-11-18T10:00:00Z", "kind": "integration.requested", "lane": None,
+                    "subject": "APP", "data": {"changeRequest": request, "head": "a" * 40}}
+                   for number, request in enumerate(requests, start=1)]
+        meta = {"headline": "App", "trackerParent": "APP",
+                **({"integration": {"base": "integrate/app", "target": "main", "remote": "origin"}} if integration else {})}
+        return {"state": {"meta": meta, "queue": [], "planned": []}, "journal": journal}
 
-    def drift(self, document: dict):
-        data = render.line_map_data(document, {}, config(), theme_key="local", history=None, repository=self.repo)
-        return data.get("integration", {}).get("drift")
+    def snapshot(self, *items: dict) -> None:
+        (self.state / "snapshots").mkdir(exist_ok=True)
+        (self.state / render.FORGE_FILE).write_text(json.dumps({"source": "forge", "takenAt": "2026-11-18T10:00:00Z",
+                                                                "items": list(items)}))
 
-    def test_the_counts_are_against_the_remote_target_from_the_start_and_from_the_current_head(self) -> None:
-        merged = ("integration.merged", {"target": "main", "targetHead": "a" * 40, "head": self.merge, "conflicts": []})
-        suite = ("integration.suite", {"head": self.fix, "result": "passed", "seconds": 3})
-        # Three target commits since the start; one since the fix, the newest head a fact names; none on local main.
-        self.assertEqual(self.drift(self.document(merged, suite)), {"moved": 3, "behind": 1})
-        # A round under the delivery's key names a head too, and a landing names none: the round's is the current head.
-        landed = ("integration.landed", {"target": "main", "head": self.merge})
-        self.assertEqual(self.drift(self.document(suite, ("review.round", {"round": 1, "head": self.started,
-                                                                            "startedAt": "2026-11-18T10:00:00Z",
-                                                                            "finishedAt": "2026-11-18T10:00:00Z",
-                                                                            "verdicts": {}, "findings": {}}), landed)),
-                         {"moved": 3, "behind": 3})
+    def test_the_latest_requests_item_gives_its_checks_and_the_page_embeds_them(self) -> None:
+        checks = {"pending": 1, "failing": [{"name": "lint", "onTarget": True}]}
+        self.snapshot({"subject": "APP-1", "changeRequest": "https://github.com/acme/app/pull/3",
+                       "checks": {"pending": 9, "failing": []}},
+                      {"subject": "APP", "changeRequest": self.REQUEST, "state": "open", "checks": checks})
+        document = self.document("https://github.com/acme/app/pull/3", self.REQUEST)
+        self.assertEqual(render.read_forge_block(self.state, document), {"checks": checks})
+        page = render.render_line_map(document, {}, config(), theme_key="local", history=None,
+                                      forge=render.read_forge_block(self.state, document))
+        self.assertEqual(block(page, "delivery-integration"), {"checks": checks})
+        self.assertIsNone(block(render.render_line_map(document, {}, config(), theme_key="local", history=None),
+                                "delivery-integration"))
 
-    def test_the_page_embeds_the_drift_the_renderer_counted_and_no_block_without_it(self) -> None:
-        document = self.document(("integration.merged", {"target": "main", "targetHead": "a" * 40, "head": self.merge,
-                                                         "conflicts": []}))
-        with mock.patch.object(render, "integration_drift", return_value={"moved": 3, "behind": 1}) as counted:
-            page = render.render_line_map(document, {}, config(), theme_key="local", history=None)
-        self.assertEqual(block(page, "delivery-integration"), {"drift": {"moved": 3, "behind": 1}})
-        self.assertEqual(counted.call_count, 1)
-        with mock.patch.object(render, "integration_drift", return_value=None):
-            page = render.render_line_map(document, {}, config(), theme_key="local", history=None)
-        self.assertIsNone(block(page, "delivery-integration"))
+    def test_no_integration_request_snapshot_item_or_trustworthy_checks_gives_nothing(self) -> None:
+        good = {"subject": "APP", "changeRequest": self.REQUEST, "checks": {"pending": 0, "failing": []}}
+        self.snapshot(good)
+        self.assertIsNone(render.read_forge_block(self.state, self.document(self.REQUEST, integration=False)))
+        self.assertIsNone(render.read_forge_block(self.state, self.document()))
+        self.assertIsNone(render.read_forge_block(self.state, self.document("https://github.com/acme/app/pull/8")))
+        for checks in (None, {"pending": -1, "failing": []}, {"pending": True, "failing": []}, {"pending": 0},
+                       {"pending": 0, "failing": [{"name": "lint"}]}, {"pending": 0, "failing": [{"name": 3, "onTarget": False}]}):
+            with self.subTest(checks=checks):
+                self.snapshot({**good, "checks": checks})
+                self.assertIsNone(render.read_forge_block(self.state, self.document(self.REQUEST)))
+        (self.state / render.FORGE_FILE).write_text("{not json")
+        self.assertIsNone(render.read_forge_block(self.state, self.document(self.REQUEST)))
+        (self.state / render.FORGE_FILE).unlink()
+        (self.state / render.FORGE_FILE).symlink_to(self.state / "elsewhere.json")
+        (self.state / "elsewhere.json").write_text(json.dumps({"items": [good]}))
+        self.assertIsNone(render.read_forge_block(self.state, self.document(self.REQUEST)))
 
-    def test_with_no_integration_fact_behind_counts_from_the_base_head(self) -> None:
-        self.assertEqual(self.drift(self.document(base_head=self.merge)), {"moved": 3, "behind": 1})
-        self.assertEqual(self.drift(self.document(base_head=self.started)), {"moved": 3, "behind": 3})
-
-    def test_a_missing_ref_a_git_that_times_out_or_is_absent_and_no_integration_leave_it_absent(self) -> None:
-        self.assertIsNone(self.drift(self.document(target="nowhere")))
-        real = subprocess.run
-        calls = []
-
-        def slow(argv, **kwargs):
-            calls.append(kwargs.get("timeout"))
-            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
-        with mock.patch.object(render.subprocess, "run", side_effect=slow):
-            self.assertIsNone(self.drift(self.document()))
-        self.assertEqual(calls, [5])
-        with mock.patch.object(render.subprocess, "run", side_effect=FileNotFoundError("git")):
-            self.assertIsNone(self.drift(self.document()))
-        plain = self.document()
-        del plain["state"]["meta"]["integration"]
-        with mock.patch.object(render.subprocess, "run", side_effect=AssertionError("no git call")):
-            data = render.line_map_data(plain, {}, config(), theme_key="local", history=None, repository=self.repo)
-        self.assertNotIn("integration", data)
-        self.assertIs(subprocess.run, real)
+    def test_names_are_cut_and_the_failing_list_is_bounded(self) -> None:
+        failing = [{"name": "x" * 500, "onTarget": False}] * (render.FORGE_FAILING + 5)
+        self.snapshot({"changeRequest": self.REQUEST, "checks": {"pending": 0, "failing": failing}})
+        read = render.read_forge_block(self.state, self.document(self.REQUEST))["checks"]["failing"]
+        self.assertEqual(len(read), render.FORGE_FAILING)
+        self.assertEqual(len(read[0]["name"]), render.FORGE_NAME)
 
 
 class StoryFixtureTests(unittest.TestCase):

@@ -1185,9 +1185,14 @@
   },
   "leftOpen": null,
   "integration": {
-    "drift": {
-      "moved": 3,
-      "behind": 1
+    "checks": {
+      "pending": 0,
+      "failing": [
+        {
+          "name": "lint",
+          "onTarget": true
+        }
+      ]
     }
   }
 }

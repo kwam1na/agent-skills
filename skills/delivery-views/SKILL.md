@@ -99,6 +99,49 @@ A live page reads its run summaries again from the view the server renders
 three seconds after each pushed record, every 30 seconds, and at once on each
 `event: runs`, which the server sends only after the views are written.
 
+Now leads with where the delivery stands, under its kicker and name: one
+sentence naming the stage and who it waits on, up to four marks, and at most one
+fact. Every word comes from the record, the supervisor's Needs you list and the
+forge's facts on the integration's change request; none names a repository's own
+check, branch or command.
+
+- **The marks.** Each is `done`, `live`, `stop` or `todo`, drawn by its shape:
+  filled ink, a ring with a halo, the stop colour, a faint ring. The live one is
+  labelled with its holder (the lead, you, the forge or a lane) and any count,
+  such as "Suite · 34 min · lead" or "Review · round 2 · lead". While stories
+  land the marks are the lanes, each with its landed stories ("Lane 1 · 2 of 4"),
+  stopped first, then done, then at work; past three lanes the rest share the
+  third mark; the last is Rejoin, or Landed without an integration. Once every
+  story has landed on an integration they are Suite, Review, Merge and Landed.
+- **The stages.** Stories still landing: "6 of 9 stories are in. A3 is in
+  review.", naming the story being checked, in review, queued or built. Then the
+  rejoin: the suite runs next; running ("The full suite is running: 28 min,
+  about 31 usual."); failed, the lead fixing it, its fact pointing to What
+  happened; over budget, "It's your call to accept.", with its time against the
+  budget as the fact, until a review starts at that head; the integration review
+  in its round; a round that asked for fixes; the change request waiting for your
+  merge, or with its checks still running (the forge holds it); the target moved
+  and the lead bringing the change request up to date; merged and closing, with
+  the follow-ups still to file as the fact; and delivered.
+- **The overrides.** A current Needs you item for you takes the sentence, as its
+  headline says it, and the live mark becomes yours, with "<mark> waits on you."
+  as the fact. A broken base or a held queue becomes the sentence in the stop
+  colour, naming the repair the lead marked, with what nothing merges until as
+  the fact. A stopped or silent supervisor, or a record with no update for over
+  an hour and a half, is the fact in the stop colour: "..., so this page may be
+  out of date."
+- **The forge's checks.** A failing check on the change request is the fact,
+  saying whether the target fails it too: "1 forge check fails, on main too."
+  The renderer reads them from the forge snapshot kept at
+  `snapshots/forge.json`, from the item whose `changeRequest` is the
+  integration's latest, as `checks: {pending, failing: [{name, onTarget}]}`;
+  without them Now says nothing of the forge's checks.
+- **What never reaches Now.** An item that holds nothing the reader can act on:
+  a tracker behind the record, or the target gaining commits the change request
+  already holds. Needs you keeps a tracker lag, and it no longer says it holds up
+  the finish: the renderer marks it not holding and says the list's opening
+  sentence again from the table of wait sentences.
+
 The line draws one row per lane and one main line they merge into, and keeps
 the same shape at any delivery size:
 
@@ -393,14 +436,14 @@ A criterion is **proven**; a finish line is **met**, as the record says.
 A journal `delivery.closed` entry makes the page read the delivery as closed,
 until a lane is assigned, a candidate is handed or a check starts after it. Now
 says so and says when, with no warning about silence, though a lost connection
-still shows. Under the delivery's name, its count line says "Every piece landed"
-only when every piece and every live plan unit landed; proofs and finish lines keep
-their own counts beside it. What's left stops
+still shows. Now's sentence says "Delivered <day>: N stories landed." only when
+every piece and every live plan unit landed, and "Closed <day>: L of N stories
+landed." otherwise; proofs and finish lines keep their own counts beside it. What's left stops
 counting down once nothing is left to land, and counts plan units that never reached
 the line. Lanes read as finished whatever the record last said they waited on, an
 unlanded stop reads "Not landed" and stops pulsing, and leftover holds, leases and
-stale sources no longer show. The progress bar and dots use the same count as the
-count line, and a piece the plan removed isn't counted. Now and the plan call what
+stale sources no longer show. The progress bar and dots use the same count as
+Now's sentence, and a piece the plan removed isn't counted. Now and the plan call what
 remains left open at close rather than asking for anything. The close is journaled
 before the supervisor stops, so its Needs you box still shows while a running,
 current list holds the close, and otherwise doesn't show.
@@ -1087,14 +1130,14 @@ reacquire or take over another owner, even with that flag. Operator takeover is
 not offered by this command.
 
 Every send comes from a fresh coherent cut of canonical state/journal, optional
-plan/Needs you paths (including absence), the files view's `lane-changes.json`,
+plan/Needs you paths (including absence), the files view's `lane-changes.json`, the forge snapshot,
 selected native review artifacts and fresh run inventory/view/artifact reads checked
 again after collection. Never use previously rendered HTML or a cached run byte
 count as freshness proof.
 
 The hosted page shows what the local live view shows, from the same record. The
 snapshot is the cut the local page renders from: every chapter, the story, each
-journal entry with its facts, the integration step and how far its target moved,
+journal entry with its facts, the integration step and the forge's checks on its change request,
 the plan, Needs you, review evidence with its briefs and results, the files view and
 what a closed delivery left open, with the paths and commands its prose holds. The
 hosted page draws it with the same `line-map.js`, so the two views tell the same
@@ -1213,9 +1256,9 @@ print those words. A record with no siblings draws exactly as before.
   views say "This repository's part is done." with those sentences in place of
   a done count: "<name> has N open." ("..., couldn't be read since <at>."
   when it isn't fresh), "<name> couldn't be read (never read).", or "<name>
-  couldn't be read since <at>.". The line map shows the first as the count under
-  the delivery's name, without its full stop, and the siblings' sentences below
-  it; the Markdown view and the built-in page say them as they are. Every
+  couldn't be read since <at>.". The line map shows the first as Now's sentence,
+  and the siblings' sentences below it; the Markdown view and the built-in page
+  say them as they are. Every
   same-epic sibling fresh with everything landed leaves the usual done count.
   The delivery still closes by itself.
 - **Elsewhere.** An outside child a drawn sibling's stories hold appears in that

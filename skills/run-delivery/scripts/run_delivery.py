@@ -15827,7 +15827,14 @@ def requeue(c, key: str) -> None:
                        + (f" and the queue's synced head {item['syncedHead'][:10]}" if item.get("syncedHead") else "")
                        + ": the lane hands it off again")
         found[:] = [item]
-        return ["--element", f"queue[subject={key}]", "--set", json.dumps({"/stage": "queued", "/checks": []})]
+        # The lane row the stop wrote, saying it stopped and waiting on the lead, no longer holds: it is put back as
+        # the queue puts back a candidate it takes again, so "Needs you", the close and the status line drop the stop.
+        queue = [{**q, "stage": "queued", "checks": []} if q["subject"] == key else q for q in doc["state"]["queue"]]
+        return {"queue": queue, "lanes": delivery_state.lane_rows_put_back(doc["state"], key)}
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
     patch_from(back_to_queued, f"{key}'s re-queue", writer="runner")
     item = found[0]
     # The re-queue answers the stop it resolves, which closes that setback.

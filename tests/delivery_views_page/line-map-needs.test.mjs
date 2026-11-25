@@ -67,7 +67,7 @@ test("a list that can't be read is unavailable, and the rest of the page still d
     expect(page.app.querySelector(".needs-you .needs-none").textContent)
       .toBe("Unavailable: the supervisor's list can't be read, so it isn't shown.");
     expect(page.app.querySelector(".needs-you li")).toBeNull();
-    expect(page.app.querySelector("#now .now-count").textContent).toBe("Nothing on the line yet");
+    expect(page.app.querySelector("#now .now-sentence").textContent).toBe("Nothing is on the line yet.");
   }
 });
 

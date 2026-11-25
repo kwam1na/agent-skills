@@ -28,7 +28,7 @@ const flips = (node) => [...node.querySelectorAll(".flip")].map((digit) => [digi
 /** The places that count, each with its words and its flipping digits. */
 function counts(app) {
   const places = {
-    now: app.querySelector("#now .now-count span"),
+    now: app.querySelector("#now .now-sentence span"),
     stories: app.querySelector("#now .fact-count span"),
     queued: app.querySelector("#now .fact-said"),
     plan: app.querySelector("#now .plan-now-link"),
@@ -90,7 +90,7 @@ test("a live update flips each changed digit of every count, from the right, and
     held: ["1"],
   });
   // The words are the new value throughout: both turning digits are the stylesheet's to draw, with no text of their own.
-  expect(second.app.querySelector("#now .now-count").textContent).toBe("11 of 12 pieces have landed");
+  expect(second.app.querySelector("#now .now-sentence").textContent).toBe("11 of 12 stories are in. P12 is in the queue.");
   // The merge's turning layers are drawing, hidden from assistive technology: the words alone hold no old count.
   const words = second.app.cloneNode(true);
   for (const hidden of words.querySelectorAll('[aria-hidden="true"]')) hidden.remove();

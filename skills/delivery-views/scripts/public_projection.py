@@ -1,7 +1,7 @@
 """The hosted line-map snapshot and stable source-cut guard.
 
 The hosted page shows what the local live view shows, from the same record: the snapshot carries the same cut the
-local page renders from, story, journal facts, files, left-open work and drift included, paths on the publishing machine included. The one
+local page renders from, story, journal facts, files, left-open work and the forge's checks on the change request included, paths on the publishing machine included. The one
 rule kept is that no credential is published. A configured secret's value anywhere in the cut, or a field under a
 credential-named key, refuses the cut with a bounded code. A sibling delivery's hosted link is a read capability, so
 it is left out and the page names the sibling without one. The byte, list and text bounds keep the snapshot within
@@ -222,14 +222,14 @@ def _without_merge_nonces(document: dict) -> dict:
 
 def project(document: dict, runs: dict, config: dict, *, source_fingerprint: str, plan: dict | None = None,
             needs: dict | None = None, files: dict | None = None, repository: Path | None = None,
-            secret_values=()) -> dict:
+            forge: dict | None = None, secret_values=()) -> dict:
     """The cut the local live view renders from, for one current delivery, less the credentials. It never carries
     history: the hosted page has none to link to."""
     document = _without_merge_nonces(document)
     named = render.named_runs(document)
     selected = {key: value for key, value in runs.items() if key in named}
     data = render.line_map_data(document, selected, config, theme_key='hosted-delivery', history=None,
-                                plan=plan, needs=needs, files=files, repository=repository)
+                                plan=plan, needs=needs, files=files, repository=repository, forge=forge)
     # A review note's file reference opens its file on the forge, as on the local page, when the forge names a fileUrl
     # and the reference names one file in the reviewed tree. Without one the links hold no files at all.
     links = {key: value for key, value in data['links'].items() if key != 'files'}
