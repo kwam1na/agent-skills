@@ -1365,6 +1365,7 @@ class TargetQuietTests(unittest.TestCase):
         taken = self.flow.target_quiet_argument
         self.assertEqual(taken(["--after", "3", "--target-quiet", "5", "--poll", "1"]), (5.0, ["--after", "3", "--poll", "1"]))
         self.assertEqual(taken(["--target-quiet=0.5"]), (0.5, []))
+        self.assertEqual(taken(["--target-quiet", "0"]), (0.0, []))
         self.assertEqual(taken(["--after", "3"]), (None, ["--after", "3"]))
         for bad in (["--target-quiet", "-1"], ["--target-quiet", "soon"], ["--target-quiet=inf"], ["--target-quiet=nan"],
                     ["--target-quiet"]):

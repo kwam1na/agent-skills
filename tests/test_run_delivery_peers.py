@@ -8,6 +8,7 @@ the pid it recorded.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime
 import json
 import os
@@ -549,16 +550,20 @@ class PeerDeliveryTests(unittest.TestCase):
                         "--head", head, cwd=m)
         self.assertIn(listed, out)
         self.assertIn("; merging into the target main: FX-9 checking FX-92, queued FX-93", out)
-        # While FX-9 checks or queues, nothing settles, and the pass keeps when it saw it busy.
-        busy = time.time()
-        self.assertEqual(self.target_step(fx, busy), "FX-9 checking or queued on main")
-        # FX-92 merges and FX-93 is withdrawn: the queue empties.
+        # A supervisor's own pass runs the step: while FX-9 checks or queues, nothing settles.
+        self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
+        passes = (fx.tmp / "flow-log/FX-1.supervisor.jsonl").read_text().splitlines()
+        self.assertEqual(json.loads(passes[-1])["target"], "FX-9 checking or queued on main")
+        # FX-92 merges; FX-93, only queued now, still holds the settle back, and a pass well after the merge keeps
+        # when it saw FX-9 busy.
         self.patch(fx, nine, "runner", "--set", json.dumps({"/meta/checking/now": None}))
-        self.patch(fx, nine, "lead", "--patch", json.dumps({"queue": []}))
         sh(sys.executable, "-B", "-c", RUNNER_ENTRY, fx.release / "skills/orchestrate-work/scripts", nine,
            "candidate.merged", json.dumps({"head": "b" * 40}), "FX-92")
         merged = flow.stamp_seconds(self.record(fx, nine)["journal"][-1]["at"])
-        quiet = max(merged, busy)
+        self.assertEqual(self.target_step(fx, merged + 1000), "FX-9 checking or queued on main")
+        # FX-93 is withdrawn, which journals nothing: the window runs from the pass that last saw it, not the merge.
+        self.patch(fx, nine, "lead", "--patch", json.dumps({"queue": []}))
+        quiet = merged + 1000
         self.assertEqual(self.target_step(fx, quiet + 599), "main settles in 1s if it stays quiet")
         self.assertEqual(self.settled(fx), [])
         self.assertEqual(self.target_step(fx, quiet + 600), "main settled after FX-9 merged")
@@ -573,10 +578,18 @@ class PeerDeliveryTests(unittest.TestCase):
         self.assertEqual(code, 3, out)
         sh(sys.executable, "-B", "-c", RUNNER_ENTRY, fx.release / "skills/orchestrate-work/scripts", nine,
            "candidate.merged", json.dumps({"head": "c" * 40}), "FX-94")
-        again = flow.stamp_seconds(self.record(fx, nine)["journal"][-1]["at"])
+        again = max(flow.stamp_seconds(self.record(fx, nine)["journal"][-1]["at"]), quiet)  # the later of it and the busy pass
         self.assertEqual(self.target_step(fx, again + 4), "main settles in 1s if it stays quiet")
         self.assertEqual(self.target_step(fx, again + 5), "main settled after FX-9 merged")
         self.assertEqual([e["data"]["stories"] for e in self.settled(fx)], [["FX-92"], ["FX-94"]])
+        # FX-9 merges its last story and closes inside the window, leaving the registry: its merge still settles.
+        sh(sys.executable, "-B", "-c", RUNNER_ENTRY, fx.release / "skills/orchestrate-work/scripts", nine,
+           "candidate.merged", json.dumps({"head": "d" * 40}), "FX-95")
+        last = max(flow.stamp_seconds(self.record(fx, nine)["journal"][-1]["at"]), quiet)  # the later of it and the busy pass
+        (self.registry(fx) / "FX-9.json").unlink()
+        self.assertEqual(self.target_step(fx, last + 4), "main settles in 1s if it stays quiet")
+        self.assertEqual(self.target_step(fx, last + 5), "main settled after FX-9 merged")
+        self.assertEqual([e["data"]["stories"] for e in self.settled(fx)], [["FX-92"], ["FX-94"], ["FX-95"]])
 
     def peer_waits(self, fx: Fixture, folder: Path) -> dict:
         """The record's peer-waits.json as the last supervisor pass wrote it, its sentences by name."""
@@ -1225,6 +1238,8 @@ class TargetSettlementTests(unittest.TestCase):
                 self.assertEqual(flow.target_quiet_seconds(state), 600, bad)
             flow.write_target_quiet(state, 5)
             self.assertEqual(flow.target_quiet_seconds(state), 5)
+            flow.write_target_quiet(state, 0)  # no window at all: settle at the first quiet pass
+            self.assertEqual(flow.target_quiet_seconds(state), 0)
 
 
 class TargetPeerListingTests(unittest.TestCase):
@@ -1256,6 +1271,35 @@ class TargetPeerListingTests(unittest.TestCase):
         same, on_target = self.listed(target="main")
         self.assertEqual(same, [("FX-5.json", "unreadable"), ("FX-8", "none")])
         self.assertEqual(on_target, [("FX-7", "stale"), ("FX-9", "none")])
+
+    def test_the_status_line_names_the_target_peers_whether_the_supervisor_runs_or_is_down(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder)
+            (state / "state.json").write_text("{}")
+            c = types.SimpleNamespace(state=state)
+            words = "; merging into the target main: FX-9 checking FX-92, queued FX-93"
+            quiet = {name: (lambda *_: "") for name in ("live_fallback", "on_fallback", "break_hold", "listener_words",
+                                                        "waits_on")}
+            for held in (True, False):
+                with self.subTest(running=held), contextlib.ExitStack() as stack:
+                    for name, value in {**quiet, "target_peer_words": lambda _: words,
+                                        "read_lock": lambda _: (held, {"pid": 42, "address": "http://127.0.0.1:1"}),
+                                        "supervisor_lock_path": lambda _: state / "lock",
+                                        "closed_status": lambda _: None, "view_serving": lambda _: None,
+                                        "supervisor_down_words": lambda _: "not started"}.items():
+                        stack.enter_context(mock.patch.object(flow, name, value))
+                    self.assertTrue(flow.supervisor_line(c).endswith(words), flow.supervisor_line(c))
+
+    def test_doctor_lists_the_target_peers_beside_the_same_base_ones_or_alone(self) -> None:
+        c = types.SimpleNamespace(base_branch="feature/FX-1")
+        doctor = types.SimpleNamespace(delivery=c)
+        target = ["integration target main: FX-9 (no supervisor; led from /x): checking nothing; queued nothing"]
+        same = [{"key": "FX-8", "file": "FX-8.json", "status": "none"}]
+        for found, first in ((same, "FX-8 said"), ([], "no other delivery is registered on feature/FX-1")):
+            with self.subTest(same_base=bool(found)), mock.patch.object(flow, "peer_deliveries", lambda _: found), \
+                    mock.patch.object(flow, "peer_line", lambda peer: f"{peer['key']} said"), \
+                    mock.patch.object(flow, "target_peer_lines", lambda _: target):
+                self.assertEqual(flow.Doctor.peers(doctor), ("ok", f"{first} | {target[0]}"))
 
     def test_a_delivery_with_no_integration_target_has_no_target_peers(self) -> None:
         same, on_target = self.listed(target=None)

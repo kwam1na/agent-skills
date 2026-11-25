@@ -15390,13 +15390,25 @@ class Supervisor:
         """Journal `target.settled` once the deliveries merging into this delivery's integration target have settled
         after a merge, by target_settlement, reading the clock through settle_clock. A pass that sees a target peer
         checking or queued keeps the moment in the flow log's `targets` log, and a settle keeps the last merge of each
-        peer it settled there as soon as it is journalled, so a supervisor started again journals nothing twice.
-        Nothing at all without an integration target or a delivery on it."""
+        peer it settled there as soon as it is journalled, so a supervisor started again journals nothing twice, and
+        each target peer's record once it is listed, so a peer that closes inside the window still settles. Nothing at
+        all without an integration target or a delivery on it."""
         c = self.c
         target = integration_target(c)
         if target is None:
             return "no integration target"
+        log = read_log("targets", c.delivery)
+        # Each target peer's record, kept once it is listed: a peer that closes, and so leaves the registry, inside the
+        # window is still read, so its last merge settles.
+        known = {row["peer"]: row["state"] for row in log
+                 if isinstance(row.get("peer"), str) and isinstance(row.get("state"), str)}
         found = peer_deliveries(c, target=True)
+        for peer in found:
+            if known.get(peer["key"]) != peer["state"]:
+                append_log("targets", c.delivery, {"peer": peer["key"], "state": peer["state"]})
+        listed = {peer["key"] for peer in found}
+        found += [{"key": key, "state": state} for key, state in sorted(known.items())
+                  if key not in listed and (Path(state) / "state.json").exists()]
         if not found:
             return f"no delivery is registered on the target {target}"
         scripts = str(c.release / "skills/orchestrate-work/scripts")
@@ -15414,8 +15426,7 @@ class Supervisor:
             peers.append({"key": peer["key"], "busy": bool(checking or queued), "journal": theirs})
         journal = load_state()["journal"]
         at, window = settle_clock(), target_quiet_seconds(c.state)
-        settle = target_settlement(peers, read_log("targets", c.delivery), journal[0]["at"] if journal else now(),
-                                   window, at)
+        settle = target_settlement(peers, log, journal[0]["at"] if journal else now(), window, at)
         entry["targetSettle"] = {key: settle[key] for key in ("busy", "since", "due", "settle")}
         if settle["busy"]:
             append_log("targets", c.delivery, {"busyAt": at})
