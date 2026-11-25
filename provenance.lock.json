@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "7fc5b700151f22562ccc93b758ff7cc3434b6eb2ec51178e298a5d3c5a3eb088"
+          "sha256": "5a32896449da0dd7f87f8444c175fca2a68321512114c906a8b4c99cab1c7bb0"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -210,11 +210,11 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.css",
-          "sha256": "8e440855ac4c51d66b2725a5ab46bade745cb4ae79a44152743ce70c5a182f24"
+          "sha256": "c84a0037253482bc7863ceff31a306e1b98fae62660e65a8a911cea2a6e67451"
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "ecd25c1e5dfcd35e973675804d3fbf33292113b884af3b6d790a35dd56e48ee8"
+          "sha256": "5b2aebf4b852e2b2cc4d117567f6e9d709f731045ce92ecea4218f169ae725a8"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
@@ -526,7 +526,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "70d4424607fd2bc53bffcd9f728ac2dc0fe53d0821252f5c5a48d9b827ac5013"
+          "sha256": "03140a3cf985fb24b4c724eceec262f5a922be8129bc111c748b5d12969b32c1"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -538,15 +538,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
-          "sha256": "946595febec3243a2a97da1bd684282746b67bb54a2ac6c3c22c86fa6272f514"
-        },
-        {
-          "path": "skills/orchestrate-work/scripts/collab.py",
-          "sha256": "b3de36f78869f1267b772f585ccb915c16c741d63e964f0a42c25244c1c41dc5"
+          "sha256": "9032d4955901d36db736d4523ea313f1a6b5ee56942bf2ba089db4777805b32f"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "919cd79efa6980e8499448127eb8870d259caf2770dd5cb0d7a184c4366423f1"
+          "sha256": "6384ca6cdc60eec91bfdca2a8461773a2cb2b253f1adb4af8f8b67763dbf67f0"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
@@ -1136,10 +1132,6 @@
         {
           "path": "skills/run-delivery/scripts/gaps.py",
           "sha256": "5737a6a012a99c7c7d4b74fe92bd0ac1c7ecb02cc630a1c2e0972153b4c42ee8"
-        },
-        {
-          "path": "skills/run-delivery/scripts/plan_sync.py",
-          "sha256": "d0dd2299c57d7c7b12fbc484e18bbe9a3a9f2c63d1440be54fbf0c2b9459aa68"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",

@@ -2,7 +2,7 @@
   "schemaVersion": "wait-words/1",
   "description": "Every sentence a wait is said in. delivery_state.waits fills each from the fields it derives, in journal_words' template forms; no view words a wait itself. A template may instead be {\"by\": field, \"cases\": {value: template}, \"otherwise\": template}.",
   "stages": {
-    "description": "Where the story a wait names stands, by its stage in the record.",
+    "description": "Where the story a wait names stands, by its stage in the record; phase is that stage in one word, for a lane card's Waiting on row.",
     "templates": {
       "where": {
         "by": "stage",
@@ -36,6 +36,23 @@
           "stopped": "Stopped."
         },
         "otherwise": "{stage}."
+      },
+      "phase": {
+        "by": "stage",
+        "cases": {
+          "planned": "planned",
+          "building": "building",
+          "review": "reviewing",
+          "handed": "handed",
+          "queued": "queued",
+          "syncing": "syncing",
+          "synced": "syncing",
+          "checking": "checking",
+          "checked": "checked",
+          "merging": "merging",
+          "stopped": "stopped"
+        },
+        "otherwise": "{stage}"
       },
       "siblingSince": {
         "by": "outcome",

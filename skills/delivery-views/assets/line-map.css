@@ -616,6 +616,29 @@ a.issue-link { color: inherit; cursor: pointer; }
 .chip.blocked { background: var(--held-wash); color: var(--held); }
 .person .on { font: 400 12px/16px var(--mono); color: var(--faint); max-width: 100%; overflow-wrap: anywhere; text-align: right; }
 .person .on.waiting { color: var(--wait); }
+/* A lane's story in the merge queue is progress, said in ink like the other working chips. */
+.chip.queue { color: var(--ink); }
+/* A lane's next story, once: the blockers as pills nearest to landing first, each in its lane's colour, filled while it
+   is in the merge queue, with a lock when it holds files the next story needs; one legend names those files. */
+.person .next { grid-column: 2 / -1; display: grid; gap: 10px; margin-top: -4px; padding-top: 12px; border-top: 1px solid var(--hair); min-width: 0; }
+.person .next .k { color: var(--faint); }
+.next-head { margin: 0; font-size: 14px; color: var(--soft); overflow-wrap: anywhere; }
+.next-head .issue-link { font-family: var(--mono); font-size: 13px; }
+.waiting-on { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.waiting-on .k { margin-right: 4px; }
+.dep { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; padding: 3px 11px 3px 9px; border: 1px solid var(--hair); border-radius: 999px;
+  white-space: nowrap; color: var(--ink); }
+.dep .issue-link { font-family: var(--mono); font-size: 12px; }
+.dep .dot { flex: none; width: 8px; height: 8px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--c); }
+.dep.queued .dot { background: var(--c); }
+.dep .phase { color: var(--soft); }
+.lock { display: inline-grid; flex: none; width: 12px; height: 12px; color: var(--faint); }
+.lock svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.next .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--faint); }
+.next .legend > span { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.next .legend code { font: 400 12px/16px var(--mono); }
+.next .legend .dot { flex: none; width: 8px; height: 8px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--faint); }
+.next .legend .dot.filled { background: var(--faint); }
 /* Who holds which files: a fold under the lanes, each claimed file in its lane's colour, solid where changed. */
 .files-fold { margin-top: 16px; border-top: 1px solid var(--hair); padding: 12px 0 0; }
 .files-fold > summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--soft); }

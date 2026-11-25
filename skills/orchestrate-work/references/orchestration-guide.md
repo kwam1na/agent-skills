@@ -369,7 +369,11 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   [the table of wait sentences](wait-words.json), which every view prints as it is. A story
   waits on each key in its planned entry's `after` that has not landed, and on
   an unlanded story of another lane whose whole-file grant covers a file both
-  stories' `files` name. An idle lane says what its next story waits on. Each
+  stories' `files` name. An idle lane says what its next story waits on. Its
+  wait on the plan's order or a file hold also names that story as `blocker`,
+  with its lane (`onLane`), whether it is in the merge queue (`queued`), its
+  phase in one word from the table, and the `files` a hold names, so a view can
+  draw the lane's next story once with one mark per story it waits on. Each
   wait goes away when what frees it happens, with no action from anyone.
 - An `after` key may name a story of a sibling delivery: another repository's
   delivery of the same epic, which the record reads (see Sibling deliveries).

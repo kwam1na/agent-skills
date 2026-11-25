@@ -5590,6 +5590,20 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
         return ({"subject": subject, "on": key, "cause": "sibling", "stage": "planned", "frees": "landed",
                  "needsSomeone": unread is None}, fields)
 
+    queued = {item["subject"] for item in queue}
+
+    def blocker(wait: dict, fields: dict) -> dict:
+        """What a lane card draws of the story its next story waits on: that story, its lane, whether it is in the
+        merge queue, its phase in one word, and the files a hold names. Only an order or files wait has one."""
+        other = items.get(wait["on"]) if wait["cause"] in ("order", "files") else None
+        if other is None:
+            return {}
+        stage = where(other)
+        return {"blocker": other["subject"], "onLane": lane_of(other),
+                "queued": other["subject"] in queued and stage not in ("handed", "stopped"),
+                "phase": wait_said(table, "stages", "phase", {"stage": stage}),
+                **({"files": list(fields["files"])} if wait["cause"] == "files" else {})}
+
     told: dict[str, list[tuple[dict, dict]]] = {}
     for entry in planned:
         if entry["stage"] != "planned":
@@ -5644,7 +5658,7 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
             said = wait_said(table, "lanes", wait["cause"], {**fields, "subject": row["id"], "next": following["subject"]})
             result.append({"subject": row["id"], "on": following["subject"], "cause": wait["cause"], "stage": "planned",
                            "frees": wait["frees"], **({"since": wait["since"]} if "since" in wait else {}),
-                           "needsSomeone": False, "words": said})
+                           "needsSomeone": False, "words": said, **blocker(wait, fields)})
     for row in state["lanes"]:
         if row.get("state") == "waiting" and row.get("waitingOn") in items and row["waitingOn"] not in landed:
             # A lane waiting on a story goes on by itself when that story lands: it names the story it will finish.

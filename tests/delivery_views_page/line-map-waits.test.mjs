@@ -58,7 +58,9 @@ test("a waiting stop says what it waits on, where it is shown, and the story it 
   expect(wait.textContent).toBe(ORDER);
   expect(wait.querySelector(".issue-link").getAttribute("data-ticket")).toBe("APP-1");
   expect(leftRow(picked.app, "APP-2").querySelector(".left-wait").textContent).toBe(ORDER);
-  expect([...person(picked.app, "lane-1").querySelectorAll(".wait")].map((line) => line.textContent)).toEqual([LANE]);
+  // An idle lane's wait on its next story is drawn as that story's blocker, not said again in a sentence.
+  expect([...person(picked.app, "lane-1").querySelectorAll(".wait")]).toHaveLength(0);
+  expect([...person(picked.app, "lane-1").querySelectorAll(".next .dep")].map((pill) => pill.textContent)).toEqual(["APP-1reviewing"]);
   expect([...person(picked.app, "lane-2").querySelectorAll(".wait")]).toHaveLength(0);
   // On the thing that holds: who waits on it, on its stop's label, in its panel and in its row.
   expect([...holder.app.querySelectorAll("#detail .d-wait")].map((line) => line.textContent)).toEqual([HOLDING]);

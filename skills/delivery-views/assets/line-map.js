@@ -3843,6 +3843,108 @@
     });
     return add(box, ruler, rows);
   }
+  /*
+   * A lane's next story, as its card draws it. The state tool gives an idle lane's wait on its next story a blocker
+   * when the cause is the plan's order or a file hold: the story it waits on, that story's lane, whether it is in the
+   * merge queue, its phase in one word and the files a hold names. Those are grouped by blocker into one pill each,
+   * nearest to landing first; every other wait keeps its own sentence.
+   */
+  var LANDING = ["merging", "checked", "checking", "synced", "syncing", "queued", "handed", "review", "building", "planned", "stopped"];
+  function blockerStage(doc, subject) {
+    var item = queueItem(doc, subject);
+    if (item) { return item.pending === true ? "handed" : text(item.stage); }
+    var entry = list(doc.state.planned).filter(function (planned) { return isObject(planned) && subjectOf(planned) === subject; })[0];
+    return !entry ? "" : entry.noChange ? "handed" : text(entry.stage);
+  }
+  function nextOf(doc, laneId) {
+    var blockers = [], byKey = Object.create(null), rest = [], next = "";
+    waitsOf(doc, "waits", laneId).forEach(function (wait) {
+      var key = typeof wait.blocker === "string" && wait.blocker ? wait.blocker : "";
+      if (!key || typeof wait.on !== "string" || (next && wait.on !== next)) { rest.push(wait); return; }
+      next = wait.on;
+      var pill = byKey[key];
+      if (!pill) {
+        pill = byKey[key] = { key: key, lane: text(wait.onLane), queued: wait.queued === true, phase: text(wait.phase), files: [] };
+        blockers.push(pill);
+      }
+      list(wait.files).forEach(function (path) { if (typeof path === "string" && pill.files.indexOf(path) < 0) { pill.files.push(path); } });
+    });
+    function rank(pill) { var at = LANDING.indexOf(blockerStage(doc, pill.key)); return at < 0 ? LANDING.length : at; }
+    blockers = blockers.map(function (pill, index) { return { pill: pill, index: index, rank: rank(pill) }; })
+      .sort(function (a, b) { return a.rank - b.rank || a.index - b.index; }).map(function (ranked) { return ranked.pill; });
+    return { next: next, blockers: blockers, rest: rest };
+  }
+  var LOCK = '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>';
+  function lockMark(label) {
+    var mark = el("span", "lock");
+    mark.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + LOCK + "</svg>";
+    if (label) { mark.setAttribute("role", "img"); mark.setAttribute("aria-label", label); }
+    return mark;
+  }
+  /** The block under a lane card: its next story once, a "Waiting on" row of one pill per blocker, and a legend. */
+  function nextBlock(doc, found, names, colours) {
+    var item = list(doc.state.planned).filter(function (entry) { return isObject(entry) && subjectOf(entry) === found.next; })[0];
+    var head = add(el("p", "next-head"), el("span", "k", "Next"), " ", issue(found.next));
+    if (item && titleOf(doc, item) !== found.next) { add(head, " \u00b7 " + titleOf(doc, item)); }
+    var row = add(el("div", "waiting-on"), el("span", "k", "Waiting on"));
+    var held = [];
+    found.blockers.forEach(function (pill) {
+      var node = el("span", "dep" + (pill.queued ? " queued" : ""));
+      node.style.setProperty("--c", colours[pill.lane] || laneColour(pill.lane));
+      var said = [names[pill.lane] || pill.lane || "No lane", pill.queued ? "in the merge queue" : "still with its lane"];
+      if (pill.files.length) { said.push("holds " + pill.files.join(", ")); }
+      node.setAttribute("title", said.join(" \u00b7 "));
+      add(node, el("span", "dot"), issue(pill.key), el("span", "phase", pill.phase));
+      if (pill.files.length) {
+        node.appendChild(lockMark("holds files " + found.next + " needs"));
+        pill.files.forEach(function (path) { if (held.indexOf(path) < 0) { held.push(path); } });
+      }
+      row.appendChild(node);
+    });
+    var legend = el("div", "legend");
+    if (found.blockers.some(function (pill) { return pill.queued; })) { legend.appendChild(add(el("span"), el("i", "dot filled"), "in the merge queue")); }
+    if (found.blockers.some(function (pill) { return !pill.queued; })) { legend.appendChild(add(el("span"), el("i", "dot"), "still with its lane")); }
+    if (held.length) {
+      legend.appendChild(add(el("span"), lockMark(""), add(el("span"), "holds ", el("code", null, held.join(", ")), ", which " + found.next + " needs")));
+    }
+    return add(el("div", "next"), head, row, legend);
+  }
+  /*
+   * A lane's own story once it is handed off: the latest of its stories still in the queue, unless the lane has
+   * moved on to other work. The card then says where it went and follows it through the queue.
+   */
+  var QUEUE_PHASE = table({ queued: "queued", syncing: "syncing", synced: "syncing", checking: "checking", checked: "checked", merging: "merging" });
+  function handedOf(doc, lane) {
+    if (lane.state !== "idle" && lane.state !== "handed" && lane.state !== "waiting") { return null; }
+    var mine = list(doc.state.queue).filter(function (item) {
+      return isObject(item) && item.lane === lane.id && item.stage !== "merged" && item.stage !== "stopped";
+    }).sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+    var item = mine[mine.length - 1] || null;
+    if (!item || (lane.state === "waiting" && lane.waitingOn !== subjectOf(item))) { return null; }
+    return item;
+  }
+  function roundsOf(doc, item) {
+    var most = 0;
+    journalFor(doc, subjectOf(item), { "review.round": true }).forEach(function (entry) {
+      var round = isObject(entry.data) && typeof entry.data.round === "number" ? entry.data.round : 0;
+      if (round > most) { most = round; }
+    });
+    return most || (typeof item.reportedRounds === "number" ? item.reportedRounds : 0);
+  }
+  function handedLine(doc, item) {
+    var rounds = roundsOf(doc, item);
+    return add(el("p", "doing"), issue(subjectOf(item)), " \u00b7 handed off at ", el("code", null, short(item.head)),
+      rounds ? " after review round " + rounds : "");
+  }
+  /** The chip of a lane whose story is in the merge queue, with the runner's phase and how long it has been there. */
+  function queueChip(doc, item, lane) {
+    if (item.pending === true || !QUEUE_PHASE[item.stage]) { return null; }
+    // Since its latest hand-off, or, for a record that journals none, since the lane stood handed over.
+    var handed = journalFor(doc, subjectOf(item), { "candidate.handed": true }).pop();
+    var then = handed ? seconds(handed.at) : lane.state === "handed" ? seconds(lane.since) : null;
+    var since = then === null || Date.now() / 1000 < then ? "" : duration(Date.now() / 1000 - then);
+    return [el("span", "chip queue", "In merge queue"), el("span", "on", QUEUE_PHASE[item.stage] + (since ? " \u00b7 " + since : ""))];
+  }
   function drawWho(doc, all) {
     whoDrawn = [doc, all];
     var inner = parts.who;
@@ -3868,14 +3970,23 @@
         row.style.setProperty("--c", colours[lane.id] || "var(--soft)");
         var who = add(el("div"), el("h3", null, text(lane.title) || text(lane.id)));
         var doing = text(lane.focus) || text(focus[lane.id]);
-        if (doing) { who.appendChild(el("p", "doing", doing)); }
+        var handed = closed ? null : handedOf(doc, lane);
+        if (handed) { who.appendChild(handedLine(doc, handed)); }
+        else if (doing) { who.appendChild(el("p", "doing", doing)); }
         if (text(lane.focus) && !closed) { who.appendChild(rowAge(lane)); }
-        if (!closed) { waitLines(doc, lane.id, "p", "doing wait").forEach(function (line) { who.appendChild(line); }); }
-        var st = add(el("div", "st"), closed ? el("span", "chip done", "Finished") : el("span", "chip" + (LANE_WORDS[lane.state] ? " " + lane.state : ""), LANE_WORDS[lane.state] || "Unknown"));
-        if (closed) { /* what a lane last waited on or how long it has held is over */ }
-        else if (lane.waitingOn) { st.appendChild(el("span", "on waiting", "waiting on " + text(lane.waitingOn))); }
-        else if (heldFor(lane.since)) { st.appendChild(el("span", "on", heldFor(lane.since))); }
+        var next = closed ? null : nextOf(doc, lane.id);
+        if (next) { next.rest.forEach(function (wait) { who.appendChild(waitLine("p", "doing wait", wait)); }); }
+        var inQueue = handed ? queueChip(doc, handed, lane) : null;
+        var st = el("div", "st");
+        if (closed) { st.appendChild(el("span", "chip done", "Finished")); /* what a lane last waited on or how long it has held is over */ }
+        else if (inQueue) { add(st, inQueue[0], inQueue[1]); }
+        else {
+          st.appendChild(el("span", "chip" + (LANE_WORDS[lane.state] ? " " + lane.state : ""), LANE_WORDS[lane.state] || "Unknown"));
+          if (lane.waitingOn) { st.appendChild(el("span", "on waiting", "waiting on " + text(lane.waitingOn))); }
+          else if (heldFor(lane.since)) { st.appendChild(el("span", "on", heldFor(lane.since))); }
+        }
         add(row, add(el("span", "swatch"), persona("lane")), who, st);
+        if (next && next.blockers.length) { row.appendChild(nextBlock(doc, next, laneNames(doc), colours)); }
         people.appendChild(row);
       });
       nodes.push(people);
