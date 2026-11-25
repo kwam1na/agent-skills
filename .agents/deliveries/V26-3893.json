@@ -34,7 +34,12 @@
         "tests/test_handoff_listing.py",
         "tests/test_merge_queue.py",
         "tests/test_shared_outputs.py",
-        "docs/solutions/best-practices/a-listing-stop-is-cleared-by-ownership-not-a-base-merge-2026-11-16.md"
+        "docs/solutions/best-practices/a-listing-stop-is-cleared-by-ownership-not-a-base-merge-2026-11-16.md",
+        "README.md",
+        "scripts/build-release.py",
+        "validation-inventory.json",
+        "tests/test_release_archive.py",
+        "qualifications/product/README.md"
       ]
     },
     "lane-2": {
