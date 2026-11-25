@@ -304,11 +304,23 @@ class AdoptionTests(PlanningRecordCase):
         self.assertEqual(code, 2, out)
         self.assertIn("already holds a record", out)
         self.assertEqual(files(folder), kept)
-        # Adopted, the plan is the delivery's: plan-view no longer builds the planning record's preview over it.
+        # Adopted, the plan is the delivery's: plan-view no longer builds the planning record's preview over it, and
+        # neither an endorsement nor a synced edit does.
         code, out = self.flow(fx, "plan-view", "--plan", "docs/plan.md")
         self.assertEqual(code, 0, out)
         self.assertNotIn("planning record", out)
         self.assertEqual(files(folder), kept)
+        code, out = self.flow(fx, "lead-plan", "endorse", "--plan", "docs/plan.md")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("plan view:", out)
+        sh("git", "switch", "-q", "-c", "lead/FX-1", cwd=fx.main)
+        sh("git", "push", "-q", "-u", "origin", "lead/FX-1", cwd=fx.main)
+        plan = fx.main / "docs/plan.md"
+        plan.write_text(plan.read_text().replace("- Scenarios: it renders.", "- Scenarios: it renders, adopted."))
+        code, out = self.flow(fx, "plan-sync", "--plan", "docs/plan.md", "--message", "an edit after adoption")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("plan view:", out)
+        self.assertEqual(files(folder).get("plan.json"), kept.get("plan.json"))
 
 
 
