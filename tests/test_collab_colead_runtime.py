@@ -464,6 +464,31 @@ class LeadCommandScopeTests(CoLeadFixture):
         self.assertIsNone(rd.lane_seat_words(types.SimpleNamespace(state=unshared), "lane-1"))
 
 
+    def test_lead_assign_prints_the_seat_line_in_its_assignment_message_between_the_brief_and_the_stories(self) -> None:
+        _, second_label = self.labels()
+        c = self.config(self.a, record_state=lambda: {}, issue_url="https://tracker/{key}", label=lambda key: key,
+                        lane_brief=Path("brief.md"))
+        c.stories = {"APP-1": {"lane": "lane-1", "title": "First"}}
+        args = types.SimpleNamespace(keys=["APP-1"], lane="lane-1", title="Lane 1", force=False, own_co_changed=False,
+                                     note=None)
+        out = io.StringIO()
+        with mock.patch.object(rd, "cfg", return_value=c), mock.patch.object(rd, "require_lead_checkout"), \
+                mock.patch.object(rd, "plan_problems", return_value=[]), \
+                mock.patch.object(rd, "story_readiness", return_value=("ready", "")), \
+                mock.patch.object(rd, "register_stories"), mock.patch.object(rd, "patch_from"), \
+                mock.patch.object(rd, "rebuild_plan"), mock.patch.object(rd, "tracked_at_base", return_value=set()), \
+                mock.patch.object(rd, "story_named_files", return_value=[]), \
+                mock.patch.object(rd, "co_change_warning", return_value=None), \
+                mock.patch.object(rd, "outside_lane", return_value=[]), mock.patch.object(rd, "print_peer_claims"), \
+                mock.patch.object(rd, "state_tool"), contextlib.redirect_stdout(out):
+            rd.lead_assign(args)
+        printed = out.getvalue()
+        line = f"You report to {second_label} (seat {self.second}), which holds lane-1"
+        self.assertIn(line, printed)
+        self.assertLess(printed.index("Read the lane brief first"), printed.index(line))
+        self.assertLess(printed.index(line), printed.index("Your stories, in order"))
+
+
 class SupervisorRoleTests(CoLeadFixture):
     """Each seat's supervisor serves the sync loop, the queue only where it holds it, and runs each pass step by the
     step table."""
@@ -512,6 +537,43 @@ class SupervisorRoleTests(CoLeadFixture):
         self.assertEqual(restarted, [])
         self.assertEqual(list(supervisor.children), ["collab"])
         self.assertEqual(supervisor.flapping(), ())
+
+    def test_the_run_loop_starts_the_queue_on_the_pass_after_the_seat_ingests_the_queue(self) -> None:
+        c = self.config(self.b)
+        c.flow_log.mkdir(parents=True, exist_ok=True)
+        supervisor = rd.Supervisor(c, once=False)
+        started: list[tuple[int, str]] = []
+        passes: list[int] = []
+
+        def one_pass(this, number: int) -> bool:
+            passes.append(number)
+            if number == 1:
+                self.give("queue", self.b)
+            if number == 3:
+                rd.lead_file(c, "supervisor.stop").write_text("{}")
+            return False
+
+        def start(this, name: str) -> None:
+            started.append((len(passes), name))
+            this.children[name] = mock.Mock(poll=lambda: None)
+        noop = lambda *args, **kwargs: None
+        patches = [mock.patch.object(rd.Supervisor, name, value) for name, value in (
+            ("one_pass", one_pass), ("start", start), ("write_lock", noop), ("keep_awake", noop),
+            ("start_live", noop), ("stop_children", noop), ("lose", lambda this: False))]
+        patches += [mock.patch.object(rd, name, value) for name, value in (
+            ("supervisor_lock_path", lambda c: c.flow_log / "supervisor.lock"), ("require_no_base_move", noop),
+            ("register_delivery", noop), ("start_hosted", noop), ("write_supervisor_status", noop),
+            ("clear_suite_checkouts", lambda c: ([], None)), ("read_log", lambda *args: []),
+            ("supervisor_pass_seconds", lambda c: 0), ("write_needs", noop), ("render_views", noop),
+            ("copy_latest", noop))]
+        patches.append(mock.patch.object(rd.signal, "signal", noop))
+        with contextlib.ExitStack() as stack, contextlib.redirect_stdout(io.StringIO()):
+            for patch in patches:
+                stack.enter_context(patch)
+            supervisor.run()
+        # The sync loop starts with the supervisor; the queue, given during pass 1, on the loop's turn before pass 2.
+        self.assertEqual(passes, [1, 2, 3])
+        self.assertEqual(started, [(0, "collab"), (1, "serve")])
 
     def one_pass(self, machine) -> tuple[list[str], dict]:
         """One supervisor pass on ``machine``, every step recorded instead of run: the steps it ran, and its entry."""
@@ -793,6 +855,33 @@ class HandoverTests(PublisherFixture):
         self.assertTrue(state_tool.holds(self.b.journal(), self.first, "lane:lane-1"))
 
 
+class HandoffMarkerTests(PublisherFixture):
+    """A lane's hand-off update posted on b's machine is found under its origin by a's publisher, never posted twice."""
+
+    def test_b_posting_its_hand_off_and_a_publishing_after_leaves_one_comment_under_the_seat_and_seq_marker(self) -> None:
+        def handed(*args: str) -> None:
+            value = lambda flag: args[args.index(flag) + 1]
+            state_tool.handoff(self.b.directory, lane=value("--lane"), subject=value("--subject"), head=value("--head"),
+                               change_request=value("--change-request"))
+        c = self.config(self.b)
+        with mock.patch.object(rd, "tracker_conf", return_value=self.CONF), \
+                mock.patch.object(rd, "state_tool", handed), \
+                mock.patch.object(rd, "load_state", lambda: {"state": self.b.state(), "journal": self.b.journal()}), \
+                mock.patch.object(tp, "Adapter", lambda conf, root: self.tracker):
+            said = rd.handoff_and_post(c, "APP-1", "lane-1", HEAD, "cr-1", 1, "handed off")
+        self.assertEqual(said, "Tracker post: posted the hand-off update on APP-1.")
+        entry = next(found for found in self.b.journal() if found["kind"] == "candidate.handed")
+        stamp = tp.marker(KEY, tp.init_id(self.b.journal()), f"{self.second}.{entry['origin']['seq']}", "comment")
+        self.assertEqual(self.tracker.posted, [("APP-1", stamp)])
+        self.exchange(self.b, self.a)
+        self.publish(self.a)
+        self.assertEqual([posted for posted in self.tracker.posted if posted == ("APP-1", stamp)], [("APP-1", stamp)])
+        # Nothing is posted under the id either seat's journal gives the entry.
+        ids = {found["id"] for machine in (self.a, self.b) for found in machine.journal()
+               if found["kind"] == "candidate.handed"}
+        self.assertEqual([marker for _, marker in self.tracker.posted if marker.split(":")[3] in map(str, ids)], [])
+
+
 class SharedMarkerTests(unittest.TestCase):
     def test_a_shared_records_init_id_is_its_record_started_whatever_each_seat_ingested_first(self) -> None:
         opener = {"seat": "s-aaaaaaaaaaaa", "seq": 1}
@@ -924,6 +1013,31 @@ class ServeSettlesUnderTheLockTests(colead.mq.MergeQueueTestCase):
         self.assertEqual(collab.give_scope(self.a.directory, "queue", self.second, wait=1)["kind"], "scope.transferred")
 
 
+    def test_a_turn_refused_before_its_settle_records_and_stops_the_candidate_by_the_fallback_outside_the_lock(self) -> None:
+        queue = colead.mq.queue
+        head = self.adopter.lane_commit("feature", {"src/app.txt": "app two\n"})
+        state_tool.handoff(self.b.directory, lane="lane-1", subject="feature", head=head, change_request="cr-1")
+        state_tool.accept_handoff(self.b.directory, "feature")
+        self.b.push()
+        self.a.take()
+        helds, setup_stop = [], queue._setup_stop
+
+        def recorded(*args, **kwargs):
+            helds.append(kwargs.get("held", False))
+            return setup_stop(*args, **kwargs)
+        # The turn stops under the lock before its results, so its own settle never runs.
+        with mock.patch.object(queue, "_setup_stop", recorded), mock.patch.object(
+                queue.Runner, "recover_interrupted", side_effect=queue.Stop("candidate_unknown", "feature's branch is gone")):
+            results = queue.serve(self.adopter.operator, self.a.directory, remote="origin", base="main",
+                                  until_idle=True, poll=0)
+        self.assertEqual([result.outcome for result in results], ["refused"], [result.stop for result in results])
+        # Before the turn, then the fallback's own check, which takes the lock the turn let go; serve's next pass
+        # checks again before it finds nothing queued. None of them held the lock.
+        self.assertEqual(helds[:2], [False, False])
+        self.assertNotIn(True, helds)
+        self.assertEqual(self.item(self.a)["stage"], "stopped")
+
+
 class TakingDeliveryTests(PublisherFixture):
     """The seat given delivery takes what was carried once, retries a partition it can't read yet, and starts its
     hosted publisher either way; a publisher run that began before the handover posts nothing after it."""
@@ -941,14 +1055,18 @@ class TakingDeliveryTests(PublisherFixture):
         self.hand_over()
         tool = rd._validator(ROOT)  # the state tool run-delivery reads with, which loads collab afresh each time
         loaded = tool._collab
+        for error in (ValueError("not a partition"), OSError("unreadable"), subprocess.SubprocessError("git failed")):
 
-        def unreadable():
-            module = loaded()
-            module.peer_carried = lambda directory, seat: None
-            return module
-        with mock.patch.object(tool, "_collab", unreadable):
-            self.assertIsNone(rd.take_delivery(self.config(self.b)))
-        self.assertFalse(collab.delivery_taken(self.b.directory))
+            def unreadable():
+                module = loaded()
+
+                def failing(repo, ref):
+                    raise error
+                module.read_partition = failing
+                return module
+            with self.subTest(error=type(error).__name__), mock.patch.object(tool, "_collab", unreadable):
+                self.assertIsNone(rd.take_delivery(self.config(self.b)))
+            self.assertFalse(collab.delivery_taken(self.b.directory))
         self.assertEqual(tp.read_ledger(self.b.directory), [])
         self.assertIn("tracker update(s) it had posted", rd.take_delivery(self.config(self.b)))
         self.assertTrue(collab.delivery_taken(self.b.directory))
