@@ -50,6 +50,9 @@ JOURNAL_FILE = "journal.jsonl"
 # Beside the record, machine-local: the tip of this seat's chain and the digest of what it holds, so an unchanged
 # partition is never built into a commit again.
 TIP_FILE = "partition-tip.json"
+# Beside the record, machine-local: what this seat's partition carries since it last passed delivery on (`given`), and
+# the transfer of delivery to this seat whose carried values it has taken (`taken`).
+CARRIED_FILE = "partition-carried.json"
 KEY = re.compile(r"^[A-Za-z][A-Za-z0-9-]{0,63}$")
 PATH = re.compile(r"^(?P<array>[a-z]+)\[(?P<key>[A-Za-z]+)=(?P<value>[^\]]+)\](?:/(?P<field>.+))?$")
 POLL_SECONDS = 5.0
@@ -237,9 +240,11 @@ def admit_seat(directory: Path, seat: str, *, approver: bool = True) -> dict:
 
 
 def give_scope(directory: Path, scope: str, to: str, *, wait: float = HANDOVER_WAIT_SECONDS,
-               poll: float = 0.5, sleep=time.sleep) -> dict:
+               poll: float = 0.5, sleep=time.sleep, park=None) -> dict:
     """Pass ``scope`` from this seat, its holder, to the admitted seat ``to``. The queue is handed over only once it is
-    idle, waiting up to ``wait`` seconds for that."""
+    idle, waiting up to ``wait`` seconds for that. Delivery, given ``park``, is handed over inside ``park(wait)``: a
+    context that parks this machine's publishers and yields what this seat's partition carries to ``to``, which is
+    kept before the transfer is journalled."""
     tool = _state_tool()
     _check_scope(scope)
     journal = tool.read_journal(directory)
@@ -250,7 +255,62 @@ def give_scope(directory: Path, scope: str, to: str, *, wait: float = HANDOVER_W
         raise _refuse("scope.held", f"seat {seat} holds {scope} already")
     if scope == "queue":
         return _hand_over_queue(directory, seat, to, wait=wait, poll=poll, sleep=sleep)
-    return tool.append_journal(directory, kind="scope.transferred", data={"scope": scope, "from": seat, "to": to})
+    with park(wait) if scope == "delivery" and park is not None else contextlib.nullcontext() as carried:
+        if carried is not None:
+            _keep_carried(directory, given=carried)
+        return tool.append_journal(directory, kind="scope.transferred", data={"scope": scope, "from": seat, "to": to})
+
+
+def _carried(directory: Path) -> dict:
+    try:
+        found = json.loads((directory / CARRIED_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def _keep_carried(directory: Path, **changes: object) -> None:
+    _state_tool()._write_atomically(directory / CARRIED_FILE, _state_tool().dumps({**_carried(directory), **changes}))
+
+
+def peer_carried(directory: Path, seat: str) -> dict | None:
+    """What ``seat``'s fetched partition carries for the seat it passed delivery to: its hosted identity and tracker
+    position, each null or empty where it carried none; None when its partition can't be read."""
+    try:
+        partition, _ = read_partition(directory, peer_ref(_key_of(directory), seat))
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return None
+    return partition.get("carried") or {"hostedIdentity": None, "trackerThrough": {}}
+
+
+def delivery_transfer(journal: list[dict], seat: str) -> dict | None:
+    """The transfer that gave ``seat`` the delivery it holds now, or None where it holds it from the record's start or
+    does not hold it."""
+    tool = _state_tool()
+    if not tool.holds(journal, seat, "delivery"):
+        return None
+    return next((entry for entry in reversed(journal) if entry["kind"] == "scope.transferred"
+                 and entry["data"]["scope"] == "delivery" and entry["data"]["to"] == seat), None)
+
+
+def delivery_taken(directory: Path, journal: list[dict] | None = None) -> bool | None:
+    """On a shared record: whether this seat holds delivery and has taken what the seat that passed it here carried,
+    so its publishers may run; None on an unshared record."""
+    tool = _state_tool()
+    collab = tool.collab_of(tool.read_state(directory))
+    if collab is None:
+        return None
+    journal = tool.read_journal(directory) if journal is None else journal
+    seat = tool.local_seat(directory, collab["key"])
+    if seat is None or not tool.holds(journal, seat, "delivery"):
+        return False
+    transfer = delivery_transfer(journal, seat)
+    return transfer is None or _carried(directory).get("taken") == _origin(transfer)
+
+
+def take_delivery(directory: Path, transfer: dict) -> None:
+    """Mark ``transfer``'s carried values as taken: the caller has written them as this seat's own."""
+    _keep_carried(directory, taken=_origin(transfer))
 
 
 def _queue_busy(state: dict) -> str | None:
@@ -425,6 +485,9 @@ def build_partition(directory: Path) -> tuple[dict, str]:
                          **({"replaces": origin["replaces"]} if "replaces" in origin else {})})
     partition = {"schemaVersion": PARTITION, "seat": seat, "generation": state["meta"].get("writerGeneration"),
                  "through": len(lines), "slice": held}
+    given = _carried(directory).get("given")
+    if given is not None:
+        partition["carried"] = given
     errors = tool.validate(partition, tool.load_schema(PARTITION))
     if errors:
         raise _refuse("collab.partition_invalid", "; ".join(errors))
