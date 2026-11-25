@@ -2038,6 +2038,7 @@ def review_prepare(args) -> None:
     tree = git("rev-parse", "HEAD^{tree}")
     merge_base = git("merge-base", c.base_ref, "HEAD")
     lane = check_candidate_ownership(c, key, merge_base, candidate)
+    verify_shared(c, key, candidate)
     prior_rounds = [json.loads(p.read_text()) for p in round_files(folder)]
     prior_candidate = prior_rounds[-1]["entries"][0]["binding"]["candidateRef"] if prior_rounds else None
     if prior_candidate == candidate:
@@ -2430,6 +2431,7 @@ def review_reduce(args) -> None:
     meta = json.loads(meta_path.read_text())
     candidate = meta["candidate"]
     lane = check_candidate_ownership(c, key, git("merge-base", c.base_ref, candidate), candidate)
+    verify_shared(c, key, candidate)
     expected, _ = story_lens_set(c, folder)
     if meta["lenses"] != expected:
         raise Stop(f"round {n} was prepared for {meta['lenses']}, not the story's lenses {expected}")
@@ -5824,8 +5826,11 @@ def handoff(args) -> None:
     added = catalogue_additions(c, "HEAD")
     ran = check_ids(c, args.checks, "--checks", added) if args.checks is not None else []
     folder = review_dir(key)
-    head = clean_head()
     git("fetch", "-q", c.remote, c.base_branch)
+    # The committed shared outputs first, before the checkout's cleanliness: an output that matches the sources only
+    # with an edit left uncommitted is said as what it is, an output its commit's own sources don't reproduce.
+    verify_shared(c, key, git("rev-parse", "HEAD"))
+    head = clean_head()
     check_base_conflict(c, key, head)
     lane = c.lane_of(key)
     pushed(key, head)
@@ -7480,11 +7485,98 @@ PATH_TOKEN = re.compile(r"[A-Za-z0-9._*?\[\]-][A-Za-z0-9._/*?\[\]-]*")
 CO_CHANGE = {"commits": 200, "sweep": 40, "support": 3, "share": 0.25, "shown": 5}
 
 
-def shared_outputs(c) -> set[str]:
-    regenerable = c.binding.get("regenerable") or {}
+class SharedOutputs(frozenset):
+    """The declared shared outputs: each listing, and every path the base binding's regenerable.shared matches, on
+    the base or not. Its members are the base's files, for listing and set arithmetic; `in` also matches a path the
+    base doesn't hold yet, by the binding's own patterns."""
+
+    def __new__(cls, members=(), patterns=()):
+        made = super().__new__(cls, members)
+        made.patterns = tuple(patterns)
+        return made
+
+    def __contains__(self, path) -> bool:
+        return frozenset.__contains__(self, path) or (
+            bool(self.patterns) and isinstance(path, str) and _merge_queue().matches_any(path, self.patterns))
+
+
+def shared_binding(c) -> dict:
+    """Decision 7: the binding that decides what is shared is the base's, never a candidate's or a working tree's. A
+    lane reads it from the base on the remote already; the lead reads it from the base branch's head."""
+    if c.shelf.ref:
+        return c.binding
+    cached = getattr(c, "_shared_binding", None)
+    if cached is None:
+        at_base = Shelf(c.root, c.base_ref).json(".agents/orchestration.json") if run(
+            ["git", "rev-parse", "--verify", "--quiet", c.base_ref], cwd=c.root, check=False).returncode == 0 else None
+        cached = c._shared_binding = at_base if at_base is not None else c.binding
+    return cached
+
+
+def shared_outputs(c) -> SharedOutputs:
+    cached = getattr(c, "_shared_outputs", None)
+    if cached is not None:
+        return cached
+    binding = shared_binding(c)
+    regenerable = binding.get("regenerable") or {}
     if not regenerable.get("regenerators"):
-        return set()
-    return {entry["path"] for entry in regenerable.get("listings", [])}
+        c._shared_outputs = SharedOutputs()
+        return c._shared_outputs
+    members = {entry["path"] for entry in regenerable.get("listings", [])}
+    queue = _merge_queue()
+    patterns = queue.shared_patterns(binding)
+    if patterns:
+        errors = queue.shared_errors(binding)
+        if errors:
+            raise Stop(f"the base binding's regenerable.shared is refused, as the merge queue refuses it: "
+                       f"{'; '.join(errors)}")
+        members |= {path for path in tracked_at_base(c) if queue.matches_any(path, patterns)}
+    c._shared_outputs = SharedOutputs(members, patterns)
+    return c._shared_outputs
+
+
+def shared_verification_key(binding: dict, head: str, inputs: list[dict]) -> str:
+    """What a verification's result is kept by: the commit, the base binding's members it runs, and its inputs."""
+    ran = {name: binding.get(name) for name in ("regenerable", "prepare", "leadInputs", "postSync")}
+    return hashlib.sha256(json.dumps([head, ran, [entry["id"] for entry in inputs]], sort_keys=True).encode()).hexdigest()
+
+
+def shared_verifications(root: Path, key: str) -> Path:
+    return root / cfg().work / "shared-outputs" / f"{key}.json"
+
+
+def verify_shared(c, key: str, head: str, inputs: list[dict] | None = None, kept_in: tuple[Path, ...] = ()) -> None:
+    """Decision 8: a candidate's change to a shared output, verified in place of a claim. Lanes run the base binding's
+    lead inputs that name no lease, and lead-accept passes the queue item's. A verification that passed is kept in
+    this checkout's state folder by its commit and base binding, so the next command at the same head reuses it;
+    ``kept_in`` names other checkouts whose kept results it may reuse."""
+    binding = shared_binding(c)
+    queue = _merge_queue()
+    if not queue.shared_patterns(binding):
+        return
+    shared_outputs(c)  # refuses a base binding whose shared the queue refuses
+    if inputs is None:
+        inputs = [entry for entry in binding.get("leadInputs") or [] if not entry.get("lease")]
+    merge_queue, runner, values = listing_reader(c, key, head)
+    runner.binding = {"checkTimeoutSeconds": 600, "prepare": [], "postSync": [], "leadInputs": [], "environment": {},
+                      **binding}
+    merge_base = git("merge-base", c.base_ref, head)
+    changed = runner.shared_changes(merge_base, head)
+    if not changed:
+        return
+    stamp = shared_verification_key(binding, head, inputs)
+    own = shared_verifications(repo(), key)
+    for kept in (own, *(shared_verifications(root, key) for root in kept_in)):
+        if kept.exists() and stamp in (load_json(kept) or {}).get("verified", []):
+            return
+    try:
+        runner.verify_shared_outputs(merge_base, head, changed, values, inputs)
+    except merge_queue.Stop as error:
+        raise Stop(f"{error.reason}: {error.detail}") from error
+    recorded = load_json(own) if own.exists() else None
+    verified = [*((recorded or {}).get("verified") or []), stamp][-20:]
+    own.parent.mkdir(parents=True, exist_ok=True)
+    own.write_text(json.dumps({"verified": verified}, indent=2) + "\n")
 
 
 def owners_of(ownership: dict, path: str) -> list[str]:
@@ -8917,7 +9009,7 @@ def lead_brief(args) -> None:
         "listings": "".join(f" Adding or removing an output {' or '.join(f'`{p}`' for p in listed)} lists needs that file's "
                             "owner: ask the lead to grant it before you hand off. Refreshing its digests alone needs no grant."
                             for listed in [[e["path"] for e in (c.binding.get("regenerable") or {}).get("listings", [])
-                                            if e["path"] in shared_outputs(c)]] if listed),
+                                            if (c.binding.get("regenerable") or {}).get("regenerators")]] if listed),
         "lanes": lane_rows, "stories": story_rows, "in_app": in_app, "notes": notes or "(none)",
         "lease": (c.in_app or {}).get("lease", "in-app"), "port": str((c.in_app or {}).get("port", "")),
         "tracker": c.issue_url.replace("{key}", "<key>"), "authority": authority_text(),
@@ -10797,6 +10889,13 @@ def accept_named(c, args) -> None:
     if takes and merged:
         raise Stop(f"{key} has merged: --take grants a file to a candidate waiting for acceptance")
     changed, outside = ([], []) if merged else candidate_ownership(c, lane, base, head, judged)
+    if not merged:
+        # Decision 11: the hand-off's shared outputs, verified again when the branch moved off the head it verified,
+        # with the queue item's lead inputs as the queue will run them.
+        tip = remote_head(branch) or head
+        named = {entry["id"]: entry for entry in shared_binding(c).get("leadInputs") or []}
+        verify_shared(c, key, tip, [named[name] for name in item.get("leadInputs") or [] if name in named],
+                      (c.lane_checkout(key),) if tip == head else ())
     if outside:
         problems.append(f"the branch changes files outside {lane}'s: {outside}")
     proposal = None
