@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from agent_skills.catalog import resolve_profile
-from agent_skills.validate import Finding, canonical_json, validate_corpus
+from agent_skills.validate import Finding, canonical_json, sentence_text, validate_corpus
 from tests.corpus_copy import ROOT, copy_corpus
 
 
@@ -254,7 +254,7 @@ class HiveKnowledgeAdapterRegistryTests(unittest.TestCase):
     def test_the_profile_descriptions_say_what_the_library_is(self) -> None:
         for profile in ("core", "delivery-views"):
             with self.subTest(profile=profile):
-                description = self.profiles[profile]["description"]
+                description = sentence_text(self.profiles[profile]["description"])
                 self.assertIn(
                     "Workflows may consult an optional, read-only knowledge library after the repository's own "
                     "solution notes, and report that it was not consulted when none is configured.",
@@ -267,7 +267,7 @@ class HiveKnowledgeAdapterRegistryTests(unittest.TestCase):
                     "the hive knowledge adapter maps it to the host's hive-mined server, configured by the "
                     "repository's knowledge properties, and a workflow reports that the library was not consulted "
                     "when none is configured.",
-                    self.profiles[profile]["description"],
+                    sentence_text(self.profiles[profile]["description"]),
                 )
 
 

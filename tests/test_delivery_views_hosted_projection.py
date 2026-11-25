@@ -18,6 +18,7 @@ from unittest import mock
 
 from jsonschema import Draft202012Validator
 
+from agent_skills.validate import sentence_text
 from tests.delivery_views_fixtures import render, config, block
 from tests.quiet_git import quieten
 
@@ -487,10 +488,10 @@ def hosted_sections():
     end = page.index('Pending bytes use immutable')
     entry = next(row for row in json.loads((ROOT / 'catalog.json').read_text(encoding='utf-8'))['skills']
                  if row['id'] == 'delivery-views')
-    texts = {'SKILL.md hosted section': page[start:end], 'catalog degradedBehavior': entry['degradedBehavior']}
+    texts = {'SKILL.md hosted section': page[start:end], 'catalog degradedBehavior': sentence_text(entry['degradedBehavior'])}
     for name in ('delivery-views', 'run-delivery', 'linear', 'jira'):
         profile = json.loads((ROOT / f'profiles/{name}.json').read_text(encoding='utf-8'))
-        texts[f'profiles/{name}.json description'] = profile['description']
+        texts[f'profiles/{name}.json description'] = sentence_text(profile['description'])
     schemas = json.loads((ROOT / 'skills/orchestrate-work/references/schemas.json').read_text(encoding='utf-8'))
     texts['delivery-state siblings description'] = schemas['delivery-state/1']['properties']['siblings']['description']
     return texts

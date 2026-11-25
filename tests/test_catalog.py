@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 import copy
+import json
 import unittest
+from pathlib import Path
+
+from jsonschema import Draft202012Validator
 
 from agent_skills.catalog import dependency_findings, resolve_profile
+from agent_skills.release import _release_view
+from agent_skills.validate import sentence_findings, sentence_text
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class CatalogTests(unittest.TestCase):
@@ -42,6 +50,62 @@ class CatalogTests(unittest.TestCase):
             rules,
             {"dependency.cycle", "dependency.reference", "dependency.required_closure"},
         )
+
+
+class SentenceListTests(unittest.TestCase):
+    """A `degradedBehavior` or profile `description` kept as one sentence per line renders as one string."""
+
+    def test_a_list_renders_joined_with_single_spaces_and_a_string_is_kept(self) -> None:
+        self.assertEqual(sentence_text(["One sentence.", "Two sentences."]), "One sentence. Two sentences.")
+        self.assertEqual(sentence_text("Already one string."), "Already one string.")
+
+    def test_the_string_and_list_forms_pass_and_bad_ones_are_named(self) -> None:
+        self.assertEqual(sentence_findings("A string."), [])
+        self.assertEqual(sentence_findings(["A sentence.", "Another one."]), [])
+        self.assertEqual(sentence_findings([]), ["sentence list must not be empty"])
+        self.assertEqual(sentence_findings(7), ["must be a string or a list of sentences"])
+        self.assertEqual(
+            sentence_findings(["", "\tTab.", "Trailing. ", "Line\nbreak.", "Return\rhere.", 3]),
+            ["sentence 0 must not be empty", "sentence 1 has leading or trailing whitespace",
+             "sentence 2 has leading or trailing whitespace", "sentence 3 holds a line break",
+             "sentence 4 holds a line break", "sentence 5 must be a string"],
+        )
+
+    def test_the_schemas_accept_and_refuse_what_the_validator_does(self) -> None:
+        catalog = json.loads((ROOT / "schemas/catalog.schema.json").read_text(encoding="utf-8"))
+        profile = json.loads((ROOT / "schemas/profile.schema.json").read_text(encoding="utf-8"))
+        subschemas = {
+            "catalog degradedBehavior": catalog["properties"]["skills"]["items"]["properties"]["degradedBehavior"],
+            "profile description": profile["properties"]["description"],
+        }
+        cases = ["A string.", "", ["One sentence.", "Another one."], ["A", "b."], [], 7, [3], [""], [" Leading."],
+                 ["Trailing. "], ["\tTab."], ["Line\nbreak."], ["Return\rhere."], ["Inner  spaces are kept."]]
+        for name, subschema in subschemas.items():
+            validator = Draft202012Validator(subschema)
+            for case in cases:
+                with self.subTest(field=name, case=case):
+                    self.assertEqual(validator.is_valid(case), not sentence_findings(case))
+
+    def test_the_archive_carries_each_list_as_its_joined_string(self) -> None:
+        source = {skill["id"]: skill for skill in
+                  json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))["skills"]}
+        files = _release_view(ROOT, "linear")
+        archived = json.loads(files["catalog.json"])["skills"]
+        self.assertGreater(len(archived), 10)
+        for skill in archived:
+            if "degradedBehavior" not in skill:
+                continue
+            with self.subTest(skill=skill["id"]):
+                sentences = source[skill["id"]]["degradedBehavior"]
+                self.assertIsInstance(sentences, list)
+                self.assertEqual(skill["degradedBehavior"], " ".join(sentences))
+        profiles = [name for name in files if name.startswith("profiles/")]
+        self.assertGreater(len(profiles), 1)
+        for name in profiles:
+            with self.subTest(profile=name):
+                sentences = json.loads((ROOT / name).read_text(encoding="utf-8"))["description"]
+                self.assertIsInstance(sentences, list)
+                self.assertEqual(json.loads(files[name])["description"], " ".join(sentences))
 
 
 if __name__ == "__main__":
