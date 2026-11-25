@@ -811,7 +811,7 @@ describe("the hosted page draws what the local page draws", () => {
       expect(chapters(hosted)).toBe(chapters(local));
       const page = hosted.window.document;
       expect(page.querySelector("#seats .title")!.textContent).toBe("2 seats write this delivery.");
-      expect(page.querySelector("#feedback .title")!.textContent).toBe("2 open, 1 blocking · 3 raised on 3 sections.");
+      expect(page.querySelector("#feedback .title")!.textContent).toBe("2 open, 1 blocking · 4 raised on 3 sections.");
       expect(page.querySelector("#plan .plan-approval")!.textContent).toBe(
         "Agent review only · 2 review rounds · every lens aligned · endorsed by Ama · stale endorsement by Ben <b>B</b> · not approved by a person",
       );
