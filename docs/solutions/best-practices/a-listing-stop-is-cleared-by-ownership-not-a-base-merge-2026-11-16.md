@@ -32,8 +32,8 @@ hands off again. Then the queue stops it with the same message.
 
 Read the stop as an ownership question. `check_shared_outputs` in the queue skips
 the listing check for any listed file that the candidate's lane alone owns. Without
-that ownership, `check_listing` compares the candidate's listed outputs with the
-merge base's and stops on any difference. A base merge moves the merge base, but the
+that ownership, `unowned_listing_changes` compares, through `listing_change`, the
+candidate's listed outputs with the merge base's and stops on any difference. A base merge moves the merge base, but the
 candidate still adds the same outputs, so the difference is still there.
 
 When the story is meant to add or remove listed outputs, as its plan says, grant its

@@ -577,6 +577,28 @@ accept it. The refusal names the file and the outputs added or removed. For a li
 digests needs no grant, from any lane. The lane brief names each declared listing once, and says nothing of them when
 the binding declares none.
 
+When stories keep regenerating the same generated file, such as a dependency graph, and the binding's own generators
+reproduce it from the sources, declare it shared rather than moving its claim from lane to lane:
+
+```json example outline
+"regenerable": {
+  "paths": ["gen/**"],
+  "regenerators": [["python3", "tools/graph.py"]],
+  "shared": ["gen/*.json"]
+}
+```
+
+A lane then changes `gen/graph.json` with no claim. `review-prepare`, `review-reduce` and `handoff` each verify the
+candidate's shared outputs on its own commit, in a temporary worktree, with the base binding's `prepare`, the lead
+inputs that name no lease, the regenerators and `postSync`; a passing result is kept by commit and base binding, so the
+later commands at the same head reuse it. `lead-accept` verifies again when the branch moved after the hand-off, and
+the queue verifies before its sync. A hand edit, a hand-written file no generator writes, or a deleted output stops
+with `shared_output_irreproducible`, naming the path; a failing or timed-out step stops with
+`shared_output_generator_failed`, naming its argv and exit. Only the base's binding declares what is shared: a
+candidate that adds `shared` to its own binding gains nothing. Generator definitions, the binding file, authored
+inputs and a listing's membership stay owned, and `binding_errors` refuses a `shared` pattern that could match any of
+the first two or a path outside `regenerable.paths`. See the guide's "Shared outputs".
+
 A story whose criteria already hold on the base needs no change, so the lane has no branch to push and no round to
 review. It runs the tests or commands that show each criterion holds, in its checkout at the base, and hands off with
 that evidence instead, naming each criterion by its id: `handoff <story-key> --no-change --evidence TEXT` (or

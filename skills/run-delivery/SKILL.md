@@ -106,7 +106,10 @@ an explicit ownership decision, and the queue applies its conflict and listing g
 listing check first: a candidate that adds or removes an output a listing names, in a listing its lane doesn't own, is
 refused before anything is recorded, naming the file, the outputs and the `lead-own` to ask the lead for: a `--grant`
 for a listing no lane holds, or a `--move` from each other lane that holds it. The
-lane brief names each declared listing once, and says nothing when the binding declares none. The close-out archive
+lane brief names each declared listing once, and says nothing when the binding declares none. A change to an output
+the base binding declares under `regenerable.shared` needs no claim: `review-prepare`, `review-reduce`, `handoff` and
+`lead-accept` verify it on the candidate's commit in a temporary worktree, with the base binding's own generators, and
+refuse with `shared_output_irreproducible` or `shared_output_generator_failed`, naming the path or the step. The close-out archive
 includes the delivery configuration with the record's effective ownership and assignments.
 
 The agent-skills delivery workflow (`deliver-work` → `orchestrate-work`, `obtain-review`/`review-work`) leaves its
