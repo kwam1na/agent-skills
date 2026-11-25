@@ -261,6 +261,17 @@ class WatchTests(JoinCase):
         self.assertTrue(ready, f"no line within {within:g}s")
         return proc.stdout.readline(), time.monotonic() - started
 
+    def ready(self, fx, a: Path, b: Path, proc: subprocess.Popen) -> None:
+        """Until the watcher prints one: a relabels itself and the change reaches b. A relabel ingested before the
+        watcher read its baseline prints nothing, so the next one is tried."""
+        for attempt in range(10):
+            self.ok(fx, "collab", "label", "--key", KEY, "--label", f"Ann {attempt}", cwd=fx.main)
+            self.exchange(a, b)
+            if select.select([proc.stdout], [], [], 5)[0]:
+                self.assertIn("seat.labeled", proc.stdout.readline())
+                return
+        self.fail("the watcher printed none of a's relabels")
+
     def test_one_flushed_line_per_peer_entry_and_its_three_exits(self) -> None:
         fx, a, b_repo, b = self.shared(poll=2)
         self.ok(fx, "collab", "join", "--key", KEY, cwd=b_repo)
@@ -270,7 +281,7 @@ class WatchTests(JoinCase):
         self.exchange(a, b)
         # With no --until it prints each peer entry ingested while it runs, and exits 0 at --timeout.
         proc = self.watching(fx, b_repo, "--timeout", 12)
-        time.sleep(1)
+        self.ready(fx, a, b, proc)
         # b's own entry is not a peer's: it prints nothing.
         self.ok(fx, "collab", "label", "--key", KEY, "--label", "Benedict", cwd=b_repo)
         self.ok(fx, "collab", "feedback", "add", "--key", KEY, "--anchor", "## Stories", "--text", "Split S2?",
@@ -283,7 +294,7 @@ class WatchTests(JoinCase):
         self.assertEqual((proc.returncode, rest), (0, ""), err)
         # With --until it exits 0 on the first matching line; one never matching exits 3 at --timeout.
         proc = self.watching(fx, b_repo, "--timeout", 20, "--until", "Split S3")
-        time.sleep(1)
+        self.ready(fx, a, b, proc)
         self.ok(fx, "collab", "feedback", "add", "--key", KEY, "--anchor", "## Stories", "--text", "Split S3?",
                 cwd=fx.main)
         self.exchange(a, b)

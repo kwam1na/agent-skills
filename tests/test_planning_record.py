@@ -496,6 +496,28 @@ class TwoSeatTests(PlanningRecordCase):
         self.assertEqual(code, 2, out)
         self.assertIn("scope.not_held", out)
         self.assertEqual(files(b), kept)
+        # Endorsed by both, but b's blocking feedback is open: lead-init is refused, leaving the record, both seats'
+        # refs and the plan's branch, here and on the remote, as they were.
+        code, out = self.flow(fx, "collab", "feedback", "add", "--anchor", "## Decisions", "--text", "Not yet.",
+                              "--blocking", cwd=b_repo)
+        self.assertEqual(code, 0, out)
+        self.exchange(b, a)
+        surfaces = lambda: ({name: body for name, body in files(a).items() if name in ("state.json", "journal.jsonl")},
+                            sh("git", "for-each-ref", "refs/agent-skills", cwd=fx.main).stdout,
+                            sh("git", "ls-remote", fx.origin, "refs/agent-skills/*", cwd=fx.tmp).stdout,
+                            sh("git", "rev-parse", "lead/FX-1", cwd=fx.main).stdout,
+                            sh("git", "ls-remote", fx.origin, "refs/heads/lead/FX-1", cwd=fx.tmp).stdout)
+        before = surfaces()
+        self.assertIn("refs/agent-skills/", before[2])
+        code, out = self.flow(fx, "lead-init")
+        self.assertEqual(code, 2, out)
+        self.assertIn("plan.feedback_blocking", out)
+        self.assertEqual(surfaces(), before)
+        # a, holding the section, settles it, and lead-init passes.
+        raised = next(entry for entry in journal(a) if entry["kind"] == "feedback.raised")
+        code, out = self.flow(fx, "collab", "feedback", "resolve", "--id", str(raised["id"]), "--outcome", "accepted",
+                              "--reason", "Done.")
+        self.assertEqual(code, 0, out)
         code, out = self.flow(fx, "lead-init")
         self.assertEqual(code, 0, out)
         self.assertEqual(record(a)["meta"]["phase"], "delivery")
