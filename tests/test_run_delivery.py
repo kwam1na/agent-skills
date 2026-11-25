@@ -11990,6 +11990,32 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         code, out = fx.flow(*move, cwd=fx.main)
         self.assertEqual(code, 0, out)
 
+    def test_on_a_legacy_record_own_co_changed_and_take_are_refused_writing_nothing(self) -> None:
+        from tests.test_run_delivery_supervisor import hand_off
+        fx = self.delivery()
+        state = fx.tmp / "record/state.json"
+        legacy = json.loads(state.read_text())
+        legacy.pop("laneOwnership")
+        state.write_text(json.dumps(legacy, indent=2) + "\n")
+        journal = fx.tmp / "record/journal.jsonl"
+
+        def written() -> tuple[bytes, bytes]:
+            return state.read_bytes(), journal.read_bytes()
+
+        before = written()
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", "--own-co-changed",
+                            cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("--own-co-changed claims files in the record: seed this record with lead-own --seed first", out)
+        self.assertEqual(written(), before)
+        hand_off(fx, "FX-3", "lane-2", assign=False)
+        self.assertNotIn("laneOwnership", json.loads(state.read_text()))
+        before = written()
+        code, out = fx.flow("lead-accept", "FX-3", "--take", "src/one.txt", "--why", "a pin", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("--take grants a claim in the record: seed this record with lead-own --seed first", out)
+        self.assertEqual(written(), before)
+
     def test_lead_ownership_rejects_duplicate_grants_and_lane_checkouts(self) -> None:
         fx = self.delivery(assign=False)
         wt = fx.lane("FX-3")
