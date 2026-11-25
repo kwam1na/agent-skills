@@ -43,7 +43,8 @@
     "A close fast-forwards the operator's checkout when it is clean and on the delivery's base or its integration target, and otherwise names why it left it; lead-retire, which lead-close runs last, removes the lead's own checkout once the archive holds every journal entry, nothing of the delivery runs from it and it has no change and its head is pushed, and otherwise names what keeps it; and the lead ends or archives the lane sessions it started.",
     "A per-machine ledger, shared by every repository on the machine, records each heavy run's claim on a capacity of slots and its measured cost; heavy commands claim and wait by default when the machine is full, an agent steps off a default with a recorded reason, and the Machine view shows who is using the machine.",
     "A Node below the runtime's minimum first on PATH gives way to an nvm Node that meets it, which the tool puts first on its own PATH for itself and every process it starts.",
-    "On macOS the supervisor keeps the machine awake while it runs, and it starts again by itself on a release applied while it runs, moving the record's writer pin to it."
+    "On macOS the supervisor keeps the machine awake while it runs, and it starts again by itself on a release applied while it runs, moving the record's writer pin to it.",
+    "A lane's change to a file outside its claims is refused at review-prepare, review-reduce and handoff, naming the lead-own --grant, or --move for a file another lane holds, that clears it before review; lead-accept --take is for a file the lead narrowed out of the lane's claims after the lane handed off."
   ],
   "expectedFiles": [
     "skills/compound-delivery-kernel/SKILL.md",

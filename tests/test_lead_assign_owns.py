@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import unittest
 
+from agent_skills.validate import sentence_text
 from tests.test_region_claims import CommandCase, command_fixture, numbered
 
 
@@ -211,6 +212,17 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
         self.assertIn("for a file the lead narrowed out of the lane's claims after it handed off: grant the lane a "
                       "whole-file claim on it, then accept; repeatable, and needs --why. Before hand-off, "
                       "review-prepare and handoff refuse an out-of-lane file, and lead-own --grant clears it", help_text)
+        sentence = ("lead-accept --take is for a file the lead narrowed out of the lane's claims after the lane handed "
+                    "off.")
+        catalog = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
+        texts = {"catalog.json": next(skill["degradedBehavior"] for skill in catalog["skills"]
+                                      if skill["id"] == "run-delivery")}
+        for name in ("jira", "linear", "run-delivery"):
+            texts[f"profiles/{name}.json"] = json.loads((ROOT / f"profiles/{name}.json").read_text(encoding="utf-8"))[
+                "description"]
+        for name, sentences in texts.items():
+            with self.subTest(file=name):
+                self.assertIn(sentence, sentence_text(sentences))
 
     def test_acceptance_refuses_an_edge_insertion_next_to_another_lane_and_takes_it_otherwise(self) -> None:
         from tests.test_run_delivery_supervisor import hand_off
