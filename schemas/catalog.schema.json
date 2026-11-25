@@ -17,7 +17,21 @@
             "type": "array"
           },
           "degradedBehavior": {
-            "type": "string"
+            "description": "What still holds when an optional capability is missing: a string, or a list of sentences, one per item, rendered joined with single spaces.",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "minLength": 1,
+                  "pattern": "^\\S(?:[^\\n\\r]*\\S)?$",
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array"
+              }
+            ]
           },
           "dependencies": {
             "type": "array"

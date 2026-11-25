@@ -348,6 +348,130 @@ def matches_any(path: str, patterns: Iterable[str]) -> bool:
     return any(pattern_regex(pattern).match(path) for pattern in patterns)
 
 
+def _pattern_tokens(pattern: str) -> list[tuple[str, str]]:
+    """``pattern`` as pattern_regex reads it: ``**/``, ``**``, ``*``, ``?`` and literal characters."""
+    tokens, index = [], 0
+    while index < len(pattern):
+        if pattern.startswith("**/", index):
+            tokens.append(("dslash", ""))
+            index += 3
+        elif pattern.startswith("**", index):
+            tokens.append(("dstar", ""))
+            index += 2
+        elif pattern[index] in "*?":
+            tokens.append(("star" if pattern[index] == "*" else "one", ""))
+            index += 1
+        else:
+            tokens.append(("lit", pattern[index]))
+            index += 1
+    return tokens
+
+
+def _pattern_moves(tokens: list[tuple[str, str]], states: frozenset, char: str) -> frozenset:
+    """The states ``tokens``' automaton reaches from ``states`` on ``char``, closed over its empty moves. A state is a
+    token index, or ``(index,)`` for the middle of a ``**/``, which matches nothing or any run ending in ``/``."""
+    reached: set = set()
+    for state in states:
+        if isinstance(state, tuple):
+            reached.add(state)
+            if char == "/":
+                reached.add(state[0] + 1)
+            continue
+        if state == len(tokens):
+            continue
+        kind, literal = tokens[state]
+        if kind == "lit" and char == literal or kind == "one" and char != "/":
+            reached.add(state + 1)
+        elif kind == "star" and char != "/" or kind == "dstar":
+            reached.add(state)
+        elif kind == "dslash":
+            reached.add((state,))
+            if char == "/":
+                reached.add(state + 1)
+    return _pattern_closure(tokens, reached)
+
+
+def _pattern_closure(tokens: list[tuple[str, str]], states: Iterable) -> frozenset:
+    closed, pending = set(states), list(states)
+    while pending:
+        state = pending.pop()
+        if not isinstance(state, tuple) and state < len(tokens) and tokens[state][0] in ("star", "dstar", "dslash"):
+            if state + 1 not in closed:
+                closed.add(state + 1)
+                pending.append(state + 1)
+    return frozenset(closed)
+
+
+def _pattern_pairs(pattern: str, others: list[str]) -> Iterator[tuple[bool, list[bool]]]:
+    """Every combination of whether ``pattern`` and each of ``others`` accept some one path, walking their automata
+    together over the characters any of them names, a slash and one character none names."""
+    automata = [_pattern_tokens(item) for item in (pattern, *others)]
+    alphabet = {literal for tokens in automata for kind, literal in tokens if kind == "lit"} | {"/", "\0"}
+    start = tuple(_pattern_closure(tokens, [0]) for tokens in automata)
+    seen, pending = {start}, [start]
+    while pending:
+        current = pending.pop()
+        accepting = [len(tokens) in states for tokens, states in zip(automata, current)]
+        yield accepting[0], accepting[1:]
+        for char in alphabet:
+            following = tuple(_pattern_moves(tokens, states, char) for tokens, states in zip(automata, current))
+            if following[0] and following not in seen:
+                seen.add(following)
+                pending.append(following)
+
+
+def pattern_meets(pattern: str, patterns: list[str]) -> bool:
+    """Whether some path matches ``pattern`` and one of ``patterns``, by pattern_regex's rule."""
+    return any(own and any(others) for own, others in _pattern_pairs(pattern, patterns))
+
+
+def pattern_within(pattern: str, patterns: list[str]) -> bool:
+    """Whether every path ``pattern`` matches also matches one of ``patterns``, by pattern_regex's rule."""
+    return all(any(others) for own, others in _pattern_pairs(pattern, patterns) if own)
+
+
+def shared_patterns(binding: dict) -> list[str]:
+    """The binding's declared shared outputs, which a lane changes with no claim once verified: none without a
+    regenerator to reproduce them."""
+    regenerable = binding.get("regenerable") or {}
+    return list(regenerable.get("shared") or []) if regenerable.get("regenerators") else []
+
+
+def shared_errors(binding: dict) -> list[str]:
+    """What ``regenerable.shared`` may not name. Decision 6: every path a pattern matches is a regenerable path, and
+    none is the binding file or a file a regenerator's argv names; a binding that declares any needs a regenerator,
+    and no lead input that needs a lease, since a lane's verification runs the lead inputs no lease guards."""
+    regenerable = binding.get("regenerable") or {}
+    declared = list(regenerable.get("shared") or [])
+    if not declared:
+        return []
+    errors = []
+    if not regenerable.get("regenerators"):
+        errors.append("/regenerable/shared: a shared output needs a regenerator to reproduce it; fix: declare "
+                      "regenerable.regenerators, or remove regenerable.shared")
+    leased = [entry["id"] for entry in binding.get("leadInputs") or [] if entry.get("lease")]
+    if leased:
+        errors.append(f"/regenerable/shared: lead input {', '.join(leased)} names a lease, and a lane's verification "
+                      "runs no leased input; fix: remove regenerable.shared, or the lease")
+    paths = list(regenerable.get("paths") or [])
+    named = [element.removeprefix("./") for argv in regenerable.get("regenerators") or [] for element in argv
+             if isinstance(element, str) and not PLACEHOLDER.match(element)]
+    for index, pattern in enumerate(declared):
+        where = f"/regenerable/shared/{index}"
+        if not pattern_meets(pattern, paths):
+            errors.append(f"{where}: {pattern} matches no regenerable path")
+        elif not pattern_within(pattern, paths):
+            errors.append(f"{where}: {pattern} can match a path outside regenerable.paths")
+        elif pattern_regex(pattern).match(BINDING_PATH):
+            errors.append(f"{where}: {pattern} matches the binding file {BINDING_PATH}, which is never shared")
+        else:
+            generators = sorted({element for element in named if pattern_regex(pattern).match(element)})
+            if generators:
+                errors.append(f"{where}: {pattern} matches {', '.join(generators)}, which a regenerator runs; a "
+                              "generator definition is never shared")
+    return errors
+
+
 def inside(root: Path, relative: str) -> Path | None:
     """``relative`` resolved under ``root``, or None when it leaves it."""
     if Path(relative).is_absolute():
@@ -419,6 +543,7 @@ def binding_errors(binding: object) -> list[str]:
     listed = [entry["path"] for entry in listings]
     for path in sorted({path for path in listed if listed.count(path) > 1}):
         errors.append(f"/regenerable/listings: {path} is listed twice")
+    errors += shared_errors(binding)
     commands += [(f"/postSync/{i}", step["argv"]) for i, step in enumerate(binding["postSync"])]
     commands += [(f"/leadInputs/{i}", item["argv"]) for i, item in enumerate(binding["leadInputs"])]
     commands += [(f"/release/{i}", target["argv"]) for i, target in enumerate(binding["release"])]
@@ -2343,6 +2468,11 @@ class Runner:
         context = context.with_values(branch=branch, head=head)
         checkout = self.checkout(head, "sync", prepare=True, context=context.with_values(treeSha=self.tree(head)))
         self.check_shared_outputs(item, checkout, base_head, head, context)
+        # Decision 12: the candidate's own shared outputs, verified before the base comes in, so a head pushed after
+        # hand-off can't carry a hand edit; the regeneration after the merge settles them as before.
+        merge_base = self.git("merge-base", base_head, head, cwd=checkout).stdout.strip()
+        self.verify_shared_outputs(merge_base, head, self.shared_changes(merge_base, head, checkout), context,
+                                   [inputs[name] for name in item["leadInputs"]])
         self.merge_base_in(checkout, base_head, branch, context)
         declared = self.declared_paths(item)
         self.settle(subject, item, checkout, context, inputs, declared, f"Regenerate after syncing {branch} with {self.base}")
@@ -2395,6 +2525,76 @@ class Runner:
         """A lane may refresh a shared output without a claim when its listing stays the same."""
         for path, _owners, added, removed in self.unowned_listing_changes(item["lane"], checkout, base, candidate, context):
             raise self.listing_stop(path, added, removed)
+
+    def shared_changes(self, merge_base: str, candidate: str, cwd: Path | None = None) -> list[str]:
+        """The shared outputs ``candidate`` changes since ``merge_base``, by the binding's own patterns, sorted."""
+        patterns = shared_patterns(self.binding)
+        if not patterns:
+            return []
+        changed = self.git("diff", "--no-renames", "--name-only", "-z", merge_base, candidate, cwd=cwd).stdout
+        return sorted(path for path in filter(None, changed.split("\0")) if matches_any(path, patterns))
+
+    def verify_shared_outputs(self, merge_base: str, candidate: str, changed: list[str], context: Context,
+                              lead_inputs: list[dict]) -> None:
+        """Decisions 8 and 9: each shared output in ``changed`` is what the binding's own generators make of the
+        candidate's tree. In a fresh worktree of the candidate's commit, outside every checkout, the binding's prepare
+        commands run as a queue checkout's do; each changed output is put back to its ``merge_base`` bytes, or removed
+        where it had none; and one regeneration pass runs: ``lead_inputs``, the regenerators, then postSync. Each output
+        must then hold the candidate's bytes, or be absent where the candidate deleted it, or this stops with
+        shared_output_irreproducible naming it. A step that fails or runs past its timeout stops with
+        shared_output_generator_failed naming its argv. The worktree goes on every outcome."""
+        if not changed:
+            return
+        timeout = self.binding["checkTimeoutSeconds"]
+        folder = Path(tempfile.mkdtemp(prefix="shared-outputs-"))
+        checkout = folder / "candidate"
+        context = context.with_values(treeSha=self.tree(candidate))
+
+        def ran(what: str, argv: list[str], completed: Completed, limit: float) -> None:
+            if completed.returncode == 0 and not completed.timed_out:
+                return
+            status = f"ran past its {limit:g}-second timeout" if completed.timed_out else f"exited {completed.returncode}"
+            tail = scrubbed_tail(completed.stderr or completed.stdout, self.environment())
+            raise Stop("shared_output_generator_failed",
+                       f"{what} {' '.join(argv)} {status}{f': {tail}' if tail else ''}; the shared outputs "
+                       f"{', '.join(changed)} could not be verified", changed)
+
+        try:
+            self.git("worktree", "add", "--detach", "--quiet", str(checkout), candidate)
+            for argv in self.binding.get("prepare") or []:
+                ran("prepare", argv, self.run_declared(argv, checkout, context, timeout), timeout)
+            for path in changed:
+                target = inside(checkout, path)
+                if self.git("cat-file", "-e", f"{merge_base}:{path}", check=False).returncode == 0:
+                    self.git("checkout", "--quiet", merge_base, "--", path, cwd=checkout)
+                elif target is not None and (target.is_file() or target.is_symlink()):
+                    target.unlink()
+            for entry in lead_inputs:
+                limit = entry.get("timeoutSeconds", timeout)
+                ran(f"lead input {entry['id']}", entry["argv"], self.run_argv(entry["argv"], checkout, context, limit), limit)
+            for argv in self.binding["regenerable"]["regenerators"]:
+                ran("regenerator", argv, self.run_argv(argv, checkout, context, timeout), timeout)
+            for entry in self.binding.get("postSync") or []:
+                ran("postSync step", entry["argv"], self.run_argv(entry["argv"], checkout, context, timeout), timeout)
+            differing = []
+            for path in changed:
+                expected = self.git("rev-parse", "-q", "--verify", f"{candidate}:{path}", check=False).stdout.strip()
+                target = inside(checkout, path)
+                present = target is not None and target.is_file()
+                actual = self.git("hash-object", "--", path, cwd=checkout).stdout.strip() if present else ""
+                if expected == actual:
+                    continue
+                differing.append(f"{path} ({'the candidate deletes it, and regeneration writes it' if not expected else 'regeneration does not write it' if not present else 'regeneration writes other bytes'})")
+            if differing:
+                raise Stop("shared_output_irreproducible",
+                           f"the binding's generators, run on the candidate's own tree, don't reproduce "
+                           f"{'; '.join(differing)}: regenerate the shared outputs from the sources and commit them, "
+                           "or revert the hand edit", [entry.split(" (", 1)[0] for entry in differing])
+        finally:
+            removed = self.git("worktree", "remove", "--force", str(checkout), check=False)
+            shutil.rmtree(folder, ignore_errors=True)
+            if removed.returncode != 0:
+                self.git("worktree", "prune", check=False)
 
     def unowned_listing_changes(
         self, lane: str, checkout: Path, base: str, candidate: str, context: Context | None,

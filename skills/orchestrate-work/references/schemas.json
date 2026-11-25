@@ -2713,6 +2713,8 @@
           "prepare_failed",
           "runner_error",
           "unstable_regeneration",
+          "shared_output_irreproducible",
+          "shared_output_generator_failed",
           "undeclared_change",
           "unreviewed_change",
           "push_refused",
@@ -2917,6 +2919,13 @@
                   "$ref": "#/$defs/argv"
                 }
               }
+            }
+          },
+          "shared": {
+            "description": "Optional. Regenerable files or patterns any lane may change with no claim, because the trusted binding's own generators reproduce them. A lane's review-prepare, review-reduce and handoff, the lead's lead-accept and the queue's sync each verify a candidate's change to one: in a fresh worktree of the candidate's commit, after the binding's prepare commands, each changed output is reset to its merge-base bytes, the lead inputs, regenerators and postSync steps run once, and the output must then hold the candidate's bytes. Otherwise the candidate stops with shared_output_irreproducible, or with shared_output_generator_failed when a step fails or times out. The binding that decides what is shared is always the base's, never the candidate's. Every path a pattern matches must be a regenerable path, and none may be the binding file or a file a regenerator's argv names. A binding that declares any needs a regenerator, and no lead input that names a lease. A listing stays a shared output as before, and adding or removing an output it lists still needs its owner. Without this member a binding behaves as before.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/path"
             }
           }
         }

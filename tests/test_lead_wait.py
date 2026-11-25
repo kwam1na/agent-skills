@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -24,7 +25,7 @@ GUIDE = ROOT / "skills/orchestrate-work/references/orchestration-guide.md"
 RUN_DELIVERY_BRIEF = ROOT / "skills/run-delivery/templates/lane-brief.md"
 TOOL = ROOT / "skills/orchestrate-work/scripts/delivery_state.py"
 EVENT_KINDS = ("candidate.handed", "check.failed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded",
-               "serving.held")
+               "serving.held", "target.settled")
 GIB = 2**30
 HEAD = "a" * 40
 # Each kind these tests journal, with facts of its shape. A kind the registry gives a cause names a check's start.
@@ -36,13 +37,14 @@ FACTS = {
     "base.broken": {"source": "queue", "detail": "unit fails on the main line."},
     "blocker.recorded": {"text": "The lead must choose."},
     "serving.held": {"why": "Serving is held: the setup failed."},
+    "target.settled": {"target": "main", "peers": ["FX-9"], "stories": ["FX-92"], "seconds": 600},
     "decision.recorded": {"text": "Carry the review", "why": "It still holds."},
     "base.rerun.stopped": {"base": {"ref": "main", "head": HEAD}, "head": HEAD, "seconds": 3, "why": "The runner was stopped."},
 }
 CAUSED = ("check.failed", "base.rerun.stopped")
 # Who an entry of a piece's kind names, for its words.
 NAMED = {"candidate.handed": ("--lane", "lane-1", "--subject", "work-q"), "candidate.merged": ("--subject", "work-q"),
-         "candidate.stopped": ("--subject", "work-q")}
+         "candidate.stopped": ("--subject", "work-q"), "target.settled": ("--subject", "work-q")}
 
 
 def _load_tool():
@@ -1343,6 +1345,48 @@ class StandingTextTests(unittest.TestCase):
         self.assertIsNotNone(re.search(r"delivery_state\.py --dir <state[^>]*> wait", text))
         self.assertIn(f"exits {state_tool.WAIT_EXPIRED_EXIT}", text)
         self.assertIn("reads the record and the machine only", " ".join(text.split()))
+
+
+class TargetQuietTests(unittest.TestCase):
+    """`lead-wait --target-quiet SECONDS` sets the record's settle window, and the wait itself never sees the option."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location("run_delivery_for_target_quiet",
+                                                      ROOT / "skills/run-delivery/scripts/run_delivery.py")
+        cls.flow = importlib.util.module_from_spec(spec)
+        previous, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+        try:
+            spec.loader.exec_module(cls.flow)
+        finally:
+            sys.dont_write_bytecode = previous
+
+    def test_the_option_is_taken_out_of_the_waits_arguments_in_either_spelling(self) -> None:
+        taken = self.flow.target_quiet_argument
+        self.assertEqual(taken(["--after", "3", "--target-quiet", "5", "--poll", "1"]), (5.0, ["--after", "3", "--poll", "1"]))
+        self.assertEqual(taken(["--target-quiet=0.5"]), (0.5, []))
+        self.assertEqual(taken(["--target-quiet", "0"]), (0.0, []))
+        self.assertEqual(taken(["--after", "3"]), (None, ["--after", "3"]))
+        for bad in (["--target-quiet", "-1"], ["--target-quiet", "soon"], ["--target-quiet=inf"], ["--target-quiet=nan"],
+                    ["--target-quiet"]):
+            with self.subTest(argv=bad), self.assertRaises(self.flow.Stop):
+                taken(bad)
+
+    def test_lead_wait_keeps_the_window_in_the_record_and_starts_the_wait_without_it(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder) / "state"
+            Record(state)
+            c = types.SimpleNamespace(state=state, release=ROOT, root=Path(folder), delivery="FX-1")
+            started = []
+            with mock.patch.object(self.flow, "cfg", lambda: c), mock.patch.object(self.flow, "record_session", lambda *a: None), \
+                    mock.patch.object(self.flow, "wait_output", lambda _: Path(folder) / "out/wait.json"), \
+                    mock.patch.object(self.flow.subprocess, "Popen", lambda argv: started.append(argv)), \
+                    mock.patch.object(self.flow, "hold_lease", lambda *a, **k: 0), self.assertRaises(SystemExit):
+                self.flow.lead_wait(types.SimpleNamespace(wait_args=["--after", "1", "--target-quiet", "5"]))
+            self.assertEqual(self.flow.target_quiet_seconds(state), 5)
+            [argv] = started
+            self.assertNotIn("--target-quiet", " ".join(argv))
+            self.assertIn("--after", argv)
 
 
 if __name__ == "__main__":

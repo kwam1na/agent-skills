@@ -2480,6 +2480,25 @@
       "line": "At 4e66a05, touching skills/orchestrate-work/SKILL.md"
     },
     {
+      "kind": "target.settled",
+      "lane": null,
+      "subject": "APP-10",
+      "data": {
+        "target": "main",
+        "peers": [
+          "APP-30",
+          "APP-31"
+        ],
+        "stories": [
+          "APP-32",
+          "APP-33"
+        ],
+        "seconds": 600
+      },
+      "head": "main settled",
+      "line": "Quiet for 10m after APP-30 and APP-31 merged APP-32 and APP-33"
+    },
+    {
       "kind": "delivery.closed",
       "lane": "lane-1",
       "subject": "APP-12",

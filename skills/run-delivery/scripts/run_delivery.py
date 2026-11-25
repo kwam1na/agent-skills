@@ -2038,6 +2038,7 @@ def review_prepare(args) -> None:
     tree = git("rev-parse", "HEAD^{tree}")
     merge_base = git("merge-base", c.base_ref, "HEAD")
     lane = check_candidate_ownership(c, key, merge_base, candidate)
+    verify_shared(c, key, candidate)
     prior_rounds = [json.loads(p.read_text()) for p in round_files(folder)]
     prior_candidate = prior_rounds[-1]["entries"][0]["binding"]["candidateRef"] if prior_rounds else None
     if prior_candidate == candidate:
@@ -2430,6 +2431,7 @@ def review_reduce(args) -> None:
     meta = json.loads(meta_path.read_text())
     candidate = meta["candidate"]
     lane = check_candidate_ownership(c, key, git("merge-base", c.base_ref, candidate), candidate)
+    verify_shared(c, key, candidate)
     expected, _ = story_lens_set(c, folder)
     if meta["lenses"] != expected:
         raise Stop(f"round {n} was prepared for {meta['lenses']}, not the story's lenses {expected}")
@@ -5824,8 +5826,11 @@ def handoff(args) -> None:
     added = catalogue_additions(c, "HEAD")
     ran = check_ids(c, args.checks, "--checks", added) if args.checks is not None else []
     folder = review_dir(key)
-    head = clean_head()
     git("fetch", "-q", c.remote, c.base_branch)
+    # The committed shared outputs first, before the checkout's cleanliness: an output that matches the sources only
+    # with an edit left uncommitted is said as what it is, an output its commit's own sources don't reproduce.
+    verify_shared(c, key, git("rev-parse", "HEAD"))
+    head = clean_head()
     check_base_conflict(c, key, head)
     lane = c.lane_of(key)
     pushed(key, head)
@@ -7480,11 +7485,98 @@ PATH_TOKEN = re.compile(r"[A-Za-z0-9._*?\[\]-][A-Za-z0-9._/*?\[\]-]*")
 CO_CHANGE = {"commits": 200, "sweep": 40, "support": 3, "share": 0.25, "shown": 5}
 
 
-def shared_outputs(c) -> set[str]:
-    regenerable = c.binding.get("regenerable") or {}
+class SharedOutputs(frozenset):
+    """The declared shared outputs: each listing, and every path the base binding's regenerable.shared matches, on
+    the base or not. Its members are the base's files, for listing and set arithmetic; `in` also matches a path the
+    base doesn't hold yet, by the binding's own patterns."""
+
+    def __new__(cls, members=(), patterns=()):
+        made = super().__new__(cls, members)
+        made.patterns = tuple(patterns)
+        return made
+
+    def __contains__(self, path) -> bool:
+        return frozenset.__contains__(self, path) or (
+            bool(self.patterns) and isinstance(path, str) and _merge_queue().matches_any(path, self.patterns))
+
+
+def shared_binding(c) -> dict:
+    """Decision 7: the binding that decides what is shared is the base's, never a candidate's or a working tree's. A
+    lane reads it from the base on the remote already; the lead reads it from the base branch's head."""
+    if c.shelf.ref:
+        return c.binding
+    cached = getattr(c, "_shared_binding", None)
+    if cached is None:
+        at_base = Shelf(c.root, c.base_ref).json(".agents/orchestration.json") if run(
+            ["git", "rev-parse", "--verify", "--quiet", c.base_ref], cwd=c.root, check=False).returncode == 0 else None
+        cached = c._shared_binding = at_base if at_base is not None else c.binding
+    return cached
+
+
+def shared_outputs(c) -> SharedOutputs:
+    cached = getattr(c, "_shared_outputs", None)
+    if cached is not None:
+        return cached
+    binding = shared_binding(c)
+    regenerable = binding.get("regenerable") or {}
     if not regenerable.get("regenerators"):
-        return set()
-    return {entry["path"] for entry in regenerable.get("listings", [])}
+        c._shared_outputs = SharedOutputs()
+        return c._shared_outputs
+    members = {entry["path"] for entry in regenerable.get("listings", [])}
+    queue = _merge_queue()
+    patterns = queue.shared_patterns(binding)
+    if patterns:
+        errors = queue.shared_errors(binding)
+        if errors:
+            raise Stop(f"the base binding's regenerable.shared is refused, as the merge queue refuses it: "
+                       f"{'; '.join(errors)}")
+        members |= {path for path in tracked_at_base(c) if queue.matches_any(path, patterns)}
+    c._shared_outputs = SharedOutputs(members, patterns)
+    return c._shared_outputs
+
+
+def shared_verification_key(binding: dict, head: str, inputs: list[dict]) -> str:
+    """What a verification's result is kept by: the commit, the base binding's members it runs, and its inputs."""
+    ran = {name: binding.get(name) for name in ("regenerable", "prepare", "leadInputs", "postSync")}
+    return hashlib.sha256(json.dumps([head, ran, [entry["id"] for entry in inputs]], sort_keys=True).encode()).hexdigest()
+
+
+def shared_verifications(root: Path, key: str) -> Path:
+    return root / cfg().work / "shared-outputs" / f"{key}.json"
+
+
+def verify_shared(c, key: str, head: str, inputs: list[dict] | None = None, kept_in: tuple[Path, ...] = ()) -> None:
+    """Decision 8: a candidate's change to a shared output, verified in place of a claim. Lanes run the base binding's
+    lead inputs that name no lease, and lead-accept passes the queue item's. A verification that passed is kept in
+    this checkout's state folder by its commit and base binding, so the next command at the same head reuses it;
+    ``kept_in`` names other checkouts whose kept results it may reuse."""
+    binding = shared_binding(c)
+    queue = _merge_queue()
+    if not queue.shared_patterns(binding):
+        return
+    shared_outputs(c)  # refuses a base binding whose shared the queue refuses
+    if inputs is None:
+        inputs = [entry for entry in binding.get("leadInputs") or [] if not entry.get("lease")]
+    merge_queue, runner, values = listing_reader(c, key, head)
+    runner.binding = {"checkTimeoutSeconds": 600, "prepare": [], "postSync": [], "leadInputs": [], "environment": {},
+                      **binding}
+    merge_base = git("merge-base", c.base_ref, head)
+    changed = runner.shared_changes(merge_base, head)
+    if not changed:
+        return
+    stamp = shared_verification_key(binding, head, inputs)
+    own = shared_verifications(repo(), key)
+    for kept in (own, *(shared_verifications(root, key) for root in kept_in)):
+        if kept.exists() and stamp in (load_json(kept) or {}).get("verified", []):
+            return
+    try:
+        runner.verify_shared_outputs(merge_base, head, changed, values, inputs)
+    except merge_queue.Stop as error:
+        raise Stop(f"{error.reason}: {error.detail}") from error
+    recorded = load_json(own) if own.exists() else None
+    verified = [*((recorded or {}).get("verified") or []), stamp][-20:]
+    own.parent.mkdir(parents=True, exist_ok=True)
+    own.write_text(json.dumps({"verified": verified}, indent=2) + "\n")
 
 
 def owners_of(ownership: dict, path: str) -> list[str]:
@@ -7736,10 +7828,27 @@ def check_candidate_ownership(c, key: str, base: str, head: str) -> str:
         queued = next((item for item in state["queue"] if item["subject"] == key), None)
         if queued and queued.get("assignedLane", queued["lane"]) != queued["lane"] and queued["stage"] != "stopped":
             raise Stop(f"{key} has a hand-off from {queued['lane']}; the lead must settle or return it first")
-        _, outside = candidate_ownership(c, lane, base, head, state)
+        changed, outside = candidate_ownership(c, lane, base, head, state)
         if outside:
-            raise Stop(f"writer_not_owned: {key} changes files outside {lane}'s: {outside}")
+            raise Stop(f"writer_not_owned: {key} changes files outside {lane}'s: {outside}"
+                       + whole_file_requests(c, lane, [path for path in outside if path in changed], state))
     return lane
+
+
+def whole_file_requests(c, lane: str, paths: list[str], state: dict) -> str:
+    """The lead's command that clears each whole file ``lane`` changes outside its claims before review: a grant of a
+    file no lane holds, or a move of the pattern another lane holds it by, as lead-assign --own-co-changed names it.
+    `lead-accept --take` is for a file narrowed out of the lane's claims after it handed off, so a hand-off never
+    needs it."""
+    ownership, command, requests = c.effective_ownership(state), flow_command(), []
+    for path in paths:
+        held = [(other, pattern) for other in owners_of(ownership, path) if other != lane
+                for pattern in ownership[other] if fnmatch.fnmatchcase(path, pattern)]
+        requests.extend(f"\n    {command} lead-own --move {shlex.quote(pattern)} --lane {shlex.quote(lane)} "
+                        f"--from {shlex.quote(other)}" for other, pattern in held)
+        if not held:
+            requests.append(f"\n    {command} lead-own --grant {shlex.quote(path)} --lane {shlex.quote(lane)}")
+    return f"; the lead clears each whole file before hand-off with:{''.join(requests)}" if requests else ""
 
 
 def story_named_files(c, key: str, tracked: list[str]) -> list[str]:
@@ -8671,10 +8780,22 @@ def unregister_delivery(c) -> str | None:
     return f"removed {c.delivery} from the deliveries registered beside the repository ({path})"
 
 
-def peer_deliveries(c) -> list[dict]:
+def integration_target(c) -> str | None:
+    """The branch this delivery's integration step rejoins, as lead-init recorded it in the record's
+    `meta.integration`; None for a delivery with no integration step, or no record."""
+    integration = (json_object(c.state / "state.json").get("meta") or {}).get("integration")
+    target = integration.get("target") if isinstance(integration, dict) else None
+    return target if isinstance(target, str) and target else None
+
+
+def peer_deliveries(c, *, target: bool = False) -> list[dict]:
     """The other deliveries registered on this delivery's base, each with its `status`: `live` while its supervisor's
     pid runs, `stale` once it doesn't, `none` when it was started with no supervisor. An entry that can't be read is
-    listed whatever its base, as `{file, status: unreadable}`, and stops nothing."""
+    listed whatever its base, as `{file, status: unreadable}`, and stops nothing. With `target`, the readable
+    deliveries whose base is this delivery's integration target instead, whatever their status: none without one."""
+    wanted = integration_target(c) if target else c.base_branch
+    if wanted is None:
+        return []
     folder = registry_folder(c.root)
     peers = []
     for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
@@ -8685,9 +8806,10 @@ def peer_deliveries(c) -> list[dict]:
         if not (isinstance(entry, dict) and all(isinstance(entry.get(name), str) and entry[name]
                                                 for name in ("key", "base", "state"))
                 and (entry.get("pid") is None or valid_pid(entry["pid"]))):
-            peers.append({"file": path.name, "status": "unreadable"})
+            if not target:  # same-base mode names it; listing it twice would say nothing more
+                peers.append({"file": path.name, "status": "unreadable"})
             continue
-        if entry["key"] == c.delivery or entry["base"] != c.base_branch:
+        if entry["key"] == c.delivery or entry["base"] != wanted:
             continue
         pid = entry.get("pid")
         peers.append({**entry, "status": "none" if pid is None else "live" if pid_runs(pid) else "stale"})
@@ -8711,11 +8833,137 @@ def peer_line(peer: dict) -> str:
     state = json_object(Path(peer["state"]) / "state.json")
     if not state:
         return f"{said}: its record {peer['state']} can't be read"
+    checking, queued = peer_queue(state)
+    return f"{said}: checking {checking or 'nothing'}; queued {', '.join(queued) or 'nothing'}"
+
+
+def peer_queue(state: dict) -> tuple[str | None, list[str]]:
+    """What a peer's queue is checking now, and what else it has queued, from its record's state."""
     current = ((state.get("meta") or {}).get("checking") or {}).get("now")
     checking = current.get("subject") if isinstance(current, dict) else None
     queued = [item.get("subject") for item in state.get("queue") or [] if isinstance(item, dict)
               and item.get("stage") in ("queued", "syncing", "synced", "checked") and item.get("subject") != checking]
-    return f"{said}: checking {checking or 'nothing'}; queued {', '.join(queued) or 'nothing'}"
+    return checking, queued
+
+
+def target_peer_lines(c) -> list[str]:
+    """Each delivery merging into this delivery's integration target, as doctor --delivery and lead-integrate list
+    it: nothing without an integration target or a peer on it."""
+    target = integration_target(c)
+    return [f"integration target {target}: {peer_line(peer)}" for peer in peer_deliveries(c, target=True)]
+
+
+def target_peer_words(c) -> str:
+    """The status line's word on the deliveries merging into the integration target: what each is checking and has
+    queued. Empty without an integration target or a peer on it; never a refusal."""
+    try:
+        target = integration_target(c)
+        peers = peer_deliveries(c, target=True)
+    except (OSError, ValueError, Stop):
+        return ""
+    said = []
+    for peer in peers:
+        checking, queued = peer_queue(json_object(Path(peer["state"]) / "state.json"))
+        said.append(f"{peer['key']} checking {checking or 'nothing'}, queued {', '.join(queued) or 'nothing'}")
+    return f"; merging into the target {target}: {'; '.join(said)}" if said else ""
+
+
+# How long the deliveries merging into the integration target stay quiet after a merge before the supervisor journals
+# `target.settled`, unless `lead-wait --target-quiet` set the record's own window.
+TARGET_QUIET_SECONDS = 600.0
+TARGET_QUIET_FILE = "target-quiet.json"
+
+
+def settle_clock() -> float:
+    """The supervisor's clock for the target's settle: the one place it reads the time, which a test replaces."""
+    return time.time()
+
+
+def target_quiet_seconds(state: Path) -> float:
+    """The record's settle window, `<state>/target-quiet.json`'s `seconds`, else 600."""
+    seconds = json_object(state / TARGET_QUIET_FILE).get("seconds")
+    usable = (isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds == seconds
+              and 0 <= seconds < float("inf"))
+    return float(seconds) if usable else TARGET_QUIET_SECONDS
+
+
+def write_target_quiet(state: Path, seconds: float) -> None:
+    """Keep the record's settle window, through a temporary file, under the state lock the record's copies take."""
+    path = state / TARGET_QUIET_FILE
+    staging = path.with_name(f".{TARGET_QUIET_FILE}.{os.getpid()}")
+    with open(state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            staging.write_text(json.dumps({"seconds": seconds}, indent=2) + "\n")
+            os.replace(staging, path)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def target_quiet_argument(passed: list[str]) -> tuple[float | None, list[str]]:
+    """`--target-quiet SECONDS`, lead-wait's own option and not the wait's: the seconds, finite and not negative, and
+    the wait's arguments without it. None when it isn't given."""
+    quiet, rest, words = None, [], iter(passed)
+    for word in words:
+        if word == "--target-quiet" or word.startswith("--target-quiet="):
+            value = word.partition("=")[2] if "=" in word else next(words, "")
+            try:
+                quiet = float(value)
+            except ValueError:
+                quiet = -1.0
+            if not (0 <= quiet < float("inf")):
+                raise Stop(f"--target-quiet {value or '(nothing)'} is not a number of seconds, finite and not negative")
+            continue
+        rest.append(word)
+    return quiet, rest
+
+
+def kept_target_peers(found: list[dict], log: list[dict]) -> tuple[list[dict], list[dict]]:
+    """The target peers the settle reads, and the flow log rows to keep. Each listed peer's record is kept once it is
+    listed and again when its path changes, the last row winning. A kept peer that has left the registry, as one that
+    closed inside the window has, is still read while its record has a state.json, so its last merge settles."""
+    known = {row["peer"]: row["state"] for row in log
+             if isinstance(row.get("peer"), str) and isinstance(row.get("state"), str)}
+    rows = [{"peer": peer["key"], "state": peer["state"]} for peer in found if known.get(peer["key"]) != peer["state"]]
+    listed = {peer["key"] for peer in found}
+    return [*found, *({"key": key, "state": state} for key, state in sorted(known.items())
+                      if key not in listed and (Path(state) / "state.json").exists())], rows
+
+
+def target_settlement(peers: list[dict], log: list[dict], began: str, window: float, at: float) -> dict:
+    """Whether the target has settled at `at`, by Decision 20: a target peer merged, since this record began and since
+    the last settle the flow log's `targets` lines keep, nothing is checking or queued on any target peer now, and the
+    window has passed since the later of the last candidate entry in their journals and the last pass that saw one
+    busy. Each peer is `{key, busy, journal}`. Returns the unsettled `merges`, the `busy` peers, when the quiet began
+    (`since`) and is `due`, whether to `settle`, and the `settled` marks a settle would keep."""
+    settled: dict[str, int] = {}
+    quiet: list[float] = []
+    for row in log:
+        if isinstance(row.get("settled"), dict):
+            for key, through in row["settled"].items():
+                if type(through) is int:
+                    settled[key] = max(through, settled.get(key, 0))
+        seen = row.get("busyAt")
+        if isinstance(seen, (int, float)) and not isinstance(seen, bool):
+            quiet.append(float(seen))
+    merges, busy = [], []
+    for peer in peers:
+        if peer["busy"]:
+            busy.append(peer["key"])
+        for entry in peer["journal"]:
+            kind, moment = str(entry.get("kind") or ""), stamp_seconds(entry.get("at"))
+            if kind.startswith("candidate.") and moment is not None:
+                quiet.append(moment)
+            if (kind == "candidate.merged" and isinstance(entry.get("at"), str) and entry["at"] >= began
+                    and type(entry.get("id")) is int and entry["id"] > settled.get(peer["key"], 0)):
+                merges.append({"peer": peer["key"], "subject": entry.get("subject"), "entry": entry["id"]})
+    since = max(quiet) if quiet else None
+    due = since + window if since is not None else None
+    marks = dict(settled)
+    for merge in merges:
+        marks[merge["peer"]] = max(marks.get(merge["peer"], 0), merge["entry"])
+    return {"merges": merges, "busy": busy, "since": since, "due": due,
+            "settle": bool(merges) and not busy and due is not None and at >= due, "settled": marks}
 
 
 def slot_line(c) -> str:
@@ -8900,7 +9148,7 @@ def lead_brief(args) -> None:
         "listings": "".join(f" Adding or removing an output {' or '.join(f'`{p}`' for p in listed)} lists needs that file's "
                             "owner: ask the lead to grant it before you hand off. Refreshing its digests alone needs no grant."
                             for listed in [[e["path"] for e in (c.binding.get("regenerable") or {}).get("listings", [])
-                                            if e["path"] in shared_outputs(c)]] if listed),
+                                            if (c.binding.get("regenerable") or {}).get("regenerators")]] if listed),
         "lanes": lane_rows, "stories": story_rows, "in_app": in_app, "notes": notes or "(none)",
         "lease": (c.in_app or {}).get("lease", "in-app"), "port": str((c.in_app or {}).get("port", "")),
         "tracker": c.issue_url.replace("{key}", "<key>"), "authority": authority_text(),
@@ -10780,6 +11028,15 @@ def accept_named(c, args) -> None:
     if takes and merged:
         raise Stop(f"{key} has merged: --take grants a file to a candidate waiting for acceptance")
     changed, outside = ([], []) if merged else candidate_ownership(c, lane, base, head, judged)
+    if not merged:
+        # Decision 11: at the handed head, the hand-off's own verification stands, read from the lane's kept results;
+        # a branch that moved off it is verified again, with the queue item's lead inputs as the queue will run them.
+        tip = remote_head(branch) or head
+        if tip == head:
+            verify_shared(c, key, head, kept_in=(c.lane_checkout(key),))
+        else:
+            named = {entry["id"]: entry for entry in shared_binding(c).get("leadInputs") or []}
+            verify_shared(c, key, tip, [named[name] for name in item.get("leadInputs") or [] if name in named])
     if outside:
         problems.append(f"the branch changes files outside {lane}'s: {outside}")
     proposal = None
@@ -11741,14 +11998,15 @@ def supervisor_line(c) -> str | None:
     held, recorded = read_lock(supervisor_lock_path(c))
     if held:
         return (f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
-                + live_fallback(c.state) + on_fallback(c) + break_hold(c) + listener_words(c) + waits_on(c))
+                + live_fallback(c.state) + on_fallback(c) + break_hold(c) + listener_words(c) + waits_on(c)
+                + target_peer_words(c))
     said = closed_status(c)
     if said is not None:
         return "supervisor: " + said
     serving = view_serving(c.state)
     address = f"; live view {live_address(serving['port'])}" if serving else ""
     return (f"supervisor: down ({supervisor_down_words(c.state)}){address}; restart it with {flow_command()} "
-            "lead-run --resume" + break_hold(c) + listener_words(c) + waits_on(c))
+            "lead-run --resume" + break_hold(c) + listener_words(c) + waits_on(c) + target_peer_words(c))
 
 
 def live_fallback(state: Path) -> str:
@@ -12370,6 +12628,27 @@ def listener_lines(c) -> list[str]:
             f"  {lead_wait_command(c, doc)}"]
 
 
+def live_view_to_open(c) -> str | None:
+    """The one live view the lead opens in the host's browser pane, unasked, when a delivery begins or resumes: the
+    hosted view's URL when `.agents/delivery-views.json` enables hosted and the watcher has one, else the address of the
+    local view the running supervisor serves. None while no supervisor holds its lock, so there is no view to open."""
+    with contextlib.suppress(OSError, ValueError):
+        held, recorded = read_lock(supervisor_lock_path(c))
+        address = recorded.get("address") if held else None
+        if not isinstance(address, str) or not address:
+            return None
+        info = hosted_info(c)
+        url = info.get("url") if info.get("state") != "disabled" else None
+        return url if isinstance(url, str) and url else address
+    return None
+
+
+def open_view_lines(c) -> list[str]:
+    """What lead-init and lead-run --resume end with: the one next step the host takes, opening the live view."""
+    url = live_view_to_open(c)
+    return [f"Next step: open {url} in the host's browser pane now, unasked."] if url else []
+
+
 def listener_words(c) -> str:
     """The status line's word on the listener: empty while one listens or nothing needs one."""
     if lead_listener(c.state) is not None:
@@ -12389,7 +12668,9 @@ def lead_wait(args) -> None:
     if not (c.state / "state.json").exists():
         raise Stop(f"no record at {c.state}: lead-init starts it")
     record_session(c, "lead")
-    passed = list(args.wait_args)
+    quiet, passed = target_quiet_argument(list(args.wait_args))
+    if quiet is not None:
+        write_target_quiet(c.state, quiet)
     parsed = _validator().wait_arguments(passed)
     after = parsed.after
     if after is None:
@@ -12731,6 +13012,8 @@ def orientation(seat: Seat) -> str:
                          f"you end your turn: {lead_wait_command(c, doc)}")
         elif needed:
             lines.append(f"- lead-wait: listening (pid {lease['pid']})")
+        if (url := live_view_to_open(c)):
+            lines.append(f"- live view: open {url} in the host's browser pane, unasked")
     return "\n".join(lines)[:ORIENT_LIMIT]
 
 
@@ -15110,7 +15393,7 @@ class Supervisor:
             return cleanup_merged(c, doc, entry["laneWords"])
 
         steps = (("reconcile", reconcile_once), ("regions", lambda: settle_landings(c)), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
-                 ("peers", lambda: self.peer_merges(entry)),
+                 ("peers", lambda: self.peer_merges(entry)), ("target", lambda: self.target_settles(entry)),
                  ("lenses", lambda: journal_lens_returns(c)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
@@ -15215,6 +15498,58 @@ class Supervisor:
             if through != start:
                 append_log("peers", c.delivery, {"peer": peer["key"], "through": through})
         return "; ".join(said) or "nothing new"
+
+    def target_settles(self, entry: dict) -> str:
+        """Journal `target.settled` once the deliveries merging into this delivery's integration target have settled
+        after a merge, by target_settlement, reading the clock through settle_clock. A pass that sees a target peer
+        checking or queued keeps the moment in the flow log's `targets` log, and a settle keeps the last merge of each
+        peer it settled there as soon as it is journalled, so a supervisor started again journals nothing twice, and
+        each target peer's record once it is listed, so a peer that closes inside the window still settles. Nothing at
+        all without an integration target or a delivery on it."""
+        c = self.c
+        target = integration_target(c)
+        if target is None:
+            return "no integration target"
+        log = read_log("targets", c.delivery)
+        found, kept = kept_target_peers(peer_deliveries(c, target=True), log)
+        for row in kept:
+            append_log("targets", c.delivery, row)
+        if not found:
+            return f"no delivery is registered on the target {target}"
+        scripts = str(c.release / "skills/orchestrate-work/scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import delivery_state
+        peers, said = [], []
+        for peer in found:
+            checking, queued = peer_queue(json_object(Path(peer["state"]) / "state.json"))
+            try:
+                theirs = delivery_state.read_journal(Path(peer["state"]))
+            except (delivery_state.StateError, OSError, ValueError):
+                said.append(f"{peer['key']}: its journal can't be read")
+                theirs = []
+            peers.append({"key": peer["key"], "busy": bool(checking or queued), "journal": theirs})
+        journal = load_state()["journal"]
+        at, window = settle_clock(), target_quiet_seconds(c.state)
+        settle = target_settlement(peers, log, journal[0]["at"] if journal else now(), window, at)
+        entry["targetSettle"] = {key: settle[key] for key in ("busy", "since", "due", "settle")}
+        if settle["busy"]:
+            append_log("targets", c.delivery, {"busyAt": at})
+            said.append(f"{', '.join(settle['busy'])} checking or queued on {target}")
+        elif not settle["merges"]:
+            said.append(f"nothing merged into {target} since its last settle")
+        elif not settle["settle"]:
+            said.append(f"{target} settles in {max(0, round(settle['due'] - at))}s if it stays quiet")
+        else:
+            merged = sorted({merge["peer"] for merge in settle["merges"]})
+            state_tool("journal", "--kind", "target.settled", "--subject", c.delivery, "--data", json.dumps(
+                {"target": target, "peers": merged, "stories": [merge["subject"] for merge in settle["merges"]
+                                                                 if isinstance(merge["subject"], str)],
+                 "seconds": window}))
+            # Kept at once, so a supervisor stopped mid-pass doesn't settle these merges again.
+            append_log("targets", c.delivery, {"settled": settle["settled"]})
+            said.append(f"{target} settled after {', '.join(merged)} merged")
+        return "; ".join(said)
 
     def peer_merge_files(self, peer: dict, merged: dict) -> tuple[str, set[str]] | None:
         """The commit a peer's merge made and the files it changed. The head comes from the entry's facts, the runner's or one
@@ -15625,7 +15960,7 @@ def lead_integrate(args) -> None:
     else:
         done = state_tool("journal", "--kind", "integration.landed", "--subject", c.delivery, "--data", json.dumps(
             {"target": target, "head": head}))
-    print(f"recorded {args.fact} as entry {journal_id(done)} at {head[:10]}")
+    print("\n".join([f"recorded {args.fact} as entry {journal_id(done)} at {head[:10]}", *target_peer_lines(c)]))
 
 
 def moved_head_stands(c, doc: dict, head: str, last: dict | None) -> str:
@@ -17053,9 +17388,10 @@ class Doctor:
         """The other deliveries registered on this base, each with what its queue is checking and has queued; an
         entry that can't be read is named, and fails nothing."""
         found = peer_deliveries(self.delivery)
+        on_target = target_peer_lines(self.delivery)
         if not found:
-            return "ok", f"no other delivery is registered on {self.delivery.base_branch}"
-        return "ok", " | ".join(peer_line(peer) for peer in found)
+            return "ok", " | ".join([f"no other delivery is registered on {self.delivery.base_branch}", *on_target])
+        return "ok", " | ".join([*(peer_line(peer) for peer in found), *on_target])
 
     def merge_slot(self):
         return "ok", slot_line(self.delivery)
@@ -17360,8 +17696,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--reuse", help="with --checks: check ids whose hand-off records the queue may reuse across paths the "
                    "candidate doesn't change, recorded through select as the lead's grant; needs --why")
     p.add_argument("--take", action="append", metavar="PATH",
-                   help="grant the lane a whole-file claim on a file the candidate changes outside its owns, then "
-                   "accept; repeatable, and needs --why")
+                   help="for a file the lead narrowed out of the lane's claims after it handed off: grant the lane a "
+                   "whole-file claim on it, then accept; repeatable, and needs --why. Before hand-off, review-prepare "
+                   "and handoff refuse an out-of-lane file, and lead-own --grant clears it")
     p.add_argument("--why", help="with --reuse: why that reuse is safe; with --take: why the lane takes each file, "
                    "journalled as the lead's decision"); p.set_defaults(fn=lead_accept)
     p = command(sub, "lead-base-broken", help="name the base broken before a base re-run's verdict, ending a re-run at "
@@ -17536,6 +17873,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.command in ("lead-init", "lead-assign", "lead-accept") or (args.command == "lead-run" and args.resume):
         with contextlib.suppress(Stop, ValueError, OSError):
             for line in listener_lines(cfg()):
+                print(line)
+    if args.command == "lead-init" or (args.command == "lead-run" and args.resume):
+        with contextlib.suppress(Stop, ValueError, OSError):
+            for line in open_view_lines(cfg()):
                 print(line)
     if args.command.startswith("lead-") and args.command not in ("lead-setup", "lead-init", "lead-run", "lead-wait"):
         with contextlib.suppress(Stop, ValueError, OSError):
