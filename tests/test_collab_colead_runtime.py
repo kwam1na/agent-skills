@@ -790,6 +790,46 @@ class CarriedInputsTests(CoLeadFixture):
         starts = tp.read_flow(self.a.repo / "flow-log", KEY, tp.LANE_STARTS)
         self.assertEqual([(start["subject"], start["assigned"]) for start in starts], [("APP-1", assigned["id"])])
 
+    def test_bs_start_follows_the_carried_assignment_and_as_publisher_matches_it_by_that(self) -> None:
+        first = state_tool.append_journal(self.a.directory, kind="lane.assigned", lane="lane-1", subject="APP-1",
+                                          data={"title": "First"})
+        self.exchange(self.a, self.b)
+        c = self.config(self.b)
+        rd.record_start(c, "APP-1", "lane-1", self.b.journal())
+        self.assertEqual(len(rd.recorded_starts(c, "APP-1", self.b.journal())), 1)
+        self.carry()
+        decide = lambda entry: tp.Publisher({"state": self.a.state(), "journal": self.a.journal()}, self.a.directory,
+                                            {"mode": "publisher", "problems": [], "transitions": {}}, FakeTracker(),
+                                            KEY, self.a.repo / "flow-log").start_decision(entry)
+        self.assertIsNone(decide(first))
+        # Reassigned before any start of the new assignment: the old start counts for neither.
+        again = state_tool.append_journal(self.a.directory, kind="lane.assigned", lane="lane-1", subject="APP-1",
+                                          data={"title": "Again"})
+        self.carry()
+        self.assertEqual(rd.recorded_starts(c, "APP-1", self.b.journal()), [])
+        self.assertEqual(decide(again), "wait")
+        self.assertIsNone(decide(first))
+        later = state_tool.append_journal(self.a.directory, kind="lane.assigned", lane="lane-1", subject="APP-1",
+                                          data={"title": "Third"})
+        self.assertEqual(decide(again), "reassigned before it started")
+
+    def test_a_non_holder_shows_the_holders_carried_plan_and_builds_none_of_its_own(self) -> None:
+        plan = {"schemaVersion": "delivery-plan/1", "updated": "2026-11-25T00:00:00Z", "built": "by a"}
+        (self.a.directory / rd.PLAN_FILE).write_text(json.dumps(plan))
+        self.carry()
+        self.assertEqual(json.loads((self.b.directory / rd.PLAN_FILE).read_text()), plan)
+        with self.on(self.b):
+            self.assertIsNone(rd.rebuild_plan(self.config(self.b)))
+        self.assertEqual(json.loads((self.b.directory / rd.PLAN_FILE).read_text()), plan)
+
+    def test_a_change_to_the_carried_inputs_moves_the_sync_loops_push_mark_and_the_same_inputs_dont(self) -> None:
+        before = collab._changes_mark(self.b.directory)
+        self.assertTrue(collab.keep_inputs(self.b.directory, {"logs": {}, "checkoutsLeft": ["APP-1"]}))
+        moved = collab._changes_mark(self.b.directory)
+        self.assertNotEqual(moved, before)
+        self.assertFalse(collab.keep_inputs(self.b.directory, {"logs": {}, "checkoutsLeft": ["APP-1"]}))
+        self.assertEqual(collab._changes_mark(self.b.directory), moved)
+
     def test_an_unshared_record_stamps_nothing_and_carries_nothing(self) -> None:
         unshared = Path(tempfile.mkdtemp(prefix="unshared-"))
         self.addCleanup(shutil.rmtree, unshared, True)
@@ -807,9 +847,9 @@ class CarriedInputsTests(CoLeadFixture):
 class AcrossSeatsFixture(CoLeadFixture):
     """Commands and pass steps run as either machine, with what each carries crossing between them."""
 
-    def on(self, machine):
+    def on(self, machine, **extra):
         """Run what follows as ``machine``'s commands: the global config, record and checkout are its own."""
-        c = self.config(machine)
+        c = self.config(machine, **extra)
         stack = contextlib.ExitStack()
         stack.enter_context(mock.patch.object(rd, "cfg", return_value=c))
         stack.enter_context(mock.patch.object(rd, "repo", return_value=machine.repo))
@@ -871,10 +911,14 @@ class CloseAcrossSeatsTests(AcrossSeatsFixture):
         self.carry()
         # Between the close and its archive the close goes on on a, and neither machine counts it closed.
         self.assertFalse(rd.closed_by_holder(self.config(self.b)))
+        registry = types.SimpleNamespace(state_of=lambda key, d: self.b.directory, release=ROOT)
+        self.assertFalse(rd.Config.closed_here(registry, KEY, {}))
         self.archive(self.a, closed)
         self.carry()
         self.assertTrue(rd.closed_by_holder(self.config(self.b)))
         self.assertFalse(rd.closed_by_holder(self.config(self.a)))
+        # The registry of b's machine counts the delivery closed too, with no closed.json of its own.
+        self.assertTrue(rd.Config.closed_here(registry, KEY, {}))
 
     def test_a_close_reopened_before_its_archive_stays_open_on_both_machines(self) -> None:
         closed = state_tool.append_journal(self.a.directory, kind="delivery.closed", data={})
@@ -883,6 +927,33 @@ class CloseAcrossSeatsTests(AcrossSeatsFixture):
         self.archive(self.a, closed)
         self.carry()
         self.assertFalse(rd.closed_by_holder(self.config(self.b)))
+
+    def quiet_pass(self, machine, **patches):
+        """``machine``'s supervisor pass with every step but the close stubbed, and its close-out by ``patches``."""
+        stack = contextlib.ExitStack()
+        stack.enter_context(self.on(machine))
+        for name, value in {"planning_phase": False, "needs_you": [], "write_needs": None, "render_views": "",
+                            "copy_latest": None, "append_log": None, "read_log": [], "cleanup_merged": [],
+                            "journal_lens_returns": [], "deferral_breaches": [], "write_peer_waits": None,
+                            "write_lane_changes": None, "reconcile_once": [], "settle_landings": "",
+                            "post_merge_step": "", "journal_finish_met": [], "auto_grant_step": "",
+                            "take_delivery": None, **patches}.items():
+            stack.enter_context(mock.patch.object(rd, name, value if callable(value) else mock.Mock(return_value=value)))
+        stack.enter_context(mock.patch.object(rd.Supervisor, "blockers", lambda this: ""))
+        stack.enter_context(mock.patch.object(rd.Supervisor, "peer_merges", lambda this, entry: ""))
+        stack.enter_context(mock.patch.object(rd.Supervisor, "lose", lambda this: False))
+        return stack
+
+    def test_the_holders_closing_pass_pushes_the_archived_close_and_b_counts_it_closed(self) -> None:
+        closed = state_tool.append_journal(self.a.directory, kind="delivery.closed", data={})
+        self.exchange(self.a, self.b)
+        supervisor = rd.Supervisor(self.config(self.a, load_delivery=lambda key: None), once=True)
+        with self.quiet_pass(self.a, close_holds=[], close_out=lambda c, flapping, once: (
+                self.archive(self.a, closed), ([], True))[1]):
+            self.assertTrue(supervisor.one_pass(1))
+        # No pass runs on a after its close: what it pushed as it closed is all b has.
+        self.b.take()
+        self.assertTrue(rd.closed_by_holder(self.config(self.b)))
 
     def test_bs_supervisor_stops_once_as_archive_is_carried(self) -> None:
         closed = state_tool.append_journal(self.a.directory, kind="delivery.closed", data={})
@@ -937,8 +1008,15 @@ class FullHealthAcrossSeatsTests(AcrossSeatsFixture):
         with self.on(self.a):
             last, rerun = rd.full_health_results(self.config(self.a), self.HEAD)
         self.assertEqual((last["result"], rerun), ("failed", False))
-        state_tool.append_journal(self.a.directory, kind="fullhealth.rerun",
-                                  data={"head": self.HEAD, "why": "Flaky host.", "at": last["at"]})
+        # a, not holding the queue, asks for it through the command.
+        with self.on(self.a), mock.patch.object(rd, "git"), mock.patch.object(rd, "base_head", return_value=self.HEAD), \
+                mock.patch.object(rd, "delivery_posture", return_value={"posture": "gate"}), \
+                mock.patch.object(rd, "base_breaks_standing", return_value=[]), contextlib.redirect_stdout(io.StringIO()):
+            rd.lead_resolve(types.SimpleNamespace(id="full-health", why="Flaky host."))
+        asked = [entry for entry in self.a.journal() if entry["kind"] == "fullhealth.rerun"]
+        self.assertEqual([entry["data"]["at"] for entry in asked], [last["at"]])
+        self.assertEqual([entry for entry in tp.read_flow(self.a.repo / "flow-log", KEY, "full-health", peers=False)
+                          if entry.get("rerun")], [])
         self.carry()
         with self.on(self.b):
             self.assertEqual(rd.full_health_results(self.config(self.b), self.HEAD)[1], True)
@@ -950,8 +1028,9 @@ class FullHealthAcrossSeatsTests(AcrossSeatsFixture):
         c = self.config(self.b, shelf=types.SimpleNamespace(json=lambda name: {"fullHealth": ["true"]}),
                         remote="origin", base_branch="main")
         launched = []
-        for met, said in (([], "fullHealth: nothing merged yet"), (["L1"], "launched")):
-            doc = {"state": {**self.b.state(), "finish": [{"id": "L1"}]},
+        for lines, met, said in (([{"id": "L1"}], [], "fullHealth: nothing merged yet"),
+                                 ([{"id": "L1"}], ["L1"], "launched"), ([], [], "launched")):
+            doc = {"state": {**self.b.state(), "finish": lines},
                    "journal": [{"kind": "finish.met", "data": {"finish": line}} for line in met]}
             with self.on(self.b), mock.patch.object(rd, "load_state", return_value=doc), \
                     mock.patch.object(rd, "delivery_posture", return_value={"posture": "gate"}), \
@@ -961,7 +1040,7 @@ class FullHealthAcrossSeatsTests(AcrossSeatsFixture):
                     mock.patch.object(rd, "base_head", return_value=self.HEAD), \
                     mock.patch.object(rd, "launch_full_health", lambda *args: launched.append(args) or "launched"):
                 self.assertEqual(rd.post_merge_step(c), said)
-        self.assertEqual(len(launched), 1)
+        self.assertEqual(len(launched), 2)
 
     def test_a_posture_note_one_seat_journalled_is_not_journalled_again_by_the_other(self) -> None:
         facts = {"from": "gate", "to": "focused", "source": "AGENTS.md", "why": "A declared posture."}
@@ -975,8 +1054,10 @@ class FullHealthAcrossSeatsTests(AcrossSeatsFixture):
             rd.journal_posture(self.config(self.b), "fullhealth.skipped",
                                {"head": self.HEAD, "posture": "focused", "source": "AGENTS.md", "why": "Again."})
             rd.journal_posture(self.config(self.b), "posture.changed", {**facts, "from": "focused", "to": "gate"})
+            rd.journal_posture(self.config(self.b), "fullhealth.skipped",
+                               {"head": "2" * 40, "posture": "focused", "source": "AGENTS.md", "why": "A new head."})
         kinds = [entry["kind"] for entry in self.b.journal() if entry["kind"] in ("posture.changed", "fullhealth.skipped")]
-        self.assertEqual(kinds, ["posture.changed", "fullhealth.skipped", "posture.changed"])
+        self.assertEqual(kinds, ["posture.changed", "fullhealth.skipped", "posture.changed", "fullhealth.skipped"])
 
 
 class EvidenceAcrossSeatsTests(AcrossSeatsFixture):
@@ -1015,6 +1096,21 @@ class EvidenceAcrossSeatsTests(AcrossSeatsFixture):
         self.carry()
         self.assertEqual(self.chosen(self.a), "/sa")
         self.assertEqual(self.chosen(self.b), "/sa")
+
+    def test_the_holders_lead_evidence_record_records_the_carried_specs(self) -> None:
+        self.check(self.b, "s1")
+        self.check(self.b, "s4")
+        self.check(self.b, "f1", mode="fail")
+        self.carry()
+        recorded = []
+        extra = {"label": lambda key: key, "stories": {"APP-1": {"lane": "lane-1", "title": "First"},
+                                                       "APP-2": {"lane": "lane-2", "title": "Second"}}}
+        with self.on(self.a, **extra), mock.patch.object(rd, "stamped", return_value={"head": "h9"}), \
+                mock.patch.object(rd, "review_dir", lambda key: self.a.repo / "work/review" / key), \
+                mock.patch.object(rd, "app_video", lambda ns: recorded.append((ns.mode, ns.path))), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rd.lead_evidence(types.SimpleNamespace(action="record", keys=["APP-1"], after_build=str(self.a.repo)))
+        self.assertEqual(recorded, [("hold", "/s4"), ("fail", "/f1")])
 
     def test_a_lane_that_returns_keeps_the_hold_written_while_it_was_away(self) -> None:
         collab.give_scope(self.b.directory, "lane:lane-1", self.first)
@@ -1064,6 +1160,9 @@ class EvidenceAcrossSeatsTests(AcrossSeatsFixture):
         (self.b.directory.parent / rd.EVIDENCE_NOTES).write_text(json.dumps({"title": "b's"}))
         old = self.b.repo / "work/review/APP-1/videos"
         old.mkdir(parents=True)
+        stub = rd.friction_stub_path(self.config(self.a))
+        stub.parent.mkdir(parents=True, exist_ok=True)
+        stub.write_text("# Friction\n\na's notes.\n")
         rd.give_delivery(self.config(self.a), KEY, self.a.directory, self.second, 1.0)
         self.a.push()
         self.b.take()
@@ -1071,17 +1170,38 @@ class EvidenceAcrossSeatsTests(AcrossSeatsFixture):
         self.assertFalse((self.b.directory.parent / rd.EVIDENCE_PAGE).exists())
         self.assertFalse(old.exists())
         self.assertEqual(json.loads((self.b.directory.parent / rd.EVIDENCE_NOTES).read_text())["title"], "a's")
+        self.assertEqual(rd.friction_stub_path(self.config(self.b)).read_text(), "# Friction\n\na's notes.\n")
 
     def test_bs_deferrals_are_journalled_once_and_the_holders_follow_ups_read_them(self) -> None:
         self.merged("APP-1", "lane-1")
         self.exchange(self.a, self.b)
         finding = {"story": "APP-1", "finding": "f-1", "title": "Later"}
+        cleaned = []
         for _ in range(2):
-            with self.on(self.b), mock.patch.object(rd, "deferred_findings", return_value=[finding]):
-                rd.journal_deferrals(self.config(self.b), {"state": self.b.state(), "journal": self.b.journal()},
-                                     "APP-1")
+            # b's cleanup journals the deferral before the checkout goes, once however many passes run.
+            with self.on(self.b), mock.patch.object(rd, "deferred_findings", return_value=[finding]), \
+                    mock.patch.object(rd, "lane_moved_off", return_value=True), \
+                    mock.patch.object(rd, "unaccepted_merge", return_value=False), \
+                    mock.patch.object(rd, "clean_story", lambda key: cleaned.append(
+                        [e["kind"] for e in self.b.journal()].count("deferral.held")) or ("removed", True, [])):
+                rd.cleanup_merged(self.config(self.b), {"state": self.b.state(), "journal": self.b.journal()})
+        self.assertEqual(cleaned, [1, 1])
         self.exchange(self.b, self.a)
         self.assertEqual(rd.held_deferrals(self.a.journal()), [finding])
+
+        @contextlib.contextmanager
+        def marked(c, followup=None):
+            yield []
+        # a's machine has no rounds of b's lane: its follow-ups come from the journal.
+        with self.on(self.a, no_deferrals=False), mock.patch.object(rd, "deferred_findings", return_value=[]), \
+                mock.patch.object(rd, "marked_decision", marked), mock.patch.object(rd, "journal_id", return_value=0), \
+                mock.patch.object(rd, "patch_from"), mock.patch.object(rd, "render_views"), \
+                mock.patch.object(rd.gaps, "gaps", return_value=[]), \
+                mock.patch.object(rd, "tracker_conf", return_value={"mode": "manual"}):
+            rd.followups_step(self.config(self.a, no_deferrals=False),
+                              {"state": self.a.state(), "journal": self.a.journal()})
+        self.assertEqual([e["data"]["followup"] for e in self.a.journal() if e["kind"] == "followup.filed"],
+                         ["APP-1-f-1"])
 
 
 class PublisherFixture(CoLeadFixture):

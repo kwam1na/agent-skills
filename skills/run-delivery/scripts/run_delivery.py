@@ -1846,6 +1846,21 @@ def closed_entry(c, tool, journal: list[dict]) -> dict | None:
     return tool.journal_origins(journal).get(kept.get("entry")) if kept.get("archive") else None
 
 
+def carry_close(c) -> str | None:
+    """On a shared record, once closed.json is written: this seat's inputs kept, so its partition carries the archived
+    close's origin, and pushed at once, since the supervisor and its sync loop stop with the close. A push that fails is
+    said; the next sync loop to run pushes it."""
+    found = shared_seat(c)
+    if found is None:
+        return None
+    inputs_step(c)
+    try:
+        found[0]._collab().push(Path(c.state), remote=c.remote)
+    except (found[0].StateError, OSError, subprocess.SubprocessError) as error:
+        return f"the archived close isn't pushed yet ({error}); the sync loop pushes it when it next runs"
+    return "pushed the archived close to the peers"
+
+
 def closed_by_holder(c) -> bool:
     """On a shared record, whether the delivery holder's machine archived the close that closes the delivery now: its
     partition carries that close's origin. A close in progress, or one reopened before its archive, isn't."""
@@ -4471,13 +4486,20 @@ def app_video(args) -> None:
     print(f"recorded {key} {args.name}: before {before_built['head'][:10]} | after {head[:10]} -> {out}")
 
 
+def lane_review_folders(key: str) -> list[Path]:
+    """Every folder a story's review rounds may be in, on any record: its checkout's, the copy kept after cleanup, the
+    lead's."""
+    c = cfg()
+    return [c.lane_checkout(key) / c.work / "review" / key, evidence_dir(key), repo() / c.work / "review" / key]
+
+
 def story_folders(key: str) -> list[Path]:
     """Where a story's lane evidence lives: its checkout's review folder, the copy kept after cleanup, the lead's. On a
     shared record only the delivery holder's merged-base folder counts: a lane's clips never do (D22)."""
     c = cfg()
     if shared_seat(c) is not None:
         return [repo() / c.work / "review" / key]
-    return [c.lane_checkout(key) / c.work / "review" / key, evidence_dir(key), repo() / c.work / "review" / key]
+    return lane_review_folders(key)
 
 
 def carried_check(key: str, mode: str) -> dict | None:
@@ -5005,6 +5027,29 @@ def handoff_and_post(c, key: str, lane: str, head: str, pr: str, rounds: int, po
     return f"Tracker post: posted the hand-off update on {key}."
 
 
+def last_assignment(journal: list[dict], key: str) -> dict | None:
+    return next((e for e in reversed(journal) if e["kind"] == "lane.assigned" and e.get("subject") == key), None)
+
+
+def recorded_starts(c, key: str, journal: list[dict]) -> list[dict]:
+    """The starts recorded since the story's last assignment. On a shared record a start names the assignment it
+    follows, by its journal id, so no clocks are compared."""
+    assigned = last_assignment(journal, key)
+    since = assigned["at"] if assigned else None
+    shared = bool(assigned and assigned.get("origin"))
+    return [s for s in tracker_publisher.read_flow(c.flow_log, c.delivery, tracker_publisher.LANE_STARTS)
+            if s.get("subject") == key and (s.get("assigned") == assigned["id"] if shared
+                                            else since is None or s.get("at", "") >= since)]
+
+
+def record_start(c, key: str, lane: str, journal: list[dict]) -> dict:
+    """The story's start, naming on a shared record the assignment it follows."""
+    assigned = last_assignment(journal, key)
+    return tracker_publisher.record_lane_start(c.flow_log, c.delivery, key, lane,
+                                               assigned["id"] if assigned and assigned.get("origin") else None,
+                                               carried_stamp(c, tracker_publisher.LANE_STARTS, key))
+
+
 def lane_start(args) -> None:
     """Begin a story: its checkout from the base, the prepare step, the lane's focus, and the story's start in the flow
     log, which the tracker publisher's start move and update wait for. Run again, it changes nothing."""
@@ -5049,14 +5094,7 @@ def lane_start(args) -> None:
             run(argv, cwd=path)
         prepared.write_text(now() + "\n")
         did.append("prepared it")
-    journal = load_state()["journal"]
-    assigned = [e for e in journal if e["kind"] == "lane.assigned" and e.get("subject") == key]
-    since = assigned[-1]["at"] if assigned else None
-    shared = bool(assigned and assigned[-1].get("origin"))
-    # On a shared record a start names the assignment it follows, by its journal id: no clocks are compared.
-    starts = [s for s in tracker_publisher.read_flow(c.flow_log, c.delivery, tracker_publisher.LANE_STARTS)
-              if s.get("subject") == key and (s.get("assigned") == assigned[-1]["id"] if shared
-                                              else since is None or s.get("at", "") >= since)]
+    starts = recorded_starts(c, key, load_state()["journal"])
     # On every run, so a start recorded without its stage move gets it on the next one; a story past planned is left as
     # it is. It comes first, so the stage is moved before the start is recorded.
     if mark_building(c, key, lane):
@@ -5067,9 +5105,7 @@ def lane_start(args) -> None:
         # The focus is set only with the start, so running it again never resets what the lane has said since.
         state_tool("focus", "--lane", lane, "--text", f"{key}: started", "--state", "working", "--waiting-on", "")
         did.append(f"set {lane}'s focus")
-        tracker_publisher.record_lane_start(c.flow_log, c.delivery, key, lane,
-                                            assigned[-1]["id"] if shared else None,
-                                            carried_stamp(c, tracker_publisher.LANE_STARTS, key))
+        record_start(c, key, lane, load_state()["journal"])
         did.append("recorded the start")
         conf = tracker_conf(c)
         # Made by hand, with the lane's own tracker tools: the publisher makes it in publisher mode.
@@ -10906,7 +10942,7 @@ def pr_review_acceptance(conf: dict, url: str, head: str, recorded: dict,
 
 def print_evidence_notes(key: str, n: int) -> None:
     """Under noDeferrals, the story's round n's evidence notes, each with its lens, in plain text for the lead."""
-    path = next((folder / f"round-{n}.json" for folder in story_folders(key) if (folder / f"round-{n}.json").is_file()),
+    path = next((folder / f"round-{n}.json" for folder in lane_review_folders(key) if (folder / f"round-{n}.json").is_file()),
                 None)
     if path is None:
         print(f"round {n}'s evidence notes: its round file isn't in the story's review folders, so they can't be read")
@@ -11475,6 +11511,10 @@ def lead_cleanup(args) -> None:
             print(f"{key}: waits for the lead's decision on its merge")
             failed |= bool(args.keys)
             continue
+        if item and item["stage"] == "merged":
+            # As the supervisor's cleanup does: a shared record's deferrals are journalled before the checkout goes.
+            for line in journal_deferrals(c, doc, key):
+                print(line)
         status, done, left = clean_story(key)
         if status == "nothing":
             print(f"{key}: nothing to clean")
@@ -11703,6 +11743,9 @@ def lead_close(args) -> None:
     lead_file(c, "closed.json").write_text(json.dumps({"archive": str(archive), "said": archived, "by": "lead-close",
                                                        "at": now(), "entry": closed["id"], **closed_full_health(c)},
                                                       indent=2) + "\n")
+    said = carry_close(c)
+    if said:
+        done.append(said)
     render("rendered the views again, with the close marked finished")
     view = recorded_live(c.state).get("pid")
     for pid, command in delivery_processes(lead, c.state, c.delivery, c.main):
@@ -14265,7 +14308,7 @@ def post_merge_step(c, wait: bool = False) -> str:
         return "fullHealth: the binding declares none"
     doc = load_state()
     if not any(e["kind"] == "candidate.merged" for e in doc["journal"]) and not (
-            shared_seat(c) is not None and doc["state"]["finish"]
+            shared_seat(c) is not None
             and all(any(e["kind"] == "finish.met" and e.get("data", {}).get("finish") == line["id"] for e in doc["journal"])
                     for line in doc["state"]["finish"])):
         # On a shared record the close's result comes from here, the queue holder's machine, so a delivery that
@@ -15597,6 +15640,8 @@ class Supervisor:
                     c, [item["text"] for item in needs if not item["holding"]], gaps.gaps(fresh["journal"], REOPENING)))
             if not holds:
                 entry["closeOut"], closed = close_out(c, self.flapping(), self.once)
+                if closed:
+                    entry["carried"] = carry_close(c)
                 render_views(c)
         except Planning:
             entry["close"] = "planning: nothing to close"
