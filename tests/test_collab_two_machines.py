@@ -21,7 +21,8 @@ from pathlib import Path
 from tests.collab_remotes import assert_fast_forwards_only
 from tests.quiet_git import quieten
 from tests.test_planning_record import B_SECTION, KEY, PlanningRecordCase, journal, record
-from tests.test_run_delivery import POSIX_ONLY, commit, sh
+from tests.test_run_delivery import POSIX_ONLY, commit, plan_delivery, sh, write_results
+from tests.test_run_delivery_supervisor import hand_off, supervised
 from tests.test_run_delivery_plan_review import OC, results, slug_store
 
 RUN_QUIETLY = True  # two supervisors, each with its live view and sync loop, and real git throughout
@@ -73,7 +74,13 @@ class TwoMachinesTests(PlanningRecordCase):
         plan = fx.main / "docs/plan.md"
         plan.write_text(plan.read_text() + "\nIt comes after COLLAB-1.\n")
         commit(fx.main, "the plan names a placeholder key")
-        self.delivered(fx)
+        # The fixture delivery with a binding whose queue merges for real, its record left the planning record's.
+        path = plan_delivery(fx, supervised(fx))
+        d = json.loads(path.read_text())
+        del d["stateDirectory"]
+        path.write_text(json.dumps(d, indent=2))
+        commit(fx.main, "FX-1: the record stays the planning record")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
         sh("git", "switch", "-q", "-c", "lead/FX-1", cwd=fx.main)
         sh("git", "push", "-q", "-u", "origin", "lead/FX-1", cwd=fx.main)
         self.env = {**fx.env, "RUN_DELIVERY_SUPERVISOR": "on"}
@@ -205,9 +212,79 @@ class TwoMachinesTests(PlanningRecordCase):
         # lead-init writes the delivery's seed over the record in place; b's record shows it, as a delivery.
         self.converged("after lead-init")
         self.assertEqual(record(self.b)["meta"]["phase"], "delivery")
+        # The two lanes split between the seats: a, holding delivery, assigns both and passes lane-2 to b.
+        for key, lane in (("FX-2", "lane-1"), ("FX-3", "lane-2")):
+            self.run_at(fx.main, "lead-assign", key, "--lane", lane, "--title", lane)
+        self.run_at(fx.main, "collab", "give", "--scope", "lane:lane-2", "--to", seat_b)
+        self.reaches(self.b, "scope.transferred", "lane-2 reaches b", scope="lane:lane-2")
+        self.converged("after the lanes split")
+        # b's lane works in b's clone, and b, holding its lane, accepts its hand-off; a's queue merges it.
+        self.lane_on(b_repo, "FX-3", "lane-2")
+        self.run_at(b_repo, "lead-accept", "FX-3")
+        self.assertEqual(self.merged("FX-3"), seat_a, "a's queue merges b's candidate")
+        self.converged("after a's queue merged b's candidate")
+        # The queue moves to b, whose supervisor starts serving it; a's lane hands off, a accepts, and b's queue merges.
+        self.run_at(fx.main, "collab", "give", "--scope", "queue", "--to", seat_b, "--wait", "60")
+        self.reaches(self.b, "scope.transferred", "the queue reaches b", scope="queue")
+        hand_off(fx, "FX-2", "lane-1", assign=False)
+        self.run_at(fx.main, "lead-accept", "FX-2")
+        self.assertEqual(self.merged("FX-2"), seat_b, "b's queue merges a's candidate")
+        self.converged("after b's queue merged a's candidate")
+        # delivery moves to b, then every scope comes back to a.
+        self.run_at(fx.main, "collab", "give", "--scope", "delivery", "--to", seat_b, "--wait", "60")
+        self.reaches(self.b, "scope.transferred", "delivery reaches b", scope="delivery")
+        self.converged("after delivery moved to b")
+        for scope in ("delivery", "queue", "lane:lane-2"):
+            self.run_at(b_repo, "collab", "give", "--scope", scope, "--to", seat_a, "--wait", "60")
+            self.reaches(self.a, "scope.transferred", f"{scope} comes back to a", scope=scope, to=seat_a)
+        self.converged("after the hand-back")
         # The plan's branch and both seats' chains only ever moved forward on the remote.
         for ref in ("refs/heads/lead/FX-1", f"refs/agent-skills/{KEY}/{seat_a}", f"refs/agent-skills/{KEY}/{seat_b}"):
             assert_fast_forwards_only(fx.origin, ref)
+
+    def merged(self, key: str) -> str:
+        """`key`'s candidate merges on the base and its merge reaches both machines, within the queue's own time: the
+        seat whose queue merged it."""
+        deadline = time.monotonic() + 120
+        while True:
+            found = [[entry for entry in journal(folder) if entry["kind"] == "candidate.merged" and entry.get("subject") == key]
+                     for folder in (self.a, self.b)]
+            if all(found):
+                self.assertEqual(found[0][0]["origin"], found[1][0]["origin"])
+                return found[0][0]["origin"]["seat"]
+            if time.monotonic() >= deadline:
+                self.fail(f"{key} didn't merge and reach both machines within 120s")
+            time.sleep(0.5)
+
+    def lane_on(self, root: Path, key: str, lane: str) -> Path:
+        """A lane's whole flow for `key` in the clone at `root`: its checkout, its change, its gate, one approved
+        review round, its draft pull request and its hand-off, as the fixture's lanes run it on the first clone."""
+        fx = self.fx
+        sh("git", "fetch", "-q", "origin", cwd=root)
+        wt = root / "lanes" / key
+        sh("git", "worktree", "add", "-q", "--no-track", "-b", f"feature/{key}", wt, "origin/feature/FX-1", cwd=root)
+        name = {"lane-1": "one", "lane-2": "two"}[lane]
+        (wt / f"src/{name}.txt").write_text(f"{name}\n")
+        commit(wt, f"{key}: {name}")
+        review = wt / ".orchestration/review" / key
+        review.mkdir(parents=True, exist_ok=True)
+        (review / "context.md").write_text("- fixture evidence\n")
+        for argv in (("gate", key), ("review-prepare", key, "--round", "1")):
+            code, out = fx.flow(*argv, cwd=wt)
+            self.assertEqual(code, 0, out)
+        meta = json.loads((review / "round-1.meta.json").read_text())
+        write_results(review, 1, key, [entry for entry in fx.lenses(wt) if entry[0] in meta["lenses"]])
+        code, out = fx.flow("review-reduce", key, "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        sh("git", "push", "-q", "-u", "origin", f"HEAD:feature/{key}", cwd=wt)
+        body = fx.tmp / f"{key}.md"
+        body.write_text(f"{key}\n")
+        code, out = fx.flow("open-pr", key, "--title", f"{key}: {name}", "--body-file", body, cwd=wt)
+        self.assertEqual(code, 0, out)
+        url = next(u for u, pr in json.loads((fx.tmp / "forge.json").read_text()).items() if pr["source"] == f"feature/{key}")
+        code, out = fx.flow("handoff", key, "--pr", url, cwd=wt)
+        self.assertEqual(code, 0, out)
+        return wt
 
     def review(self, fx) -> str:
         """One aligned round of the plan's own review, kept beside the plan and pushed: the commit it aligned on."""
