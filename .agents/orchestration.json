@@ -2,7 +2,7 @@
   "schemaVersion": "orchestration-binding/1",
   "base": {
     "remote": "origin",
-    "ref": "integrate/shared-generated-files"
+    "ref": "main"
   },
   "bases": [
     "main",
@@ -2526,7 +2526,22 @@
       "timeoutSeconds": 180
     },
     "refreshSeconds": 180,
-    "liveHome": "line-map"
+    "liveHome": "line-map",
+    "liveRuns": {
+      "renderer": "runs",
+      "inventory": {
+        "argv": [
+          "python3",
+          "-B",
+          ".agent-skills/current",
+          "--root",
+          ".",
+          "harness",
+          "runs"
+        ],
+        "timeoutSeconds": 10
+      }
+    }
   },
   "fullHealthTimeoutSeconds": 5400,
   "reuse": {
