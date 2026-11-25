@@ -7745,14 +7745,17 @@ def check_candidate_ownership(c, key: str, base: str, head: str) -> str:
 
 def whole_file_requests(c, lane: str, paths: list[str], state: dict) -> str:
     """The lead's command that clears each whole file ``lane`` changes outside its claims before review: a grant of a
-    file no lane holds, or a move of one another lane holds alone. `lead-accept --take` is for a file narrowed out of
-    the lane's claims after it handed off, so a hand-off never needs it."""
+    file no lane holds, or a move of the pattern another lane holds it by, as lead-assign --own-co-changed names it.
+    `lead-accept --take` is for a file narrowed out of the lane's claims after it handed off, so a hand-off never
+    needs it."""
     ownership, command, requests = c.effective_ownership(state), flow_command(), []
     for path in paths:
-        owners = [owner for owner in owners_of(ownership, path) if owner != lane]
-        move = f" --from {shlex.quote(owners[0])}" if len(owners) == 1 else ""
-        requests.append(f"\n    {command} lead-own {'--move' if move else '--grant'} {shlex.quote(path)} "
-                        f"--lane {shlex.quote(lane)}{move}")
+        held = [(other, pattern) for other in owners_of(ownership, path) if other != lane
+                for pattern in ownership[other] if fnmatch.fnmatchcase(path, pattern)]
+        requests.extend(f"\n    {command} lead-own --move {shlex.quote(pattern)} --lane {shlex.quote(lane)} "
+                        f"--from {shlex.quote(other)}" for other, pattern in held)
+        if not held:
+            requests.append(f"\n    {command} lead-own --grant {shlex.quote(path)} --lane {shlex.quote(lane)}")
     return f"; the lead clears each whole file before hand-off with:{''.join(requests)}" if requests else ""
 
 

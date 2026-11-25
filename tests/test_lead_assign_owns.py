@@ -177,28 +177,39 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
 
     def test_handoff_names_the_grant_or_move_that_clears_an_out_of_lane_file_before_review(self) -> None:
         from tests.test_run_delivery_supervisor import hand_off
-        self.push_base({"lib/out12.txt": ["out\n"], "lib/other12.txt": ["other\n"]})
-        for path in ("lib/out12.txt", "lib/other12.txt"):
-            self.flow("lead-own", "--grant", path, "--lane", "lane-2")
+        base = self.push_base({"lib/out12.txt": ["out\n"], "lib/g12/other.txt": ["other\n"],
+                               "lib/span12.txt": numbered(6, "s")})
+        for pattern in ("lib/out12.txt", "lib/g12/*"):
+            self.flow("lead-own", "--grant", pattern, "--lane", "lane-2")
+        self.grant("lib/span12.txt", "lane-2", base, 1, 3)
+        self.grant("lib/span12.txt", "lane-3", base, 4, 6)
         refusals = []
 
         def narrowed(wt, url) -> None:
-            # Narrowed after review: one file no lane holds, one another lane holds.
+            # Narrowed after review: a file no lane holds, a file another lane holds by a glob, and a file lanes
+            # share by lines whose changed span no lane holds.
             self.flow("lead-own", "--revoke", "lib/out12.txt", "--lane", "lane-2")
-            self.flow("lead-own", "--move", "lib/other12.txt", "--lane", "lane-3", "--from", "lane-2")
+            self.flow("lead-own", "--move", "lib/g12/*", "--lane", "lane-3", "--from", "lane-2")
+            self.flow("lead-own", "--revoke-region", "lib/span12.txt", "--lane", "lane-2", "--base", base,
+                      "--start", "1", "--end", "3")
             refused = self.flow("handoff", "FX-12", "--pr", url, cwd=wt, ok=False)
             refusals.append(refused)
             self.assertIn("writer_not_owned: FX-12 changes files outside lane-2's", refused)
             self.assertIn("the lead clears each whole file before hand-off with:", refused)
             self.assertIn("lead-own --grant lib/out12.txt --lane lane-2\n", refused)
-            self.assertIn("lead-own --move lib/other12.txt --lane lane-2 --from lane-3", refused)
-            self.assertNotIn("--take", refused)
-            # The named commands are what clear it: the hand-off that follows succeeds.
+            # The other lane's own pattern, which lead-own --move takes, not the file's path.
+            self.assertIn("lead-own --move 'lib/g12/*' --lane lane-2 --from lane-3", refused)
+            self.assertIn("lib/span12.txt: ", refused)
+            for wrong in ("--take", "lib/g12/other.txt --lane", "--grant lib/span12.txt", "--grant 'lib/span12.txt"):
+                self.assertNotIn(wrong, refused)
+            # The named commands, and a span for the shared file, are what clear it: the hand-off that follows succeeds.
             self.flow("lead-own", "--grant", "lib/out12.txt", "--lane", "lane-2")
-            self.flow("lead-own", "--move", "lib/other12.txt", "--lane", "lane-2", "--from", "lane-3")
+            self.flow("lead-own", "--move", "lib/g12/*", "--lane", "lane-2", "--from", "lane-3")
+            self.grant("lib/span12.txt", "lane-2", base, 1, 3)
 
-        hand_off(self.fx, "FX-12", "lane-2", files={"lib/out12.txt": "out changed\n", "lib/other12.txt": "other changed\n"},
-                 before=narrowed)
+        hand_off(self.fx, "FX-12", "lane-2", before=narrowed,
+                 files={"lib/out12.txt": "out changed\n", "lib/g12/other.txt": "other changed\n",
+                        "lib/span12.txt": "".join(["s 1 changed\n", *numbered(6, "s")[1:]])})
         self.assertEqual(len(refusals), 1)
 
     def test_take_is_described_as_for_a_file_narrowed_out_after_hand_off(self) -> None:
