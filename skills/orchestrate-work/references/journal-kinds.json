@@ -104,6 +104,8 @@
         "prepare_failed",
         "runner_error",
         "unstable_regeneration",
+        "shared_output_irreproducible",
+        "shared_output_generator_failed",
         "undeclared_change",
         "unreviewed_change",
         "push_refused",

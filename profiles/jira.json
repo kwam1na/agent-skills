@@ -46,7 +46,9 @@
     "A per-machine ledger, shared by every repository on the machine, records each heavy run's claim on a capacity of slots and its measured cost; heavy commands claim and wait by default when the machine is full, an agent steps off a default with a recorded reason, and the Machine view shows who is using the machine.",
     "A Node below the runtime's minimum first on PATH gives way to an nvm Node that meets it, which the tool puts first on its own PATH for itself and every process it starts.",
     "On macOS the supervisor keeps the machine awake while it runs, and it starts again by itself on a release applied while it runs, moving the record's writer pin to it.",
-    "A lane's change to a file outside its claims is refused at review-prepare, review-reduce and handoff, naming the lead-own --grant, or --move for a file another lane holds, that clears it before review; lead-accept --take is for a file the lead narrowed out of the lane's claims after the lane handed off."
+    "A lane's change to a file outside its claims is refused at review-prepare, review-reduce and handoff, naming the lead-own --grant, or --move for a file another lane holds, that clears it before review; lead-accept --take is for a file the lead narrowed out of the lane's claims after the lane handed off.",
+    "A binding may declare regenerable.shared outputs, which a lane changes with no claim: the queue verifies a candidate's shared outputs on its own commit, in a temporary worktree, with the base binding's prepare, lead inputs, regenerators and postSync, before it merges the base in, and stops with shared_output_irreproducible or shared_output_generator_failed; a binding without shared behaves as before.",
+    "review-prepare, review-reduce, handoff and lead-accept verify a change to an output the base binding declares under regenerable.shared in place of a claim, keeping a passing result by commit and base binding, and the lead reads what is shared from the base branch's head, never its working tree."
   ],
   "expectedFiles": [
     "skills/compound-delivery-kernel/SKILL.md",

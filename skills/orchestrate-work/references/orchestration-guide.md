@@ -491,6 +491,8 @@ supervisor's.
   | `lease_withdraw_failed` | Withdraw the lease material by hand, then re-queue. Nothing was pushed. |
   | `sync_step_failed` | A lead input, regenerator or post-sync step failed or timed out. Fix the step or its input, and re-queue. |
   | `unstable_regeneration` | The regenerators keep changing files. Fix the regenerator before re-queueing. |
+  | `shared_output_irreproducible` | The candidate's shared outputs aren't what the binding's generators make of its own tree: a hand edit, a file no generator writes, or a deleted output. Return it to the lane to regenerate and commit the named paths, or revert the hand edit. |
+  | `shared_output_generator_failed` | A `prepare` command, lead input, regenerator or `postSync` step failed or timed out while verifying the candidate's shared outputs. Fix the named step, then re-queue. |
   | `undeclared_change`, `unreviewed_change` | The sync produced changes the binding does not declare, or code the lenses did not review. Return it to the lane, or declare the path in the binding. |
   | `prepare_failed`, `dirty_checkout` | A checkout could not be prepared, or was not clean after preparing or checking. Fix `prepare` or the check that writes files. |
   | `no_checks`, `profile_unknown` | The selection was empty while files changed, or a check named an unknown profile. Fix the provider, `alwaysRun`, `fallback` or `profiles`. |
@@ -1459,7 +1461,7 @@ it is not a freshness proof or permission to skip any admission check.
 | `candidate` | An argv that resolves a candidate reference to `{branch, head}` as JSON. |
 | `prepare` | An argv list run in every fresh checkout, such as installing dependencies or creating a ref the checks need from `{baseHead}`. |
 | `hooks` | `bypass` or `run`. See "Git hooks" below. |
-| `regenerable` | `{paths, regenerators, listings?}`: the generated-only paths, which may use `*` and `**` globs, the regenerator argv list, and optional `listings`, each `{path, argv}`: one regenerable file and the argv that reads a version of it on stdin and prints the outputs it lists as a JSON array of strings. See "A conflicted listed path". |
+| `regenerable` | `{paths, regenerators, listings?, shared?}`: the generated-only paths, which may use `*` and `**` globs, the regenerator argv list, optional `listings`, each `{path, argv}`: one regenerable file and the argv that reads a version of it on stdin and prints the outputs it lists as a JSON array of strings, and optional `shared`: the regenerable files or patterns any lane may change with no claim, once verified. See "A conflicted listed path" and "Shared outputs". |
 | `postSync` | Entries of `{argv, paths}`; each declares the paths it may change. |
 | `leadInputs` | Each input's `id`, `argv` and `paths`, plus an optional `lease` it needs and an optional `timeoutSeconds`. |
 | `profiles` | `{name: {environment}}`, with placeholder values. A check names one profile; an unknown profile is refused. |
@@ -1823,6 +1825,58 @@ version without the path stops the candidate with `source_conflict` too, and
 nothing is regenerated. Before merging, a lane that is not the only owner of a
 listed path it changed is checked the stricter way: its listing must match the
 merge base's, whatever the base did.
+
+### Shared outputs
+
+A file every story regenerates, such as a dependency graph built from the
+sources, makes lanes queue for its claim. When the binding's own generators
+reproduce it, declare it under `regenerable.shared`, and any lane may change it
+with no claim:
+
+```json
+"regenerable": {
+  "paths": ["gen/**"],
+  "regenerators": [["python3", "tools/graph.py"]],
+  "shared": ["gen/*.json"]
+}
+```
+
+A candidate's change to a shared output is verified in place of the claim, by
+run-delivery's `review-prepare`, `review-reduce`, `handoff` and `lead-accept`,
+and by the queue's sync before it merges the base in. In a fresh worktree of
+the candidate's exact commit, outside every checkout, the binding's `prepare`
+commands run as a queue checkout's do; each shared output the candidate changed
+goes back to its merge-base bytes, or is removed where the merge base has none;
+and one regeneration pass runs. A lane's commands run the lead inputs that name
+no lease, and the queue and `lead-accept` the queue item's, then the
+regenerators, then `postSync`. Each changed output must then hold the
+candidate's bytes, or be absent where the candidate deleted it. A lane's
+commands keep a passing verification by its commit and the base binding's
+`regenerable`, `prepare`, `leadInputs` and `postSync`, so the next command at
+the same head reuses it, and a change to the base binding runs it again.
+`lead-accept` verifies again when the branch has moved off the head the
+hand-off verified. The worktree goes on every outcome. After the merge, the
+queue regenerates the outputs as it always did.
+
+- An output the generators don't reproduce, a hand-written file `shared`
+  matches but no generator writes, and a deleted output the generators write
+  again each stop with `shared_output_irreproducible`, naming the path.
+- A `prepare` command, lead input, regenerator or `postSync` step that exits
+  non-zero, or runs past its timeout, stops with
+  `shared_output_generator_failed`, naming its argv, its exit status and the
+  end of its error output.
+
+The binding that decides what is shared is always the base's: the queue reads
+it from the base head, a lane from the base on the remote, and the lead from
+the base branch's head, never a working tree. A candidate that declares an
+output shared in its own binding gains nothing by it, and the binding file
+stays an owned file. `binding_errors` refuses a `shared` pattern that matches no
+regenerable path or any path outside `regenerable.paths`, the binding file, or
+a file a regenerator's argv names, and refuses `shared` without regenerators or
+beside a lead input that names a lease. A listing stays a shared output as
+before, and its membership guard still holds: adding or removing an output a
+listing names needs the listing's lone owner, whether or not it is also
+declared shared. A binding without `shared` behaves as it did.
 
 ### What sync proves
 
