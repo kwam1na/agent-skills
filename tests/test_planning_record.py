@@ -231,6 +231,8 @@ class PlanningSupervisorTests(PlanningRecordCase):
         steps = set(passes[0]) - {"pass", "startedAt", "finishedAt", "at", "delivery", "laneWords", "needsYou"}
         self.assertEqual(steps, {"needs", "render", "latest", "close"}, passes[0])
         self.assertEqual(passes[0]["close"], "planning: nothing to close")
+        # A planning record has no close, so it owes no compound-learning decision.
+        self.assertEqual([item["kind"] for item in passes[0]["needsYou"] if item.get("kind") == "compounding"], [])
 
 
 class AdoptionTests(PlanningRecordCase):
@@ -302,6 +304,23 @@ class AdoptionTests(PlanningRecordCase):
         self.assertEqual(code, 2, out)
         self.assertIn("already holds a record", out)
         self.assertEqual(files(folder), kept)
+        # Adopted, the plan is the delivery's: plan-view no longer builds the planning record's preview over it, and
+        # neither an endorsement nor a synced edit does.
+        code, out = self.flow(fx, "plan-view", "--plan", "docs/plan.md")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("planning record", out)
+        self.assertEqual(files(folder), kept)
+        code, out = self.flow(fx, "lead-plan", "endorse", "--plan", "docs/plan.md")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("plan view:", out)
+        sh("git", "switch", "-q", "-c", "lead/FX-1", cwd=fx.main)
+        sh("git", "push", "-q", "-u", "origin", "lead/FX-1", cwd=fx.main)
+        plan = fx.main / "docs/plan.md"
+        plan.write_text(plan.read_text().replace("- Scenarios: it renders.", "- Scenarios: it renders, adopted."))
+        code, out = self.flow(fx, "plan-sync", "--plan", "docs/plan.md", "--message", "an edit after adoption")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("plan view:", out)
+        self.assertEqual(files(folder).get("plan.json"), kept.get("plan.json"))
 
 
 
@@ -519,6 +538,27 @@ class JointApprovalTests(unittest.TestCase):
         self.assertIsNone(self.refused())
         self.assertEqual(self.refused(aligned=None), "plan.not_aligned")
 
+    def test_the_plan_view_reads_endorsed_once_every_admitted_approver_s_latest_names_the_commit(self) -> None:
+        approval = lambda: plan_sync.preview_approval(self.entries, self.seats, Y)
+        self.assertEqual(approval(), "agents-only")
+        self.endorse((A, Y))
+        self.assertEqual(approval(), "agents-only", "one approver of two")
+        # A seat's latest endorsement is the one that counts: Ben's first, of X, is stale until Ben endorses Y.
+        self.endorse((B, X))
+        self.assertEqual(approval(), "agents-only")
+        self.assertEqual(plan_sync.latest_endorsements(self.entries, self.seats),
+                         [{"seat": A, "label": "Ann", "commit": Y}, {"seat": B, "label": "Ben", "commit": X}])
+        self.endorse((B, Y))
+        # Cy writes but doesn't approve, and Di isn't admitted: neither holds it up.
+        self.assertEqual(approval(), "endorsed")
+        self.assertEqual(plan_sync.latest_endorsements(self.entries, self.seats),
+                         [{"seat": A, "label": "Ann", "commit": Y}, {"seat": B, "label": "Ben", "commit": Y}])
+        # Ann endorsing an older commit again takes Ann's endorsement back to it.
+        self.endorse((A, X))
+        self.assertEqual(approval(), "agents-only")
+        # A record with no approver seat at all is never endorsed.
+        self.assertEqual(plan_sync.preview_approval(self.entries, {C: self.seats[C]}, Y), "agents-only")
+
     def test_an_unrecorded_text_edit_at_the_endorsed_commit_is_not_aligned(self) -> None:
         self.rekey()
         self.endorse((A, Z), (B, Z))
@@ -540,6 +580,105 @@ class JointApprovalTests(unittest.TestCase):
         self.add(B, "feedback.raised", {"anchor": "## Stories", "text": "Not yet.", "blocking": True})
         self.assertEqual(self.refused(current=Z), "plan.not_aligned")
         self.assertEqual(self.refused(current=Y), "plan.endorsement_stale")
+
+
+PREVIEW_PROBE = ("import sys\nfrom pathlib import Path\nsys.path.insert(0, sys.argv[1])\nimport run_delivery as flow\n"
+                 "c = flow.CFG = flow.preview_config(sys.argv[2])\nprint(flow.rebuild_preview(c, c.preview_plan)[0])\n")
+
+
+class PlanViewTests(PlanningRecordCase):
+    """One plan view: the plan's preview until plan-open, then the planning record's plan.json, built by the same
+    builder with the record's endorsements, and rebuilt by plan-sync, plan-view and the plan-review commands."""
+
+    def plan_json(self, folder: Path) -> dict:
+        return json.loads((folder / "plan.json").read_text())
+
+    def edit(self, fx, old: str, new: str) -> str:
+        """An edit to the plan, synced: the commit it landed as."""
+        path = fx.main / "docs/plan.md"
+        path.write_text(path.read_text().replace(old, new))
+        code, out = self.flow(fx, "plan-sync", "--plan", "docs/plan.md", "--message", f"the plan: {new}")
+        self.assertEqual(code, 0, out)
+        self.synced = out
+        return sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip()
+
+    def test_plan_sync_leaves_a_preview_handed_to_a_delivery_alone(self) -> None:
+        fx = self.fixture()
+        sh("git", "switch", "-q", "-c", "plan/fixture-plan", cwd=fx.main)
+        sh("git", "push", "-q", "-u", "origin", "plan/fixture-plan", cwd=fx.main)
+        done = sh(sys.executable, "-B", "-c", PREVIEW_PROBE, fx.tool.parent, "docs/plan.md", cwd=fx.main, env=fx.env)
+        preview = Path(done.stdout.strip().splitlines()[-1])
+        # Handed, as a delivery's adoption marks it once its finish runs.
+        (preview / "handed.json").write_text(json.dumps({"delivery": "FX-9", "at": "2026-11-24T00:00:00Z",
+                                                         "finisher": 0}) + "\n")
+        kept = files(preview)
+        self.edit(fx, "- Scenarios: it renders.", "- Scenarios: it renders, after the hand-over.")
+        self.assertNotIn("plan view:", self.synced)
+        self.assertEqual(files(preview), kept)
+
+    def test_a_preview_until_plan_open_then_the_planning_record_with_its_endorsements(self) -> None:
+        fx = self.fixture()
+        sh("git", "switch", "-q", "-c", "plan/fixture-plan", cwd=fx.main)
+        sh("git", "push", "-q", "-u", "origin", "plan/fixture-plan", cwd=fx.main)
+        done = sh(sys.executable, "-B", "-c", PREVIEW_PROBE, fx.tool.parent, "docs/plan.md", cwd=fx.main, env=fx.env)
+        preview = Path(done.stdout.strip().splitlines()[-1])
+        self.assertNotIn("endorsements", self.plan_json(preview)["preview"])
+        # plan-sync landing a push rebuilds the plan's own preview while it has one.
+        head = self.edit(fx, "- Scenarios: it renders.", "- Scenarios: it renders, edited.")
+        self.assertIn("plan view: the preview: plan (", self.synced)
+        self.assertEqual(self.plan_json(preview)["preview"]["commit"], head)
+        # plan-open hands the preview to the planning record, which builds the plan from here on.
+        code, out = self.flow(fx, "plan-open", "--plan", "docs/plan.md", "--key", KEY)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"plan preview: handed to the planning record of {KEY}", out)
+        folder = Path(re.search(r"planning record of \S+ at (\S+):", out).group(1))
+        finisher = json.loads((preview / "handed.json").read_text())["finisher"]
+        deadline = time.monotonic() + 60
+        while process_runs(finisher) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        self.assertFalse(process_runs(finisher), "the handed finish ends")
+        handed = self.plan_json(preview)["preview"]
+        self.assertEqual((handed["approval"], handed["delivery"]), ("handed", KEY))
+        self.assertNotIn("endorsements", handed)
+        built = self.plan_json(folder)
+        self.assertEqual(built["preview"]["approval"], "agents-only")
+        self.assertEqual((built["preview"]["endorsements"], built["preview"]["commit"]), ([], head))
+        self.assertEqual(built["outcome"], self.plan_json(preview)["outcome"])
+        untouched = files(preview)
+        # From here every rebuild is the planning record's, and the preview's folder is left alone.
+        head = self.edit(fx, "- Scenarios: it renders, edited.", "- Scenarios: it renders, edited twice.")
+        self.assertIn(f"plan view: the planning record of {KEY}: plan (", self.synced)
+        self.assertEqual(self.plan_json(folder)["preview"]["commit"], head)
+        self.review(fx)
+        self.assertEqual([entry["round"] for entry in self.plan_json(folder)["planReview"]["rounds"]], [1])
+        self.assertEqual(files(preview), untouched)
+        # The one approver seat endorses the commit the plan stands at: the plan is endorsed, by its label.
+        head = sh("git", "rev-list", "-1", "HEAD", "--", "docs/plan.md", cwd=fx.main).stdout.strip()
+        code, out = self.flow(fx, "lead-plan", "endorse", "--plan", "docs/plan.md")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"plan view: the planning record of {KEY}: plan (preview)", out)
+        seat = state_tool.local_seat(folder, KEY)
+        label = record(folder)["meta"]["collab"]["seats"][seat]["label"]
+        endorsed = self.plan_json(folder)["preview"]
+        self.assertEqual((endorsed["approval"], endorsed["endorsements"]),
+                         ("endorsed", [{"seat": seat, "label": label, "commit": head}]))
+        # plan-view with nothing new leaves it, and prints the planning record's links.
+        before = files(folder)
+        code, out = self.flow(fx, "plan-view", "--plan", "docs/plan.md")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"plan: the planning record of {KEY}: ", out)
+        self.assertEqual(files(folder)["plan.json"], before["plan.json"])
+        # A later commit leaves that endorsement stale: shown, of the older commit, and the plan agents-only again.
+        later = self.edit(fx, "- Scenarios: it renders, edited twice.", "- Scenarios: it renders, edited again.")
+        stale = self.plan_json(folder)["preview"]
+        self.assertEqual((stale["approval"], stale["commit"], stale["endorsements"]),
+                         ("agents-only", later, [{"seat": seat, "label": label, "commit": head}]))
+        self.assertEqual(files(preview), untouched)
+        # The record's views read it as a planning record's; a plain preview's reader refuses its endorsements.
+        from tests.test_delivery_views_plan import views as views_common
+        self.assertEqual(views_common.read_plan(folder / "plan.json", planning=True)["preview"], stale)
+        with self.assertRaises(views_common.ConfigError):
+            views_common.read_plan(folder / "plan.json", planning=False)
 
 
 if __name__ == "__main__":

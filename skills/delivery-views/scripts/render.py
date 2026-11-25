@@ -1420,13 +1420,15 @@ def read_plan_block(state_directory: Path, document: object = None) -> dict | No
     """The page's plan block: None with no plan.json, what the record names when it says a plan is on file, one line
     naming the key path for a file that can't be trusted, or the valid plan within its share."""
     path = state_directory / "plan.json"
+    state = document.get("state") if isinstance(document, dict) else None
+    meta = state.get("meta") if isinstance(state, dict) else None
     if not path.exists() and not path.is_symlink():
-        state = document.get("state") if isinstance(document, dict) else None
-        meta = state.get("meta") if isinstance(state, dict) else None
         named = meta.get("planFile") if isinstance(meta, dict) else None
         return {"absent": named} if isinstance(named, str) and named else None
+    # Only a shared record's plan may carry endorsements: a record that isn't shared is no planning record.
+    planning = None if not isinstance(meta, dict) else bool(meta.get("collab"))
     try:
-        plan = views_common.read_plan(path)
+        plan = views_common.read_plan(path, planning=planning)
     except views_common.ConfigError as error:
         return {"unreadable": str(error).replace(str(path), "plan.json")}
     return plan_block(plan)
