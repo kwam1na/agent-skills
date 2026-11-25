@@ -4298,9 +4298,12 @@ class SupervisorTrackerTests(unittest.TestCase):
         page = fx.tmp / "record/line-map.html"
         holding = lambda drawn: sorted("base.broken" if item["source"].endswith("(base.broken)") else item["source"]
                                        for item in drawn["items"] if item["holding"])
-        # Each holds the close, and the line map the pass draws lists each, from the same list the close read.
-        drawn = wait_for(lambda: (lambda d: d if holding(d) == ["base.broken", "fullHealth", "tracker publisher"] else None)(
+        # Each holds the close, and the line map the pass draws lists each, from the same list the close read. The
+        # tracker publisher's lag, which nobody can act on, keeps its row there and stops claiming to hold up the finish.
+        lagging = lambda drawn: [item for item in drawn["items"] if item["source"] == "tracker publisher"]
+        drawn = wait_for(lambda: (lambda d: d if holding(d) == ["base.broken", "fullHealth"] and lagging(d) else None)(
             self.embedded_needs(page.read_text())), "each holding in the line map")
+        self.assertEqual([item["holding"] for item in lagging(drawn)], [False], drawn)
         self.assertTrue(drawn["running"], drawn)
         # Stale once a pass is overdue: the interval (1s here) and once more the longer of it and the pass's own time.
         moment = lambda text: datetime.datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ")
@@ -4315,12 +4318,21 @@ class SupervisorTrackerTests(unittest.TestCase):
         for item in last["needsYou"]:
             if item["holding"]:
                 self.assertIn(item["text"], last["closeHeldBy"])
+        # The supervisor's own pass still holds the close on the publisher's lag.
+        [publisher] = [item for item in last["needsYou"] if item["source"] == "tracker publisher"]
+        self.assertTrue(publisher["holding"], publisher)
+        self.assertIn(publisher["text"], last["closeHeldBy"])
         self.assertEqual(kinds(fx, "delivery.closed"), [])
-        # Clearing one removes it on a following pass; the other still holds. The rerun passes, so it repairs the base.
+        # Clearing one removes it on a following pass; the lag still holds the close, and the line map keeps its row
+        # without saying it holds up the finish. The rerun passes, so it repairs the base.
         (fx.tmp / "health").write_text("pass")
         code, out = fx.flow("lead-resolve", "full-health", "--why", "flaky", cwd=fx.main)
         self.assertEqual(code, 0, out)
-        wait_for(lambda: holding(self.embedded_needs(page.read_text())) == ["tracker publisher"], "fullHealth cleared")
+        cleared = wait_for(lambda: (lambda d: d if holding(d) == [] and lagging(d) else None)(
+            self.embedded_needs(page.read_text())), "fullHealth cleared")
+        self.assertEqual([item["holding"] for item in lagging(cleared)], [False], cleared)
+        self.assertTrue(any("tracker publisher" in item["source"] and item["text"] in passes(fx)[-1]["closeHeldBy"]
+                            for item in passes(fx)[-1]["needsYou"]), passes(fx)[-1])
         self.assertEqual(kinds(fx, "delivery.closed"), [])
         # Stopped, it says so: the list, the line map and `latest` all say it isn't running, and keep no items.
         os.kill(pid, signal.SIGTERM)
@@ -5675,6 +5687,123 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.queued(fx, "FX-3", "lane-2")
         self.serve_until_idle(fx)
         self.assertEqual(self.stage(fx, "FX-3"), "queued")
+
+    def test_a_standing_break_is_named_by_every_lead_command_and_lead_accept_names_the_repair(self) -> None:
+        """While a base.broken stands, lead-accept, its --requeue, lead-flake and the status line say the queue runs
+        nothing until a repair is named, with the commands that name one; without one their output is unchanged.
+        lead-accept --repair queues the candidate as the repair, which the queue takes first and alone; its merge
+        journals base.repaired, and the held candidate then goes through."""
+        fx = self.fixture()
+        hold = "the queue runs no candidate until a repair is named"
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("the base is broken", out)
+        # --repair with no break standing is refused, accepting nothing.
+        hand_off(fx, "FX-3", "lane-2")
+        code, out = fx.flow("lead-accept", "FX-3", "--repair", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the base isn't broken", out)
+        self.assertTrue(next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-3").get("pending"))
+        state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps(
+            {"source": "queue", "reason": "base_broken", "detail": "lint also fails on the base"}))
+        broken = kinds(fx, "base.broken")[-1]["id"]
+        said = f"the base is broken (journal entry {broken}): {hold}"
+        repair_commands = ("lead-accept KEY --repair", f"delivery_state.py --dir {fx.tmp / 'record'} repair --subject KEY")
+        code, out = fx.flow("lead-flake", "--check", "lint", "--ref", "https://tracker.test/F-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn(said, out)
+        for command in repair_commands:
+            self.assertIn(command, out)
+        state_tool(fx, "patch", "--writer", "runner", "--version", str(record(fx)["state"]["version"]), "--element",
+                   "queue[subject=FX-2]", "--set", json.dumps({"/stage": "stopped"}))
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn(said, out)
+        code, out = fx.flow("lead-hints", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn(said, out)
+        # The running form says it too: a supervisor holds its lock (this process, standing in for one).
+        lock = fx.tmp / "flow-log/FX-1.supervisor.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock, "a+") as held:
+            held.seek(0)
+            held.truncate()
+            held.write(json.dumps({"pid": os.getpid(), "address": "http://127.0.0.1:1"}))
+            held.flush()
+            fcntl.flock(held, fcntl.LOCK_EX)
+            try:
+                code, out = fx.flow("lead-hints", cwd=fx.main)
+            finally:
+                fcntl.flock(held, fcntl.LOCK_UN)
+        lock.unlink()
+        self.assertEqual(code, 0, out)
+        self.assertIn("supervisor: running", out)
+        self.assertIn(said, out)
+        # Accepting FX-3 as the repair queues it with the mark, and the status line names it.
+        code, out = fx.flow("lead-accept", "FX-3", "--repair", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("named FX-3 the repair", out)
+        self.assertIn(f"the base is broken (journal entry {broken}): the queue runs only FX-3, the named repair", out)
+        self.assertNotIn(hold, out)
+        rows = {q["subject"]: q for q in record(fx)["state"]["queue"]}
+        self.assertIn("repair", rows["FX-3"])
+        self.assertNotIn("repair", rows["FX-2"])
+        self.assertEqual((rows["FX-2"]["stage"], rows["FX-3"]["stage"]), ("queued", "queued"))
+        # With FX-3 the named repair, another --repair is refused before anything is written.
+        version = record(fx)["state"]["version"]
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", "--repair", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-3 is already the base's named repair", out)
+        self.assertEqual(record(fx)["state"]["version"], version)
+        self.serve_until_idle(fx)
+        journal = record(fx)["journal"]
+        merged = [e["subject"] for e in journal if e["kind"] == "candidate.merged"]
+        self.assertEqual(merged, ["FX-3", "FX-2"])
+        [repaired] = [e for e in journal if e["kind"] == "base.repaired"]
+        self.assertEqual(repaired["data"].get("repair"), "FX-3")
+        first_fx2 = min(e["id"] for e in journal if e["kind"] == "check.started" and e["subject"] == "FX-2")
+        fx3_merged = next(e["id"] for e in journal if e["kind"] == "candidate.merged" and e["subject"] == "FX-3")
+        self.assertGreater(first_fx2, repaired["id"])
+        self.assertGreater(repaired["id"], fx3_merged - 1)
+        # With the break repaired, a lead command's output says nothing of it.
+        code, out = fx.flow("lead-hints", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("the base is broken", out)
+        # A merged story is never named the repair, and the refusal accepts nothing.
+        state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps(
+            {"source": "queue", "reason": "base_broken", "detail": "broken again"}))
+        accepted = len(kinds(fx, "handoff.accepted"))
+        code, out = fx.flow("lead-accept", "FX-2", "--repair", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-2 is merged", out)
+        self.assertEqual(len(kinds(fx, "handoff.accepted")), accepted)
+
+    def test_a_requeue_with_repair_names_the_stopped_candidate_and_keeps_a_mark_it_already_carries(self) -> None:
+        """lead-accept --requeue KEY --repair re-queues the stopped candidate as the repair; a row that already carries
+        the mark, as a --self-repair hand-off's does, keeps it with no second write."""
+        fx = self.fixture()
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps(
+            {"source": "queue", "reason": "base_broken", "detail": "lint also fails on the base"}))
+        row = lambda: next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-2")
+        stop = lambda: state_tool(fx, "patch", "--writer", "runner", "--version", str(record(fx)["state"]["version"]),
+                                  "--element", "queue[subject=FX-2]", "--set", json.dumps({"/stage": "stopped"}))
+        stop()
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", "--repair", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("named FX-2 the repair", out)
+        self.assertEqual(row()["stage"], "queued")
+        named = row()["repair"]
+        self.assertIn("the queue runs only FX-2, the named repair", out)
+        # Stopped again with its mark, and re-queued with --repair: the mark it carries stands, unwritten.
+        stop()
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", "--repair", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("named FX-2 the repair", out)
+        self.assertEqual((row()["stage"], row()["repair"]), ("queued", named))
 
     def test_a_close_out_run_of_its_own_that_is_flaky_holds_nothing(self) -> None:
         fx = self.fixture(fullHealthRerun=FLAKY_RERUN)

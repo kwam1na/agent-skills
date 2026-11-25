@@ -10591,6 +10591,40 @@ def lead_accept(args) -> None:
 
 
 def accept_story(c, args) -> None:
+    """Accept or re-queue the story, and with --repair name it the broken base's repair in the same step: checked
+    before anything is written, so a refused --repair accepts nothing."""
+    if not getattr(args, "repair", False):
+        accept_named(c, args)
+        return
+    key = c.require(args.requeue or args.key) if (args.requeue or args.key) else None
+    if key is None:
+        raise Stop("name the story to accept, or --requeue a stopped one")
+    doc = load_state()
+    if not standing_break(doc["journal"]):
+        raise Stop("--repair names the broken base's repair, and the base isn't broken: accept without it")
+    named = [q["subject"] for q in doc["state"]["queue"] if "repair" in q and q["subject"] != key]
+    if named:
+        raise Stop(f"{named[0]} is already the base's named repair; withdraw it with the state tool's repair --withdraw "
+                   "first, or accept without --repair")
+    item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
+    if item is None or item["stage"] == "merged":
+        raise Stop(f"--repair names a candidate the queue takes; {key} is "
+                   f"{'merged' if item else 'not in the queue (a no-change hand-off is never queued)'}")
+    accept_named(c, args)
+    item = next((q for q in load_state()["state"]["queue"] if q["subject"] == key), None) or {}
+    if "repair" not in item:
+        if item.get("stage") != "queued" or item.get("pending"):
+            raise Stop(f"{key} was accepted, but it is {item.get('stage', 'not in the queue')}, not queued, so it isn't "
+                       f"named the repair; name it once it is queued: {state_command()} repair --subject {key}")
+        done = state_tool("repair", "--subject", key, check=False)
+        if done.returncode != 0:
+            answer = json.loads(done.stdout) if done.stdout.strip().startswith("{") else {}
+            raise Stop(f"{key} was accepted, but the state tool refused to name it the repair: "
+                       f"{answer.get('error') or (done.stderr or done.stdout).strip()[-400:]}")
+    print(f"named {key} the repair: the queue takes it first and alone, and its merge journals base.repaired")
+
+
+def accept_named(c, args) -> None:
     if args.requeue:
         requeue(c, c.require(args.requeue))
         return
@@ -11664,6 +11698,41 @@ def on_fallback(c) -> str:
                             "checks" for subject, checks in named)
 
 
+def state_command() -> str:
+    """The state tool's command line as messages name it, beside flow_command's, with this delivery's record."""
+    c = CFG
+    tool = (Path(c.release_override) if c is not None and c.release_override else Path(TOOL_PATH).parents[3]) / STATE_TOOL
+    return f"python3 -B {tool} --dir {cfg().state}"
+
+
+def standing_break(journal: list[dict]) -> dict | None:
+    """The base.broken that stands, the last word on the base as the queue reads it, or None."""
+    last = next((entry for entry in reversed(journal) if entry.get("kind") in ("base.broken", "base.repaired")), None)
+    return last if last is not None and last["kind"] == "base.broken" else None
+
+
+def break_hold(c) -> str:
+    """While a base.broken stands, what every lead command says of it: the queue runs nothing until a repair is named,
+    with the commands that name one, or only the repair named. Empty when none stands."""
+    release = getattr(c, "release", None)  # a status line built for a bare record, with no release, says nothing of it
+    if release is None:
+        return ""
+    try:
+        doc = shown_record(release, c.state)
+    except (Stop, ValueError, OSError):
+        return ""
+    broken = standing_break(doc.get("journal") or [])
+    if broken is None:
+        return ""
+    named = [q["subject"] for q in (doc.get("state") or {}).get("queue") or [] if isinstance(q, dict) and "repair" in q]
+    if named:
+        return (f"; the base is broken (journal entry {broken['id']}): the queue runs only {named[0]}, the named repair, "
+                "until it lands and journals base.repaired")
+    return (f"; the base is broken (journal entry {broken['id']}): the queue runs no candidate until a repair is named. "
+            f"Name one: {flow_command()} lead-accept KEY --repair, or for a candidate already queued, {state_command()} "
+            "repair --subject KEY")
+
+
 def supervisor_line(c) -> str | None:
     """What every lead command repeats: the supervisor's state, the live view's address, any candidate checking on the
     fallback, and what the close waits on, or how to restart it."""
@@ -11672,14 +11741,14 @@ def supervisor_line(c) -> str | None:
     held, recorded = read_lock(supervisor_lock_path(c))
     if held:
         return (f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
-                + live_fallback(c.state) + on_fallback(c) + listener_words(c) + waits_on(c))
+                + live_fallback(c.state) + on_fallback(c) + break_hold(c) + listener_words(c) + waits_on(c))
     said = closed_status(c)
     if said is not None:
         return "supervisor: " + said
     serving = view_serving(c.state)
     address = f"; live view {live_address(serving['port'])}" if serving else ""
     return (f"supervisor: down ({supervisor_down_words(c.state)}){address}; restart it with {flow_command()} "
-            "lead-run --resume" + listener_words(c) + waits_on(c))
+            "lead-run --resume" + break_hold(c) + listener_words(c) + waits_on(c))
 
 
 def live_fallback(state: Path) -> str:
@@ -17276,6 +17345,9 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=lead_assign)
     p = command(sub, "lead-accept"); p.add_argument("key", nargs="?"); p.add_argument("--accept-blocked", action="append")
     p.add_argument("--requeue", metavar="KEY", help="re-queue a stopped candidate you resolved, with no new hand-off")
+    p.add_argument("--repair", action="store_true",
+                   help="while the base is broken, name the candidate this accepts or re-queues the base's repair, "
+                        "which the queue takes first and alone")
     p.add_argument("--accept-restarts", action="store_true")
     p.add_argument("--accept-discarded", action="append", type=int, metavar="ROUND")
     p.add_argument("--checks", help="under selection.lead: the candidate's checks, by catalogue id, comma-separated, "
