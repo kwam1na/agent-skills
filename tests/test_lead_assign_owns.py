@@ -20,7 +20,7 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.fx, cls.delivery = command_fixture(cls, {"FX-5": "lane-1", "FX-6": "lane-1", "FX-7": "lane-2", "FX-8": "lane-3",
                                                      "FX-9": "lane-2", "FX-10": "lane-1", "FX-11": "lane-3",
-                                                     "FX-12": "lane-2"})
+                                                     "FX-12": "lane-2", "FX-13": "lane-1", "FX-14": "lane-1"})
 
     def names(self, key: str, path: str) -> None:
         """The story's plan section names ``path``, so lead-assign reads it as one of the story's files."""
@@ -45,6 +45,12 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
         binding_path.write_text(json.dumps(binding, indent=2))
         commit(self.fx.main, f"FX-1: {path} is a shared output")
         self.git("push", "-q", "origin", "HEAD:feature/FX-1")
+
+    def record_bytes(self) -> dict[str, bytes]:
+        """Every file of the delivery record, by its path in the record's folder."""
+        folder = self.fx.tmp / "record"
+        return {path.relative_to(folder).as_posix(): path.read_bytes() for path in sorted(folder.rglob("*"))
+                if path.is_file()}
 
     def git(self, *argv: str) -> str:
         from tests.test_run_delivery import sh
@@ -130,6 +136,38 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
         self.assertEqual((self.record()["state"]["laneOwnership"], self.record()["state"]["planned"],
                           len(self.record()["journal"])), (state["laneOwnership"], state["planned"], length))
 
+    def test_own_co_changed_with_nothing_outside_the_lane_commits_nothing_and_claims_nothing(self) -> None:
+        # FX-13 names a file lane-1 holds, and that file changes only with another lane-1 file.
+        for path in ("lib/c13.txt", "lib/p13.txt"):
+            self.flow("lead-own", "--grant", path, "--lane", "lane-1")
+        self.names("FX-13", "lib/c13.txt")
+        self.co_change("lib/c13.txt", "lib/p13.txt")
+        before, since = self.git("rev-parse", "HEAD"), self.last_id()
+        state, delivery = self.record()["state"], self.delivery.read_bytes()
+        out = self.flow("lead-assign", "FX-13", "--lane", "lane-1", "--title", "lane-1", "--own-co-changed")
+        for said in ("Files outside", "committed the delivery file", "isn't added", "Move each to"):
+            self.assertNotIn(said, out)
+        self.assertEqual(self.git("rev-parse", "HEAD"), before)
+        self.assertEqual(self.git("status", "--porcelain"), "")
+        self.assertEqual(self.delivery.read_bytes(), delivery)
+        after = self.record()["state"]
+        for member in ("laneOwnership", "laneRegions"):
+            with self.subTest(member=member):
+                self.assertEqual(json.dumps(after.get(member), sort_keys=True), json.dumps(state.get(member), sort_keys=True))
+        # The assignment is all it writes: its own entries, and no ownership change.
+        self.assertEqual({entry["kind"] for entry in self.record()["journal"] if entry["id"] > since}, {"lane.assigned"})
+
+    def test_with_the_flag_a_warning_of_named_files_alone_ends_on_its_named_line(self) -> None:
+        self.names("FX-14", "lib/c14.txt")
+        before, since = self.git("rev-parse", "HEAD"), self.last_id()
+        out = self.flow("lead-assign", "FX-14", "--lane", "lane-1", "--title", "lane-1", "--own-co-changed")
+        warning = out[out.index("Files outside lane-1's owns"):out.index("Assignment message for")]
+        self.assertEqual(warning, "Files outside lane-1's owns, before it starts (lead-accept refuses a change to any of "
+                                  "them):\n  FX-14 names lib/c14.txt (no lane's)\n\n")
+        self.assertEqual(self.git("rev-parse", "HEAD"), before)
+        self.assertEqual(self.entries("ownership.granted", since), [])
+        self.assertNotIn("lib/c14.txt", self.record()["state"]["laneOwnership"]["lane-1"])
+
     def test_take_accepts_a_pin_outside_the_lane_with_its_reason_and_refuses_what_it_can_t_take(self) -> None:
         from tests.test_run_delivery import commit, sh
         from tests.test_run_delivery_supervisor import hand_off
@@ -174,6 +212,17 @@ class AssignAcceptOwnsTests(CommandCase, unittest.TestCase):
         self.assertIn("lib/pin1.txt, lib/pin2.txt", decision["data"]["text"])
         self.assertEqual(decision["data"]["why"], "one-line pins the story needs in files no lane holds")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        # Once the story has merged, --take has no candidate to grant a file to: refused, writing nothing.
+        self.land("FX-9", {"lib/pin1.txt": ["one pinned\n"], "lib/pin2.txt": ["two pinned\n"]})
+        doc = self.record()
+        queue = [{key: value for key, value in {**item, "stage": "merged"}.items() if key != "pending"}
+                 if item["subject"] == "FX-9" else item for item in doc["state"]["queue"]]
+        self.state("patch", "--writer", "runner", "--version", str(doc["state"]["version"]),
+                   "--patch", json.dumps({"queue": queue}))
+        written = self.record_bytes()
+        refused = self.flow("lead-accept", "FX-9", "--take", "lib/pin1.txt", "--why", "a pin", ok=False)
+        self.assertIn("FX-9 has merged: --take grants a file to a candidate waiting for acceptance", refused)
+        self.assertEqual(self.record_bytes(), written)
 
     def test_handoff_names_the_grant_or_move_that_clears_an_out_of_lane_file_before_review(self) -> None:
         from tests.test_run_delivery_supervisor import hand_off
