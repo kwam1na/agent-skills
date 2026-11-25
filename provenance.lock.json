@@ -518,11 +518,11 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "dd8e16894d3b1366cd9c07ca857c354f3e689e5fe57a3eb295d9d9db9a5d4b80"
+          "sha256": "cbd95ca9a1dfab8f711d03fec21cf73394e120042b75315abf740cf16dcf3fa6"
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
-          "sha256": "a4451fe1695b1f6e420fde96eaf72c52b280482143fddf794a8b032ae93862b9"
+          "sha256": "3f1b5991a2a9c75adc69ed29063cc6e6dd397b17e44cc04fae1f60b10a58cd99"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",

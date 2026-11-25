@@ -1023,7 +1023,7 @@ an unshared record every step runs, as before. run-delivery's
 
 | Step | Runs on |
 | --- | --- |
-| `reconcile`, `regions`, `peers`, `grants`, `planView`, `finish`, `publish`, `cleanupBeforeClose`, `friction`, `closeOut`, `carried` | the machine whose seat holds `delivery` |
+| `reconcile`, `regions`, `peers`, `target`, `grants`, `planView`, `finish`, `publish`, `cleanupBeforeClose`, `friction`, `closeOut`, `carried` | the machine whose seat holds `delivery` |
 | `fullHealth` | the machine whose seat holds `queue` |
 | `lenses`, `cleanup`, `deferrals` | every machine, for the stories of the lanes its seat holds, whose checkouts and review rounds are there |
 | `blockers` | every machine, journalling only blockers about its own supervisor's children |
@@ -1078,6 +1078,7 @@ replaced, by the journal.
 | `friction.md` | carried by `delivery`'s holder |
 | `full-health.lock`, `full-health.log`, `supervisor.blockers.json`, `supervisor.jsonl`, `supervisor.live.log`, `supervisor.log`, `supervisor.{name}.log`, `supervisor.stop`, `wait.json`, `lead-wait.json` | local |
 | flow log `resolutions` | carried by the resolving seat, keyed by the resolved entry's origin |
+| flow log `targets`, `target-quiet.json` | local to `delivery`'s holder, whose `target` step alone reads them; what it settles reaches peers as the record's `target.settled` entries |
 | flow logs `finish`, `peers` | replaced: by the record's `finish.met` and `peer.merged` entries, whatever their origin |
 | flow log `plan-changes`, `plan.json` | carried by `delivery`'s holder, whose built `plan.json` other seats use |
 | `hosted-identity.json`, `hosted-status.json`, `hosted-owner.json`, `hosted-retry.json`, `hosted-terminal.json` | carried by `delivery`'s holder: the identity; the owner, status, retry and terminal files are rebuilt by the publisher of the seat taking delivery |
