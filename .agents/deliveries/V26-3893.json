@@ -177,6 +177,17 @@
           "text": "c3: With no peer delivery on the target, nothing changes."
         }
       ]
+    },
+    "V26-3895": {
+      "title": "Open the delivery's live view in the host's browser pane when a delivery begins",
+      "lane": "lane-2",
+      "why": "The operator ruled on 2026-11-25 that the workflow, not the lead's memory, makes the lead open the live view at every delivery's start",
+      "criteria": [
+        {
+          "id": "v26-3895-1",
+          "text": "lead-init and lead-run --resume name the one live-view URL to open in the host's browser pane, hosted first, and the skill, guide and delivery.orient hook state the rule"
+        }
+      ]
     }
   },
   "finish": [
