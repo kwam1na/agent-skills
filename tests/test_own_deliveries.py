@@ -31,6 +31,7 @@ CATALOGUE_MODULES = (
     "plan_sync",
     "planning_record",
     "collab_join",
+    "collab_two_machines",
     "profile_inventory", "provenance", "provider_qualification", "qualification", "readme", "receipt", "region_claims", "region_grants", "registry",
     "release_archive", "release_channel", "release_entry_budget", "release_integration", "review_and_compounding",
     "review_base_reopening", "review_bound_corpus", "review_grace", "review_orchestration", "round_brief_template_corpus",

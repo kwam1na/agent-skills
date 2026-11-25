@@ -121,3 +121,12 @@ available partial output before scratch cleanup, preserving actual round bounds,
 history and reported cost. Unsupported reporting or capture failure stays
 explicit without changing the work's underlying result. The shared contract
 owns these details; discovery projections introduce no additional workflow.
+
+## Shared deliveries
+
+A shared delivery record, written by two engineers' clones and carried through
+git, adds no host projection. Seats, scopes, feedback and handovers are all
+`run_delivery.py` commands, and the watch streams that follow a peer print plain
+flushed lines, which a host's monitor reads as a terminal does. Neither host
+discovers anything new for a shared record. See
+[two engineers, one delivery](collaboration.md).

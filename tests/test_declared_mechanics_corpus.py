@@ -63,6 +63,34 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "A release rests on whoever tags",
         "It blocks neither a merge nor a release",
         "Windows, which is not validated (see above), keeps its native `taskkill /T /F` tree cleanup",
+        "A record nobody shares is unchanged. See [two engineers, one delivery](docs/collaboration.md)",
+    ),
+    # The adopter guide to a shared delivery: what a seat is and isn't, how each engineer starts, joins and follows,
+    # and what each machine needs and how each hold clears.
+    "docs/collaboration.md": (
+        "A record nobody shares behaves exactly as it always has",
+        "A seat is one writer of a shared record: in practice one clone on one machine",
+        "no environment variable sets or overrides it",
+        "**A seat is not a person.** One person on two machines holds two seats",
+        "**A label is only shown.**",
+        "**Identity is trust-based.** Anyone who can push to the base remote can write any seat's chain",
+        "Nothing else pushes or ingests a chain",
+        "Until a seat is admitted, its only write is its own request",
+        "Neither pushes or ingests",
+        "Each seat changes only the plan sections it holds, and a plan section nobody was given is the `delivery`"
+        " holder's",
+        "Only the holder of that section settles it, once",
+        "Only the `delivery` holder runs it",
+        "`lead-setup` and `lead-init` take the planning record over in place",
+        "In between, no machine serves the queue, and the line map says \"queue moving to <label>\"",
+        "so the public link is unchanged and no tracker update is posted twice",
+        "A machine that may hold `delivery` needs the repository's hosted publishing token and its tracker credentials",
+        "Nothing secret travels in a seat's chain",
+        "It is ingested once the lagging machine runs its own `lead-upgrade-writer`. No machine upgrades another",
+        "refuses every later write with `collab.seat_split`",
+        "Full health runs once a base head, on the `queue` holder's machine",
+        "Only the `delivery` holder records and publishes evidence",
+        "A peer counts the delivery closed only once that archived close reaches it",
     ),
     "docs/host-adapters.md": (
         "On Windows, which is not validated (see the README), directory links use",
@@ -217,6 +245,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " policy recompilation that consumer performs",
         "Everything under the installed generation's directory is generated"
         " release payload, outside review scope by declaration",
+        "A shared delivery record, written by two engineers' clones and carried through git, adds no host projection",
+        "Neither host discovers anything new for a shared record",
     ),
     "skills/execute-work/SKILL.md": (
         "If related test-pin updates are allowed, make the smallest correction"
