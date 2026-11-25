@@ -10890,12 +10890,14 @@ def accept_named(c, args) -> None:
         raise Stop(f"{key} has merged: --take grants a file to a candidate waiting for acceptance")
     changed, outside = ([], []) if merged else candidate_ownership(c, lane, base, head, judged)
     if not merged:
-        # Decision 11: the hand-off's shared outputs, verified again when the branch moved off the head it verified,
-        # with the queue item's lead inputs as the queue will run them.
+        # Decision 11: at the handed head, the hand-off's own verification stands, read from the lane's kept results;
+        # a branch that moved off it is verified again, with the queue item's lead inputs as the queue will run them.
         tip = remote_head(branch) or head
-        named = {entry["id"]: entry for entry in shared_binding(c).get("leadInputs") or []}
-        verify_shared(c, key, tip, [named[name] for name in item.get("leadInputs") or [] if name in named],
-                      (c.lane_checkout(key),) if tip == head else ())
+        if tip == head:
+            verify_shared(c, key, head, kept_in=(c.lane_checkout(key),))
+        else:
+            named = {entry["id"]: entry for entry in shared_binding(c).get("leadInputs") or []}
+            verify_shared(c, key, tip, [named[name] for name in item.get("leadInputs") or [] if name in named])
     if outside:
         problems.append(f"the branch changes files outside {lane}'s: {outside}")
     proposal = None

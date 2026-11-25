@@ -35,7 +35,8 @@ TOOLS = {
         "    log.write(json.dumps({'ran': 'graph', 'cwd': os.getcwd(), 'head': head}) + '\\n')\n"
         "nodes = {p.name: p.read_text() for p in sorted(pathlib.Path('src').glob('*.txt'))}\n"
         "pathlib.Path('gen').mkdir(exist_ok=True)\n"
-        "pathlib.Path('gen/graph.json').write_text(json.dumps({'nodes': nodes}))\n"),
+        "pathlib.Path('gen/graph.json').write_text(json.dumps({'nodes': nodes}))\n"
+        "pathlib.Path('gen/index.json').write_text(json.dumps(sorted(nodes)) + '\\n')\n"),
     "tools/format.py": (
         "import json, pathlib\n"
         "path = pathlib.Path('gen/graph.json')\n"
@@ -45,6 +46,11 @@ TOOLS = {
         "with open(os.environ['SHARED_LOG'], 'a') as log:\n"
         "    log.write(json.dumps({'ran': 'input', 'cwd': os.getcwd()}) + '\\n')\n"),
 }
+
+
+def index(checkout: Path) -> str:
+    """The node index the regenerator writes beside the graph, which the base doesn't hold."""
+    return json.dumps(sorted(path.name for path in (checkout / "src").glob("*.txt"))) + "\n"
 
 
 def graph(checkout: Path) -> str:
@@ -193,6 +199,7 @@ class LaneSharedOutputTests(unittest.TestCase):
             (m / f"src/{name}.txt").write_text(f"{name}\n")
         (m / "gen").mkdir(exist_ok=True)
         (m / GRAPH).write_text(graph(m))
+        (m / "gen/legacy.json").write_text("{}\n")  # a shared output no generator writes
         self.log = fx.tmp / "shared.log"
         self.log.write_text("")
         self.bind(fx, shared=shared, message="FX-1: a shared generated graph")
@@ -273,7 +280,9 @@ class LaneSharedOutputTests(unittest.TestCase):
         for key, lane, name in (("FX-2", "lane-1", "one"), ("FX-3", "lane-2", "two")):
             wt = trees[key] = self.started(fx, key, lane)
             (wt / f"src/{name}.txt").write_text(f"{name} changed\n")
-            heads[key] = self.change(fx, key, wt, {GRAPH: graph(wt)}, "its source and the graph")
+            # The index is a shared output the base doesn't hold yet: matched by pattern, it needs no claim either.
+            heads[key] = self.change(fx, key, wt, {GRAPH: graph(wt), "gen/index.json": index(wt)},
+                                     "its source, the graph and its index")
             self.reviewed(fx, key, wt, 1)
             urls[key] = self.opened(fx, key, wt)
             # review-prepare verified it once; review-reduce reused that, at the same head and base binding.
@@ -290,6 +299,16 @@ class LaneSharedOutputTests(unittest.TestCase):
             self.assertFalse(Path(entry["cwd"]).exists(), entry)
         self.assertTrue(self.runs("", "input"), "the lead input that names no lease ran in the verification")
         self.assertEqual(self.worktrees(fx), before)
+        # The lead's working tree drops `shared`, but the base declares it: the base's binding decides.
+        binding = fx.main / ".agents/orchestration.json"
+        declared = binding.read_text()
+        binding.write_text(json.dumps(self.binding(shared=False), indent=2))
+        try:
+            self.assertIn("accepted FX-2", self.flow(fx, "lead-accept", "FX-2"))
+        finally:
+            binding.write_text(declared)
+        # At the handed head, acceptance reused the lane's verification: the generators didn't run again.
+        self.assertEqual(len(self.runs(heads["FX-2"])), 1)
         # A generator that can't run stops the hand-off with its argv and exit, and leaves no worktree.
         python = sys.executable
         for settings, said in (
@@ -309,14 +328,6 @@ class LaneSharedOutputTests(unittest.TestCase):
                                    "timeoutSeconds": 60}])
         self.flow(fx, "handoff", "FX-3", "--pr", urls["FX-3"], cwd=trees["FX-3"])
         self.assertEqual(len(self.runs(heads["FX-3"])), 2)
-        # The lead's working tree drops `shared`, but the base declares it: the base's binding decides.
-        binding = fx.main / ".agents/orchestration.json"
-        declared = binding.read_text()
-        binding.write_text(json.dumps(self.binding(shared=False), indent=2))
-        try:
-            self.assertIn("accepted FX-2", self.flow(fx, "lead-accept", "FX-2"))
-        finally:
-            binding.write_text(declared)
         # A newer head with a hand edit, pushed after the hand-off: verified again, refused, and nothing accepted.
         self.change(fx, "FX-3", trees["FX-3"], {GRAPH: "{}\n"}, "a hand edit")
         sh("git", "push", "-q", "origin", "HEAD:feature/FX-3", cwd=trees["FX-3"])
@@ -365,6 +376,20 @@ class LaneSharedOutputTests(unittest.TestCase):
         own("--revoke", "lib/extra3.txt", "--lane", "lane-2")
         out = self.flow(fx, "lead-accept", "FX-3", ok=False)
         self.assertIn("the branch changes files outside lane-2's: ['lib/extra3.txt']", out)
+        # review-reduce verifies too: a hand edit prepared while the base declared nothing shared stops its reduce.
+        own("--grant", "lib/extra3.txt", "--lane", "lane-2")
+        own("--grant", GRAPH, "--lane", "lane-2")
+        self.bind(fx, shared=False)
+        self.change(fx, "FX-3", wt, {GRAPH: "{}\n"}, "a hand edit")
+        self.flow(fx, "gate", "FX-3", cwd=wt)
+        self.flow(fx, "review-prepare", "FX-3", "--round", 2, cwd=wt)
+        write_results(wt / ".orchestration/review/FX-3", 2, "FX-3", fx.lenses(wt))
+        self.bind(fx)
+        out = self.flow(fx, "review-reduce", "FX-3", "--round", 2, cwd=wt, ok=False)
+        self.assertIn(f"shared_output_irreproducible: the binding's generators, run on the candidate's own tree, don't "
+                      f"reproduce {GRAPH} (regeneration writes other bytes)", out)
+        self.assertFalse((wt / ".orchestration/review/FX-3/round-2.json").exists())
+        own("--revoke", GRAPH, "--lane", "lane-2")
         # Each irreproducible candidate, reviewed while the base declared nothing shared, stops its hand-off once it does.
         wt = self.started(fx, "FX-2", "lane-1")
         own("--grant", "gen/*", "--lane", "lane-1")
@@ -378,8 +403,9 @@ class LaneSharedOutputTests(unittest.TestCase):
         self.assertEqual(self.worktrees(fx), before)
         (wt / "src/one.txt").write_text("one changed\n")
         cases = (
-            ("a hand-written output the generator never writes", {GRAPH: graph(wt), "gen/notes.json": "{}\n"},
-             "gen/notes.json (regeneration does not write it)", None),
+            ("a hand-written output the generator never writes, and a hand edit to one the base holds",
+             {GRAPH: graph(wt), "gen/notes.json": "{}\n", "gen/legacy.json": "{\"edited\": true}\n"},
+             "gen/legacy.json (regeneration writes other bytes); gen/notes.json (regeneration does not write it)", None),
             ("a deleted output", {GRAPH: None, "gen/notes.json": None},
              f"{GRAPH} (the candidate deletes it, and regeneration writes it)", None),
             ("an output matching a source edit left uncommitted",
