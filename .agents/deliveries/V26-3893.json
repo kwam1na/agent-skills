@@ -194,7 +194,7 @@
     {
       "id": "stories",
       "label": "The stories",
-      "text": "V26-3611, V26-3703, V26-3700, V26-3701, V26-3741 and V26-3616 land on integrate/shared-generated-files through its merge queue, each with every criterion met",
+      "text": "V26-3611, V26-3703, V26-3700, V26-3701, V26-3741, V26-3895 and V26-3616 land on integrate/shared-generated-files through its merge queue, each with every criterion met",
       "covers": {
         "criteria": "all",
         "proofs": [
