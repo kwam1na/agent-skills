@@ -110,6 +110,15 @@ test("a scope's later holder passes it on, and every section nobody passed on fo
   expect(seats.querySelector(".seats-note").textContent).toBe("Every other plan section is Ben <b>B</b>'s, as the delivery's holder.");
 });
 
+test("a scope handed on once can be handed on again by its new holder", async () => {
+  // Ben holds lane-2, passed to him by Ama; passing it to Cy counts, as Ben is its holder now.
+  const again = (document) => {
+    transfer(document, BEN, { scope: "lane:lane-2", from: BEN, to: "s-cccccccccccc" });
+    return document;
+  };
+  expect(rows(await chapter("colead", "seats", again), ".scope-row").at(-1)).toBe("lane:lane-2Cyrus");
+});
+
 test("a record that stops being shared hides its Seats and Feedback chapters and their links", async () => {
   const unshared = structuredClone(readJson(path.join(CORPUS, "plan-shared", "document.json")));
   delete unshared.state.meta.collab;
