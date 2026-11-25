@@ -98,7 +98,7 @@ export function fixtures() {
       { sentence: "main moved. The lead is bringing #7 up to date.", link: ["#7", REQUEST],
         marks: marks(SUITE, REVIEW, live("Merge · updating", "lead"), todo("Landed")) }],
     ["11-closing", "Merged, closing", delivery([...throughReview, requested(70, H), rejoined(90)],
-      { followups: [{ id: "A1-F1", reference: "A1-F1" }, { id: "B2-F3", reference: "B2-F3" }, { id: "B3-F1", reference: "V26-9" }] }),
+      { followups: [{ id: "A1-F1", reference: "A1-F1" }, { id: "B2-F3", reference: "B2-F3" }, { id: "B3-F1", reference: "APP-90" }] }),
       { sentence: "#7 is in main. The delivery is closing.", link: ["#7", REQUEST], fact: "Filing 2 follow-ups.",
         marks: marks(SUITE, REVIEW, MERGE, live("Landed · closing")) }],
     ["12-closed", "Closed", delivery([...throughReview, requested(70, H), rejoined(90), [100, "delivery.closed", KEY]]),
