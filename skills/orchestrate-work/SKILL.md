@@ -1002,3 +1002,78 @@ python3 -B scripts/delivery_state.py --dir STATE scope request --scope SCOPE --r
 python3 -B scripts/delivery_state.py --dir STATE scope decline --request ID
 python3 -B scripts/delivery_state.py --dir STATE seat admit --seat SEAT [--no-approver]
 ```
+
+### Which machine runs what
+
+Every seat runs a supervisor on its own machine. It serves the live view and
+`collab.py serve`, the sync loop, which pushes this seat's partition within a
+poll of a local write and fetches and ingests its peers' every poll, so a write
+reaches a running peer's record within two polls and one push. It serves the
+queue only where its seat holds `queue`: a seat given the queue starts serving
+it on its supervisor's next pass, and one that passed it on drops its exited
+queue child, which is never restarted and is no blocker.
+
+On a shared record each pass step, and the close-out's, runs by this table; on
+an unshared record every step runs, as before. run-delivery's
+`SHARED_STEPS` holds the same rows.
+
+| Step | Runs on |
+| --- | --- |
+| `reconcile`, `regions`, `peers`, `finish`, `publish`, `cleanupBeforeClose`, `friction`, `closeOut` | the machine whose seat holds `delivery` |
+| `fullHealth` | the machine whose seat holds `queue` |
+| `lenses`, `cleanup`, `deferrals` | every machine, for the stories of the lanes its seat holds, whose checkouts and review rounds are there |
+| `blockers` | every machine, journalling only blockers about its own supervisor's children |
+| `peerWaits`, `laneChanges`, `needs`, `render`, `latest` | every machine, writing only files beside its own record |
+
+- **Lead commands.** `lead-assign`, `lead-own` and `lead-add-lane` need
+  `delivery`, which arbitrates files and lanes, and `lead-accept` needs the
+  story's lane. Elsewhere each refuses with `scope.not_held` before it writes
+  anything, naming the holder's seat and label. The assignment message names
+  the seat its lane reports to, whose session accepts its hand-offs.
+- **Handing over delivery.** `run-delivery collab give --scope delivery --to
+  SEAT [--wait SECONDS]` waits for no tracker post in flight and no hosted
+  publication pending. Then, holding the tracker ledger's lock, it stops this
+  machine's hosted publisher, keeps the hosted identity and the ledger's
+  position (`trackerThrough`, each seat's last seq the ledger covered through)
+  in this seat's partition, and journals `scope.transferred`. Busy past
+  `--wait`, it refuses with `scope.handover_busy`, naming what is busy. The
+  seat taking delivery writes them as its own before it publishes anything,
+  and resumes the hosted session with the same identity, so the public link
+  stays. Each machine that may hold delivery needs the publishing token and
+  the tracker's access in its own environment.
+- **Handing over a lane.** `collab give --scope lane:<lane>` refuses with
+  `scope.handover_busy` while the lane has a merged or settled story whose
+  checkout is still on this machine, naming it; `lead-cleanup` removes it
+  first.
+- **The publishers.** The tracker and hosted publishers run only on the
+  machine whose seat holds `delivery`, once it has taken what the seat before
+  it carried. On a shared record a tracker marker names an entry by its origin,
+  `<seat>.<seq>`, and so does each ledger line, so moving `delivery` never
+  posts an update twice.
+
+Every file a supervisor step or lead command reads that lives on one machine
+has one of three rules on a shared record: local, read only by that machine's
+own steps; carried, by its holder's partition, which peers ingest; or
+replaced, by the journal.
+
+| Input | Rule |
+| --- | --- |
+| `state.json`, `journal.jsonl` | carried: the record itself, by each seat's partition |
+| `state.lock`, `lane-ownership.lock`, `plan.lock`, `queue.lock`, `supervisor.lock` | local |
+| flow logs `supervisor`, `prepares`, `suite`, `ship-gates`; `sessions.json`, `needs-you.json`, `lane-changes.json`, `peer-waits.json`, `live.json` and `supervisor.json` with their writes' temporary `.live.json.{pid}` and `.supervisor.json.{pid}`, `snapshots`; the peer registry and the machine ledger | local |
+| `flow-log` | local: the folder holding the flow logs, each by its own row here |
+| flow logs `acceptance`, `app-checks`, `lane-starts` | carried by the lane's holder: `acceptance` keyed by subject and head, `lane-starts` by subject, `app-checks` keeping every entry in its seat's order |
+| flow log `videos` | carried by the seat that recorded each entry, keyed by subject, clip and head; a lane's recordings never count for the close |
+| flow log `tracker-marks`, and the tracker ledger | carried by `delivery`'s holder, keyed by `<seat>.<seq>` |
+| flow log `full-health` | its `result` entries carried by `queue`'s holder, keyed by head; a rerun replaced by a `fullhealth.rerun` entry naming the result it reruns; `note_posture`'s dedupe replaced by the record's `posture.changed` and `fullhealth.skipped` entries |
+| `closed.json` | local to the closer, whose partition carries the closing entry's origin |
+| `evidence-page.json`, `evidence-notes.json` | written only by `delivery`'s holder, whose partition carries the notes |
+| `friction.md` | carried by `delivery`'s holder |
+| `full-health.lock`, `full-health.log`, `supervisor.blockers.json`, `supervisor.jsonl`, `supervisor.live.log`, `supervisor.log`, `supervisor.{name}.log`, `supervisor.stop`, `wait.json`, `lead-wait.json` | local |
+| flow log `resolutions` | carried by the resolving seat, keyed by the resolved entry's origin |
+| flow logs `finish`, `peers` | replaced: by the record's `finish.met` and `peer.merged` entries, whatever their origin |
+| flow log `plan-changes`, `plan.json` | carried by `delivery`'s holder, whose built `plan.json` other seats use |
+| `hosted-identity.json`, `hosted-status.json`, `hosted-owner.json`, `hosted-retry.json`, `hosted-terminal.json` | carried by `delivery`'s holder: the identity; the owner, status, retry and terminal files are rebuilt by the publisher of the seat taking delivery |
+
+No reader orders entries written on different machines by their `at`: a
+tracker position is carried by origin, never by time.

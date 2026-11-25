@@ -4748,6 +4748,48 @@
         "items": {
           "$ref": "#/$defs/sliceEntry"
         }
+      },
+      "carried": {
+        "description": "What this seat carried when it last passed delivery on, for the seat that takes it: the hosted publisher's identity, so the public link stays, and how far its tracker ledger had posted, by each seat's last seq every entry up to which it covered. Absent until the seat first passes delivery on.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "hostedIdentity",
+          "trackerThrough"
+        ],
+        "properties": {
+          "hostedIdentity": {
+            "description": "The hosted publisher's identity sidecar as this seat last kept it, with no publication pending, or null where it published nothing.",
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "spec",
+                  "publicId",
+                  "ownerId",
+                  "epoch",
+                  "sequence"
+                ],
+                "properties": {
+                  "spec": {
+                    "const": "hosted-delivery-identity/1"
+                  }
+                }
+              }
+            ]
+          },
+          "trackerThrough": {
+            "description": "For each seat, by its id, the last seq up to which the tracker ledger covered every entry of that seat.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
       }
     },
     "$defs": {

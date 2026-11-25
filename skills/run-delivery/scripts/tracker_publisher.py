@@ -207,12 +207,58 @@ def followup_label(story: str, finding: str) -> str:
 
 
 def init_id(journal: list[dict]) -> str:
-    """The record's init id: the time of its first journal entry, the "Record starts at base" decision."""
-    return re.sub(r"[^0-9A-Za-z]", "", journal[0]["at"]) if journal else "0"
+    """The record's init id: the time of its first journal entry, the "Record starts at base" decision. On a shared
+    record, the time of its `record.started`, which every seat's journal holds as its opener wrote it."""
+    started = next((entry for entry in journal if entry.get("origin") and entry["kind"] == "record.started"), None)
+    first = started or (journal[0] if journal else None)
+    return re.sub(r"[^0-9A-Za-z]", "", first["at"]) if first else "0"
 
 
-def marker(delivery: str, init: str, journal_id: int, action: str) -> str:
-    return f"agent-delivery:{delivery}:{init}:{journal_id}:{action}"
+def entry_ref(entry: dict) -> int | str:
+    """How a marker and a ledger line name an entry: its journal id, or on a shared record its origin, `<seat>.<seq>`,
+    which is the same on every seat's machine."""
+    origin = entry.get("origin")
+    return f"{origin['seat']}.{origin['seq']}" if isinstance(origin, dict) else entry["id"]
+
+
+def marker(delivery: str, init: str, ref: int | str, action: str) -> str:
+    return f"agent-delivery:{delivery}:{init}:{ref}:{action}"
+
+
+# Delivery passed between the seats of a shared record: how far one seat's ledger covered, for the seat that takes it.
+
+TAKEN = "posted by the seat that passed delivery on"
+
+
+def through_by_seat(journal: list[dict], ledger: list[dict]) -> dict[str, int]:
+    """For each seat, the last seq up to which this ledger covers every entry of that seat: what a seat that passes
+    delivery on carries, so the seat taking it posts none of them again."""
+    done, through, stopped = covered(ledger, init_id(journal)), {}, set()
+    for entry in sorted(journal, key=lambda e: e["id"]):
+        origin = entry.get("origin")
+        if not isinstance(origin, dict) or origin["seat"] in stopped:
+            continue
+        if entry["id"] in done:
+            through[origin["seat"]] = origin["seq"]
+        else:
+            stopped.add(origin["seat"])
+    return through
+
+
+def take_through(state_dir: Path, journal: list[dict], through: dict[str, int], giver: str) -> int:
+    """Cover in this seat's ledger every entry the seat ``giver`` had posted, by the position it carried: each one
+    this ledger doesn't cover yet gets a final skip. The caller holds the ledger's lock. Returns how many."""
+    init, ledger = init_id(journal), read_ledger(state_dir)
+    done, taken = covered(ledger, init), 0
+    for entry in sorted(journal, key=lambda e: e["id"]):
+        origin = entry.get("origin")
+        if entry["id"] in done or not isinstance(origin, dict) or origin["seq"] > through.get(origin["seat"], 0):
+            continue
+        append_ledger(state_dir, {"journal": entry["id"], "init": init, "outcome": "skip", "writer": "publisher",
+                                  "kind": entry["kind"], "final": True, "origin": entry_ref(entry), "reason": TAKEN,
+                                  "from": giver})
+        taken += 1
+    return taken
 
 
 # Settings: `tracker` in .agents/run-delivery.json, with Jira's derived from the binding's tracker snapshot.
@@ -512,6 +558,7 @@ class Publisher:
     def write(self, entry: dict, outcome: str, final: bool = False, **detail) -> dict:
         line = append_ledger(self.state_dir, {"journal": entry["id"], "init": self.init, "outcome": outcome,
                                               "writer": self.writer, "kind": entry["kind"],
+                                              **({"origin": entry_ref(entry)} if entry.get("origin") else {}),
                                               **({"final": True} if final else {}), **detail})
         self.ledger.append(line)
         return line
@@ -582,7 +629,7 @@ class Publisher:
 
     def started_before(self, entry: dict, names: list[str], markers: set[str]) -> bool:
         """The ticket carries this delivery's start marker from another entry, under this init id or an earlier one."""
-        own = marker(self.delivery, self.init, entry["id"], "")
+        own = marker(self.delivery, self.init, entry_ref(entry), "")
         return any(m.startswith(f"agent-delivery:{self.delivery}:") and not m.startswith(own)
                    and ":transition:" in m and m.split(":transition:", 1)[1] in names for m in markers)
 
@@ -597,7 +644,7 @@ class Publisher:
         if earlier:
             notes.append(f"Its move to {earlier.get('status')} was already made by someone else.")
             return
-        ours = any(marker(self.delivery, self.init, entry["id"], f"transition:{name}") in markers for name in names)
+        ours = any(marker(self.delivery, self.init, entry_ref(entry), f"transition:{name}") in markers for name in names)
         last = target(names[-1])
         if last is not None and last == status.get("status") and not ours and not any(
                 self.done(entry, f"transition:{name}") for name in names):
@@ -607,7 +654,7 @@ class Publisher:
             return
         for name in names:
             action = f"transition:{name}"
-            stamp = marker(self.delivery, self.init, entry["id"], action)
+            stamp = marker(self.delivery, self.init, entry_ref(entry), action)
             line = self.done(entry, action)
             if line is None and stamp in markers:
                 line = self.write(entry, "transition", move=move, ticket=ticket, transition=name, action=action,
@@ -696,7 +743,7 @@ class Publisher:
             notes.append("No start move is configured: moving the ticket belongs to people.")
         elif entry["kind"] in MOVING:
             notes.append("No move is configured for this: moving the ticket belongs to people.")
-        stamp = marker(self.delivery, self.init, entry["id"], "comment")
+        stamp = marker(self.delivery, self.init, entry_ref(entry), "comment")
         if stamp in markers:
             self.write(entry, "comment", final=True, ticket=ticket, action="comment", found=True)
             return
@@ -795,6 +842,14 @@ class Publisher:
         return 0, None
 
 
+def ready_to_publish(state_dir: Path) -> bool:
+    """On a shared record, whether this machine's seat holds delivery and has taken what the seat that passed it here
+    carried; an unshared record is always ready."""
+    import delivery_state  # beside journal_words
+
+    return delivery_state._collab().delivery_taken(state_dir) is not False
+
+
 def write_error(state_dir: Path, error: str | None) -> None:
     path = state_dir / ERROR_FILE
     if error is None:
@@ -887,6 +942,8 @@ def main(argv: list[str] | None = None) -> int:
               "(meta.trackerParent); pass --delivery"), file=sys.stderr)
         return 2
     state_dir = args.state_dir
+    if doc["state"].get("meta", {}).get("collab") and not ready_to_publish(state_dir):
+        return 0  # A shared record's updates are posted only by the seat holding delivery, once it has taken it.
     with ledger_lock(state_dir, wait=False) as taken:
         if not taken:
             return 0  # Another run holds the ledger: it, or the next pass, posts these.

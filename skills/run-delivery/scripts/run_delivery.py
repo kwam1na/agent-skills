@@ -257,8 +257,42 @@ def hosted_call(c,operation,folder,key,*,archive=True,resume=False,timeout=5):
 
 
 def start_hosted(c,*,resume=False,timeout=5):
+    # On a shared record only the seat holding delivery publishes, once it has taken what the seat before it carried.
+    if not delivery_publishes(c):return {'state':'held_elsewhere'}
     try:return hosted_call(c,'start',c.state,c.delivery,resume=resume,timeout=timeout)
     except (Stop,OSError,ValueError,subprocess.SubprocessError):return {'state':'failed','code':'publisher_unavailable'}
+
+
+def delivery_publishes(c,folder=None):
+    """Whether this machine's publishers run for the record: always on an unshared one; on a shared one, only where
+    this seat holds delivery and has taken what the seat that passed it here carried."""
+    state=getattr(c,'state',None)
+    if folder is None and state is None:return True
+    if not (json_object(Path(folder or state)/'state.json').get('meta') or {}).get('collab'):return True
+    tool=_validator(c.release)
+    try:return tool._collab().delivery_taken(Path(folder or state)) is not False
+    except (OSError,ValueError,tool.StateError):return True
+
+
+def hosted_pending(c,folder):
+    """What hosted publication of the record in `folder` is still pending, or None."""
+    identity=json_object(Path(folder)/hosted_module(c.release).IDENTITY)
+    pending=identity.get('pending')
+    return f"hosted snapshot {pending.get('sequence')} is pending" if isinstance(pending,dict) else None
+
+
+def carried_identity(c,folder):
+    """The hosted identity a seat passing delivery on carries: its sidecar as kept, nothing pending, or None."""
+    identity=json_object(Path(folder)/hosted_module(c.release).IDENTITY)
+    return {**identity,'pending':None,'sessionRequest':None} if identity.get('publicId') else None
+
+
+def take_hosted(c,identity):
+    """Write a carried identity as this machine's own, before its first publish: the owner, status and retry files
+    are its own publisher's to rebuild."""
+    module=hosted_module(c.release)
+    for name in (module.STATUS,module.RETRY):(c.state/name).unlink(missing_ok=True)
+    module.atomic(c.state/module.IDENTITY,identity)
 
 
 def hosted_info(c,*,archive=None):
@@ -2204,8 +2238,8 @@ def _merge_queue():
     return merge_queue
 
 
-def _validator():
-    path = str(cfg().release / "skills/orchestrate-work/scripts")
+def _validator(release: Path | None = None):
+    path = str((release or cfg().release) / "skills/orchestrate-work/scripts")
     if path not in sys.path:
         sys.path.insert(0, path)
     sys.dont_write_bytecode = True  # the release's modules leave no bytecode in the installed generation
@@ -2393,10 +2427,14 @@ def journal_returns(key: str, folder: Path, doc: dict) -> list[str]:
 
 
 def journal_lens_returns(c) -> list[str]:
-    """The supervisor's pass: each running round's new lens results, read from its lane's checkout."""
+    """The supervisor's pass: each running round's new lens results, read from its lane's checkout. On a shared record,
+    only the rounds of the lanes this seat holds, whose checkouts are on its machine."""
     doc = load_state()
+    roles = seat_roles(c)
     journaled = []
     for key in sorted({e["subject"] for e in doc["journal"] if e.get("kind") == "review.started" and e.get("subject")}):
+        if roles is not None and not lane_held(roles, c.lane_of(key, doc["state"])):
+            continue
         folder = c.lane_checkout(key) / c.work / "review" / key
         if folder.is_dir():
             journaled += journal_returns(key, folder, doc)
@@ -4732,7 +4770,7 @@ def handoff_and_post(c, key: str, lane: str, head: str, pr: str, rounds: int, po
         journal = sorted(doc["journal"], key=lambda e: e["id"])
         entry = [e for e in journal if e["kind"] == "candidate.handed" and e.get("subject") == key][-1]
         init = tracker_publisher.init_id(journal)
-        stamp = tracker_publisher.marker(c.delivery, init, entry["id"], "comment")
+        stamp = tracker_publisher.marker(c.delivery, init, tracker_publisher.entry_ref(entry), "comment")
         adapter = tracker_publisher.Adapter(conf, c.root)
         try:
             found = stamp in adapter.markers(key)
@@ -9575,6 +9613,7 @@ def lead_own(args) -> None:
     require_lead_checkout(c)
     if not (c.state / "state.json").is_file():
         raise Stop("initialize the delivery record before changing lane ownership")
+    require_scope(c, "delivery", "arbitrates files between lanes")
     with ownership_lock(c):
         change_ownership(c, args)
 
@@ -10132,6 +10171,7 @@ def lead_add_lane(args) -> None:
     require_lead_checkout(c)
     if not (c.state / "state.json").is_file():
         raise Stop("initialize the delivery record before adding a lane")
+    require_scope(c, "delivery", "adds lanes")
     grants = list(dict.fromkeys(args.grant or []))
     for pattern in grants:
         if Path(pattern).is_absolute() or any(part in ("", ".", "..") for part in pattern.split("/")):
@@ -10206,6 +10246,7 @@ def lead_assign(args) -> None:
     c = cfg()
     keys = [c.require(k) for k in args.keys]
     require_lead_checkout(c)
+    require_scope(c, "delivery", "assigns stories to lanes")
     problems = plan_problems(c, keys)
     if problems:
         raise Stop("; ".join(problems))
@@ -10307,6 +10348,9 @@ def lead_assign(args) -> None:
         print()
     print(f"Assignment message for {args.lane} ({args.title}):\n")
     print(f"You are {args.lane} in the {c.delivery} delivery. Read the lane brief first: {c.root / c.lane_brief}\n")
+    seat = lane_seat_words(c, args.lane)
+    if seat:
+        print(f"{seat}\n")
     print("Your stories, in order (one branch, one review and one hand-off each):")
     for key in keys:
         print(f"- {key} {c.issue_url.format(key=key)} ({c.label(key)}: {c.stories[key]['title']})")
@@ -10635,6 +10679,10 @@ def accept_story(c, args) -> None:
     doc = load_state()
     item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
     waiting = next((p for p in doc["state"].get("planned", []) if p["subject"] == key and p.get("noChange")), None)
+    lane = (item or waiting or {}).get("lane")
+    if lane:
+        # Before anything is read from the lane or written: a lane's hand-offs are accepted by the seat holding it.
+        require_scope(c, f"lane:{lane}", f"accepts {lane}'s hand-offs")
     if not item and waiting:
         if takes:
             raise Stop(f"--take {takes[0]}: {key} has a no-change hand-off, which changes no file, so there is nothing "
@@ -11951,10 +11999,12 @@ def unaccepted_merge(doc: dict, item: dict) -> dict | None:
 
 def cleanup_merged(c, doc: dict, words: dict | None = None) -> list[str]:
     """What lead-cleanup does, for each merged story whose lane has moved off it. A story already cleaned up, by hand
-    or by an earlier pass, has nothing left to clean and journals nothing."""
+    or by an earlier pass, has nothing left to clean and journals nothing. On a shared record, only the stories of the
+    lanes this seat holds, whose checkouts are on its machine."""
     said = []
+    roles = seat_roles(c)
     for item in doc["state"]["queue"]:
-        if item["stage"] != "merged" or item["subject"] not in c.stories:
+        if item["stage"] != "merged" or item["subject"] not in c.stories or not lane_held(roles, item.get("lane")):
             continue
         if not lane_moved_off(doc, item, words):
             said.append(f"{item['subject']}: waits for {item['lane']} to move off it")
@@ -11968,7 +12018,8 @@ def cleanup_merged(c, doc: dict, words: dict | None = None) -> list[str]:
             said.append(f"{item['subject']}: {status}" + "".join(f"; {line}" for line in left))
     # A story settled with no change leaves its lane's checkout too, once the lane has moved off it.
     for entry in doc["state"].get("planned", []):
-        if entry["stage"] != "settled" or entry["subject"] not in c.stories or not lane_moved_off(doc, entry, words):
+        if entry["stage"] != "settled" or entry["subject"] not in c.stories or not lane_moved_off(doc, entry, words) \
+                or not lane_held(roles, entry.get("lane")):
             continue
         status, done, left = clean_story(entry["subject"])
         if status not in ("nothing", "waiting"):
@@ -14110,7 +14161,10 @@ def deferral_breaches(c, doc: dict) -> list[str]:
     the lead resolves it with lead-resolve, and no follow-up is filed for it."""
     if not c.no_deferrals:
         return []
-    merged = {item["subject"] for item in doc["state"]["queue"] if item["stage"] == "merged"}
+    roles = seat_roles(c)
+    # On a shared record, only the stories of the lanes this seat holds, whose review rounds are on its machine.
+    merged = {item["subject"] for item in doc["state"]["queue"] if item["stage"] == "merged"
+              and lane_held(roles, item.get("lane"))}
     said = []
     for finding in deferred_findings(c):
         if finding["story"] not in merged:
@@ -14845,6 +14899,21 @@ class Supervisor:
                 "--remote", c.remote, "--base", c.base_branch, "serve", "--poll",
                 str(min(30.0, supervisor_pass_seconds(c)))]
 
+    def wanted_children(self) -> list[str]:
+        """The children this machine serves: a planning record's sync loop; the queue, on an unshared record; on a
+        shared one the sync loop, and the queue only where this seat holds it, so a seat given the queue starts it on
+        the pass after it ingests the transfer."""
+        if planning_phase(self.c):
+            return ["collab"]
+        shared = seat_roles(self.c) is not None
+        return [*(["collab"] if shared else []), *(["serve"] if self.child_argv("serve") is not None else [])]
+
+    def align_children(self) -> None:
+        """Start each wanted child that isn't running; one that exited is keep_alive's."""
+        for name in self.wanted_children():
+            if name not in self.children:
+                self.start(name)
+
     def start(self, name: str) -> None:
         argv = self.child_argv(name)
         if argv is None:
@@ -14988,6 +15057,13 @@ class Supervisor:
         """Restart a child that exited, at most once a pass once it has exited CHILD_FLAPS times in the window: a
         child that won't stay up is shown in "Needs you", and a restart that fails never ends the supervisor."""
         down = [name for name, proc in self.children.items() if proc.poll() is not None]
+        for name in [name for name in down if self.child_argv(name) is None]:
+            # No longer this machine's to serve, as the queue once handed to another seat: dropped, never restarted,
+            # so its exit is no blocker.
+            del self.children[name]
+            self.restarts.pop(name, None)
+            down.remove(name)
+            self.write_lock()
         for name in down + (["live"] if self.view_pid and self.view_down() else []):
             times = self.restarts.setdefault(name, [])
             if name in self.flapping() and times and time.monotonic() - times[-1] < supervisor_pass_seconds(self.c):
@@ -15066,6 +15142,13 @@ class Supervisor:
             return cleanup_merged(c, doc, entry["laneWords"])
 
         planning = planning_phase(c)
+        roles = seat_roles(c)
+        if roles is not None and roles["delivery"]:
+            # Before any step publishes: what the seat that gave this one delivery carried becomes this machine's.
+            with contextlib.suppress(Stop, OSError, ValueError, subprocess.SubprocessError):
+                taken = take_delivery(c)
+                if taken:
+                    entry["delivery"] = taken
         steps = (("reconcile", reconcile_once), ("regions", lambda: settle_landings(c)), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
                  ("peers", lambda: self.peer_merges(entry)),
                  ("lenses", lambda: journal_lens_returns(c)),
@@ -15078,6 +15161,10 @@ class Supervisor:
         if planning:
             # While the plan is drafted: the views and the record's copy only; no queue, tracker or full health.
             steps = tuple((name, step) for name, step in steps if name in PLANNING_STEPS)
+        for name, _ in steps:
+            if not step_runs(roles, name):
+                entry[name] = f"held by another seat: {SHARED_STEPS[name]}"
+        steps = tuple((name, step) for name, step in steps if step_runs(roles, name))
         for name, step in steps:
             self.honour_signal()
             if self.lose():
@@ -15092,6 +15179,10 @@ class Supervisor:
                 # Nothing to close, and its list is what the pass found: blocking feedback holds approval, not a close.
                 entry["needsYou"] = derived.get("needs", [])
                 raise Planning
+            if not step_runs(roles, "closeOut"):
+                # The delivery holder's machine closes; this one's list is what the pass found.
+                entry["needsYou"] = derived.get("needs", [])
+                raise HeldElsewhere
             doc = derived.get("doc") or load_state()
             needs = derived["needs"] if "needs" in derived else needs_you(c, doc, self.flapping())
             holds = close_holds(c, doc, needs)
@@ -15114,6 +15205,8 @@ class Supervisor:
                 render_views(c)
         except Planning:
             entry["close"] = "planning: nothing to close"
+        except HeldElsewhere:
+            entry["close"] = "closed by the delivery holder's machine"
         except (Stop, ValueError, OSError, subprocess.SubprocessError) as error:
             entry["close"] = f"failed: {error}"
         if self.lose():
@@ -15259,7 +15352,7 @@ class Supervisor:
                     for line in clear_suite_checkouts(c)[0]:
                         self.say(line)
                 # A planning record has no queue yet: its one child beside the view is the sync loop.
-                self.start("collab" if planning_phase(c) else "serve")
+                self.align_children()
                 print(self.address, flush=True)  # the first line: where the delivery is watched
                 lines, self.held_lines = self.held_lines or [], None
                 for line in lines:
@@ -15267,6 +15360,8 @@ class Supervisor:
             number = len(read_log("supervisor", c.delivery))
             while True:
                 number += 1
+                if not self.once:
+                    self.align_children()
                 closed = self.one_pass(number)
                 self.honour_signal()
                 if closed or self.once or self.stop_asked() or self.lose():
@@ -15337,6 +15432,10 @@ class Supervisor:
 
 class Planning(Exception):
     """A pass over a planning record, which has nothing to close."""
+
+
+class HeldElsewhere(Exception):
+    """A pass on a seat of a shared record that doesn't hold delivery, whose machine closes nothing."""
 
 
 # The pass steps a planning record runs.
@@ -17085,6 +17184,159 @@ COLLAB_POLL_SECONDS = 5
 COLLAB_POLL_FLOOR = 2
 
 
+# -- the co-lead runtime: which machine runs what on a shared record ------------------------------------------------
+
+# Each supervisor pass step, and the close-out's, by what this checkout's seat must hold for it to run on a shared
+# record: "delivery" and "queue" run only where the seat holds that scope; "lane" runs on every seat, for the stories of
+# the lanes it holds, whose checkouts and review rounds are on its machine; "every" runs on every seat. The
+# orchestration guide's "Which machine runs what" table says the same.
+SHARED_STEPS = {"reconcile": "delivery", "regions": "delivery", "peers": "delivery", "finish": "delivery",
+                "publish": "delivery", "cleanupBeforeClose": "delivery", "friction": "delivery", "closeOut": "delivery",
+                "fullHealth": "queue", "lenses": "lane", "cleanup": "lane", "deferrals": "lane", "blockers": "every",
+                "peerWaits": "every", "laneChanges": "every", "needs": "every", "render": "every", "latest": "every"}
+
+
+def seat_roles(c) -> dict | None:
+    """On a shared record: this checkout's seat, and whether it holds delivery and the queue, and the lanes it holds;
+    None on an unshared record, or one that can't be read."""
+    if getattr(c, "state", None) is None or not (json_object(Path(c.state) / "state.json").get("meta") or {}).get("collab"):
+        return None
+    tool = _validator(c.release)
+    try:
+        state = tool.read_state(c.state)
+        collab = tool.collab_of(state)
+        if collab is None:
+            return None
+        journal = tool.read_journal(c.state)
+    except (tool.StateError, OSError, ValueError):
+        return None
+    seat = tool.local_seat(c.state, collab["key"])
+    named = {row["id"] for row in state.get("lanes", [])} | set(state.get("laneOwnership") or {}) \
+        | {item["lane"] for name in ("planned", "queue") for item in state.get(name, []) if item.get("lane")}
+    return {"seat": seat, "delivery": tool.holds(journal, seat, "delivery"), "queue": tool.holds(journal, seat, "queue"),
+            "lanes": {lane for lane in named if tool.holds(journal, seat, f"lane:{lane}")}}
+
+
+def step_runs(roles: dict | None, name: str) -> bool:
+    """Whether a pass step runs on this machine: every step on an unshared record; on a shared one, by SHARED_STEPS."""
+    rule = SHARED_STEPS.get(name, "every")
+    return roles is None or rule not in ("delivery", "queue") or roles[rule]
+
+
+def lane_held(roles: dict | None, lane: str | None) -> bool:
+    """Whether a lane's stories are this machine's to clean up, review and defer: every lane's on an unshared record."""
+    return roles is None or lane in roles["lanes"]
+
+
+def require_scope(c, scope: str, doing: str) -> None:
+    """On a shared record, refuse a lead command this checkout's seat doesn't hold `scope` for, before it writes
+    anything, naming the seat that holds it."""
+    tool = _validator(c.release)
+    state = json_object(c.state / "state.json")
+    collab = (state.get("meta") or {}).get("collab")
+    if not collab:
+        return
+    journal = tool.read_journal(c.state)
+    seat = tool.local_seat(c.state, collab["key"])
+    if seat is None:
+        raise Stop(f"collab.seat_missing: this checkout has no seat for the shared record {collab['key']}; collab join "
+                   "gives it one")
+    if not tool.holds(journal, seat, scope):
+        holder = tool.holder(journal, scope)
+        label = (tool.derived_seats(journal).get(holder) or {}).get("label")
+        raise Stop(f"scope.not_held: only the holder of {scope}, seat {holder}" + (f" ({label})" if label else "")
+                   + f", {doing}; {flow_command()} collab request --scope {scope} --reason TEXT asks for it")
+
+
+def take_delivery(c) -> str | None:
+    """Where this seat was just given delivery: write what the seat that gave it carried as this machine's own, its
+    hosted identity and how far its tracker ledger had posted, before this machine publishes anything, then resume the
+    hosted session with that identity, so the public link stays. None when there is nothing to take."""
+    tool = _validator(c.release)
+    link = tool._collab()
+    try:
+        collab = tool.collab_of(tool.read_state(c.state))
+        journal = tool.read_journal(c.state) if collab else []
+    except (tool.StateError, OSError, ValueError):
+        return None
+    transfer = link.delivery_transfer(journal, tool.local_seat(c.state, collab["key"])) if collab else None
+    if transfer is None or link.delivery_taken(c.state, journal):
+        return None
+    giver = transfer["data"]["from"]
+    carried = link.peer_carried(c.state, giver)
+    with tracker_publisher.ledger_lock(c.state, wait=True):
+        if carried.get("hostedIdentity"):
+            take_hosted(c, carried["hostedIdentity"])
+        posted = tracker_publisher.take_through(c.state, sorted(journal, key=lambda e: e["id"]),
+                                                carried.get("trackerThrough") or {}, giver)
+        link.take_delivery(c.state, transfer)
+    if carried.get("hostedIdentity"):
+        start_hosted(c, resume=True)
+    return (f"took delivery from seat {giver}: {posted} tracker update(s) it had posted, "
+            + ("its hosted identity" if carried.get("hostedIdentity") else "no hosted identity"))
+
+
+def lane_seat_words(c, lane: str) -> str | None:
+    """On a shared record, the seat a lane reports to: the one holding its scope, by its label, whose session accepts
+    the lane's hand-offs."""
+    state = json_object(c.state / "state.json")
+    if not (state.get("meta") or {}).get("collab"):
+        return None
+    tool = _validator(c.release)
+    journal = tool.read_journal(c.state)
+    holder = tool.holder(journal, f"lane:{lane}")
+    label = (tool.derived_seats(journal).get(holder) or {}).get("label") or holder
+    return (f"You report to {label} (seat {holder}), which holds {lane} on this shared record: its session accepts "
+            "your hand-offs.")
+
+
+def lane_checkouts_left(c, folder: Path, lane: str) -> list[str]:
+    """The lane's merged or settled stories whose checkout is still on this machine: a lane is handed over only once its
+    outgoing seat has cleaned them up, since no other machine can."""
+    state = json_object(folder / "state.json")
+    done = [item["subject"] for item in state.get("queue", []) if item.get("lane") == lane and item.get("stage") == "merged"]
+    done += [item["subject"] for item in state.get("planned", []) if item.get("lane") == lane
+             and item.get("stage") == "settled"]
+    return [subject for subject in done if c.lane_checkout(subject).exists()]
+
+
+def give_delivery(c, key: str, folder: Path, to: str, wait: float) -> dict:
+    """Pass delivery to seat `to` as a parked transition: once no tracker post is in flight and no hosted publication
+    is pending, holding the tracker ledger's lock so no post starts, stop this machine's hosted publisher, keep its
+    identity and the ledger's position in this seat's partition, and journal the transfer. Busy past `wait` seconds,
+    refuse with scope.handover_busy, naming what is busy, having written nothing."""
+    tool = _validator(c.release)
+
+    @contextlib.contextmanager
+    def park(wait: float):
+        deadline = time.monotonic() + wait
+        while True:
+            with tracker_publisher.ledger_lock(folder, wait=False) as free:
+                busy = None if free else "a tracker post is in flight"
+                if busy is None:
+                    busy = hosted_pending(c, folder)
+                if busy is None:
+                    hosted_call(c, "stop", folder, key, archive=False)
+                    busy = hosted_pending(c, folder)
+                    if busy is None:
+                        journal = sorted(tool.read_journal(folder), key=lambda e: e["id"])
+                        yield {"hostedIdentity": carried_identity(c, folder),
+                               "trackerThrough": tracker_publisher.through_by_seat(
+                                   journal, tracker_publisher.read_ledger(folder))}
+                        return
+                    with contextlib.suppress(Stop, OSError, ValueError, subprocess.SubprocessError):
+                        hosted_call(c, "start", folder, key)  # stopped mid-publication: it finishes it first
+            if time.monotonic() >= deadline:
+                raise Stop(f"scope.handover_busy: delivery is not idle on this machine: {busy}; hand it over once it "
+                           "is, or wait longer")
+            time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
+
+    try:
+        return tool._collab().give_scope(folder, "delivery", to, wait=wait, park=park)
+    except tool.StateError as error:
+        raise Stop(f"{error.code}: {error}") from None
+
+
 def collab_settings(c) -> dict:
     """`collab.pollSeconds` (default 5, at least 2: each tick is one git fetch) and `collab.autoGrant` (default
     false), refused when out of range."""
@@ -17631,6 +17883,16 @@ def collab_feedback(args) -> None:
 def collab_scope(args) -> None:
     """The state tool's scope and seat commands, on this checkout's shared record."""
     c, key, folder = collab_config(args)
+    if args.collab_action == "give" and args.scope.startswith("lane:"):
+        left = lane_checkouts_left(c, folder, args.scope[len("lane:"):])
+        tool = _validator()
+        if left and tool.holds(tool.read_journal(folder), tool.local_seat(folder, key), args.scope):
+            raise Stop(f"scope.handover_busy: {args.scope} still has the checkout of {', '.join(left)} on this machine, "
+                       f"merged or settled; {flow_command()} lead-cleanup removes it, then hand the lane over")
+    if args.collab_action == "give" and args.scope == "delivery":
+        entry = give_delivery(c, key, folder, args.to, args.wait)
+        print(f"{entry['kind']} (entry {entry['id']}): {json.dumps(entry['data'], sort_keys=True)}")
+        return
     if args.collab_action == "give":
         argv = ["scope", "give", "--scope", args.scope, "--to", args.to, "--wait", str(args.wait)]
     elif args.collab_action == "request":
@@ -18133,7 +18395,7 @@ def main(argv: list[str] | None = None) -> None:
     q.add_argument("--key", help=shared_key)
     q.add_argument("--scope", required=True, help="delivery, queue, lane:<lane> or plan:<section>")
     q.add_argument("--to", required=True, help="the seat that takes it")
-    q.add_argument("--wait", type=float, default=60.0, help="for the queue: seconds to wait for it to be idle")
+    q.add_argument("--wait", type=float, default=60.0, help="for the queue or delivery: seconds to wait for it to be idle")
     q.set_defaults(fn=collab_scope)
     q = command(collab_commands, "request", help="ask the holder of a scope for it")
     q.add_argument("--key", help=shared_key)

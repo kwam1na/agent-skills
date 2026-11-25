@@ -6067,7 +6067,13 @@ ADOPTER_FILES = frozenset({".agents/orchestration.json", ".agents/delivery-postu
                            # run-delivery's lead-suite: the flow log it appends each run of the lead's suite to
                            "<delivery>.suite.jsonl",
                            # a shared record's sync loop, which the supervisor runs
-                           "scripts/collab.py"})
+                           "scripts/collab.py",
+                           # the files beside a record and in its flow log that "Which machine runs what" gives a rule
+                           "state.json", "journal.jsonl", "sessions.json", "needs-you.json", "lane-changes.json",
+                           "peer-waits.json", "live.json", "supervisor.json", "evidence-page.json",
+                           "evidence-notes.json", "friction.md", "supervisor.blockers.json", "supervisor.jsonl",
+                           "wait.json", "lead-wait.json", "hosted-identity.json", "hosted-status.json",
+                           "hosted-owner.json", "hosted-retry.json", "hosted-terminal.json"})
 
 
 def review_round(number: int, candidate: str, *, finding: bool = False, resolved: bool = False) -> dict:

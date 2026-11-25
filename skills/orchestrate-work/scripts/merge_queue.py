@@ -4201,20 +4201,22 @@ class Runner:
                 raise Stop("queue_locked", f"{error}; nothing was attempted, and serve tries again") from None
             raise
 
-    def run_command(self, subcommand: str, subjects: list[str], approved_by: str | None = None) -> list[Result]:
+    def run_command(self, subcommand: str, subjects: list[str], approved_by: str | None = None,
+                    after: Callable[[list[Result]], None] | None = None) -> list[Result]:
         # A turn claims its machine slots first, waiting while the machine is full, and never while it holds the merge
         # slot. Serve passes the claim it keeps across a retry; a turn that claimed for itself releases it here.
         owned = None
         if self.turn_claim is None and subcommand in TURN_COMMANDS and subjects:
             owned = self.turn_claim = self.claim_turn(subjects)
         try:
-            return self._run_command(subcommand, subjects, approved_by)
+            return self._run_command(subcommand, subjects, approved_by, after)
         finally:
             if owned is not None:
                 owned.release()
                 self.turn_claim = None
 
-    def _run_command(self, subcommand: str, subjects: list[str], approved_by: str | None = None) -> list[Result]:
+    def _run_command(self, subcommand: str, subjects: list[str], approved_by: str | None = None,
+                     after: Callable[[list[Result]], None] | None = None) -> list[Result]:
         try:
             with self.slot(slot_doing(subcommand, subjects)), self.locked():
                 # Under the lock, so a queue handed on between serve's passes takes no turn here.
@@ -4222,7 +4224,11 @@ class Runner:
                 # A state that cannot be read or written is reported by the subcommand itself, as before.
                 with contextlib.suppress(delivery_state.StateError, OSError):
                     self.recover_interrupted()
-                return self._run_locked(subcommand, subjects, approved_by)
+                results = self._run_locked(subcommand, subjects, approved_by)
+                if after is not None:
+                    # The turn's own writes after its results, still under the lock: a queue handover waits for them.
+                    after(results)
+                return results
         except Stop as stop:
             result = Result(subcommand, subjects[0] if subjects and subcommand != "release" else None)
             self.stopped(result, stop, None)
@@ -4337,14 +4343,15 @@ def _refused_stop(directory: Path, subject: str, head: str | None, reason: str) 
 
 
 def _setup_stop(repository: Path, state_directory: Path, *, remote: str, base: str,
-                lead: str) -> tuple[Result, dict | None, list[str]]:
+                lead: str, held: bool = False) -> tuple[Result, dict | None, list[str]]:
     """Read the binding from the base and check the checkout once, under the queue lock, before serving anything.
-    Also returns what keeps the binding's candidate step from running, which holds serve rather than ending it."""
+    Also returns what keeps the binding's candidate step from running, which holds serve rather than ending it.
+    ``held``: the caller holds the queue lock already, as a turn's own writes after it do."""
     runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead)
     candidate: list[str] = []
 
     def check(result: Result) -> None:
-        with runner.locked():
+        with contextlib.nullcontext() if held else runner.locked():
             result.baseHead = runner.load()
             result.base = base
         # A refresh setting the tool cannot use would fail on every interval: refuse it here, once.
@@ -4596,8 +4603,39 @@ def serve(
             # from a turn that found the slot or the queue held keeps its place ahead of later arrivals.
             claim, kept_claim = kept_claim or runner.claim_turn(waiting), None
             runner.turn_claim = claim
+
+            settled: list[bool] = []
+
+            def settle(taken: list[Result], held: bool = True) -> None:
+                # Under the turn's queue lock, so a queue handed on after the turn never refuses what the turn owes.
+                settled.append(True)
+                refused = [result for result in taken if result.outcome == "refused" and result.candidate is not None
+                           and result.stop["reason"] != "queue_locked"]
+                troubled = any(result.stop is not None and result.stop["reason"] != "queue_locked" for result in taken)
+                cause_known, broken = True, None
+                if troubled:
+                    # A stop or refusal names its code, not its cause: the setup check says whether the setup broke
+                    # this turn.
+                    again, _, candidate = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead,
+                                                      held=held)
+                    if again.stop is not None:
+                        cause_known = again.stop["reason"] != "queue_locked"
+                        broken = again.stop["detail"] if cause_known else None
+                    elif candidate:
+                        broken = candidate_hold(candidate)
+                for result in taken:
+                    write_result(state_directory, result)
+                    if cause_known and broken is None and result in refused:
+                        # A refusal leaves the candidate queued as it was; serve stops it, journaled once, as any stop.
+                        with contextlib.suppress(Stop, delivery_state.StateError):
+                            runner.write(build=_refused_stop(state_directory, result.candidate, heads.get(result.candidate), result.stop["reason"]))
+                if broken is not None:
+                    # None of this turn's candidates was at fault: back to queued, so no lane hands anything off again.
+                    requeued, kept = _requeue_after_setup(runner, taken, heads)
+                    hold_for_setup(state_directory, broken, kept, requeued)
+
             try:
-                taken = runner.run_command("batch" if len(waiting) > 1 else "run", waiting)
+                taken = runner.run_command("batch" if len(waiting) > 1 else "run", waiting, after=settle)
             except BaseException:
                 claim.release()
                 raise
@@ -4612,28 +4650,9 @@ def serve(
                 continue
             # The turn has ended, however it ended: its claim goes now.
             claim.release()
-            refused = [result for result in taken if result.outcome == "refused" and result.candidate is not None
-                       and result.stop["reason"] != "queue_locked"]
-            troubled = any(result.stop is not None and result.stop["reason"] != "queue_locked" for result in taken)
-            cause_known, broken = True, None
-            if troubled:
-                # A stop or refusal names its code, not its cause: the setup check says whether the setup broke this turn.
-                again, _, candidate = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
-                if again.stop is not None:
-                    cause_known = again.stop["reason"] != "queue_locked"
-                    broken = again.stop["detail"] if cause_known else None
-                elif candidate:
-                    broken = candidate_hold(candidate)
-            for result in taken:
-                write_result(state_directory, result)
-                if cause_known and broken is None and result in refused:
-                    # A refusal leaves the candidate queued as it was; serve stops it, journaled once, as any stop.
-                    with contextlib.suppress(Stop, delivery_state.StateError):
-                        runner.write(build=_refused_stop(state_directory, result.candidate, heads.get(result.candidate), result.stop["reason"]))
-            if broken is not None:
-                # None of this turn's candidates was at fault: back to queued, so no lane hands anything off again.
-                requeued, kept = _requeue_after_setup(runner, taken, heads)
-                hold_for_setup(state_directory, broken, kept, requeued)
+            if not settled:
+                # A turn refused before it took the lock still records its results, as any turn does.
+                settle(taken, held=False)
             for result in taken:
                 # Reported only once every result is written and every refusal stopped, so a reader never loses them.
                 if on_result is not None:
