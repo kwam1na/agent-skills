@@ -119,6 +119,8 @@ test("a lane's \"+N more\" marker takes its own slot on the line, after its last
   // Lane 2 gets four open stories: three stops are drawn and the fourth folds into "+1".
   document.state.planned.push({ subject: "APP-6", title: "APP-6", lane: "lane-2", stage: "planned" },
     { subject: "APP-7", title: "APP-7", lane: "lane-2", stage: "planned" });
+  // jsdom reports a shorthand and its longhands apart, so each is compared.
+  const SLOT = ["flex", "flex-grow", "flex-shrink", "flex-basis", "width", "max-width"];
   let seen = null;
   await openPage(pageWithRuns(waited(document), {}, { config: CONFIG }), { now: NOW, steps: [{ run(window) {
     const more = window.document.querySelector(".seg.more");
@@ -136,8 +138,8 @@ test("a lane's \"+N more\" marker takes its own slot on the line, after its last
     seen = more && { text: more.textContent, last: stops.lastElementChild === more,
       before: more.previousElementSibling.querySelector(".stop-btn") !== null,
       position: style.position, place: style.placeItems, paddingTop: style.paddingTop, top: style.top,
-      flex: ["flex", "width", "max-width"].map((name) => style.getPropertyValue(name)),
-      stopFlex: ["flex", "width", "max-width"].map((name) => stop.getPropertyValue(name)),
+      flex: SLOT.map((name) => style.getPropertyValue(name)),
+      stopFlex: SLOT.map((name) => stop.getPropertyValue(name)),
       fold: [folded.position, folded.top, folded.left] };
     fold.remove();
   } }] });
