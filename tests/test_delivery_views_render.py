@@ -1098,6 +1098,74 @@ class NeedsBlockTests(unittest.TestCase):
         self.assertEqual(len(row["said"]["why"]), render.NEEDS_TEXT)
         self.assertEqual((block["summary"], block["words"]), ("1 thing needs the lead.", {"heading": "H", "holding": "M", "age": "for {age}"}))
 
+    def test_a_shared_lists_stamps_wordings_and_summary_pass_through_and_nothing_else(self) -> None:
+        """On a shared record the supervisor stamps each item's owner and words it for each reader: the page is given
+        the stamp, all three wordings and both sentences, cut as the rest are, and still nothing it doesn't draw."""
+        said = lambda who: {"headline": f"{who} marks the draft ready", "why": "w" * 700, "clears": "c", "who": who, "extra": "x"}
+        item = {"holding": False, "source": "acceptance", "text": "t", "clears": "c", "kind": "drafts", "who": "operator",
+                "scope": "queue", "seat": "s-bbbbbbbbbbbb", "said": said("You"), "saidAll": said("Ben"),
+                "saidRole": said("Someone"), "saidOther": said("Cy"), "seats": {"s-bbbbbbbbbbbb": "Ben"}}
+        unstamped = {"holding": False, "source": "lane-2's state", "text": "t", "clears": "c", "kind": "laneAsks",
+                     "who": "lead", "scope": "lane:lane-2", "scopeSeat": "x", "said": said("The lead")}
+        written = self.listed([item, unstamped])
+        written.update(summary="1 thing needs you.", summaryAll="1 thing needs Ben.", summaryOther="x" * 700)
+        self.write(written)
+        block = render.read_needs_block(self.state)
+        stamped, unresolved = block["items"]
+        self.assertEqual(set(stamped), {"holding", "source", "text", "clears", "kind", "who", "scope", "seat",
+                                        "said", "saidAll", "saidRole"})
+        self.assertEqual((stamped["scope"], stamped["seat"]), ("queue", "s-bbbbbbbbbbbb"))
+        for wording, who in (("said", "You"), ("saidAll", "Ben"), ("saidRole", "Someone")):
+            with self.subTest(wording=wording):
+                self.assertEqual(set(stamped[wording]), {"headline", "why", "clears", "who"})
+                self.assertEqual(stamped[wording]["who"], who)
+                self.assertEqual(len(stamped[wording]["why"]), render.NEEDS_TEXT)
+        # An item whose seat the pass couldn't resolve carries its scope and no seat.
+        self.assertEqual(set(unresolved), {"holding", "source", "text", "clears", "kind", "who", "scope", "said"})
+        self.assertEqual((block["summary"], block["summaryAll"]), ("1 thing needs you.", "1 thing needs Ben."))
+        self.assertNotIn("summaryOther", block)
+        written["summaryAll"] = "s" * 700
+        self.write(written)
+        self.assertEqual(len(render.read_needs_block(self.state)["summaryAll"]), render.NEEDS_TEXT)
+
+    def test_an_unshared_list_draws_no_stamp_wording_or_second_sentence(self) -> None:
+        item = {"holding": True, "source": "s", "text": "t", "clears": "c", "kind": "stopped", "who": "lead",
+                "said": {"headline": "h", "why": "w", "clears": "c", "who": "The lead"}}
+        written = self.listed([item])
+        written["summary"] = "1 thing needs the lead, and it's holding up the finish."
+        self.write(written)
+        block = render.read_needs_block(self.state)
+        self.assertEqual(set(block), {"running", "at", "staleAfter", "items", "summary"})
+        self.assertEqual(set(block["items"][0]), {"holding", "source", "text", "clears", "kind", "who", "said"})
+
+    def test_a_tracker_lag_on_a_shared_list_drops_both_sentences_rather_than_reword_them(self) -> None:
+        """A shared list's sentences name seats, which only the pass can say: a tracker lag that stops holding takes
+        both away, as when the table can't say one, rather than say them again in the unshared form."""
+        lag = {"holding": True, "source": "tracker publisher", "text": "behind", "clears": "c", "kind": "trackerLag",
+               "who": "lead", "scope": "delivery", "seat": "s-aaaaaaaaaaaa"}
+        blocked = {"holding": True, "source": "lane-2's state", "text": "blocked", "clears": "c", "kind": "laneBlocked",
+                   "who": "lead", "scope": "lane:lane-2", "seat": "s-aaaaaaaaaaaa"}
+        for marked in ("summaryAll", "scope"):
+            with self.subTest(marked=marked):
+                items = [dict(lag), dict(blocked)]
+                written = self.listed(items)
+                written["summary"] = "2 things need the lead, and both are holding up the finish."
+                if marked == "summaryAll":
+                    written["summaryAll"] = "2 things need Ama's lead, and both are holding up the finish."
+                    for each in items:
+                        each.pop("scope")
+                self.write(written)
+                block = render.read_needs_block(self.state)
+                self.assertNotIn("summary", block)
+                self.assertNotIn("summaryAll", block)
+                self.assertEqual([row["holding"] for row in block["items"]], [False, True])
+        # Without a tracker lag, a shared list keeps both sentences as the pass wrote them.
+        written = self.listed([blocked])
+        written.update(summary="1 thing needs the lead.", summaryAll="1 thing needs Ama's lead.")
+        self.write(written)
+        block = render.read_needs_block(self.state)
+        self.assertEqual((block["summary"], block["summaryAll"]), ("1 thing needs the lead.", "1 thing needs Ama's lead."))
+
     def test_a_tracker_lag_keeps_its_row_and_stops_claiming_to_hold_up_the_finish(self) -> None:
         lag = {"holding": True, "source": "tracker publisher", "text": "behind", "clears": "c", "kind": "trackerLag", "who": "lead"}
         blocked = {"holding": True, "source": "lane-2's state", "text": "blocked", "clears": "c", "kind": "laneBlocked", "who": "lead"}
@@ -1151,6 +1219,65 @@ class NeedsBlockTests(unittest.TestCase):
             with self.subTest(bad=bad):
                 self.write(self.listed([bad]))
                 self.assertEqual(render.read_needs_block(self.state), {"unreadable": True})
+
+SEAT_A, SEAT_B = "s-aaaaaaaaaaaa", "s-bbbbbbbbbbbb"
+
+
+def shared_record(key: str = "SHOP-90") -> dict:
+    """A record two seats share: Ama's and Ben's."""
+    return {"state": {"meta": {"collab": {"key": key, "seats": {
+        SEAT_A: {"label": "Ama", "admitted": True, "approver": True},
+        SEAT_B: {"label": "Ben", "admitted": True, "approver": True}}}}, "planned": [], "queue": []}, "journal": []}
+
+
+class ViewerSeatTests(unittest.TestCase):
+    """The local page is drawn for this checkout's seat on a shared record, and for nobody on any other record: the
+    seat is embedded on its own, never in the cut the hosted page shares."""
+
+    def setUp(self) -> None:
+        holder = tempfile.TemporaryDirectory()
+        self.addCleanup(holder.cleanup)
+        self.root = Path(holder.name).resolve()
+        self.state = self.root / "state"
+
+    def seated(self, seat: str, key: str = "SHOP-90") -> None:
+        if not (self.root / ".git").is_dir():
+            subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
+            quieten(self.root)
+        self.state.mkdir(exist_ok=True)
+        subprocess.run(["git", "config", "--local", f"agent-skills.seat.{key}", seat], cwd=self.root, check=True)
+
+    def test_a_shared_record_is_drawn_for_this_checkouts_seat(self) -> None:
+        repository = Repository(self.root, {"spec": views_common.CONFIG_SPEC})
+        self.seated(SEAT_B)
+        self.assertEqual(render.viewer_seat(self.state, shared_record()), SEAT_B)
+        result = repository.render(shared_record())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        page = result.stdout.decode("utf-8")
+        self.assertEqual(block(page, "delivery-viewer"), {"seat": SEAT_B})
+        # The seat is the page's own: the shared cut's blocks carry none of it.
+        self.assertNotIn(SEAT_B, json.dumps(block(page, "delivery-view")))
+
+    def test_an_unshared_record_is_drawn_for_nobody_even_where_the_checkout_holds_a_seat(self) -> None:
+        unshared = shared_record()
+        del unshared["state"]["meta"]["collab"]
+        with mock.patch.object(render.review_state, "local_seat", return_value=SEAT_A) as local:
+            self.assertIsNone(render.viewer_seat(self.state, unshared))
+            self.assertIsNone(render.viewer_seat(self.state, {"state": {"meta": {"collab": "SHOP-90"}}}))
+            self.assertIsNone(render.viewer_seat(self.state, {"state": []}))
+        local.assert_not_called()
+        page = render.render_line_map(unshared, {}, config(), theme_key="k", history=None)
+        self.assertNotIn('id="delivery-viewer"', page)
+        self.assertEqual(page, render.render_line_map(unshared, {}, config(), theme_key="k", history=None, viewer=None))
+
+    def test_a_seat_the_record_doesnt_hold_or_no_seat_at_all_is_nobody(self) -> None:
+        self.assertIsNone(render.viewer_seat(self.state, shared_record()), "no checkout at all")
+        self.seated("s-cccccccccccc")
+        self.assertIsNone(render.viewer_seat(self.state, shared_record()))
+        self.seated(SEAT_A, key="SHOP-91")
+        self.assertIsNone(render.viewer_seat(self.state, shared_record()), "a seat on another record")
+        self.assertEqual(render.viewer_seat(self.state, shared_record("SHOP-91")), SEAT_A)
+
 
 class LeftOpenTests(unittest.TestCase):
     """What a closed delivery left open, from its record and in the table's words: each stopped piece, the base when its
