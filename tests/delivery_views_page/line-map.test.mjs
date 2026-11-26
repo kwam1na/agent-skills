@@ -228,9 +228,11 @@ const rowsOf = (list) => [...list.querySelectorAll(":scope > li")].map((row) => 
 /** Whether a rule of the page's own stylesheet cuts this element to one line: read on the live page, since a
  * snapshot is a copy without the page's styles. */
 const styleRules = (rules) => [...rules].flatMap((rule) => (rule.cssRules ? styleRules(rule.cssRules) : [rule]));
+/** Whether a rule's selector matches the element: one jsdom can't read, such as a ::highlight, matches nothing. */
+const ruleMatches = (node, rule) => { try { return node.matches(rule.selectorText); } catch (error) { return false; } };
 const cutToOneLine = (node) => [...node.ownerDocument.styleSheets].flatMap((sheet) => styleRules(sheet.cssRules))
   .filter((rule) => rule.style && (rule.style.getPropertyValue("white-space") === "nowrap" || rule.style.getPropertyValue("text-overflow") === "ellipsis"))
-  .some((rule) => node.matches(rule.selectorText));
+  .some((rule) => ruleMatches(node, rule));
 
 /** The lead's note, by its words, among the sheet's folds and lines. */
 const leadNote = (app) => [...app.querySelectorAll(".checking > .ck-chosen, .checking > .ck-chosen-line")]
@@ -263,12 +265,49 @@ test("the lead's note opens to the sheet's own check list when the sheet only co
   expect(leadNote(paged.app).querySelector(".ck-pager .ck-page-where")?.textContent).toBe("11–16 of 16");
 });
 
+/** Fourteen checks that have not failed, ten passed, one running and three waiting; timed as the runner times them, from
+ * the run's start, one after another, or with no times at all. */
+function fourteen(timed) {
+  const at = (minutes) => new Date(Date.parse("2026-10-22T04:30:00Z") + minutes * 60000).toISOString();
+  return Array.from({ length: 14 }, (_, index) => ({ label: `shop.check.${index}`,
+    state: index < 10 ? "passed" : index === 10 ? "running" : "pending",
+    ...(timed && index < 10 ? { startedAt: at(index), finishedAt: at(index + 1) } : timed && index === 10 ? { startedAt: at(10) } : {}) }));
+}
+
+test("on a long run that hasn't failed, the note opens to the list only when the sheet draws its run line", async () => {
+  for (const timed of [true, false]) {
+    const document = chosenByLead("only the retry path changed", fourteen(timed));
+    if (timed) { document.state.meta.checking.now.startedAt = "2026-10-22T04:30:00Z"; }
+    const [{ app }] = await open(document, { steps: [{ click: ".checking > details.ck-chosen > summary" }] }).then((shots) => shots.slice(1));
+    const note = leadNote(app);
+    const lists = [...app.querySelectorAll(".checking ol.ck-list")];
+    expect(lists).toHaveLength(1);
+    if (timed) {
+      // The run on the clock names no check: the note is where they are read by name.
+      expect(app.querySelector(".checking svg.run-line")).not.toBeNull();
+      expect(note.tagName).toBe("DETAILS");
+      expect(note.contains(lists[0])).toBe(true);
+      expect(note.querySelector(".ck-pager .ck-page-where")?.textContent).toBe("1–10 of 13");
+    } else {
+      // Untimed, the sheet lists them in its own fold: the note says its reason in one line.
+      expect(app.querySelector(".checking svg.run-line")).toBeNull();
+      expect([note.tagName, note.className]).toEqual(["P", "ck-chosen-line"]);
+      expect(lists[0].closest("details.ck-chosen > summary")).toBeNull();
+      expect(lists[0].closest("details.ck-chosen").querySelector(":scope > summary").textContent).toMatch(/^10 done, 3 waiting/);
+    }
+  }
+});
+
 test("the lead's note is one line when the sheet already lists the checks, so the list is there once", async () => {
   const reason = "only the retry path changed, and the payment provider's sandbox is down for the afternoon, so the " +
     "contract checks that call it are left to tomorrow's run rather than failing on the sandbox today";
-  let cut = null;
+  let cut = null, typed = null;
   const [{ app }] = await open(chosenByLead(reason), { steps: [{ run(window) {
-    cut = cutToOneLine(leadNote(window.document.querySelector("#app")));
+    const line = leadNote(window.document.querySelector("#app"));
+    cut = cutToOneLine(line);
+    // It reads as the sheet's other quiet lines do: their small faint type, and no paragraph's margins.
+    const rules = [...window.document.styleSheets].flatMap((sheet) => styleRules(sheet.cssRules)).filter((rule) => rule.style && ruleMatches(line, rule));
+    typed = ["font-size", "color", "margin"].map((name) => rules.map((rule) => rule.style.getPropertyValue(name)).filter(Boolean).pop() || null);
   } }] });
   const note = leadNote(app);
   expect(note.tagName).toBe("P");
@@ -276,6 +315,7 @@ test("the lead's note is one line when the sheet already lists the checks, so th
   // Whole, and never cut to one line: nothing opens it.
   expect(note.textContent).toBe("Checks chosen by the lead, not the usual selection: " + reason);
   expect(cut).toBe(false);
+  expect(typed).toEqual(["13px", "var(--faint)", "0"]);
   expect(app.querySelectorAll(".checking ol.ck-list")).toHaveLength(1);
   expect(note.querySelector("ol.ck-list")).toBeNull();
 });
