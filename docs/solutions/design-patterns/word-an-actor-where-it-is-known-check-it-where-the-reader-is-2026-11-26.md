@@ -58,10 +58,10 @@ in the supervisor alone can't know which page reads it.
 ## Examples
 
 - Plan: `docs/plans/2026-11-26-first-class-seats.md`, decisions 8 to 10.
-- Supervisor stamping and wording: V26-3994 (`NEED_SCOPES` in
-  `skills/run-delivery/scripts/run_delivery.py`).
-- The page's `yours(item)` and the seat chip: V26-3996
-  (`skills/delivery-views/assets/line-map.js`).
+- Supervisor stamping and wording: `NEED_SCOPES` and `say_needs` in
+  `skills/run-delivery/scripts/run_delivery.py`.
+- The page's `yours` and the seat chip:
+  `skills/delivery-views/assets/line-map.js`.
 
 ## Related
 

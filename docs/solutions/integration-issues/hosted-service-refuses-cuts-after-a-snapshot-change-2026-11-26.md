@@ -15,7 +15,7 @@ resolution_type: environment_setup
 
 ## Problem
 
-V26-3993 published nothing to its hosted page. linear-v4.5.0 had added a
+A delivery published nothing to its hosted page. linear-v4.5.0 had added a
 `repository` member to `hosted-snapshot.schema.json`, and the Worker serving
 `deliveries.v26technologies.com` had been deployed from an earlier main. The
 service refused each cut as `invalid_projection`, and the page stayed 404.
@@ -66,5 +66,5 @@ here from a stale viewer test, fixed in PR #538.
 
 ## Related Issues
 
-- V26-3993's repo gap 13, which recorded the refusal and its evidence.
+- The delivery's repo gap that recorded the refusal and its evidence, kept in its archive.
 - `docs/solutions/integration-issues/hosted-viewer-hooks-the-line-map-by-exact-text-2026-11-20.md`
