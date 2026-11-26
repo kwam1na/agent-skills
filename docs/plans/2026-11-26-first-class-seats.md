@@ -31,28 +31,24 @@ created as tracked items once the plan is approved.
   - Now's sentence, the marks, the Needs you box and the rejoin's "you" words on
     the line map;
   - a seat chip and a "shared with" line on a shared record's page;
-  - the delivery-views and orchestration wording rules for shared records.
+  - the delivery-views and orchestration wording rules for shared records;
+  - four multi-seat bugs the planning found, each reproduced before it is fixed
+    where it was read from the code: a resolved blocker that stays listed on
+    another seat (V26-3997), a false tracker lag on a seat without `delivery`
+    (V26-3998), the listener item naming another seat's lanes (V26-3999), and
+    the Needs you kinds the docs promise but nothing emits (V26-4000).
 - Out:
-  - a blocker resolved on one seat that stays listed on another, because the
-    resolutions log is machine-local;
-  - a tracker lag item on a seat without `delivery`, which reads that machine's
-    own empty ledger;
-  - the listener item naming lanes another seat holds;
-  - Needs you kinds the docs promise but nothing emits: a held peer partition, a
-    seat split, a generation mismatch, a pending seat or scope request;
   - V26-3930 (settle state on a delivery move) and V26-3919 (deferred test
     strength);
   - tracker posts, the friction note and every lead-facing text (`text`,
     `clears`, command output). Their readers are the lead or the tracker, not a
     seat's person.
 
-  The four bugs are filed as V26-3997 (the resolutions log), V26-3998 (the tracker
-  lag), V26-3999 (the listener) and V26-4000 (the promised kinds). This plan's stamping does not hide them, and does
-  not depend on them.
-
 ## Decisions recorded here
 
 The operator approved this plan on 2026-11-26, with decisions 1 to 11 as written.
+The same day the operator added the four multi-seat bugs the planning found to the
+delivery, as V26-3997 to V26-4000 (decision 12).
 
 Operator calls the ticket asked for, with the recommendation adopted. The
 operator confirms or overturns them in approving this plan.
@@ -111,6 +107,13 @@ operator confirms or overturns them in approving this plan.
 11. **The summary is the pass's.** `summary` and `summaryAll` are worded when
     the list is written. An item that later reads as outrun still counts in
     them until the next pass, the same lag as every other word in the list.
+12. **The four bugs ride in lane 1, after the stamp.** Each changes
+    `run_delivery.py`, which lane 1 holds, so they queue behind V26-3994
+    there rather than opening a third lane on the same file. Only V26-4000
+    truly waits on V26-3994, because a new kind must land with its owner row.
+    V26-3997 and V26-3998 were read from the code and not reproduced. Each is
+    reproduced first and closed with that evidence if it doesn't reproduce:
+    `resolutions` is already a carried log, which may mean V26-3997 is fixed.
 
 ## Inventory and disposition
 
@@ -217,6 +220,12 @@ neither.
      tests pass unchanged.
 5. `skills/delivery-views/SKILL.md` and the orchestration guide state the rule
    once: on a shared record, "you" is the seat that holds the call.
+6. On the two-seat fixture, a blocker resolved on one seat is gone from the
+   other's list; a seat without `delivery` lists no tracker lag that the
+   delivery holder has posted; a seat's listener item names only its own lanes;
+   and every Needs you kind the docs name is emitted, or no longer named. A bug
+   that doesn't reproduce is closed with the failing-to-fail test as its
+   evidence.
 
 ## Stories
 
@@ -333,12 +342,62 @@ Lane 2, tier 2, after V26-3995. Test-first. Files:
 - Comes after V26-3995 because it takes over V26-3995's lane, and its cases assert
   the embed V26-3995 writes. Not blocked by V26-3994.
 
+### V26-3997. A blocker resolved on one seat stays listed on the other
+
+Lane 1, tier 1, not blocked. Characterization-first. Files:
+`skills/run-delivery/scripts/run_delivery.py`,
+`skills/run-delivery/scripts/tracker_publisher.py`,
+`skills/run-delivery/SKILL.md` and `tests/test_collab_colead_runtime.py`.
+
+- Reproduce first: on the two-seat fixture, record a blocker, resolve it on a,
+  and run b's pass. If b no longer lists it, close the item with that test as
+  its evidence.
+- If it does reproduce, the resolution reaches every seat, and the mirror case
+  (resolved on b, read on a) holds too.
+
+### V26-3998. A seat without delivery shows a false tracker lag in Needs you
+
+Lane 1, tier 1, not blocked. Characterization-first. Files:
+`skills/run-delivery/scripts/tracker_publisher.py`,
+`skills/run-delivery/scripts/run_delivery.py`,
+`tests/test_collab_colead_runtime.py` and `tests/test_run_delivery_tracker.py`.
+
+- Reproduce first: two seats, publisher mode, a posts everything, and b's pass
+  lists `trackerLag`. If it doesn't, close the item with that evidence.
+- If it does, b lists nothing, while an unposted entry on a still shows.
+
+### V26-3999. The listener item names lanes another seat holds
+
+Lane 1, tier 1, not blocked. Test-first. Files:
+`skills/run-delivery/scripts/run_delivery.py`,
+`tests/test_collab_colead_runtime.py` and `tests/test_lead_wait.py`.
+
+- On a shared record, the listener item covers only the lanes this seat holds.
+  b with no lead-wait raises nothing for a's lane 2, and still raises one for
+  its own lane 1. Unshared records keep every lane.
+
+### V26-4000. Raise the Needs you items the shared-delivery docs promise but nothing emits
+
+Lane 1, tier 2, after V26-3994. Test-first. Files:
+`skills/run-delivery/scripts/run_delivery.py`,
+`skills/orchestrate-work/references/`, `skills/orchestrate-work/SKILL.md`,
+`tests/test_waits.py` and `tests/test_collab_colead_runtime.py`.
+
+- For each promised kind (a held peer partition, a seat split, a generation
+  mismatch, a pending seat or scope request), either emit it or correct the
+  standing doc that promises it, and record why. Historical plans are left as
+  written.
+- A new kind lands with its words and its `NEED_SCOPES` row: `seat:<writer>`
+  for the machine-local ones, the admitting or answering holder's scope for the
+  requests.
+
 ## Units and order
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3994 | `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`, `skills/orchestrate-work/references/`, `tests/test_waits.py`, `tests/test_collab_colead_runtime.py`, `tests/test_run_delivery_supervisor.py` |
+| 1 | 1 | V26-3994, V26-3997, V26-3998, V26-3999 | `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`, `skills/orchestrate-work/references/`, `skills/orchestrate-work/SKILL.md`, `tests/test_waits.py`, `tests/test_collab_colead_runtime.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_tracker.py`, `tests/test_lead_wait.py` |
 | 1 | 2 | V26-3995 | `skills/delivery-views/scripts/`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_hosted.py`, `tests/test_delivery_views_hosted_projection.py` |
+| 2 | 1 | V26-4000 | |
 | 2 | 2 | V26-3996 | `skills/delivery-views/assets/`, `skills/delivery-views/SKILL.md`, `tests/delivery_views_page/`, `tests/fixtures/delivery-views/line-map/` |
 
 Shared files: `provenance.lock.json` and each touched skill's catalog entry
@@ -391,6 +450,10 @@ and each test above names the mutant it must fail on.
   `tests.test_run_delivery_supervisor`.
 - V26-3995: `tests.test_delivery_views_render`, `tests.test_delivery_views_hosted`
   and `tests.test_delivery_views_hosted_projection`.
+- V26-3997, V26-3998, V26-3999 and V26-4000: `tests.test_collab_colead_runtime`,
+  with each bug's case in an existing two-seat fixture class, plus
+  `tests.test_run_delivery_tracker` (V26-3998), `tests.test_lead_wait`
+  (V26-3999) and `tests.test_waits` (V26-4000).
 - V26-3996: `tests/test_delivery_views_page.py` (the Node page lane, including
   `golden.test.mjs`'s byte-for-byte recapture check).
 - Every story: `scripts/validate-registry.py` and
@@ -402,7 +465,7 @@ and each test above names the mutant it must fail on.
 
 ## Approval handoffs
 
-1. The operator approves this plan, including decisions 1 to 11.
+1. The operator approves this plan, including decisions 1 to 12.
 2. The stories and the four out-of-scope bugs are created with
    `$create-linear-ticket`, under V26-3959's project.
 3. Delivery runs under `orchestrate-work`. No release is cut by this plan.
