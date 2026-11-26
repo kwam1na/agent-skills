@@ -912,6 +912,16 @@ def ready_to_publish(state_dir: Path) -> bool:
     return delivery_state._collab().delivery_taken(state_dir) is not False
 
 
+def posts_here(doc: dict, state_dir: Path) -> bool:
+    """Whether this machine's publisher posts the record ``doc`` holds: always on an unshared record, and on a shared
+    one only where ``ready_to_publish`` holds, judged from ``doc``'s own journal."""
+    if not (doc["state"].get("meta") or {}).get("collab"):
+        return True
+    import delivery_state  # beside journal_words
+
+    return delivery_state._collab().delivery_taken(state_dir, doc["journal"]) is not False
+
+
 def write_error(state_dir: Path, error: str | None) -> None:
     path = state_dir / ERROR_FILE
     if error is None:
@@ -950,10 +960,11 @@ def waiting(doc: dict, state_dir: Path, flow_log: Path, delivery: str) -> tuple[
 def needs_you(doc: dict, state_dir: Path, flow_log: Path, delivery: str, conf: dict, closing: bool = False) -> list[dict]:
     """The tracker's "Needs you" items: {holding, text}. A publisher whose ledger lags the journal holds, naming its
     last error; `failed` and `handled` lines are shown. A start that waits holds nothing, except while closing,
-    when it is shown."""
+    when it is shown. On a shared record only the seat that posts, holding delivery and having taken it, judges what
+    the ledger owes: no other seat writes this ledger, so on any other it would owe everything."""
     items: list[dict] = []
     if conf.get("mode") == "publisher":
-        lagging, starts = waiting(doc, state_dir, flow_log, delivery)
+        lagging, starts = waiting(doc, state_dir, flow_log, delivery) if posts_here(doc, state_dir) else ([], [])
         if lagging:
             error = (read_error(state_dir) or {}).get("error")
             ids = ", ".join(str(e["id"]) for e in lagging[:10]) + (" and more" if len(lagging) > 10 else "")
