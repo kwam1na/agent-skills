@@ -5,6 +5,7 @@ date: 2026-11-26
 topic: first-class-seats
 reviewSlug: first-class-seats
 execution: code
+status: approved
 ---
 
 # First-class seats in the shared-delivery views - Plan
@@ -45,10 +46,13 @@ created as tracked items once the plan is approved.
     `clears`, command output). Their readers are the lead or the tracker, not a
     seat's person.
 
-  Each out-of-scope bug above is filed as its own tracked item when this plan is
-  approved. This plan's stamping does not hide them, and does not depend on them.
+  The four bugs are filed as V26-3997 (the resolutions log), V26-3998 (the tracker
+  lag), V26-3999 (the listener) and V26-4000 (the promised kinds). This plan's stamping does not hide them, and does
+  not depend on them.
 
 ## Decisions recorded here
+
+The operator approved this plan on 2026-11-26, with decisions 1 to 11 as written.
 
 Operator calls the ticket asked for, with the recommendation adopted. The
 operator confirms or overturns them in approving this plan.
@@ -167,7 +171,7 @@ piece, then the item is stamped, then it is worded. So `stopped` and
 no lane where its kind wants one falls back to `delivery`.
 
 On an unshared record none of these keys is written, so `needs-you.json` and
-the supervisor log are byte-identical to today's. SEATS-1 adds the pin that
+the supervisor log are byte-identical to today's. V26-3994 adds the pin that
 proves it. The version stays at 1: every added member is optional, and an
 unshared list never carries one.
 
@@ -208,7 +212,7 @@ neither.
    label and says "you" nowhere in Needs you, Now or the rejoin. The hosted
    page is that page.
 4. Every unshared record draws as today:
-   - the new unshared list pin (SEATS-1) passes;
+   - the new unshared list pin (V26-3994) passes;
    - the ten unshared line-map goldens and the unshared Now and Needs you page
      tests pass unchanged.
 5. `skills/delivery-views/SKILL.md` and the orchestration guide state the rule
@@ -216,10 +220,10 @@ neither.
 
 ## Stories
 
-Story keys are given when the items are created; the placeholders `SEATS-1` to
-`SEATS-3` stand in for them.
+The stories sit under the epic V26-3993. Earlier drafts of this plan called them
+`SEATS-1` to `SEATS-3`.
 
-### SEATS-1. Stamp each Needs you item with its owner and word it for each reader
+### V26-3994. Stamp each Needs you item with its owner and word it for each reader
 
 Lane 1, tier 1, not blocked. Test-first. Files:
 `skills/run-delivery/scripts/run_delivery.py`,
@@ -268,7 +272,7 @@ Lane 1, tier 1, not blocked. Test-first. Files:
   Each is re-derived, not loosened. The stamp is added after the producer dict,
   so the source-layout check keeps its pattern.
 
-### SEATS-2. Give the local page its seat, and pass the stamps through
+### V26-3995. Give the local page its seat, and pass the stamps through
 
 Lane 2, tier 1, not blocked. Test-first. Files:
 `skills/delivery-views/scripts/render.py`,
@@ -287,12 +291,12 @@ Lane 2, tier 1, not blocked. Test-first. Files:
     local seat. Mutant: the shared check removed.
   - A shared record's local page embeds the seat id, and the hosted page embeds
     none.
-- Not blocked by SEATS-1: the contract above fixes the list's shape, and the
+- Not blocked by V26-3994: the contract above fixes the list's shape, and the
   tests use hand-written lists.
 
-### SEATS-3. Draw seats on Now, the marks, Needs you and the rejoin
+### V26-3996. Draw seats on Now, the marks, Needs you and the rejoin
 
-Lane 2, tier 2, after SEATS-2. Test-first. Files:
+Lane 2, tier 2, after V26-3995. Test-first. Files:
 `skills/delivery-views/assets/line-map.js`, `skills/delivery-views/SKILL.md`,
 `tests/delivery_views_page/` and `tests/fixtures/delivery-views/line-map/`.
 
@@ -326,16 +330,16 @@ Lane 2, tier 2, after SEATS-2. Test-first. Files:
     unchanged.
 - The `colead` and `plan-shared` goldens are recaptured. The ten unshared
   goldens are untouched.
-- Comes after SEATS-2 because it takes over SEATS-2's lane, and its cases assert
-  the embed SEATS-2 writes. Not blocked by SEATS-1.
+- Comes after V26-3995 because it takes over V26-3995's lane, and its cases assert
+  the embed V26-3995 writes. Not blocked by V26-3994.
 
 ## Units and order
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | SEATS-1 | `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`, `skills/orchestrate-work/references/`, `tests/test_waits.py`, `tests/test_collab_colead_runtime.py`, `tests/test_run_delivery_supervisor.py` |
-| 1 | 2 | SEATS-2 | `skills/delivery-views/scripts/`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_hosted.py`, `tests/test_delivery_views_hosted_projection.py` |
-| 2 | 2 | SEATS-3 | `skills/delivery-views/assets/`, `skills/delivery-views/SKILL.md`, `tests/delivery_views_page/`, `tests/fixtures/delivery-views/line-map/` |
+| 1 | 1 | V26-3994 | `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`, `skills/orchestrate-work/references/`, `tests/test_waits.py`, `tests/test_collab_colead_runtime.py`, `tests/test_run_delivery_supervisor.py` |
+| 1 | 2 | V26-3995 | `skills/delivery-views/scripts/`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_hosted.py`, `tests/test_delivery_views_hosted_projection.py` |
+| 2 | 2 | V26-3996 | `skills/delivery-views/assets/`, `skills/delivery-views/SKILL.md`, `tests/delivery_views_page/`, `tests/fixtures/delivery-views/line-map/` |
 
 Shared files: `provenance.lock.json` and each touched skill's catalog entry
 change in every story. The merge queue serializes them. A conflict only in the
@@ -383,11 +387,11 @@ and each test above names the mutant it must fail on.
 
 ## Sensors
 
-- SEATS-1: `tests.test_waits`, `tests.test_collab_colead_runtime` and
+- V26-3994: `tests.test_waits`, `tests.test_collab_colead_runtime` and
   `tests.test_run_delivery_supervisor`.
-- SEATS-2: `tests.test_delivery_views_render`, `tests.test_delivery_views_hosted`
+- V26-3995: `tests.test_delivery_views_render`, `tests.test_delivery_views_hosted`
   and `tests.test_delivery_views_hosted_projection`.
-- SEATS-3: `tests/test_delivery_views_page.py` (the Node page lane, including
+- V26-3996: `tests/test_delivery_views_page.py` (the Node page lane, including
   `golden.test.mjs`'s byte-for-byte recapture check).
 - Every story: `scripts/validate-registry.py` and
   `scripts/update-provenance.py --check`.
