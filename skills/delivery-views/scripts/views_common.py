@@ -736,6 +736,8 @@ PLAN_OUTCOME_TEXT, PLAN_TEXT, PLAN_LABEL = 2000, 600, 200
 PLAN_UNITS, PLAN_CRITERIA, PLAN_CHANGES, PLAN_FINISH = 200, 1000, 500, 30
 # Bounds the contract leaves to the validator: kinds, lenses, approvals, out-of-scope texts, items per proof.
 PLAN_LIST = 100
+# A headed decision's body: its paragraphs and bulleted lists, and the bullets in one list.
+PLAN_DECISION_BLOCKS, PLAN_DECISION_ITEMS = 20, 20
 PLAN_RECORD_KINDS = ("handed", "merged", "review")
 PLAN_CHANGE_KINDS = ("added", "removed", "relaxed", "changed", "finish")
 PLAN_KEYS = ("schemaVersion", "updated", "outcome", "requiredLenses", "proofKinds", "units", "finish", "approved",
@@ -772,6 +774,33 @@ def _plan_object(value: object, where: str, allowed: set[str], required: set[str
         if key not in value:
             raise ConfigError(f"{_join(where, key)}: is required")
     return value
+
+
+def _plan_decision(value: object, where: str) -> None:
+    """A plan decision: one text, or `{head, body?}`, whose body holds paragraphs and `{items}` lists of bullets."""
+    if isinstance(value, str):
+        _text(value, where, PLAN_TEXT)
+        return
+    if not isinstance(value, dict):
+        raise ConfigError(f"{where}: must be text or an object")
+    _plan_object(value, where, {"head", "body"}, {"head"})
+    _text(value["head"], f"{where}.head", PLAN_TEXT)
+    if "body" not in value:
+        return
+    blocks = _bounded(value["body"], f"{where}.body", PLAN_DECISION_BLOCKS)
+    if not blocks:
+        raise ConfigError(f"{where}.body: must hold at least one block")
+    for j, block in enumerate(blocks):
+        at = f"{where}.body[{j}]"
+        if isinstance(block, str):
+            _text(block, at, PLAN_TEXT)
+            continue
+        _plan_object(block, at, {"items"}, {"items"})
+        items = _bounded(block["items"], f"{at}.items", PLAN_DECISION_ITEMS)
+        if not items:
+            raise ConfigError(f"{at}.items: must hold at least one item")
+        for k, item in enumerate(items):
+            _text(item, f"{at}.items[{k}]", PLAN_TEXT)
 
 
 def _bounded(value: object, where: str, cap: int) -> list:
@@ -1114,8 +1143,8 @@ def _plan_preview(value: object) -> None:
         _plan_id(preview["delivery"], "preview.delivery")
     if preview["layout"] not in PLAN_PREVIEW_LAYOUTS:
         raise ConfigError(f"preview.layout: must be {' or '.join(PLAN_PREVIEW_LAYOUTS)}")
-    for i, text in enumerate(_bounded(preview["decisions"], "preview.decisions", PLAN_LIST)):
-        _text(text, f"preview.decisions[{i}]", PLAN_TEXT)
+    for i, decision in enumerate(_bounded(preview["decisions"], "preview.decisions", PLAN_LIST)):
+        _plan_decision(decision, f"preview.decisions[{i}]")
     if "endorsements" in preview:
         if preview["approval"] == "handed":
             raise ConfigError("preview.endorsements: is never given when the approval is handed")

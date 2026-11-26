@@ -656,6 +656,11 @@ class PlanPreviewContractTests(unittest.TestCase):
             "handed": preview_plan(approval="handed", delivery="FX-1"),
             "another layout": preview_plan(layout="other", decisions=[]),
             "at its caps": preview_plan(plan="p" * 600, decisions=["d" * 600] * 100),
+            # A headed decision: its headline, and paragraphs and bulleted lists beneath it, each at its cap.
+            "headed decisions": preview_plan(decisions=[
+                {"head": "h" * 600, "body": ["p" * 600, {"items": ["i" * 600] * views.PLAN_DECISION_ITEMS}]
+                 + ["p"] * (views.PLAN_DECISION_BLOCKS - 2)},
+                {"head": "A headline alone."}, "A plain decision still reads."]),
             # A planning record's: always its endorsements, none yet, some, one of them stale, or every seat's.
             "a planning record not yet endorsed": preview_plan(endorsements=[]),
             "a planning record with a stale endorsement": preview_plan(endorsements=[
@@ -714,6 +719,28 @@ class PlanPreviewContractTests(unittest.TestCase):
             "a missing layout": (lambda p: p.pop("layout"), "preview.layout: is required"),
             "a missing decisions list": (lambda p: p.pop("decisions"), "preview.decisions: is required"),
             "an empty decision": (lambda p: p.update(decisions=[""]), "preview.decisions[0]: must be non-empty text"),
+            "a decision that is neither text nor headed": (lambda p: p.update(decisions=[3]),
+                                                           "preview.decisions[0]: must be text or an object"),
+            "a headed decision with no head": (lambda p: p.update(decisions=[{"body": ["Why."]}]),
+                                               "preview.decisions[0].head: is required"),
+            "a headed decision with another key": (lambda p: p.update(decisions=[{"head": "H.", "n": 1}]),
+                                                   "preview.decisions[0]: holds an unknown key"),
+            "a 601-character head": (lambda p: p.update(decisions=[{"head": "h" * 601}]),
+                                     "preview.decisions[0].head: holds 601 characters, over the cap of 600"),
+            "an empty body": (lambda p: p.update(decisions=[{"head": "H.", "body": []}]),
+                              "preview.decisions[0].body: must hold at least one block"),
+            "too many blocks": (lambda p: p.update(decisions=[{"head": "H.", "body": ["p"] * 21}]),
+                                "preview.decisions[0].body: holds 21 entries, over the cap of 20"),
+            "a 601-character paragraph": (lambda p: p.update(decisions=[{"head": "H.", "body": ["p" * 601]}]),
+                                          "preview.decisions[0].body[0]: holds 601 characters, over the cap of 600"),
+            "a list with another key": (lambda p: p.update(decisions=[{"head": "H.", "body": [{"items": ["i"], "x": 1}]}]),
+                                        "preview.decisions[0].body[0]: holds an unknown key"),
+            "an empty list": (lambda p: p.update(decisions=[{"head": "H.", "body": [{"items": []}]}]),
+                              "preview.decisions[0].body[0].items: must hold at least one item"),
+            "too many items": (lambda p: p.update(decisions=[{"head": "H.", "body": [{"items": ["i"] * 21}]}]),
+                               "preview.decisions[0].body[0].items: holds 21 entries, over the cap of 20"),
+            "an empty item": (lambda p: p.update(decisions=[{"head": "H.", "body": [{"items": [""]}]}]),
+                              "preview.decisions[0].body[0].items[0]: must be non-empty text"),
             "a malformed delivery key": (lambda p: p.update(approval="handed", delivery="FX 1"), "preview.delivery: must be an id"),
         }
         for name, (edit, message) in refused.items():
@@ -772,7 +799,16 @@ class PlanPreviewContractTests(unittest.TestCase):
         self.assertEqual(member["properties"]["approval"]["enum"], list(views.PLAN_PREVIEW_APPROVALS))
         self.assertEqual(member["properties"]["layout"]["enum"], list(views.PLAN_PREVIEW_LAYOUTS))
         self.assertEqual(member["properties"]["decisions"]["maxItems"], views.PLAN_LIST)
-        self.assertEqual(member["properties"]["decisions"]["items"]["maxLength"], views.PLAN_TEXT)
+        plain, headed = member["properties"]["decisions"]["items"]["oneOf"]
+        self.assertEqual(plain["maxLength"], views.PLAN_TEXT)
+        self.assertEqual(headed["properties"]["head"]["maxLength"], views.PLAN_TEXT)
+        body = headed["properties"]["body"]
+        self.assertEqual((body["minItems"], body["maxItems"]), (1, views.PLAN_DECISION_BLOCKS))
+        paragraph, bullets = body["items"]["oneOf"]
+        self.assertEqual(paragraph["maxLength"], views.PLAN_TEXT)
+        items = bullets["properties"]["items"]
+        self.assertEqual((items["minItems"], items["maxItems"], items["items"]["maxLength"]),
+                         (1, views.PLAN_DECISION_ITEMS, views.PLAN_TEXT))
         self.assertEqual(member["properties"]["plan"]["maxLength"], views.PLAN_TEXT)
         self.assertNotIn("preview", views.PLAN_REQUIRED)
 

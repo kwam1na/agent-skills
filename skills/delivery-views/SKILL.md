@@ -395,7 +395,7 @@ any value.
 | `outOfScope` | Optional list of texts. |
 | `planReview` | Optional: how the plan came to be approved. `{lenses, state, endedReason?, rounds}`, below. |
 | `closeOut` | Optional: `{fullHealth: "skipped", posture: "focused", source, reason}`, when the close-out's `fullHealth` run was skipped under the base's declared posture. It renders as skipped, and no approval state stands in for it. |
-| `preview` | Optional, written only by a plan's preview builder, never by a delivery's producer: `{plan, commit, approval: agents-only \| handed \| endorsed, delivery?, layout: delivery \| other, decisions, endorsements?}`. `delivery` is given exactly when `approval` is `handed`; `decisions` holds at most 100 texts. With it, the plan chapter says the review is agent-only and never reads as approved. A planning record's plan, the one shared delivery record that exists from a plan's first draft, always carries `endorsements`, possibly empty: each seat's latest endorsement, `{seat, label, commit}`, at most 20, never with `handed`. `endorsed` means every approver seat endorsed `commit`, and needs at least one endorsement; its line reads "Endorsed by <labels> · N review rounds · <ending>". An endorsement of an older commit is shown as stale. A reader that knows its record isn't shared refuses `endorsements`. |
+| `preview` | Optional, written only by a plan's preview builder, never by a delivery's producer: `{plan, commit, approval: agents-only \| handed \| endorsed, delivery?, layout: delivery \| other, decisions, endorsements?}`. `delivery` is given exactly when `approval` is `handed`; `decisions` holds at most 100 decisions, each one text or `{head, body?}`: a headline, and beneath it at most 20 paragraphs and `{items}` lists of at most 20 bullets, every text at most 600 characters. With it, the plan chapter says the review is agent-only and never reads as approved. A planning record's plan, the one shared delivery record that exists from a plan's first draft, always carries `endorsements`, possibly empty: each seat's latest endorsement, `{seat, label, commit}`, at most 20, never with `handed`. `endorsed` means every approver seat endorsed `commit`, and needs at least one endorsement; its line reads "Endorsed by <labels> · N review rounds · <ending>". An endorsement of an older commit is shown as stale. A reader that knows its record isn't shared refuses `endorsements`. |
 
 Texts are capped at 600 characters, `outcome.text` at 2,000 and labels at 200;
 lists at 200 units, 1,000 criteria, 500 changes and 30 finish lines. Ids match
@@ -492,8 +492,11 @@ With it the chapter never reads as approved:
   takes the review up.
 - There is no "as approved / as amended" switch and no changes fold, and the
   plan review speaks of lenses aligning, never of approving.
-- A "Decisions" fold lists `preview.decisions`, and while the plan records none
-  it says they will show there once it does.
+- A "Decisions" fold lists `preview.decisions`, numbered as the plan numbers
+  them, and while the plan records none it says they will show there once it
+  does. Each headline always shows, so the calls read at a glance; a decision
+  with reasons opens to its paragraphs and bullets, one at a time or all
+  together, and "decision N" in its words opens decision N.
 - With `layout: other`, one line says the plan isn't in the delivery layout, so
   it shows no stories.
 - A preview over its share says so at the chapter's end.
