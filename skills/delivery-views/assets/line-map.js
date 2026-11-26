@@ -2149,32 +2149,96 @@
         { key: "checking:" + key, oneLine: true, onSettle: function () { prev.checkingHeight = box.offsetHeight; } });
       return fold;
     }
-    var chosenItems = (batch || (byId[current.subject] ? [byId[current.subject]] : [])).filter(function (item) {
-      return isObject(item.checkSelection) && item.checkSelection.by === "lead";
-    });
-    if (batch && chosenItems.length) {
-      var reasons = el("ul", "ck-chosen-list");
-      chosenItems.forEach(function (item) {
-        var reason = text(item.checkSelection.reason);
-        add(reasons, add(el("li"), add(el("b"), titleOf(doc, item)), reason || null));
+    // The lead's note is built once the sheet has said whether it lists the run's checks itself: they are listed once, so
+    // the note opens to the list only when the sheet draws the run line, or nothing, in its place.
+    function leadNotes(listedHere) {
+      var chosenItems = (batch || (byId[current.subject] ? [byId[current.subject]] : [])).filter(function (item) {
+        return isObject(item.checkSelection) && item.checkSelection.by === "lead";
       });
-      chosenNotes.push(chosenFold("batch:" + chosenItems.map(subjectOf).join(","), "Checks chosen by the lead, not the usual selection · for " +
-        (chosenItems.length === batch.length ? (batch.length === 2 ? "both pieces" : "all " + batch.length + " pieces") : chosenItems.length + " of " + batch.length + " pieces"), reasons));
-    } else {
-      chosenItems.forEach(function (item) {
-        var reason = text(item.checkSelection.reason);
-        chosenNotes.push(chosenFold(subjectOf(item), "Checks chosen by the lead, not the usual selection" + (reason ? ": " + reason : "")));
+      var listNodes = chosenItems.length && !listedHere ? checkListNodes(steps) : [];
+      var withList = function (first) {
+        var body = el("div", "ck-rest");
+        [first].concat(listNodes).forEach(function (node) { if (node) { body.appendChild(node); } });
+        return body;
+      };
+      if (batch && chosenItems.length) {
+        var reasons = el("ul", "ck-chosen-list");
+        chosenItems.forEach(function (item) {
+          var reason = text(item.checkSelection.reason);
+          add(reasons, add(el("li"), add(el("b"), titleOf(doc, item)), reason || null));
+        });
+        chosenNotes.push(chosenFold("batch:" + chosenItems.map(subjectOf).join(","), "Checks chosen by the lead, not the usual selection · for " +
+          (chosenItems.length === batch.length ? (batch.length === 2 ? "both pieces" : "all " + batch.length + " pieces") : chosenItems.length + " of " + batch.length + " pieces"),
+          listNodes.length ? withList(reasons) : reasons));
+      } else {
+        chosenItems.forEach(function (item) {
+          var reason = text(item.checkSelection.reason);
+          var words = "Checks chosen by the lead, not the usual selection" + (reason ? ": " + reason : "");
+          // A fold opens to something more than its own line, or it is a line: the reason is read whole either way.
+          chosenNotes.push(listNodes.length ? chosenFold(subjectOf(item), words, withList(null)) : el("p", "ck-chosen-line", words));
+        });
+      }
+      // Under lead selection, a piece the lead chose no checks for runs the binding's fallback: the note names it.
+      var fallbackItems = (batch || (byId[current.subject] ? [byId[current.subject]] : [])).filter(function (item) {
+        return isObject(item.checkSelection) && item.checkSelection.by === "provider" && list(item.checkSelection.fallback).length > 0;
       });
+      if (fallbackItems.length) {
+        var fallbackNames = list(fallbackItems[0].checkSelection.fallback).map(function (name) { return text(name); }).join(", ");
+        var whose = batch && batch.length > 1 ? (fallbackItems.length === batch.length ? " for every piece" : " for " +
+          fallbackItems.map(function (item) { return titleOf(doc, item); }).join(", ")) : "";
+        chosenNotes.push(el("p", "ck-fallback", "Checking on the fallback, " + fallbackNames + whose + ": the lead selected no checks"));
+      }
     }
-    // Under lead selection, a piece the lead chose no checks for runs the binding's fallback: the note names it.
-    var fallbackItems = (batch || (byId[current.subject] ? [byId[current.subject]] : [])).filter(function (item) {
-      return isObject(item.checkSelection) && item.checkSelection.by === "provider" && list(item.checkSelection.fallback).length > 0;
-    });
-    if (fallbackItems.length) {
-      var fallbackNames = list(fallbackItems[0].checkSelection.fallback).map(function (name) { return text(name); }).join(", ");
-      var whose = batch && batch.length > 1 ? (fallbackItems.length === batch.length ? " for every piece" : " for " +
-        fallbackItems.map(function (item) { return titleOf(doc, item); }).join(", ")) : "";
-      chosenNotes.push(el("p", "ck-fallback", "Checking on the fallback, " + fallbackNames + whose + ": the lead selected no checks"));
+    // The run's checks by name, one list ordered by state, ten to a page: the sheet's own list, and the lead's note's when
+    // the sheet draws the run line instead. Nothing when no check waits or is done.
+    function checkListNodes(steps) {
+      // What waits its turn, then what passed, was reused or was skipped.
+      var STATE_ORDER = { pending: 0, passed: 1, reused: 2, skipped: 3 };
+      var rank = function (step) { var state = STEP_WORDS[step.state] ? step.state : "pending"; return state in STATE_ORDER ? STATE_ORDER[state] : 0; };
+      var listed = steps.filter(function (step) { return step.state !== "running"; }).sort(function (a, b) {
+        return rank(a) - rank(b) || steps.indexOf(a) - steps.indexOf(b);
+      });
+      var checkList = el("ol", "ck-list");
+      var checkRow = function (step) {
+        // The mark draws the state and the order groups it, so no row repeats it in words; a screen reader hears it
+        // before the name. Only a reused result says so after its name: its tick alone would read as a fresh pass.
+        var state = STEP_WORDS[step.state] ? step.state : "pending";
+        var row = add(el("li", "ck-step " + state), el("span", "sr", STEP_WORDS[state] + ": "), stepName(step),
+          state === "reused" ? el("span", "ck-item-note", " · reused") : null);
+        // The note repeats what a screen reader already heard before the name.
+        var note = row.querySelector(".ck-item-note");
+        if (note) { note.setAttribute("aria-hidden", "true"); }
+        // A title cut short is there whole to read on pointing at it.
+        if (text(step.title).length > TITLE_SHOWN) { row.setAttribute("title", text(step.title)); }
+        return row;
+      };
+      // Ten checks to a page, so a long run's list reads in steps rather than a column down the page. The page read
+      // stays across live redraws of the same run, moved back only when the list has grown too short for it.
+      var PAGE_SIZE = 10;
+      var pageCount = Math.ceil(listed.length / PAGE_SIZE);
+      var pageKey = text(current.startedAt) + "|" + text(current.subject);
+      var page = prev.checkPage && prev.checkPage.run === pageKey ? Math.min(prev.checkPage.page, Math.max(0, pageCount - 1)) : 0;
+      var pager = pageCount > 1 ? el("div", "ck-pager") : null;
+      var showPage = function () {
+        prev.checkPage = { run: pageKey, page: page };
+        checkList.replaceChildren.apply(checkList, listed.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map(checkRow));
+        checkList.setAttribute("start", String(page * PAGE_SIZE + 1));
+        if (!pager) { return; }
+        var from = page * PAGE_SIZE + 1, to = Math.min(listed.length, (page + 1) * PAGE_SIZE);
+        var step = function (by, words, mark) {
+          var button = add(el("button", "ck-page-step"), mark);
+          button.type = "button";
+          button.setAttribute("aria-label", words);
+          button.disabled = page + by < 0 || page + by >= pageCount;
+          button.addEventListener("click", function () { page += by; showPage(); });
+          return button;
+        };
+        var where = el("span", "ck-page-where", from + "–" + to + " of " + listed.length);
+        where.setAttribute("aria-live", "polite");
+        pager.replaceChildren(step(-1, "Previous checks", "‹"), where, step(1, "Next checks", "›"));
+      };
+      showPage();
+      return listed.length ? [checkList].concat(pager ? [pager] : []) : [];
     }
     var steps = list(current.steps).filter(function (step) { return isObject(step) && step.label !== "selecting checks"; });
     if (steps.length) {
@@ -2217,55 +2281,7 @@
       var groups = null;
       line = steps.length > 12 || failed ? runLine(current, steps) : null;
       if (line) { add(box, line); }
-      else if (!failed) {
-        // One list ordered by state: what waits its turn, then what passed, was reused or was skipped.
-        var STATE_ORDER = { pending: 0, passed: 1, reused: 2, skipped: 3 };
-        var rank = function (step) { var state = STEP_WORDS[step.state] ? step.state : "pending"; return state in STATE_ORDER ? STATE_ORDER[state] : 0; };
-        var listed = steps.filter(function (step) { return step.state !== "running"; }).sort(function (a, b) {
-          return rank(a) - rank(b) || steps.indexOf(a) - steps.indexOf(b);
-        });
-        var checkList = el("ol", "ck-list");
-        var checkRow = function (step) {
-          // The mark draws the state and the order groups it, so no row repeats it in words; a screen reader hears it
-          // before the name. Only a reused result says so after its name: its tick alone would read as a fresh pass.
-          var state = STEP_WORDS[step.state] ? step.state : "pending";
-          var row = add(el("li", "ck-step " + state), el("span", "sr", STEP_WORDS[state] + ": "), stepName(step),
-            state === "reused" ? el("span", "ck-item-note", " · reused") : null);
-          // The note repeats what a screen reader already heard before the name.
-          var note = row.querySelector(".ck-item-note");
-          if (note) { note.setAttribute("aria-hidden", "true"); }
-          // A title cut short is there whole to read on pointing at it.
-          if (text(step.title).length > TITLE_SHOWN) { row.setAttribute("title", text(step.title)); }
-          return row;
-        };
-        // Ten checks to a page, so a long run's list reads in steps rather than a column down the page. The page read
-        // stays across live redraws of the same run, moved back only when the list has grown too short for it.
-        var PAGE_SIZE = 10;
-        var pageCount = Math.ceil(listed.length / PAGE_SIZE);
-        var pageKey = text(current.startedAt) + "|" + text(current.subject);
-        var page = prev.checkPage && prev.checkPage.run === pageKey ? Math.min(prev.checkPage.page, Math.max(0, pageCount - 1)) : 0;
-        var pager = pageCount > 1 ? el("div", "ck-pager") : null;
-        var showPage = function () {
-          prev.checkPage = { run: pageKey, page: page };
-          checkList.replaceChildren.apply(checkList, listed.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map(checkRow));
-          checkList.setAttribute("start", String(page * PAGE_SIZE + 1));
-          if (!pager) { return; }
-          var from = page * PAGE_SIZE + 1, to = Math.min(listed.length, (page + 1) * PAGE_SIZE);
-          var step = function (by, words, mark) {
-            var button = add(el("button", "ck-page-step"), mark);
-            button.type = "button";
-            button.setAttribute("aria-label", words);
-            button.disabled = page + by < 0 || page + by >= pageCount;
-            button.addEventListener("click", function () { page += by; showPage(); });
-            return button;
-          };
-          var where = el("span", "ck-page-where", from + "–" + to + " of " + listed.length);
-          where.setAttribute("aria-live", "polite");
-          pager.replaceChildren(step(-1, "Previous checks", "‹"), where, step(1, "Next checks", "›"));
-        };
-        showPage();
-        groups = listed.length ? [checkList].concat(pager ? [pager] : []) : [];
-      }
+      else if (!failed) { groups = checkListNodes(steps); }
       if (failed) { add(box, failedChecks(doc, batch ? batch.map(subjectOf) : [current.subject === undefined || current.subject === null ? "" : String(current.subject)], current, failedSteps)); }
       // The check shown running at the last draw: when it has finished since, its row settles, marks its result and flips
       // over to the check now running, or rests on its result when none is.
@@ -2329,6 +2345,7 @@
     } else if (ago(current.startedAt)) {
       add(box, el("div", "ck-s", "Started " + ago(current.startedAt)));
     }
+    leadNotes(Boolean(groups && groups.length));
     chosenNotes.forEach(function (fold) { add(box, fold); });
     if (nextNames.length) { add(box, el("div", "ck-s ck-next", "Up next: " + nextNames.join(" · "))); }
     return box;
