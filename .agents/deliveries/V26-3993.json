@@ -190,6 +190,17 @@
           "text": "Opening a lead-chosen checks note lists every check of the run by name and state, so the opened fold always shows more than its closed summary; a batch still opens to each piece's reason first."
         }
       ]
+    },
+    "V26-4003": {
+      "title": "Keep the reader's place when the live view redraws itself",
+      "lane": "lane-2",
+      "why": "The operator saw the live view's scroll jump to the top every 30 seconds on this delivery's own page",
+      "criteria": [
+        {
+          "id": "v26-4003-1",
+          "text": "A 30-second tick, a resize or a pushed update leaves the scroll where it was; turning to another page still lands at its top or end; the plan chapter still keeps its place past a plan of another height."
+        }
+      ]
     }
   },
   "finish": [

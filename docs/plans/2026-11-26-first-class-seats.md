@@ -399,6 +399,10 @@ Lane 2, tier 2, not blocked. Added mid-delivery: The operator saw lane 1's +2 ma
 
 Lane 2, tier 2, not blocked. Added mid-delivery: The operator found the single-piece fold opens to nothing on this delivery's own page, and asked for the checks as a list
 
+### V26-4003. Keep the reader's place when the live view redraws itself
+
+Lane 2, tier 2, not blocked. Added mid-delivery: The operator saw the live view's scroll jump to the top every 30 seconds on this delivery's own page
+
 ## Units and order
 
 | Tier | Lane | Items, in order | Owns |
