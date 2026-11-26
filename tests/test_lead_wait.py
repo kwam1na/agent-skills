@@ -1250,6 +1250,9 @@ class LeaseTests(unittest.TestCase):
         self.assertEqual(flow.listener_facts(flow.held_lanes_view(state, seat)), {"lanes": ["lane-1"], "pieces": ["C"]})
         self.assertEqual(flow.listener_facts(flow.held_lanes_view(state, {**seat, "queue": True})),
                          {"lanes": ["lane-1"], "pieces": ["B", "C"]})
+        # A piece not stopped goes by the lane it is on, whatever lane it was once assigned.
+        moved = {**state, "queue": [{"subject": "D", "stage": "queued", "lane": "lane-2", "assignedLane": "lane-1"}]}
+        self.assertEqual(flow.listener_facts(flow.held_lanes_view(moved, seat))["pieces"], [])
 
 
 class StandingTextTests(unittest.TestCase):
