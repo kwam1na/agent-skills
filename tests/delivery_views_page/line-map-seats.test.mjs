@@ -28,10 +28,10 @@ const A = "s-aaaaaaaaaaaa", B = "s-bbbbbbbbbbbb";
 
 /** The merge stage's record, shared by Ama and Ben, with each scope where the journal puts it: `moves` are further
  * transfers, each [scope, from, to], made by the scope's holder after the first ones. */
-function shared(moves = []) {
-  const document = structuredClone(MERGE.document);
+function shared(moves = [], base = MERGE.document, seats = {}) {
+  const document = structuredClone(base);
   document.state.meta.collab = { key: "APP-10", peers: {}, seats: {
-    [A]: { label: "Ama", admitted: true, approver: true }, [B]: { label: "Ben", admitted: true, approver: true } } };
+    [A]: { label: "Ama", admitted: true, approver: true }, [B]: { label: "Ben", admitted: true, approver: true }, ...seats } };
   let id = Math.max(...document.journal.map((entry) => entry.id));
   const seq = { [A]: 0, [B]: 0 };
   const entry = (kind, data, seat) => ({ id: ++id, at: "2026-10-30T11:00:00Z", kind, lane: null, subject: null, data,
@@ -60,15 +60,15 @@ const asksFor = { [A]: item("laneAsks", "lead", { ...ASKS, said: ["The lead", "L
   [B]: item("laneAsks", "lead", { ...ASKS, said: ["Ama's lead", "Lane 2 waits on Ama's lead"] }) };
 
 /** The page as the renderer embeds it: the list, the forge's facts and, on a local page, the seat it is drawn for. */
-function page(document, list, viewer) {
-  const blocks = [["delivery-needs", list], ["delivery-integration", MERGE.integration], ["delivery-viewer", viewer ? { seat: viewer } : null]]
+function page(document, list, viewer, integration = MERGE.integration) {
+  const blocks = [["delivery-needs", list], ["delivery-integration", integration], ["delivery-viewer", viewer ? { seat: viewer } : null]]
     .filter(([, value]) => value)
     .map(([id, value]) => `<script type="application/json" id="${id}">${JSON.stringify(value)}</script>\n`).join("");
   return pageWithRuns(document, {}, { config: CONFIG }).replace("<script>\n", blocks + "<script>\n");
 }
 /** What the reader sees of whose each call is: Now, the rows in order, the summary, the seat line and the rejoin's line. */
-async function drawn(document, list, viewer) {
-  const [{ app }] = await openPage(page(document, list, viewer), { now: NOW, store: false });
+async function drawn(document, list, viewer, at = MERGE) {
+  const [{ app }] = await openPage(page(document, list, viewer, at.integration), { now: at.now, store: false });
   const rows = [...app.querySelectorAll(".needs-you .needs-row")];
   return {
     app, now: nowOf(app),
@@ -186,4 +186,50 @@ test("a record nobody shares reads every person's call as the reader's, whatever
       [call.expected.marks[1][0] + " · you", "live", "you"], call.expected.fact]);
     expect(app.querySelector("#now .seat-line")).toBeNull();
   }
+});
+
+test("the call to accept an over-budget suite is the delivery holder's: hers on her page, under her label on Ben's", async () => {
+  const over = fixture("05-over-budget");
+  const record = shared([], over.document);
+  const asA = await drawn(record, needs([asksFor[A]]), A, over);
+  expect([asA.now.sentence, asA.now.marks[0]]).toEqual([over.expected.sentence, [over.expected.marks[0][0] + " · you", "live", "you"]]);
+  expect(asA.now.sentence.endsWith("It's your call to accept.")).toBe(true);
+  const asB = await drawn(record, needs([asksFor[B]]), B, over);
+  expect([asB.now.sentence, asB.now.marks[0]]).toEqual([over.expected.sentence.replace("It's your call", "It's Ama's call"),
+    [over.expected.marks[0][0] + " · Ama", "live", "seat"]]);
+});
+
+test("another seat's call names that seat on the mark it waits at, and takes nothing over", async () => {
+  // While stories land, a lane's mark names no holder: Ben's call about lane 2 names him on it, on Ama's page.
+  const landing = fixture("01-stories-landing");
+  const call = item("unaccepted", "operator", { scope: "queue", seat: B, lane: "lane-2", said: ["Ben", "Ben accepts lane 2's hand-off"],
+    role: ["Someone", "Someone accepts lane 2's hand-off"] });
+  const asA = await drawn(shared([], landing.document), needs([call]), A, landing);
+  expect(asA.now.sentence).toBe(landing.expected.sentence);
+  const lane = landing.expected.marks.findIndex(([label]) => label.startsWith("Lane 2"));
+  expect(asA.now.marks[lane]).toEqual([landing.expected.marks[lane][0] + " · Ben", landing.expected.marks[lane][1], "seat"]);
+  expect(asA.now.marks.filter((made) => made[2] === "seat")).toHaveLength(1);
+});
+
+test("the reader's own calls lead; another seat's rank with the rest, in the list's order", async () => {
+  const own = item("feedback", "operator", { scope: "plan:goal", seat: A, said: ["You", "Settle the feedback on Goal"],
+    all: ["Ama", "Ama settles it"], role: ["Someone", "Someone settles it"] });
+  const asA = await drawn(shared(), needs([asksFor[A], draftFor[A], own]), A);
+  expect(asA.rows.map((row) => [row[0], row[2]])).toEqual([["You", "yours"], ["The lead", ""], ["Ben", "theirs"]]);
+});
+
+test("a stamped call with no scope stays its seat's: the journal can't outrun a stamp it can't check", async () => {
+  const call = item("drafts", "operator", { seat: B, said: ["You", "Mark the draft ready"], all: ["Ben", "Ben marks it"],
+    role: ["Someone", "Someone marks it"] });
+  const asB = await drawn(shared(), needs([call]), B);
+  expect([asB.now.sentence, asB.rows[0][2]]).toEqual(["Mark the draft ready.", "yours"]);
+});
+
+test("the seat line names only admitted seats, and a page for a seat the record doesn't have is drawn for nobody", async () => {
+  const record = shared([], MERGE.document, { "s-cccccccccccc": { label: "Cy", admitted: false, approver: false } });
+  expect((await drawn(record, needs([]), A)).seat).toEqual([["seat-chip", "Ama · holds delivery"], ["seat-shared", "Shared with Ben"]]);
+  const stranger = await drawn(record, needs([draftFor[B]]), "s-eeeeeeeeeeee");
+  expect(stranger.seat).toEqual([["seat-shared", "Shared by Ama and Ben"]]);
+  // It reads as the hosted page does: every owner by label.
+  expect(stranger.rows).toEqual([["Ben", "Ben marks the draft ready", "theirs"]]);
 });

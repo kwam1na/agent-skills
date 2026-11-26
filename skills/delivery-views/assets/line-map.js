@@ -2632,7 +2632,7 @@
     var rank = function (entry) { return (entry.item.holding === true ? 0 : 2) + (yours(doc, entry.item) ? 0 : 1); };
     items.sort(function (a, b) { return rank(a) - rank(b) || a.at - b.at; });
     // The pass's sentence for its own seat; a page with no seat reads the one that names every owner.
-    var summary = collabOf(doc) && !VIEWER ? text(NEEDS.summaryAll) : text(NEEDS.summary);
+    var summary = collabOf(doc) && !viewerOf(doc) ? text(NEEDS.summaryAll) : text(NEEDS.summary);
     if (summary) { box.appendChild(el("p", "needs-summary", summary)); }
     if (!items.length) { return box; }
     var ul = el("ul", "needs-rows");
@@ -5836,20 +5836,25 @@
     if (!collabOf(doc) || !seat) { return { seat: null, outrun: false }; }
     return { seat: seat, outrun: Boolean(scope) && holderOf(registerOf(doc), scope) !== seat };
   }
+  /** The seat this page is drawn for, when it is one of the record's seats; a page for any other seat has none. */
+  function viewerOf(doc) {
+    var collab = collabOf(doc);
+    return collab && VIEWER && isObject(collab.seats) && isObject(collab.seats[VIEWER]) ? VIEWER : null;
+  }
   /** The reader's own call. Unshared, every person's call is; shared, only one whose stamped seat is this page's and
    * still holds it. A page with no seat has none. */
   function yours(doc, item) {
     if (!collabOf(doc)) { return item.who === "operator"; }
-    if (item.who !== "operator" || !VIEWER) { return false; }
+    if (item.who !== "operator" || !viewerOf(doc)) { return false; }
     var owner = needSeat(doc, item);
-    return owner.seat === VIEWER && !owner.outrun;
+    return owner.seat === viewerOf(doc) && !owner.outrun;
   }
   /** Another seat's person's call, still theirs: that seat's label; otherwise none. */
   function theirs(doc, item) {
     var collab = collabOf(doc);
     if (!collab || item.who !== "operator") { return null; }
     var owner = needSeat(doc, item);
-    return owner.seat && !owner.outrun && owner.seat !== VIEWER ? seatName(seatLabels(doc, collab), owner.seat) : null;
+    return owner.seat && !owner.outrun && owner.seat !== viewerOf(doc) ? seatName(seatLabels(doc, collab), owner.seat) : null;
   }
   /** The words an item reads on this page: the pass's own for its seat, every owner by label with no seat, and by role
    * when the stamp can't be trusted. */
@@ -5858,14 +5863,14 @@
     if (!collabOf(doc)) { return pick("said") || {}; }
     var owner = needSeat(doc, item);
     if (!owner.seat || owner.outrun) { return pick("saidRole") || pick("saidAll") || pick("said") || {}; }
-    return (VIEWER ? pick("said") : pick("saidAll") || pick("saidRole")) || pick("said") || {};
+    return (viewerOf(doc) ? pick("said") : pick("saidAll") || pick("saidRole")) || pick("said") || {};
   }
   /** Whose the rejoin's person words are, the delivery holder's: null for the reader's own, else the holder's label. */
   function rejoinOwner(doc) {
     var collab = collabOf(doc);
     if (!collab) { return null; }
     var holder = holderOf(registerOf(doc), "delivery");
-    return holder && holder === VIEWER ? null : seatName(seatLabels(doc, collab), holder);
+    return holder && holder === viewerOf(doc) ? null : seatName(seatLabels(doc, collab), holder);
   }
   /** "your" for the reader's own merge, "Ama's" for another's. */
   function rejoinWhose(doc) { var owner = rejoinOwner(doc); return owner ? owner + "'s" : "your"; }
@@ -5884,12 +5889,13 @@
     var seats = isObject(collab.seats) ? collab.seats : {};
     var admitted = Object.keys(seats).filter(function (seat) { return isObject(seats[seat]) && seats[seat].admitted === true; });
     var box = el("div", "seat-line");
-    if (VIEWER && VIEWER in seats) {
-      var held = ["delivery", "queue"].filter(function (scope) { return holderOf(register, scope) === VIEWER; })
-        .concat(list(doc.state.lanes).filter(function (lane) { return isObject(lane) && text(lane.id) && holderOf(register, "lane:" + lane.id) === VIEWER; })
+    var viewer = viewerOf(doc);
+    if (viewer) {
+      var held = ["delivery", "queue"].filter(function (scope) { return holderOf(register, scope) === viewer; })
+        .concat(list(doc.state.lanes).filter(function (lane) { return isObject(lane) && text(lane.id) && holderOf(register, "lane:" + lane.id) === viewer; })
           .map(function (lane) { return laneLabel(lane.id).toLowerCase(); }));
-      add(box, el("span", "seat-chip", [seatName(labels, VIEWER)].concat(held.length ? ["holds " + held[0]].concat(held.slice(1)) : []).join(" · ")));
-      var others = admitted.filter(function (seat) { return seat !== VIEWER; }).map(function (seat) { return seatName(labels, seat); });
+      add(box, el("span", "seat-chip", [seatName(labels, viewer)].concat(held.length ? ["holds " + held[0]].concat(held.slice(1)) : []).join(" · ")));
+      var others = admitted.filter(function (seat) { return seat !== viewer; }).map(function (seat) { return seatName(labels, seat); });
       if (others.length) { add(box, el("span", "seat-shared", "Shared with " + spokenList(others))); }
     } else {
       add(box, el("span", "seat-shared", "Shared by " + spokenList(admitted.map(function (seat) { return seatName(labels, seat); }))));
