@@ -1,5 +1,6 @@
 {
   "description": [
+    "On a shared record \"Needs you\" names a held peer partition, a peer on another release and this checkout's seat split on the machine that reads them, a seat asking to join for the delivery holder, and a scope asked for for its holder.",
     "On a shared record, \"you\" in \"Needs you\" is the seat that holds the call: each item names its owning scope and seat, and no seat reads \"you\" for another seat's call.",
     "target.settled joins the kinds that wake the lead's wait, and the integration recipe waits for the target to settle before a review round or a full-suite run.",
     "The lead opens the live view in the host's browser pane, unasked, when a delivery begins: the hosted view first when hosted is enabled and has a URL, else the local live view's address; lanes never open it.",

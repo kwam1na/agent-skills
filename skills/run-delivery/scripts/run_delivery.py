@@ -13760,6 +13760,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           "text": f"Feedback {entry['id']} on {anchor} stops approval: {said}. The holder of its section "
                           f"settles it with {settle}", "clears": settle, "kind": "feedback", "who": "lead",
                           "since": entry.get("at"), "fields": {"entry": entry["id"], "anchor": anchor, "detail": said}})
+        items += seat_needs(c, doc)
     needed = listener_needed(doc["state"])
     if needed and lead_listener(c.state) is None:
         listening = listening_words(c, doc["state"])
@@ -13789,6 +13790,47 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
     items += lane_change_needs(c, doc["state"])
     items += record_needs(doc, items)
     return say_needs(c, doc, items + waits_needing(c, doc, items))
+
+
+def seat_needs(c, doc: dict) -> list[dict]:
+    """What only a shared record needs, none of it holding the close: on the machine that reads it, a peer's updates
+    held for not fitting this record or for another release's writer, and this checkout's seat split; for the holder
+    who answers, a seat asking to join and a scope asked for and not yet given or kept."""
+    tool = _validator(c.release)
+    collab = doc["state"]["meta"]["collab"]
+    labels = {seat: found["label"] for seat, found in tool.derived_seats(doc["journal"]).items()}
+    items = []
+    for seat, peer in sorted((collab.get("peers") or {}).items()):
+        reason = (peer or {}).get("heldReason") if isinstance(peer, dict) else None
+        if not reason:
+            continue
+        older = reason == "generation_differs"
+        items.append({"holding": False, "source": f"seat {seat}'s partition",
+                      "text": f"Seat {labels.get(seat, seat)}'s updates are held ({reason})"
+                      + ("; the machine behind runs lead-upgrade-writer, and no machine upgrades another" if older else ""),
+                      "clears": "the partition read again", "kind": "generationDiffers" if older else "peerHeld",
+                      "who": "lead", "fields": {"peer": labels.get(seat, seat)}})
+    if collab.get("heldReason") == "seat_split":
+        items.append({"holding": False, "source": "this checkout's seat",
+                      "text": "This checkout's seat split: another clone wrote as it, so it writes and reads nothing "
+                      "more until it has a fresh seat, admitted like any other", "clears": "a fresh seat for this checkout",
+                      "kind": "seatSplit", "who": "lead", "fields": {}})
+    for seat, found in sorted(tool.derived_seats(doc["journal"]).items()):
+        if not found["admitted"]:
+            items.append({"holding": False, "source": f"seat {seat}'s request",
+                          "text": f"Seat {found['label']} asks to join: {flow_command()} collab admit --seat {seat}",
+                          "clears": "the seat admitted", "kind": "seatRequest", "who": "lead",
+                          "fields": {"peer": found["label"]}})
+    for entry in tool._collab().open_requests(doc["journal"]):
+        asker, scope = entry["origin"]["seat"], entry["data"]["scope"]
+        reason = str(entry["data"].get("reason") or "")
+        items.append({"holding": False, "source": f"journal entry {entry['id']} (scope.requested)",
+                      "text": f"Seat {labels.get(asker, asker)} asks for {scope}: {reason}. Its holder gives it with "
+                      f"{flow_command()} collab give --scope {scope} --to {asker}, or keeps it",
+                      "clears": "the scope given or kept", "kind": "scopeRequest", "who": "lead",
+                      "since": entry.get("at"), "fields": {"peer": labels.get(asker, asker), "scope": scope,
+                                                            "reason": reason}})
+    return items
 
 
 COMPOUNDING_SOURCE = "compound-learning"
@@ -13893,7 +13935,8 @@ NEED_WORDS = ("headline", "why", "clears", "who")
 
 # On a shared record, whose call each kind of "Needs you" item is: the scope whose holder acts on it. `lane:<lane>` is
 # the lane the item's story is on, `plan:<anchor>` the plan section it names, and `seat:<writer>` the seat whose pass
-# saw it, for what only that machine can do or read. A blocker is its lane's, else its journal entry's seat's.
+# saw it, for what only that machine can do or read. A blocker is its lane's, else its journal entry's seat's, and a
+# scope asked for is its holder's: `<scope>` is the scope the item names.
 NEED_SCOPES = {
     "trackerLedger": "delivery", "trackerLag": "delivery", "compounding": "delivery", "regrant": "delivery",
     "laneOutside": "delivery", "sibling": "delivery", "free": "delivery", "paused": "delivery",
@@ -13904,6 +13947,8 @@ NEED_SCOPES = {
     "feedback": "plan:<anchor>",
     "flapping": "seat:<writer>", "listener": "seat:<writer>", "laneUnreadable": "seat:<writer>",
     "blocker": "lane:<lane>|seat:<origin.seat>",
+    "peerHeld": "seat:<writer>", "generationDiffers": "seat:<writer>", "seatSplit": "seat:<writer>",
+    "seatRequest": "delivery", "scopeRequest": "<scope>",
 }
 
 
@@ -13948,6 +13993,8 @@ def need_scope(seats: dict, doc: dict, item: dict, fields: dict) -> str | None:
         return f"plan:{fields['anchor']}" if fields.get("anchor") else "delivery"
     if form == "seat:<writer>":
         return f"seat:{seats['writer']}" if seats["writer"] else None
+    if form == "<scope>":
+        return fields.get("scope") or "delivery"
     return form
 
 

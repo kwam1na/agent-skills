@@ -676,6 +676,11 @@ class NeedsYouRowTests(unittest.TestCase):
             "stale": ({"name": "tracker", "reason": "timed out"}, {}, "The tracker is not answering"),
             "compounding": ({"stub": "flow-log/APP.friction.md"}, {}, "The compound-learning decision is not recorded"),
             "feedback": ({"entry": 9, "anchor": "## Decisions", "detail": "Not yet."}, {}, "Feedback on ## Decisions stops approval"),
+            "peerHeld": ({"peer": "Ben"}, {}, "Ben's updates are held"),
+            "generationDiffers": ({"peer": "Ben"}, {}, "Ben writes with another release"),
+            "seatSplit": ({}, {}, "This checkout's seat split"),
+            "seatRequest": ({"peer": "Cy"}, {}, "Cy asks to join"),
+            "scopeRequest": ({"peer": "Ben", "scope": "queue", "reason": "Tonight."}, {}, "Ben asks for queue"),
         }
         self.assertEqual(set(given), kinds)
         items = [{"holding": False, "source": "s", "text": "t", "clears": "c", "kind": kind, "who": "lead", "fields": fields, **facts}
@@ -818,7 +823,9 @@ class SeatStampTests(unittest.TestCase):
             "unaccepted": "lane:<lane>", "stopped": "lane:<lane>", "laneBlocked": "lane:<lane>", "laneAsks": "lane:<lane>",
             "feedback": "plan:<anchor>",
             "flapping": "seat:<writer>", "listener": "seat:<writer>", "laneUnreadable": "seat:<writer>",
-            "blocker": "lane:<lane>|seat:<origin.seat>"})
+            "blocker": "lane:<lane>|seat:<origin.seat>",
+            "peerHeld": "seat:<writer>", "generationDiffers": "seat:<writer>", "seatSplit": "seat:<writer>",
+            "seatRequest": "delivery", "scopeRequest": "<scope>"})
 
     def test_every_kind_either_producer_gives_has_an_owner(self) -> None:
         source = (PRODUCT_ROOT / "skills/run-delivery/scripts/run_delivery.py").read_text(encoding="utf-8")
