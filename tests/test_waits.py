@@ -10,6 +10,7 @@ import builtins
 import copy
 import datetime
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -675,6 +676,11 @@ class NeedsYouRowTests(unittest.TestCase):
             "stale": ({"name": "tracker", "reason": "timed out"}, {}, "The tracker is not answering"),
             "compounding": ({"stub": "flow-log/APP.friction.md"}, {}, "The compound-learning decision is not recorded"),
             "feedback": ({"entry": 9, "anchor": "## Decisions", "detail": "Not yet."}, {}, "Feedback on ## Decisions stops approval"),
+            "peerHeld": ({"peer": "Ben"}, {}, "Ben's updates are held"),
+            "generationDiffers": ({"peer": "Ben"}, {}, "Ben writes with another release"),
+            "seatSplit": ({}, {}, "This checkout's seat split"),
+            "seatRequest": ({"peer": "Cy"}, {}, "Cy asks to join"),
+            "scopeRequest": ({"peer": "Ben", "scope": "queue", "reason": "Tonight."}, {}, "Ben asks for queue"),
         }
         self.assertEqual(set(given), kinds)
         items = [{"holding": False, "source": "s", "text": "t", "clears": "c", "kind": kind, "who": "lead", "fields": fields, **facts}
@@ -695,6 +701,274 @@ class NeedsYouRowTests(unittest.TestCase):
                          "1 thing needs you and 1 thing needs the lead, and all of them are holding up the finish.")
         self.assertEqual(run_delivery.needs_words(self.RELEASE),
                          {"heading": "Waiting on someone", "holding": "Holding up the finish", "age": "for {age}"})
+
+
+# Two seats on one shared record: a (Ama) holds delivery and lane 2 and 3; b (Ben) holds the queue and lane 1.
+SEAT_A, SEAT_B = "s-aaaaaaaaaaaa", "s-bbbbbbbbbbbb"
+
+
+def shared(document: dict, gives: tuple = (("queue", SEAT_B), ("lane:lane-1", SEAT_B)), started: bool = True) -> dict:
+    """``document`` made a shared record: every entry written by a, both seats admitted, and each scope in ``gives``
+    passed on by a. Without ``started`` no entry says which seat began the record, so no scope's holder is known."""
+    seqs = {SEAT_A: 0, SEAT_B: 0}
+
+    def origin(seat: str) -> dict:
+        seqs[seat] += 1
+        return {"seat": seat, "seq": seqs[seat], "seen": {}}
+    for entry in document["journal"]:
+        entry["origin"] = origin(SEAT_A)
+    if not started:
+        document["journal"] = [entry for entry in document["journal"] if entry["kind"] != "record.started"]
+    document["origin"] = origin
+    for kind, seat, data in (("seat.requested", SEAT_A, {"seat": SEAT_A, "label": "Ama"}),
+                             ("seat.admitted", SEAT_A, {"seat": SEAT_A, "label": "Ama", "approver": True}),
+                             ("seat.requested", SEAT_B, {"seat": SEAT_B, "label": "Ben"}),
+                             ("seat.admitted", SEAT_A, {"seat": SEAT_B, "label": "Ben", "approver": True}),
+                             *(("scope.transferred", SEAT_A, {"scope": scope, "from": SEAT_A, "to": to})
+                               for scope, to in gives)):
+        written(document, kind, seat, data)
+    document["state"]["meta"]["collab"] = {"key": "APP", "seats": {SEAT_A: {"label": "Ama"}, SEAT_B: {"label": "Ben"}}}
+    return document
+
+
+def written(document: dict, kind: str, seat: str, data: dict, subject: str | None = None,
+            lane: str | None = None) -> dict:
+    """An entry ``seat`` journalled on the shared record, with its origin."""
+    entry = journal(document, kind, subject, data, lane=lane)
+    entry["origin"] = document["origin"](seat)
+    return entry
+
+
+def item(kind: str, who: str = "lead", **facts) -> dict:
+    return {"holding": True, "source": "s", "text": "t", "clears": "c", "kind": kind, "who": who, **facts}
+
+
+# What each kind of item carried on an unshared record before seats were stamped, by kind: the pin that an unshared
+# list is unchanged.
+UNSHARED_KEYS = {
+    "paused": {"holding", "source", "text", "clears", "kind", "who", "since", "said"},
+    "drafts": {"holding", "source", "text", "clears", "kind", "who", "said"},
+    "laneAsks": {"holding", "source", "text", "clears", "kind", "who", "lane", "since", "subject", "state", "said"},
+    "flapping": {"holding", "source", "text", "clears", "kind", "who", "said"},
+    "blocker": {"holding", "source", "text", "clears", "kind", "who", "since", "subject", "lane", "state", "said"},
+    "stopped": {"holding", "source", "text", "clears", "kind", "who", "subject", "lane", "state", "said"},
+}
+
+
+class SeatStampTests(unittest.TestCase):
+    """On a shared record each "Needs you" item names the scope whose call it is and the seat holding it, and is worded
+    for the seat writing the list, for a reader with no seat, and by role. An unshared list is as it was."""
+
+    def setUp(self) -> None:
+        # run_delivery reaches the state tool by name, so the patched module must be the one that name resolves to,
+        # whichever test module was imported last.
+        for patcher in (mock.patch.dict(sys.modules, {"delivery_state": state_tool}),
+                        mock.patch.object(state_tool, "local_seat", lambda directory, key: self.writer)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.writer = SEAT_A
+        self.release = SimpleNamespace(release=PRODUCT_ROOT, state=Path("/nonexistent"))
+
+    def said(self, document: dict, items: list[dict], writer: str | None = SEAT_A) -> list[dict]:
+        self.writer = writer
+        return run_delivery.say_needs(self.release, document, [dict(entry) for entry in items])
+
+    def stamps(self, document: dict, items: list[dict]) -> list[tuple]:
+        return [(entry["kind"], entry.get("scope"), entry.get("seat")) for entry in self.said(document, items)]
+
+    def needs_you(self, document: dict, flapping: tuple[str, ...] = ()) -> list[dict]:
+        """needs_you itself, as NeedsYouRowTests runs it, with the merge step refusing drafts."""
+        here = SimpleNamespace(release=PRODUCT_ROOT, state=Path("/nonexistent"), flow_log=Path("/nonexistent"),
+                               delivery="APP", forge={"mergeNeedsReady": True})
+        with mock.patch.multiple(run_delivery, tracker_conf=lambda c: {}, base_head=lambda c: None,
+                                 full_health_running=lambda c: None, read_log=lambda *a, **k: [],
+                                 lead_listener=lambda *a, **k: {"pid": 1}, only_full_health_breaks=lambda journal: False,
+                                 authority=lambda: {}, decision_owed=lambda c, doc: False,
+                                 lane_change_needs=lambda c, state: []), \
+                mock.patch.object(run_delivery.tracker_publisher, "needs_you", lambda *a, **k: []):
+            return run_delivery.needs_you(here, document, flapping)
+
+    def every_form(self, document: dict) -> dict:
+        """A record whose list holds an item of every owner form: the delivery's, the queue's, a lane's, a machine's own,
+        and blockers."""
+        document["state"]["meta"]["hold"] = {"reason": "a break", "at": "2026-11-17T11:00:00Z"}
+        queue(document, "APP-2", "queued")
+        row(document, "lane-2").update(state="working", focus="which API", waitingOn="lead")
+        journal(document, "blocker.recorded", "APP-1", {"text": "the API is down"})
+        planned(document, "APP-3")["lane"] = None
+        queue(document, "APP-3", "stopped")
+        return document
+
+    def test_an_unshared_list_carries_exactly_what_it_did_and_no_summary_for_a_reader_with_no_seat(self) -> None:
+        listed = self.needs_you(self.every_form(record()), flapping=("publisher",))
+        self.assertEqual({entry["kind"]: set(entry) for entry in listed if entry["kind"] in UNSHARED_KEYS}, UNSHARED_KEYS)
+        self.assertEqual({key for entry in listed for key in entry} & {"scope", "seat", "saidAll", "saidRole"}, set())
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(run_delivery, "supervisor_pass_seconds", lambda c: 60):
+            c = SimpleNamespace(release=PRODUCT_ROOT, state=Path(folder))
+            run_delivery.write_needs(c, listed, 1, time.monotonic(), {"state": record()["state"], "journal": []})
+            written = json.loads((Path(folder) / "needs-you.json").read_text(encoding="utf-8"))
+        self.assertEqual(set(written), {"spec", "running", "pass", "at", "items", "summary", "words", "staleAfter"})
+        # The same record shared stamps each of them.
+        listed = self.needs_you(shared(self.every_form(record())), flapping=("publisher",))
+        self.assertTrue(all("scope" in entry and "saidAll" in entry and "saidRole" in entry for entry in listed))
+
+    def test_the_owner_of_each_kind_is_one_table(self) -> None:
+        self.assertEqual(run_delivery.NEED_SCOPES, {
+            "trackerLedger": "delivery", "trackerLag": "delivery", "compounding": "delivery", "regrant": "delivery",
+            "laneOutside": "delivery", "sibling": "delivery", "free": "delivery", "paused": "delivery",
+            "healthRunning": "queue", "healthFailed": "queue", "healthFlaky": "queue", "baseHealth": "queue",
+            "baseBroken": "queue", "baseFocused": "queue", "runnerHold": "queue", "drafts": "queue", "report": "queue",
+            "stale": "queue",
+            "unaccepted": "lane:<lane>", "stopped": "lane:<lane>", "laneBlocked": "lane:<lane>", "laneAsks": "lane:<lane>",
+            "feedback": "plan:<anchor>",
+            "flapping": "seat:<writer>", "listener": "seat:<writer>", "laneUnreadable": "seat:<writer>",
+            "blocker": "lane:<lane>|seat:<origin.seat>",
+            "peerHeld": "seat:<writer>", "generationDiffers": "seat:<writer>", "seatSplit": "seat:<writer>",
+            "seatRequest": "delivery", "scopeRequest": "<scope>"})
+
+    def test_every_kind_either_producer_gives_has_an_owner(self) -> None:
+        source = (PRODUCT_ROOT / "skills/run-delivery/scripts/run_delivery.py").read_text(encoding="utf-8")
+        body = source[source.index("def tracker_item("):source.index("NEEDS_FILE = ")]
+        body += source[source.index("def regrant_needs("):source.index("def change_ownership(")]
+        publisher = (PRODUCT_ROOT / "skills/run-delivery/scripts/tracker_publisher.py").read_text(encoding="utf-8")
+        body += publisher[publisher.index("def needs_you("):publisher.index("def main(")]
+        found = re.findall(r'"kind": "(\w+)"(?: if \w+ else "(\w+)")?', body)
+        kinds = {kind for pair in found for kind in pair if kind}
+        self.assertGreater(len(kinds), 20)
+        self.assertEqual(kinds, set(run_delivery.NEED_SCOPES))
+
+    def test_a_blocker_is_its_lanes_else_its_storys_lanes_else_the_seat_that_journalled_it(self) -> None:
+        document = shared(record())
+        on_lane = journal(document, "blocker.recorded", None, {"text": "a"}, lane="lane-1")
+        on_story = journal(document, "blocker.recorded", "APP-1", {"text": "b"})
+        on_b = written(document, "blocker.recorded", SEAT_B, {"text": "c"})
+        items = [item("blocker", fields={"entry": entry["id"], "detail": entry["data"]["text"]},
+                      **{name: entry[name] for name in ("lane", "subject") if entry.get(name)})
+                 for entry in (on_lane, on_story, on_b)]
+        self.assertEqual(self.stamps(document, items), [("blocker", "lane:lane-1", SEAT_B),
+                                                        ("blocker", "lane:lane-2", SEAT_A),
+                                                        ("blocker", f"seat:{SEAT_B}", SEAT_B)])
+        # b's own blocker, said as b writes it, is the lead's: b's lead, which b reads as "The lead".
+        [said] = self.said(document, items[2:], writer=SEAT_B)
+        self.assertEqual((said["said"]["who"], said["saidAll"]["who"]), ("The lead", "Ben's lead"))
+
+    def test_a_stopped_piece_on_no_lane_is_the_deliverys(self) -> None:
+        document = shared(record())
+        planned(document, "APP-3")["lane"] = None
+        queue(document, "APP-3", "stopped")
+        self.assertEqual(self.stamps(document, [item("stopped", subject="APP-3")]), [("stopped", "delivery", SEAT_A)])
+        # Moved to lane 1, it is b's.
+        self.assertEqual(self.stamps(document, [item("stopped", subject="APP-2")]), [("stopped", "lane:lane-1", SEAT_B)])
+
+    def test_feedback_on_a_section_nobody_holds_is_the_delivery_holders(self) -> None:
+        document = shared(record(), gives=(("queue", SEAT_B), ("lane:lane-1", SEAT_B), ("delivery", SEAT_B)))
+        # b, now holding every section nobody holds, passes one back to a.
+        written(document, "scope.transferred", SEAT_B, {"scope": "plan:## Goal", "from": SEAT_B, "to": SEAT_A})
+        feedback = lambda anchor: item("feedback", fields={"entry": 9, "anchor": anchor, "detail": "Not yet."})
+        self.assertEqual(self.stamps(document, [feedback("## Decisions"), feedback("## Goal")]),
+                         [("feedback", "plan:## Decisions", SEAT_B), ("feedback", "plan:## Goal", SEAT_A)])
+
+    def test_a_machines_own_item_is_the_writing_seats_and_unresolved_with_no_seat(self) -> None:
+        document = shared(record())
+        flapping = item("flapping", fields={"name": "publisher", "log": "p.log"})
+        self.writer = SEAT_B
+        self.assertEqual([(entry["scope"], entry["seat"]) for entry in self.said(document, [flapping], writer=SEAT_B)],
+                         [(f"seat:{SEAT_B}", SEAT_B)])
+        [said] = self.said(document, [flapping], writer=None)
+        self.assertNotIn("scope", said)
+        self.assertNotIn("seat", said)
+        self.assertEqual([said[name]["who"] for name in ("said", "saidAll", "saidRole")], ["The lead"] * 3)
+
+    def test_a_draft_is_the_queue_holders_call_you_to_them_and_their_label_to_anyone_else(self) -> None:
+        document = shared(record())
+        drafts = item("drafts", "operator", fields={"subjects": ["APP-1"]})
+        on_a, on_b = self.said(document, [drafts], writer=SEAT_A)[0], self.said(document, [drafts], writer=SEAT_B)[0]
+        for said in (on_a, on_b):
+            self.assertEqual((said["scope"], said["seat"]), ("queue", SEAT_B))
+            self.assertEqual(said["saidAll"]["who"], "Ben")
+            self.assertEqual(said["saidRole"]["who"], "Someone")
+            self.assertEqual(said["saidAll"]["headline"], "APP-1 wait to be marked ready")
+        self.assertEqual((on_b["said"]["who"], on_a["said"]["who"]), ("You", "Ben"))
+
+    def test_a_lanes_question_to_its_lead_names_the_lead_only_to_the_seat_that_holds_the_lane(self) -> None:
+        document = shared(record())
+        row(document, "lane-2").update(state="working", focus="which API", waitingOn="lead")
+        [asks] = [entry for entry in run_delivery.lane_needs(document["state"]) if entry["kind"] == "laneAsks"]
+        on_a, on_b = self.said(document, [asks], writer=SEAT_A)[0], self.said(document, [asks], writer=SEAT_B)[0]
+        self.assertEqual((on_a["said"]["headline"], on_a["said"]["who"]), ("Lane 2 waits on the lead about APP-1", "The lead"))
+        self.assertEqual((on_b["said"]["headline"], on_b["said"]["who"]), ("Lane 2 waits on Ama's lead about APP-1", "Ama's lead"))
+        self.assertEqual(on_b["said"]["clears"], "Clears when Lane 2 no longer waits on Ama's lead.")
+        for said in (on_a, on_b):
+            self.assertEqual(said["saidAll"]["headline"], "Lane 2 waits on Ama's lead about APP-1")
+            self.assertEqual(said["saidRole"]["headline"], "Lane 2 waits on the lead about APP-1")
+            self.assertNotIn("you", " ".join(said[name][field] for name in ("said", "saidAll", "saidRole")
+                                             for field in ("headline", "who")).lower().split())
+
+    def test_with_no_seat_to_name_a_persons_call_is_someones_on_every_reading(self) -> None:
+        document = shared(record(), started=False)
+        [said] = self.said(document, [item("drafts", "operator", fields={"subjects": ["APP-1"]})])
+        self.assertEqual(said["scope"], "queue")
+        self.assertNotIn("seat", said)
+        self.assertEqual([said[name]["who"] for name in ("said", "saidAll", "saidRole")], ["Someone"] * 3)
+
+    def test_the_summary_leads_with_the_readers_own_calls_and_counts_each_others_as_more(self) -> None:
+        document = shared(record())
+        row(document, "lane-2").update(state="blocked", focus="the copy", waitingOn="operator")
+        items = [*run_delivery.lane_needs(document["state"]), item("drafts", "operator", fields={"subjects": ["APP-1"]})]
+        listed = self.said(document, items)
+        seats = run_delivery.need_seats(self.release, document)
+        summary = lambda viewer: run_delivery.needs_summary(self.release, listed, seats, viewer)
+        self.assertEqual(summary(SEAT_A), "1 thing needs you; 1 more needs Ben, and all of them are holding up the finish.")
+        self.assertEqual(summary(SEAT_B), "1 thing needs you; 1 more needs Ama, and all of them are holding up the finish.")
+        self.assertEqual(summary(None), "1 thing needs Ama; 1 more needs Ben, and all of them are holding up the finish.")
+        # Written by a, the list's summary is a's and summaryAll a reader's with no seat.
+        self.writer = SEAT_A
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(run_delivery, "supervisor_pass_seconds", lambda c: 60):
+            c = SimpleNamespace(release=PRODUCT_ROOT, state=Path(folder))
+            run_delivery.write_needs(c, listed, 1, time.monotonic(), document)
+            written = json.loads((Path(folder) / "needs-you.json").read_text(encoding="utf-8"))
+        self.assertEqual((written["summary"], written["summaryAll"]), (summary(SEAT_A), summary(None)))
+        # A third owner is counted too, each after the reader's own.
+        row(document, "lane-3").update(state="working", focus="its schema", waitingOn="lead")
+        listed = self.said(document, [*run_delivery.lane_needs(document["state"]),
+                                      item("drafts", "operator", fields={"subjects": ["APP-1"]})])
+        self.assertEqual(summary(SEAT_A), "1 thing needs you; 1 more needs the lead and 1 more needs Ben, and all of "
+                                          "them are holding up the finish.")
+        self.assertEqual(summary(None), "1 thing needs Ama; 1 more needs Ben and 1 more needs Ama's lead, and all of "
+                                        "them are holding up the finish.")
+
+    def test_the_summary_leads_with_the_readers_own_call_even_when_it_is_the_leads(self) -> None:
+        document = shared(record())
+        listed = self.said(document, [item("drafts", "operator", fields={"subjects": ["APP-1"]}),
+                                      item("paused", fields={"reason": "a break"})])
+        seats = run_delivery.need_seats(self.release, document)
+        self.assertEqual(run_delivery.needs_summary(self.release, listed, seats, SEAT_A),
+                         "1 thing needs the lead; 1 more needs Ben, and all of them are holding up the finish.")
+        self.assertEqual(run_delivery.needs_summary(self.release, listed, seats, SEAT_B),
+                         "1 thing needs you; 1 more needs Ama's lead, and all of them are holding up the finish.")
+
+    def test_with_no_viewer_an_item_with_no_seat_keeps_its_place_behind_the_persons_calls(self) -> None:
+        seats = run_delivery.need_seats(self.release, shared(record()))
+        listed = [{"holding": True, "who": "operator", "seat": SEAT_B}, {"holding": True, "who": "lead"}]
+        self.assertEqual(run_delivery.needs_summary(self.release, listed, seats),
+                         "1 thing needs Ben; 1 more needs the lead, and all of them are holding up the finish.")
+
+    def test_a_count_of_the_pieces_waiting_reaches_every_reading(self) -> None:
+        document = shared(record())
+        queue(document, "APP-1", "stopped")
+        items = run_delivery.record_needs(document, [])
+        items += run_delivery.waits_needing(self.release, document, items)
+        [said] = self.said(document, items)
+        self.assertEqual([said[name]["why"] for name in ("said", "saidAll", "saidRole")], ["2 pieces wait on it."] * 3)
+
+    def test_the_supervisor_writes_the_list_from_the_record_its_pass_read(self) -> None:
+        # The summary's seats come from the same read as the items' stamps: write_needs takes that read.
+        self.assertEqual(list(inspect.signature(run_delivery.write_needs).parameters)[-1], "doc")
+        self.assertIs(inspect.signature(run_delivery.write_needs).parameters["doc"].default, inspect.Parameter.empty)
+        source = inspect.getsource(run_delivery.Supervisor.one_pass)
+        self.assertIn('write_needs(c, derived["needs"], number, started, derived["doc"])', source)
 
 
 class ListeningTests(unittest.TestCase):
@@ -1020,8 +1294,8 @@ class TableTests(unittest.TestCase):
         self.assertEqual(set(table["waits"]["templates"]), {"order", "sibling", "files", "claim", "slot", "review", "held"})
         self.assertEqual(set(table["lanes"]["templates"]), {"order", "sibling", "files", "claim", "held", "waiting"})
         self.assertEqual(set(table["needsYou"]["templates"]), {"count", "free", "stopped", "headline", "why", "clears", "who",
-                                                               "whom", "part", "summary", "heading", "holding", "age",
-                                                               "leftOpen"})
+                                                               "whom", "part", "more", "shared", "summary", "heading",
+                                                               "holding", "age", "leftOpen"})
         self.assertEqual(state_tool.wait_said(table, "needsYou", "count", {"count": 1}), "1 piece waits on it.")
         self.assertEqual(state_tool.wait_said(table, "needsYou", "count", {"count": 3}), "3 pieces wait on it.")
 

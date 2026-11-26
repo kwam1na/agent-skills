@@ -295,13 +295,13 @@ the lead and the lanes make them instead, as the commands print them.
 | `hook.held` | None: a host hook held, or warned about, a lead's stop while no listener ran, and the entry shows in the record and the views. | nowhere | - |
 | `peer.merged` | None: the supervisor journals a merge by another delivery on the base that changed a file one of this delivery's open stories names, and the entry shows in the record and the views. | nowhere | - |
 | `target.settled` | None: the supervisor journals that the deliveries merging into the integration target went quiet once a merge landed there, and the entry shows in the record and the views. | nowhere | - |
-| `seat.requested` | None: a checkout joined a shared record's catch-up as a new seat, and the entry shows in the record and the views. | nowhere | - |
+| `seat.requested` | None: a checkout joined a shared record's catch-up as a new seat; Needs you names it to the delivery holder, who admits it, and the entry shows in the record and the views. | nowhere | - |
 | `seat.admitted` | None: the delivery holder admitted a seat to the shared record, and the entry shows in the record and the views. | nowhere | - |
 | `seat.labeled` | None: a seat's label is display only, and the entry shows in the record and the views. | nowhere | - |
 | `partition.held` | None: Needs you names a held peer partition on the machine that reads it, and the entry shows in the record and the views. | nowhere | - |
 | `partition.resumed` | None: the partition held earlier is ingested again, and the entry shows in the record and the views. | nowhere | - |
 | `scope.transferred` | None: a scope moved between seats of a shared record, and the entry shows in the record and the views. | nowhere | - |
-| `scope.requested` | None: a request for a scope goes to its holder's session, and the entry shows in the record and the views. | nowhere | - |
+| `scope.requested` | None: a request for a scope goes to its holder's session, and Needs you names it to that holder, who gives the scope or keeps it; the entry shows in the record and the views. | nowhere | - |
 | `scope.declined` | None: the holder kept its scope, and the entry shows in the record and the views. | nowhere | - |
 | `plan.endorsed` | None: endorsements show on the plan's own page and in the record. | nowhere | - |
 | `plan.seen` | None: reading the plan is bookkeeping, and the entry shows in the record and the views. | nowhere | - |
@@ -407,6 +407,11 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   stopped, blocked on the lead, or in "Needs you" itself, whose item then says
   how many pieces wait on it; or nothing holds a planned story any more and its
   lane is idle, so it is free to start. Neither holds the close.
+- On a shared record, "you" is the seat that holds the call. Each "Needs you"
+  item names the scope whose call it is and the seat holding it, and is worded
+  for the seat that wrote the list, for a reader with no seat, and by role, so
+  no seat reads "you" for another seat's call (run-delivery's "Collaboration"
+  says how).
 
 ### 4. Run the queue
 

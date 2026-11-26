@@ -13109,6 +13109,18 @@ def listener_needed(state: dict) -> list[str]:
             + [f"{item['subject']} ({item.get('stage')})" for item in state.get("queue", []) if item.get("stage") != "merged"])
 
 
+def held_lanes_view(state: dict, roles: dict | None) -> dict:
+    """``state`` with only the lanes this seat holds, and the queue's pieces on them, by the lane a stopped piece is
+    assigned to, and a piece on no lane where this seat holds the queue: all of it on an unshared record, whose
+    ``roles`` are None."""
+    if roles is None:
+        return state
+    lane_of = lambda item: item.get("assignedLane", item.get("lane")) if item.get("stage") == "stopped" else item.get("lane")
+    return {**state, "lanes": [lane for lane in state.get("lanes", []) if lane_held(roles, lane["id"])],
+            "queue": [item for item in state.get("queue", []) if lane_held(roles, lane_of(item))
+                      or not lane_of(item) and roles["queue"]]}
+
+
 def listener_facts(state: dict) -> dict:
     """The same, as a held stop's facts: the lanes still working and the pieces still to land, by name."""
     return {"lanes": [lane["id"] for lane in state.get("lanes", []) if lane.get("state") not in LANE_DONE],
@@ -13760,9 +13772,12 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           "text": f"Feedback {entry['id']} on {anchor} stops approval: {said}. The holder of its section "
                           f"settles it with {settle}", "clears": settle, "kind": "feedback", "who": "lead",
                           "since": entry.get("at"), "fields": {"entry": entry["id"], "anchor": anchor, "detail": said}})
-    needed = listener_needed(doc["state"])
+        items += seat_needs(c, doc)
+    # On a shared record each seat's lead hears only its own lanes, and the pieces in the queue on them.
+    heard = held_lanes_view(doc["state"], seat_roles(c))
+    needed = listener_needed(heard)
     if needed and lead_listener(c.state) is None:
-        listening = listening_words(c, doc["state"])
+        listening = listening_words(c, heard)
         items.append({"holding": False, "source": f"{LEAD_WAIT_LEASE} in the record", **listening, "kind": "listener",
                       "who": "lead", "fields": {"detail": listening["text"]}})
     for name in flapping:
@@ -13789,6 +13804,47 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
     items += lane_change_needs(c, doc["state"])
     items += record_needs(doc, items)
     return say_needs(c, doc, items + waits_needing(c, doc, items))
+
+
+def seat_needs(c, doc: dict) -> list[dict]:
+    """What only a shared record needs, none of it holding the close: on the machine that reads it, a peer's updates
+    held for not fitting this record or for another release's writer, and this checkout's seat split; for the holder
+    who answers, a seat asking to join and a scope asked for and not yet given or kept."""
+    tool = _validator(c.release)
+    collab = doc["state"]["meta"]["collab"]
+    labels = {seat: found["label"] for seat, found in tool.derived_seats(doc["journal"]).items()}
+    items = []
+    for seat, peer in sorted((collab.get("peers") or {}).items()):
+        reason = (peer or {}).get("heldReason") if isinstance(peer, dict) else None
+        if not reason:
+            continue
+        older = reason == "generation_differs"
+        items.append({"holding": False, "source": f"seat {seat}'s partition",
+                      "text": f"Seat {labels.get(seat, seat)}'s updates are held ({reason})"
+                      + ("; the machine behind runs lead-upgrade-writer, and no machine upgrades another" if older else ""),
+                      "clears": "the partition read again", "kind": "generationDiffers" if older else "peerHeld",
+                      "who": "lead", "fields": {"peer": labels.get(seat, seat)}})
+    if collab.get("heldReason") == "seat_split":
+        items.append({"holding": False, "source": "this checkout's seat",
+                      "text": "This checkout's seat split: another clone wrote as it, so it writes and reads nothing "
+                      "more until it has a fresh seat, admitted like any other", "clears": "a fresh seat for this checkout",
+                      "kind": "seatSplit", "who": "lead", "fields": {}})
+    for seat, found in sorted(tool.derived_seats(doc["journal"]).items()):
+        if not found["admitted"]:
+            items.append({"holding": False, "source": f"seat {seat}'s request",
+                          "text": f"Seat {found['label']} asks to join: {flow_command()} collab admit --seat {seat}",
+                          "clears": "the seat admitted", "kind": "seatRequest", "who": "lead",
+                          "fields": {"peer": found["label"]}})
+    for entry in tool._collab().open_requests(doc["journal"]):
+        asker, scope = entry["origin"]["seat"], entry["data"]["scope"]
+        reason = str(entry["data"].get("reason") or "")
+        items.append({"holding": False, "source": f"journal entry {entry['id']} (scope.requested)",
+                      "text": f"Seat {labels.get(asker, asker)} asks for {scope}: {reason}. Its holder gives it with "
+                      f"{flow_command()} collab give --scope {scope} --to {asker}, or keeps it",
+                      "clears": "the scope given or kept", "kind": "scopeRequest", "who": "lead",
+                      "since": entry.get("at"), "fields": {"peer": labels.get(asker, asker), "scope": scope,
+                                                            "reason": reason}})
+    return items
 
 
 COMPOUNDING_SOURCE = "compound-learning"
@@ -13891,11 +13947,92 @@ def record_needs(doc: dict, named: list[dict]) -> list[dict]:
 # What a row of "Needs you" is said in, beside its facts: from the table of wait sentences, by the item's kind.
 NEED_WORDS = ("headline", "why", "clears", "who")
 
+# On a shared record, whose call each kind of "Needs you" item is: the scope whose holder acts on it. `lane:<lane>` is
+# the lane the item's story is on, `plan:<anchor>` the plan section it names, and `seat:<writer>` the seat whose pass
+# saw it, for what only that machine can do or read. A blocker is its lane's, else its journal entry's seat's, and a
+# scope asked for is its holder's: `<scope>` is the scope the item names.
+NEED_SCOPES = {
+    "trackerLedger": "delivery", "trackerLag": "delivery", "compounding": "delivery", "regrant": "delivery",
+    "laneOutside": "delivery", "sibling": "delivery", "free": "delivery", "paused": "delivery",
+    "healthRunning": "queue", "healthFailed": "queue", "healthFlaky": "queue", "baseHealth": "queue",
+    "baseBroken": "queue", "baseFocused": "queue", "runnerHold": "queue", "drafts": "queue", "report": "queue",
+    "stale": "queue",
+    "unaccepted": "lane:<lane>", "stopped": "lane:<lane>", "laneBlocked": "lane:<lane>", "laneAsks": "lane:<lane>",
+    "feedback": "plan:<anchor>",
+    "flapping": "seat:<writer>", "listener": "seat:<writer>", "laneUnreadable": "seat:<writer>",
+    "blocker": "lane:<lane>|seat:<origin.seat>",
+    "peerHeld": "seat:<writer>", "generationDiffers": "seat:<writer>", "seatSplit": "seat:<writer>",
+    "seatRequest": "delivery", "scopeRequest": "<scope>",
+}
+
+
+def need_seats(c, doc: dict) -> dict | None:
+    """Who holds what on a shared record, for one pass's "Needs you": the record's first seat and each scope passed
+    on, from the pass's own read of the journal, each seat's label, and the seat this checkout writes as. None on an
+    unshared record, whose list says "you" for every person's call as it always has."""
+    tool = _validator(c.release)
+    collab = (doc["state"].get("meta") or {}).get("collab")
+    if not collab:
+        return None
+    first, held = tool.scope_register(doc["journal"])
+    writer = tool.local_seat(Path(c.state), collab["key"]) if getattr(c, "state", None) and collab.get("key") else None
+    return {"first": first, "held": held, "writer": writer, "held_by": tool._held_by,
+            "labels": {seat: found["label"] for seat, found in tool.derived_seats(doc["journal"]).items()}}
+
+
+def need_holder(seats: dict, scope: str | None) -> str | None:
+    """The seat holding ``scope`` at this pass: a `seat:<id>` is held by that seat, an unheld plan section by the
+    delivery holder, and any other scope by whoever it was last passed to, else the first seat."""
+    if scope is None:
+        return None
+    if scope.startswith("seat:"):
+        return scope[len("seat:"):] or None
+    return seats["held_by"](seats["first"], seats["held"], scope)
+
+
+def need_scope(seats: dict, doc: dict, item: dict, fields: dict) -> str | None:
+    """The scope ``item`` is stamped with, by its kind's row: a lane-less item whose kind wants a lane is the
+    delivery's, and a machine's own item on a checkout with no seat has none."""
+    form = NEED_SCOPES.get(item.get("kind"), "delivery")
+    if form.startswith("lane:"):
+        if item.get("lane"):
+            return f"lane:{item['lane']}"
+        if form.endswith("|seat:<origin.seat>"):
+            entry = next((e for e in doc["journal"] if e.get("id") == fields.get("entry")), None)
+            seat = ((entry or {}).get("origin") or {}).get("seat")
+            if seat:
+                return f"seat:{seat}"
+        return "delivery"
+    if form == "plan:<anchor>":
+        return f"plan:{fields['anchor']}" if fields.get("anchor") else "delivery"
+    if form == "seat:<writer>":
+        return f"seat:{seats['writer']}" if seats["writer"] else None
+    if form == "<scope>":
+        return fields.get("scope") or "delivery"
+    return form
+
+
+def need_who(seats: dict, who: str, owner: str | None, viewer: str | None, role: bool = False) -> dict:
+    """The `who` a row's words are chosen by, for one reader: a person's call or the lead's is "you" or "the lead"
+    only for the seat that holds it, the owner's label for anyone else, and by role alone when the owner can't be
+    named. A lane's own name stays."""
+    if who not in ("operator", "lead"):
+        return {"who": who}
+    if role or owner is None:
+        return {"who": "someone" if who == "operator" else "lead"}
+    if viewer is not None and owner == viewer:
+        return {"who": who}
+    return {"who": "otherSeat" if who == "operator" else "otherLead", "label": seats["labels"].get(owner, owner)}
+
 
 def say_needs(c, doc: dict, items: list[dict]) -> list[dict]:
     """Each item with its facts filled from the record and its row's words from the table of wait sentences: the
     lane its story is on, the story's state, the story it waits on with that one's lane and state, and the headline,
-    why, what clears it and who acts. An item's `text`, which the close and the friction note read, is unchanged."""
+    why, what clears it and who acts. An item's `text`, which the close and the friction note read, is unchanged.
+
+    On a shared record each item is then stamped with the scope whose call it is and the seat holding it, and worded
+    for three readers: `said` for the seat writing the list, `saidAll` for a reader with no seat, every owner named
+    by label, and `saidRole` by role alone. An unshared record's items carry none of these."""
     scripts = str(c.release / "skills/orchestrate-work/scripts")
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
@@ -13905,6 +14042,7 @@ def say_needs(c, doc: dict, items: list[dict]) -> list[dict]:
     pieces = {item["subject"]: item for item in [*state["queue"], *state.get("planned", [])]}
     lane_of = lambda piece: piece.get("assignedLane", piece.get("lane")) if piece.get("stage") == "stopped" else piece.get("lane")
     found = delivery_state.waits(doc, needing={name for item in items for name in needs_about(doc, item)}, words=table)
+    seats = need_seats(c, doc)
     said = []
     for item in items:
         item = {key: value for key, value in item.items() if value is not None}
@@ -13919,12 +14057,26 @@ def say_needs(c, doc: dict, items: list[dict]) -> list[dict]:
             on = pieces[wait["on"]]
             item["blocker"] = {"subject": wait["on"], "state": on["stage"], **({"lane": lane_of(on)} if lane_of(on) else {})}
         kind, who = item.get("kind", "other"), item.get("who", "lead")
-        words = {**fields, **{name: item[name] for name in ("lane", "subject") if item.get(name)}, "kind": kind,
-                 "who": who, "whom": delivery_state.wait_said(table, "needsYou", "whom", {"who": who})}
-        item["said"] = {name: delivery_state.wait_said(table, "needsYou", name, words) for name in NEED_WORDS}
+        facts = {**fields, **{name: item[name] for name in ("lane", "subject") if item.get(name)}, "kind": kind}
+
+        def worded(reader: dict) -> dict:
+            words = {**facts, **reader, "whom": delivery_state.wait_said(table, "needsYou", "whom", reader)}
+            return {name: delivery_state.wait_said(table, "needsYou", name, words) for name in NEED_WORDS}
+
+        readers = {"said": {"who": who}}
+        if seats is not None:
+            # After the lane is filled, so a story's item finds its lane's holder, and before the words, which name it.
+            scope = need_scope(seats, doc, item, fields)
+            owner = need_holder(seats, scope)
+            item.update({**({"scope": scope} if scope else {}), **({"seat": owner} if owner else {})})
+            readers = {"said": need_who(seats, who, owner, seats["writer"]), "saidAll": need_who(seats, who, owner, None),
+                       "saidRole": need_who(seats, who, owner, None, role=True)}
+        for name, reader in readers.items():
+            item[name] = worded(reader)
         if item.get("waiting"):
             count = delivery_state.wait_said(table, "needsYou", "count", {"count": item.pop("waiting")})
-            item["said"]["why"] = f"{item['said']['why']} {count}".strip()
+            for name in readers:
+                item[name]["why"] = f"{item[name]['why']} {count}".strip()
         said.append(item)
     return said
 
@@ -13942,9 +14094,11 @@ def needs_words(c) -> dict:
             "age": table["needsYou"]["templates"]["age"]}
 
 
-def needs_summary(c, items: list[dict]) -> str:
+def needs_summary(c, items: list[dict], seats: dict | None = None, viewer: str | None = None) -> str:
     """The sentence "Needs you" opens with: how many items wait on whom, the operator first, and how many of them hold
-    up the finish, from the table of wait sentences."""
+    up the finish, from the table of wait sentences. On a shared record, given its ``seats``, it is worded for the
+    ``viewer`` seat, or for a reader with none: the viewer's own calls first, then "1 more" for each other owner, by
+    the seat each item was stamped with."""
     scripts = str(c.release / "skills/orchestrate-work/scripts")
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
@@ -13952,11 +14106,26 @@ def needs_summary(c, items: list[dict]) -> str:
     table = delivery_state.load_wait_words()
     if not items:
         return delivery_state.wait_said(table, "needsYou", "summary", {"shape": "empty", "parts": [], "holding": 0})
-    whom: dict[str, int] = {}
-    for item in sorted(items, key=lambda item: item.get("who") != "operator"):
-        whom[item.get("who", "lead")] = whom.get(item.get("who", "lead"), 0) + 1
-    parts = [delivery_state.wait_said(table, "needsYou", "part", {
-        "count": count, "whom": delivery_state.wait_said(table, "needsYou", "whom", {"who": who})}) for who, count in whom.items()]
+    if seats is None:
+        whom: dict[str, int] = {}
+        for item in sorted(items, key=lambda item: item.get("who") != "operator"):
+            whom[item.get("who", "lead")] = whom.get(item.get("who", "lead"), 0) + 1
+        parts = [delivery_state.wait_said(table, "needsYou", "part", {
+            "count": count, "whom": delivery_state.wait_said(table, "needsYou", "whom", {"who": who})})
+            for who, count in whom.items()]
+    else:
+        # The viewer's own calls first, a person's before the lead's, then everyone else's, each in the list's order.
+        readers = [need_who(seats, item.get("who", "lead"), item.get("seat"), viewer) for item in sorted(
+            items, key=lambda item: (viewer is None or item.get("seat") != viewer, item.get("who") != "operator"))]
+        counted: dict[str, int] = {}
+        for reader in readers:
+            whom_said = delivery_state.wait_said(table, "needsYou", "whom", reader)
+            counted[whom_said] = counted.get(whom_said, 0) + 1
+        said = [delivery_state.wait_said(table, "needsYou", "part" if not number else "more",
+                                         {"count": count, "whom": whom_said})
+                for number, (whom_said, count) in enumerate(counted.items())]
+        parts = [delivery_state.wait_said(table, "needsYou", "shared",
+                                          {"first": said[0], **({"more": said[1:]} if said[1:] else {})})]
     holding = sum(1 for item in items if item["holding"])
     shape = ("none" if not holding else "it" if len(items) == 1 else "all" if holding == len(items)
              else "one" if holding == 1 else "some")
@@ -14332,17 +14501,22 @@ def lane_change_needs(c, state: dict) -> list[dict]:
 NEEDS_FILE = "needs-you.json"
 
 
-def write_needs(c, items: list[dict] | None, number: int, started: float) -> None:
+def write_needs(c, items: list[dict] | None, number: int, started: float, doc: dict | None) -> None:
     """Replace the record's "Needs you" list, which renderers read: this pass's items, or, with None, the word that
     the supervisor isn't running. A running list is stale once one pass is overdue: after the pass interval and once
-    more the longer of that interval and this pass's own time so far."""
+    more the longer of that interval and this pass's own time so far. ``doc`` is the record the pass read its items
+    from, None with no items. On a shared record its summary is worded for this seat and `summaryAll` for a reader with none; an unshared list has no
+    `summaryAll`."""
     at = datetime.datetime.now(datetime.timezone.utc)
     written: dict = {"spec": "delivery-needs-you/1", "running": items is not None, "pass": number,
                      "at": at.strftime("%Y-%m-%dT%H:%M:%SZ"), "items": items or []}
     if items is not None:
         # The list's own words, from the table of wait sentences: its heading, the sentence it opens with, the mark a
         # holding row carries, and the age column's form, whose {age} the page fills as it ticks.
-        written["summary"] = needs_summary(c, items)
+        seats = need_seats(c, doc) if doc is not None else None
+        written["summary"] = needs_summary(c, items, seats, seats["writer"] if seats else None)
+        if seats is not None:
+            written["summaryAll"] = needs_summary(c, items, seats)
         written["words"] = needs_words(c)
         interval = supervisor_pass_seconds(c)
         stale = at + datetime.timedelta(seconds=interval + max(interval, time.monotonic() - started))
@@ -16025,7 +16199,7 @@ class Supervisor:
             # After the publishers, so their ledger is current; before the views, so the line map shows this list.
             derived["doc"] = load_state()
             derived["needs"] = needs_you(c, derived["doc"], self.flapping())
-            write_needs(c, derived["needs"], number, started)
+            write_needs(c, derived["needs"], number, started, derived["doc"])
             return f"{len(derived['needs'])} item(s)"
 
         earlier = read_log("supervisor", c.delivery)
@@ -16349,7 +16523,7 @@ class Supervisor:
             # the record or install is gone, which would only write a record back that no one is serving.
             if not self.lost:
                 with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
-                    write_needs(c, None, len(read_log("supervisor", c.delivery)), time.monotonic())
+                    write_needs(c, None, len(read_log("supervisor", c.delivery)), time.monotonic(), None)
                     render_views(c, only="renderers")
                     copy_latest(c)
                     if closed:

@@ -100,6 +100,9 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .chapter + .chapter { border-top: 1px solid var(--hair); }
 .chapter-now { min-height: 82vh; display: grid; align-content: center; }
 .inner { width: 100%; max-width: 980px; margin-inline: auto; display: grid; gap: 24px; }
+/* Whose page a shared record's is: the reader's seat and what it holds, then who else writes it. */
+.seat-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 6px 0 2px; font-size: 12px; line-height: 16px; color: var(--faint); }
+.seat-chip { padding: 2px 8px; border: 1px solid var(--hair); border-radius: 999px; color: var(--soft); font-weight: 500; }
 .kicker { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .title { margin: 0; font-family: var(--display); font-weight: 500; font-size: clamp(28px, 4.2vw, 44px); line-height: 1.1; letter-spacing: -0.02em; max-width: 24ch; }
 /* On Now the delivery's name is the headline, in the display face at its largest and lightest. */
@@ -146,6 +149,8 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .now-mark.is-live.is-paused .now-mark-label { color: var(--soft); }
 .now-mark-label { font-size: 12px; line-height: 16px; color: var(--faint); overflow-wrap: anywhere; }
 .now-mark.is-live .now-mark-label { color: var(--ink); font-weight: 500; }
+/* A mark another seat holds is theirs to move: it stays as quiet as a waiting one. */
+.now-mark.is-live[data-who="seat"] .now-mark-label { color: var(--soft); font-weight: 450; }
 .now-mark.is-stop .now-mark-label { color: var(--held); font-weight: 500; }
 /* While stories land the lanes run side by side: each lane is a row, its label then its mark, and its thread curves
    into the one finish on the right, which sits where the threads meet. A landed lane's thread is solid ink; one paused
@@ -272,7 +277,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .ck-chosen { font-size: 13px; line-height: 18px; color: var(--faint); }
 .ck-chosen + .ck-chosen { margin-top: -8px; }
 .ck-rest { display: grid; gap: 12px; padding: 6px 0 2px 16px; }
-.ck-fallback { font-size: 13px; line-height: 18px; color: var(--faint); margin: 0; }
+.ck-fallback, .ck-chosen-line { font-size: 13px; line-height: 18px; color: var(--faint); margin: 0; }
 .ck-chosen > summary { cursor: pointer; list-style: none; position: relative; padding-left: 16px; }
 .ck-chosen > summary::-webkit-details-marker { display: none; }
 .ck-chosen > summary::before { content: ""; position: absolute; left: 1px; top: .55em; width: 5px; height: 5px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .15s ease; }
@@ -311,6 +316,8 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .needs-row .a2 { color: var(--soft); font-size: 14px; overflow-wrap: anywhere; }
 .needs-row.is-quiet .a1 { font-weight: 500; color: var(--soft); }
 .needs-row.is-quiet .nr-mark { opacity: .7; }
+/* Another seat's call on a shared record: read here, acted on there, so it reads quieter than the reader's own. */
+.needs-row.is-theirs .a1 { font-weight: 500; color: var(--soft); }
 .nr-mark { position: relative; display: flex; align-items: flex-start; width: 88px; padding-top: 2px; }
 .nr-stroke { position: absolute; left: 0; right: 0; top: 10px; height: 2px; border-radius: 1px; background: color-mix(in oklab, var(--c) 30%, transparent); }
 .nr-stop { position: relative; display: grid; justify-items: center; gap: 3px; padding: 0 8px; }
@@ -397,9 +404,10 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 /* A row's landed stories, folded into one bar on the rule that grows with their count, with how many under it. */
 .seg.fold .fold-bar { position: absolute; top: 20px; left: 4px; height: 7px; border-radius: 3px; background: var(--c);
   width: calc(10px + var(--landed, 1) * 6px); max-width: calc(100% - 8px); }
-.seg.fold .fold-label, .seg.more { position: absolute; top: 40px; font: 450 11px/14px var(--mono); color: var(--soft); white-space: nowrap; }
-.seg.fold .fold-label { left: 4px; }
-.seg.more { top: 14px; color: var(--faint); }
+.seg.fold .fold-label, .seg.more { font: 450 11px/14px var(--mono); color: var(--soft); white-space: nowrap; }
+.seg.fold .fold-label { position: absolute; top: 40px; left: 4px; }
+/* A lane's "+N more" is a slot on the line like a stop's, after its last one, never laid over that stop's label. */
+.seg.more { padding-top: 14px; place-items: start center; color: var(--faint); }
 /* Lighting a lane, from its row, its stop or one of its ticks, dims every other lane's row, turn and ticks. */
 .lines-track [data-lane] { transition: opacity .15s; }
 .lines-track.lit [data-lane]:not(.on) { opacity: .22; }
