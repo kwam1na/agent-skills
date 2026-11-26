@@ -113,3 +113,46 @@ test("a long name on Now is cut to three lines and shown whole on the page's car
   expect([seen.clamp, seen.overflow]).toEqual(["3", "hidden"]);
   expect(seen.card).toBe(name);
 });
+
+test("a lane's \"+N more\" marker takes its own slot on the line, after its last stop, rather than sitting on that stop", async () => {
+  const document = record();
+  // Lane 2 gets four open stories: three stops are drawn and the fourth folds into "+1".
+  document.state.planned.push({ subject: "APP-6", title: "APP-6", lane: "lane-2", stage: "planned" },
+    { subject: "APP-7", title: "APP-7", lane: "lane-2", stage: "planned" });
+  // jsdom reports a shorthand and its longhands apart, so each is compared.
+  const SLOT = ["flex", "flex-grow", "flex-shrink", "flex-basis", "width", "max-width"];
+  let seen = null;
+  await openPage(pageWithRuns(waited(document), {}, { config: CONFIG }), { now: NOW, steps: [{ run(window) {
+    const more = window.document.querySelector(".seg.more");
+    const stops = more && more.parentElement;
+    const style = more && window.getComputedStyle(more);
+    const stop = window.getComputedStyle(more.previousElementSibling);
+    // The folded bar's label shares the marker's type but keeps its own place under the bar; this row has no landed
+    // stories, so one is drawn into it to read the rule.
+    const fold = window.document.createElement("div");
+    fold.className = "seg fold";
+    const label = fold.appendChild(window.document.createElement("div"));
+    label.className = "fold-label";
+    stops.insertBefore(fold, stops.firstChild);
+    const folded = window.getComputedStyle(label);
+    seen = more && { text: more.textContent, last: stops.lastElementChild === more,
+      before: more.previousElementSibling.querySelector(".stop-btn") !== null,
+      position: style.position, place: style.placeItems, paddingTop: style.paddingTop, top: style.top,
+      flex: SLOT.map((name) => style.getPropertyValue(name)),
+      stopFlex: SLOT.map((name) => stop.getPropertyValue(name)),
+      fold: [folded.position, folded.top, folded.left] };
+    fold.remove();
+  } }] });
+  expect(seen === null).toBe(false);
+  expect([seen.text, seen.last, seen.before]).toEqual(["+1", true, true]);
+  // An absolutely placed marker has no box of its own on the line: with no left it falls onto the last stop's label.
+  expect(seen.position).toBe("relative");
+  expect(seen.top === "" || seen.top === "auto").toBe(true);
+  // In the flow it is a slot like a stop's, its count where a stop's mark would sit.
+  expect(seen.place).toBe("start center");
+  expect(seen.paddingTop).toBe("14px");
+  // Its slot is a stop's: the same flex, so the row's five slots stay one width.
+  expect(seen.stopFlex[0]).toBe("0 0 calc(100% / var(--most, 1))");
+  expect(seen.flex).toEqual(seen.stopFlex);
+  expect(seen.fold).toEqual(["absolute", "40px", "4px"]);
+});

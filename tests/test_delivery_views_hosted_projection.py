@@ -182,6 +182,34 @@ class ProjectionTests(unittest.TestCase):
                         expected = {**expected, 'history': None}
                     self.assertEqual(value.get(key), expected, key)
 
+    def test_a_shared_record_publishes_each_items_stamp_and_wordings_and_no_viewer(self):
+        """The hosted page has no seat: its cut carries the shared list as the local page embeds it, stamps, all three
+        wordings and both sentences, so it can name every owner, and never the seat a local page is drawn for."""
+        doc = json.loads((ROOT / 'tests/fixtures/delivery-views/line-map/colead/document.json').read_text(encoding='utf-8'))
+        seat = next(iter(doc['state']['meta']['collab']['seats']))
+        said = lambda who: {'headline': f'{who} marks the draft ready', 'why': 'w', 'clears': 'c', 'who': who}
+        written = {'spec': render.NEEDS_SPEC, 'running': False, 'at': '2026-10-30T12:00:00Z',
+                   'summary': '1 thing needs you.', 'summaryAll': '1 thing needs Ben.',
+                   'items': [{'holding': False, 'source': 'acceptance', 'text': 't', 'clears': 'c', 'kind': 'drafts',
+                              'who': 'operator', 'scope': 'queue', 'seat': seat, 'said': said('You'),
+                              'saidAll': said('Ben'), 'saidRole': said('Someone')}]}
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / render.NEEDS_FILE).write_text(json.dumps(written))
+            needs = render.read_needs_block(Path(folder))
+        with mock.patch.object(render.review_state, 'local_seat', return_value=seat) as local:
+            value = public.project(doc, {}, FORGE, source_fingerprint='1' * 64, needs=needs)
+        local.assert_not_called()
+        page = render.render_line_map(doc, {}, FORGE, theme_key='hosted-delivery', history=None, needs=needs, viewer=seat)
+        self.assertEqual(value['needs'], block(page, 'delivery-needs'))
+        [row] = value['needs']['items']
+        self.assertEqual((row['scope'], row['seat'], row['saidAll']['who'], row['saidRole']['who']),
+                         ('queue', seat, 'Ben', 'Someone'))
+        self.assertEqual(value['needs']['summaryAll'], '1 thing needs Ben.')
+        self.assertEqual(block(page, 'delivery-viewer'), {'seat': seat})
+        self.assertNotIn('viewer', value)
+        self.assertNotIn(seat, public.encode(value['view']).decode())
+        Draft202012Validator(public.SCHEMA).validate(value)
+
     def test_a_base_merge_authorization_publishes_without_its_nonce(self):
         doc, runs, plan, needs, files = full_record()
         value = public.project(doc, runs, FORGE, source_fingerprint='1' * 64, plan=plan, needs=needs, files=files)
