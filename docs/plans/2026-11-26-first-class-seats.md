@@ -161,9 +161,10 @@ On a shared record only:
   - `saidAll` and `saidRole`, the same shape as `said`;
 - the list gains `summaryAll`, and its `summary` is worded for the writing seat.
 
-The stamp is made after `say_needs` has filled each item's `lane` from its piece,
-so `stopped` and `unaccepted` items find their lane. An item with no lane where
-its kind wants one falls back to `delivery`.
+Within the pass, the order is: `say_needs` fills each item's `lane` from its
+piece, then the item is stamped, then it is worded. So `stopped` and
+`unaccepted` items find their lane, and the words know the owner. An item with
+no lane where its kind wants one falls back to `delivery`.
 
 On an unshared record none of these keys is written, so `needs-you.json` and
 the supervisor log are byte-identical to today's. SEATS-1 adds the pin that
@@ -249,6 +250,8 @@ Lane 1, tier 1, not blocked. Test-first. Files:
   - **Blockers.** Three cases: a blocker with a lane, one with only a subject
     whose piece is on a lane, and one with neither (`seat:<origin.seat>`).
     Mutant: the subject branch skipped.
+  - **No lane.** A `stopped` item whose piece has no lane, on the two-seat
+    record, stamps `delivery`/a. Mutant: the fallback stamping `queue`.
   - **Feedback.** An unheld section after `delivery` has moved off the first
     seat stamps the delivery holder. Mutant: the first seat.
   - **Wording.** On a shared list, `said`, `saidAll` and `saidRole` for
@@ -311,8 +314,9 @@ Lane 2, tier 2, after SEATS-2. Test-first. Files:
     takes nothing over and ranks with the others'. Mutant: an absent seat
     falling back to "operator means you".
   - an outrun stamp reads `saidRole`. Mutant: `saidAll`.
-  - an item stamped `seat:b`, drawn as b where b is not the first seat, reads
-    `said` and can take over Now; drawn as a, it reads under b's label.
+  - a lane-less `blocker` (`who: lead`, as its producer emits it) stamped
+    `seat:b`, drawn as b where b is not the first seat, reads `said`, not
+    `saidRole`, and takes nothing over; drawn as a, it reads under b's label.
     Mutant: `seat:` judged by `holderOf`'s first-seat default.
   - `delivery` moved from a to b, then a `feedback` item on an unheld section
     stamped b: b's call on b's page, under b's label on a's. Mutant: `holderOf`
@@ -364,7 +368,8 @@ lane 1.
    a's next pass reads "You".
 6. Blockers: one on lane 1 stamps `lane:lane-1`/b; one with only a subject on
    lane 2 stamps `lane:lane-2`/a; one the supervisor journaled on b with
-   neither stamps `seat:b`/b, and b's page can lead with it.
+   neither stamps `seat:b`/b, reads `said` on b's page and takes nothing over.
+   A `stopped` piece with no lane stamps `delivery`/a.
 7. Feedback after `delivery` moves from a to b, on an unheld section, is b's.
 8. Unshared: every item's key set and the list's keys are today's; the page,
    the goldens and the Now cases are unchanged.
