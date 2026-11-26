@@ -10,6 +10,7 @@ import builtins
 import copy
 import datetime
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -754,9 +755,12 @@ class SeatStampTests(unittest.TestCase):
     for the seat writing the list, for a reader with no seat, and by role. An unshared list is as it was."""
 
     def setUp(self) -> None:
-        patcher = mock.patch.object(state_tool, "local_seat", lambda directory, key: self.writer)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        # run_delivery reaches the state tool by name, so the patched module must be the one that name resolves to,
+        # whichever test module was imported last.
+        for patcher in (mock.patch.dict(sys.modules, {"delivery_state": state_tool}),
+                        mock.patch.object(state_tool, "local_seat", lambda directory, key: self.writer)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.writer = SEAT_A
         self.release = SimpleNamespace(release=PRODUCT_ROOT, state=Path("/nonexistent"))
 
@@ -919,6 +923,39 @@ class SeatStampTests(unittest.TestCase):
             run_delivery.write_needs(c, listed, 1, time.monotonic(), document)
             written = json.loads((Path(folder) / "needs-you.json").read_text(encoding="utf-8"))
         self.assertEqual((written["summary"], written["summaryAll"]), (summary(SEAT_A), summary(None)))
+        # A third owner is counted too, each after the reader's own.
+        row(document, "lane-3").update(state="working", focus="its schema", waitingOn="lead")
+        listed = self.said(document, [*run_delivery.lane_needs(document["state"]),
+                                      item("drafts", "operator", fields={"subjects": ["APP-1"]})])
+        self.assertEqual(summary(SEAT_A), "1 thing needs you; 1 more needs the lead and 1 more needs Ben, and all of "
+                                          "them are holding up the finish.")
+        self.assertEqual(summary(None), "1 thing needs Ama; 1 more needs Ben and 1 more needs Ama's lead, and all of "
+                                        "them are holding up the finish.")
+
+    def test_the_summary_leads_with_the_readers_own_call_even_when_it_is_the_leads(self) -> None:
+        document = shared(record())
+        listed = self.said(document, [item("drafts", "operator", fields={"subjects": ["APP-1"]}),
+                                      item("paused", fields={"reason": "a break"})])
+        seats = run_delivery.need_seats(self.release, document)
+        self.assertEqual(run_delivery.needs_summary(self.release, listed, seats, SEAT_A),
+                         "1 thing needs the lead; 1 more needs Ben, and all of them are holding up the finish.")
+        self.assertEqual(run_delivery.needs_summary(self.release, listed, seats, SEAT_B),
+                         "1 thing needs you; 1 more needs Ama's lead, and all of them are holding up the finish.")
+
+    def test_a_count_of_the_pieces_waiting_reaches_every_reading(self) -> None:
+        document = shared(record())
+        queue(document, "APP-1", "stopped")
+        items = run_delivery.record_needs(document, [])
+        items += run_delivery.waits_needing(self.release, document, items)
+        [said] = self.said(document, items)
+        self.assertEqual([said[name]["why"] for name in ("said", "saidAll", "saidRole")], ["2 pieces wait on it."] * 3)
+
+    def test_the_supervisor_writes_the_list_from_the_record_its_pass_read(self) -> None:
+        # The summary's seats come from the same read as the items' stamps: write_needs takes that read.
+        self.assertEqual(list(inspect.signature(run_delivery.write_needs).parameters)[-1], "doc")
+        self.assertIs(inspect.signature(run_delivery.write_needs).parameters["doc"].default, inspect.Parameter.empty)
+        source = inspect.getsource(run_delivery.Supervisor.one_pass)
+        self.assertIn('write_needs(c, derived["needs"], number, started, derived["doc"])', source)
 
 
 class ListeningTests(unittest.TestCase):

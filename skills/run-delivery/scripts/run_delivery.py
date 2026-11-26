@@ -13907,19 +13907,11 @@ NEED_SCOPES = {
 }
 
 
-def need_seats(c, doc: dict | None = None) -> dict | None:
+def need_seats(c, doc: dict) -> dict | None:
     """Who holds what on a shared record, for one pass's "Needs you": the record's first seat and each scope passed
-    on, read once from the journal, each seat's label, and the seat this checkout writes as. None on an unshared
-    record, whose list says "you" for every person's call as it always has."""
+    on, from the pass's own read of the journal, each seat's label, and the seat this checkout writes as. None on an
+    unshared record, whose list says "you" for every person's call as it always has."""
     tool = _validator(c.release)
-    if doc is None:
-        state = json_object(Path(c.state) / "state.json") if getattr(c, "state", None) else {}
-        if not (state.get("meta") or {}).get("collab"):
-            return None
-        try:
-            doc = {"state": state, "journal": tool.read_journal(Path(c.state))}
-        except (tool.StateError, OSError, ValueError):
-            doc = {"state": state, "journal": []}
     collab = (doc["state"].get("meta") or {}).get("collab")
     if not collab:
         return None
@@ -14061,9 +14053,11 @@ def needs_summary(c, items: list[dict], seats: dict | None = None, viewer: str |
             "count": count, "whom": delivery_state.wait_said(table, "needsYou", "whom", {"who": who})})
             for who, count in whom.items()]
     else:
-        readers = [need_who(seats, item.get("who", "lead"), item.get("seat"), viewer) for item in items]
+        # The viewer's own calls first, a person's before the lead's, then everyone else's, each in the list's order.
+        readers = [need_who(seats, item.get("who", "lead"), item.get("seat"), viewer) for item in sorted(
+            items, key=lambda item: (viewer is None or item.get("seat") != viewer, item.get("who") != "operator"))]
         counted: dict[str, int] = {}
-        for reader in sorted(readers, key=lambda reader: reader["who"] != "operator"):
+        for reader in readers:
             whom_said = delivery_state.wait_said(table, "needsYou", "whom", reader)
             counted[whom_said] = counted.get(whom_said, 0) + 1
         said = [delivery_state.wait_said(table, "needsYou", "part" if not number else "more",
@@ -14446,11 +14440,11 @@ def lane_change_needs(c, state: dict) -> list[dict]:
 NEEDS_FILE = "needs-you.json"
 
 
-def write_needs(c, items: list[dict] | None, number: int, started: float, doc: dict | None = None) -> None:
+def write_needs(c, items: list[dict] | None, number: int, started: float, doc: dict | None) -> None:
     """Replace the record's "Needs you" list, which renderers read: this pass's items, or, with None, the word that
     the supervisor isn't running. A running list is stale once one pass is overdue: after the pass interval and once
-    more the longer of that interval and this pass's own time so far. On a shared record, read from ``doc`` when given,
-    its summary is worded for this seat and `summaryAll` for a reader with none; an unshared list has no
+    more the longer of that interval and this pass's own time so far. ``doc`` is the record the pass read its items
+    from, None with no items. On a shared record its summary is worded for this seat and `summaryAll` for a reader with none; an unshared list has no
     `summaryAll`."""
     at = datetime.datetime.now(datetime.timezone.utc)
     written: dict = {"spec": "delivery-needs-you/1", "running": items is not None, "pass": number,
@@ -14458,7 +14452,7 @@ def write_needs(c, items: list[dict] | None, number: int, started: float, doc: d
     if items is not None:
         # The list's own words, from the table of wait sentences: its heading, the sentence it opens with, the mark a
         # holding row carries, and the age column's form, whose {age} the page fills as it ticks.
-        seats = need_seats(c, doc)
+        seats = need_seats(c, doc) if doc is not None else None
         written["summary"] = needs_summary(c, items, seats, seats["writer"] if seats else None)
         if seats is not None:
             written["summaryAll"] = needs_summary(c, items, seats)
@@ -16468,7 +16462,7 @@ class Supervisor:
             # the record or install is gone, which would only write a record back that no one is serving.
             if not self.lost:
                 with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
-                    write_needs(c, None, len(read_log("supervisor", c.delivery)), time.monotonic())
+                    write_needs(c, None, len(read_log("supervisor", c.delivery)), time.monotonic(), None)
                     render_views(c, only="renderers")
                     copy_latest(c)
                     if closed:
