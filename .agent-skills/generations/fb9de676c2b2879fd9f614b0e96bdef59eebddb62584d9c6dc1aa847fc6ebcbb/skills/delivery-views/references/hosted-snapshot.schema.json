@@ -1,0 +1,300 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-skills.dev/schemas/hosted-delivery-snapshot/3",
+  "title": "hosted-delivery-snapshot/3",
+  "description": "What the hosted page draws: the same cut the local live view renders from, bounded. Every string, list and object is bounded; the publisher and the receiver also refuse a credential-named field anywhere in it, and the publisher refuses any configured secret value.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "sourceFingerprint",
+    "document",
+    "runs",
+    "reviews",
+    "view",
+    "links"
+  ],
+  "maxProperties": 10000,
+  "properties": {
+    "schemaVersion": {
+      "const": "hosted-delivery-snapshot/3"
+    },
+    "sourceFingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "maxLength": 65536
+    },
+    "document": {
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "maxProperties": 10000,
+      "propertyNames": {
+        "$ref": "#/$defs/key"
+      },
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/record"
+        },
+        "journal": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "$ref": "#/$defs/record"
+          }
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/value"
+      }
+    },
+    "runs": {
+      "type": "object",
+      "maxProperties": 10000,
+      "propertyNames": {
+        "$ref": "#/$defs/key"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/record"
+      }
+    },
+    "reviews": {
+      "type": "object",
+      "maxProperties": 10000,
+      "propertyNames": {
+        "$ref": "#/$defs/key"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/record"
+      }
+    },
+    "view": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "themeKey": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "history": {
+          "type": "null"
+        },
+        "runs": {
+          "type": "boolean"
+        },
+        "lenses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 65536
+              },
+              "icon": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "maxProperties": 10000
+          },
+          "maxProperties": 10000,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9_.:# -]+$"
+          }
+        }
+      },
+      "required": [
+        "title",
+        "history",
+        "runs",
+        "lenses"
+      ],
+      "maxProperties": 10000
+    },
+    "links": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "issues": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "maxProperties": 10000,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9_.:# -]+$"
+          }
+        },
+        "commits": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "maxProperties": 10000,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9_.:# -]+$"
+          }
+        },
+        "changes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string",
+                "maxLength": 65536
+              },
+              "href": {
+                "type": "string",
+                "maxLength": 65536
+              },
+              "repository": {
+                "type": "string",
+                "maxLength": 65536
+              }
+            },
+            "required": [
+              "label",
+              "href",
+              "repository"
+            ],
+            "maxProperties": 10000
+          },
+          "maxProperties": 10000,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        "files": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "maxProperties": 2000,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 2048,
+            "pattern": "^[0-9a-f]{7,40} (?:\\./)?(?!\\.\\.?(?:/|:))(?![^:]*/\\.\\.?(?:/|:))[^\\x00-\\x20\\x7f\\\\:/]+(?:/[^\\x00-\\x20\\x7f\\\\:/]+)*:[0-9]+(?:-[0-9]+)?$"
+          }
+        }
+      },
+      "required": [
+        "issues",
+        "commits",
+        "changes"
+      ],
+      "maxProperties": 10000
+    },
+    "plan": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/record"
+        }
+      ]
+    },
+    "needs": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/record"
+        }
+      ]
+    },
+    "files": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/record"
+        }
+      ]
+    },
+    "leftOpen": {
+      "$ref": "#/$defs/value"
+    },
+    "integration": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/record"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "key": {
+      "type": "string",
+      "maxLength": 2048
+    },
+    "record": {
+      "type": "object",
+      "maxProperties": 10000,
+      "propertyNames": {
+        "$ref": "#/$defs/key"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/value"
+      }
+    },
+    "value": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "maxLength": 65536
+        },
+        {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "$ref": "#/$defs/value"
+          }
+        },
+        {
+          "$ref": "#/$defs/record"
+        }
+      ]
+    }
+  }
+}

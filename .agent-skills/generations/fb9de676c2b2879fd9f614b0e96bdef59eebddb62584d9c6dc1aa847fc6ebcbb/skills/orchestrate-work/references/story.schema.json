@@ -1,0 +1,224 @@
+{
+  "$id": "urn:agent-skills:orchestrate-work:story:1",
+  "title": "story/1",
+  "description": "A delivery's story, as the narrator tells it from the journal: a digest, chapters that each end at a landing, the beats inside them with the altitudes each shows at, the threads that gather each setback, and a ledger that tells each setback once, grouped by story and reason. It holds instants and the durations between two entries, never a time measured to now.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "state", "digest", "chapters", "beats", "threads", "ledger", "tones"],
+  "properties": {
+    "schemaVersion": {"const": "story/1"},
+    "state": {"description": "Whether the delivery is still running or has closed.", "enum": ["open", "closed"]},
+    "digest": {"$ref": "#/$defs/digest"},
+    "chapters": {"type": "array", "items": {"$ref": "#/$defs/chapter"}},
+    "beats": {"type": "array", "items": {"$ref": "#/$defs/beat"}},
+    "threads": {"type": "array", "items": {"$ref": "#/$defs/thread"}},
+    "ledger": {
+      "description": "Each setback once: one row per story, kind and reason, the standing rows first, each part newest first.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/ledgerRow"}
+    },
+    "tones": {
+      "description": "What each tone means to a reader, in the order a legend lists them.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tone", "word"],
+        "properties": {"tone": {"enum": ["landed", "ready", "decision", "problem", "note"]}, "word": {"type": "string", "minLength": 1}}
+      }
+    }
+  },
+  "$defs": {
+    "instant": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"},
+    "seconds": {"description": "Whole seconds between two entries.", "type": "integer", "minimum": 0},
+    "entryIds": {"description": "Journal entries by id.", "type": "array", "items": {"type": "integer", "minimum": 1}},
+    "chapterId": {"type": "string", "pattern": "^c[1-9][0-9]*$"},
+    "beatId": {"type": "string", "pattern": "^b[1-9][0-9]*$"},
+    "threadId": {"type": "string", "pattern": "^t[1-9][0-9]*$"},
+    "ledgerRowId": {"type": "string", "pattern": "^s[1-9][0-9]*$"},
+    "subjects": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "words": {
+      "description": "What a reader reads: a head and a line, in the page's voice.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head", "line"],
+      "properties": {"head": {"type": "string", "minLength": 1}, "line": {"type": "string"}}
+    },
+    "digest": {
+      "description": "What the story holds: the pieces landed, when the delivery started and closed, its setbacks and what they cost, and the lead's decisions.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["landed", "pieces", "startedAt", "closedAt", "took", "setbacks", "decisions", "words"],
+      "properties": {
+        "landed": {"type": "integer", "minimum": 0},
+        "pieces": {"type": "integer", "minimum": 0},
+        "startedAt": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/instant"}]},
+        "closedAt": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/instant"}]},
+        "took": {"description": "From the first entry to the close, once closed.", "anyOf": [{"type": "null"}, {"$ref": "#/$defs/seconds"}]},
+        "setbacks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["closed", "cost", "standing"],
+          "properties": {
+            "closed": {"description": "The ledger rows that have ended.", "type": "integer", "minimum": 0},
+            "cost": {"description": "What the ended ledger rows cost, together.", "$ref": "#/$defs/seconds"},
+            "standing": {
+              "description": "Each setback still open, by its thread and the instant it opened.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["thread", "openedAt"],
+                "properties": {"thread": {"$ref": "#/$defs/threadId"}, "openedAt": {"$ref": "#/$defs/instant"}}
+              }
+            }
+          }
+        },
+        "decisions": {"description": "The decisions the lead recorded.", "type": "integer", "minimum": 0},
+        "words": {"$ref": "#/$defs/words"}
+      }
+    },
+    "chapter": {
+      "description": "A stretch of the delivery: the start, up to its first landing; each landing, from the one before; and what came after the last.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "form", "subject", "pieceTitle", "at", "entries", "beats", "setbacks", "standing", "notLanded", "words"],
+      "properties": {
+        "id": {"$ref": "#/$defs/chapterId"},
+        "form": {"enum": ["start", "landing", "finish"]},
+        "subject": {"description": "The piece that landed, for a landing.", "anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+        "pieceTitle": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+        "at": {"description": "The landing's instant; the first entry's for the start; the last entry's for the finish.", "$ref": "#/$defs/instant"},
+        "entries": {"$ref": "#/$defs/entryIds"},
+        "beats": {"type": "array", "items": {"$ref": "#/$defs/beatId"}},
+        "setbacks": {"description": "The ledger rows that opened or ended inside this chapter.", "type": "array", "items": {"$ref": "#/$defs/ledgerRowId"}},
+        "standing": {"description": "For each ledger row that opened in an earlier chapter and ended inside this one, the thread that ended it last. A row that opened inside this chapter is told here by its own beats, so it is not listed, and nothing still standing from an earlier chapter is carried into a later one.", "type": "array", "items": {"$ref": "#/$defs/threadId"}},
+        "notLanded": {"description": "For a closed delivery's last chapter, the pieces that never landed.", "$ref": "#/$defs/subjects"},
+        "words": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["head", "line", "standing"],
+          "properties": {
+            "head": {"type": "string", "minLength": 1},
+            "line": {"type": "string"},
+            "standing": {
+              "description": "One line for each ledger row that opened in an earlier chapter and ended inside this one, at until, which a view shows as a time.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["thread", "text", "until"],
+                "properties": {
+                  "thread": {"$ref": "#/$defs/threadId"},
+                  "text": {"type": "string", "minLength": 1},
+                  "until": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/instant"}]}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "beat": {
+      "description": "One thing a reader reads: an entry, a batch's starts, a run of bookkeeping, finish lines met together, or a setback told whole at the headline altitude.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "chapter", "form", "altitudes", "at", "entries", "thread", "kind", "tone", "label", "words", "explain", "items"],
+      "properties": {
+        "id": {"$ref": "#/$defs/beatId"},
+        "chapter": {"$ref": "#/$defs/chapterId"},
+        "form": {"enum": ["entry", "batch", "bookkeeping", "finish", "thread"]},
+        "altitudes": {
+          "description": "The altitudes it shows at.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["headline", "story", "everything"]}
+        },
+        "at": {"$ref": "#/$defs/instant"},
+        "entries": {"description": "The entries it tells.", "type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
+        "thread": {"description": "The thread its entries belong to.", "anyOf": [{"type": "null"}, {"$ref": "#/$defs/threadId"}]},
+        "kind": {"description": "Its entries' kind, or a thread's opening kind; none for a run of bookkeeping.", "anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+        "tone": {"enum": ["landed", "ready", "decision", "problem", "note"]},
+        "label": {"type": "string", "minLength": 1},
+        "words": {"$ref": "#/$defs/words"},
+        "explain": {"description": "One sentence on what its kind of event is, shown when the beat is opened; none for a run of bookkeeping.", "anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+        "items": {
+          "description": "For a run of bookkeeping, each of its entries in that entry's own words; empty otherwise.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["entry", "words"],
+            "properties": {"entry": {"type": "integer", "minimum": 1}, "words": {"$ref": "#/$defs/words"}}
+          }
+        }
+      }
+    },
+    "thread": {
+      "description": "A setback: its opening, every entry linked to it, the entry that answered it, and what it cost.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "chapter", "beat", "opening", "closing", "openedAt", "closedAt", "cost", "state", "endedBy", "entries", "cause", "heldUp", "words", "told"],
+      "properties": {
+        "id": {"$ref": "#/$defs/threadId"},
+        "chapter": {"$ref": "#/$defs/chapterId"},
+        "beat": {"description": "The beat that tells it at the headline altitude.", "$ref": "#/$defs/beatId"},
+        "opening": {"type": "integer", "minimum": 1},
+        "closing": {"description": "The entry that ended it: one that answered its opening, or its story's landing.", "anyOf": [{"type": "null"}, {"type": "integer", "minimum": 1}]},
+        "openedAt": {"$ref": "#/$defs/instant"},
+        "closedAt": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/instant"}]},
+        "cost": {"description": "From its opening to its closing; none while it stands. A stop journalled after its story's landing happened ends at its own opening, at no cost.", "anyOf": [{"type": "null"}, {"$ref": "#/$defs/seconds"}]},
+        "state": {"enum": ["open", "closed"]},
+        "endedBy": {"description": "What ended it: an entry that answered its opening, or its own story's landing, which ends a stop nothing answered; none while it stands.", "enum": ["answer", "landing", null]},
+        "entries": {"$ref": "#/$defs/entryIds"},
+        "cause": {"description": "What went wrong first: the problems its opening happened because of.", "$ref": "#/$defs/entryIds"},
+        "heldUp": {"description": "The other pieces it stopped.", "$ref": "#/$defs/subjects"},
+        "words": {"$ref": "#/$defs/words"},
+        "told": {
+          "description": "Its parts, each a sentence of its own: what went wrong first, its own line, what it held up, and how it ended or that it still stands.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cause", "said", "heldUp", "ending"],
+          "properties": {
+            "cause": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+            "said": {"description": "The opening's own line: why it happened, when nothing earlier caused it.", "anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+            "heldUp": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+            "ending": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "ledgerRow": {
+      "description": "Setbacks with the same story, kind and reason, told once.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "subject", "kind", "reason", "threads", "count", "firstOpenedAt", "lastOpenedAt", "state", "since", "endedAt", "endedBy", "ending", "cost", "waitingOn", "chapters", "words"],
+      "properties": {
+        "id": {"$ref": "#/$defs/ledgerRowId"},
+        "subject": {"description": "The piece its setbacks name, if any.", "anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+        "kind": {"description": "Its threads' opening kind.", "type": "string", "minLength": 1},
+        "reason": {"description": "Its openings' reason, where they give one.", "anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+        "threads": {"description": "Its threads, oldest first.", "type": "array", "minItems": 1, "items": {"$ref": "#/$defs/threadId"}},
+        "count": {"type": "integer", "minimum": 1},
+        "firstOpenedAt": {"$ref": "#/$defs/instant"},
+        "lastOpenedAt": {"$ref": "#/$defs/instant"},
+        "state": {"description": "Open while any of its threads stands.", "enum": ["open", "closed"]},
+        "since": {"description": "When its oldest standing thread opened; none once it has ended.", "anyOf": [{"type": "null"}, {"$ref": "#/$defs/instant"}]},
+        "endedAt": {"description": "When its last thread ended, once all have.", "anyOf": [{"type": "null"}, {"$ref": "#/$defs/instant"}]},
+        "endedBy": {"description": "The entry that ended its last thread.", "anyOf": [{"type": "null"}, {"type": "integer", "minimum": 1}]},
+        "ending": {"description": "Whether that entry answered it or was its story's landing.", "enum": ["answer", "landing", null]},
+        "cost": {"description": "Once ended, the time its threads held something up, overlaps counted once.", "anyOf": [{"type": "null"}, {"$ref": "#/$defs/seconds"}]},
+        "waitingOn": {"description": "Who a standing row waits on, where the record says.", "anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+        "chapters": {
+          "description": "The chapter it opened in, and the one it ended in.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["opened", "ended"],
+          "properties": {"opened": {"$ref": "#/$defs/chapterId"}, "ended": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/chapterId"}]}}
+        },
+        "words": {"$ref": "#/$defs/words"}
+      }
+    }
+  }
+}
