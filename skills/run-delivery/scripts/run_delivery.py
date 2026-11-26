@@ -13109,6 +13109,18 @@ def listener_needed(state: dict) -> list[str]:
             + [f"{item['subject']} ({item.get('stage')})" for item in state.get("queue", []) if item.get("stage") != "merged"])
 
 
+def held_lanes_view(state: dict, roles: dict | None) -> dict:
+    """``state`` with only the lanes this seat holds, and the queue's pieces on them, by the lane a stopped piece is
+    assigned to, and a piece on no lane where this seat holds the queue: all of it on an unshared record, whose
+    ``roles`` are None."""
+    if roles is None:
+        return state
+    lane_of = lambda item: item.get("assignedLane", item.get("lane")) if item.get("stage") == "stopped" else item.get("lane")
+    return {**state, "lanes": [lane for lane in state.get("lanes", []) if lane_held(roles, lane["id"])],
+            "queue": [item for item in state.get("queue", []) if lane_held(roles, lane_of(item))
+                      or not lane_of(item) and roles["queue"]]}
+
+
 def listener_facts(state: dict) -> dict:
     """The same, as a held stop's facts: the lanes still working and the pieces still to land, by name."""
     return {"lanes": [lane["id"] for lane in state.get("lanes", []) if lane.get("state") not in LANE_DONE],
@@ -13760,9 +13772,11 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           "text": f"Feedback {entry['id']} on {anchor} stops approval: {said}. The holder of its section "
                           f"settles it with {settle}", "clears": settle, "kind": "feedback", "who": "lead",
                           "since": entry.get("at"), "fields": {"entry": entry["id"], "anchor": anchor, "detail": said}})
-    needed = listener_needed(doc["state"])
+    # On a shared record each seat's lead hears only its own lanes, and the pieces in the queue on them.
+    heard = held_lanes_view(doc["state"], seat_roles(c))
+    needed = listener_needed(heard)
     if needed and lead_listener(c.state) is None:
-        listening = listening_words(c, doc["state"])
+        listening = listening_words(c, heard)
         items.append({"holding": False, "source": f"{LEAD_WAIT_LEASE} in the record", **listening, "kind": "listener",
                       "who": "lead", "fields": {"detail": listening["text"]}})
     for name in flapping:
