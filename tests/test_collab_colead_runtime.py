@@ -1150,8 +1150,12 @@ class SeatNeedsTests(AcrossSeatsFixture):
                 lead_listener=lambda *a, **k: {"pid": 1}, decision_owed=lambda c, doc: False, read_log=lambda *a, **k: [],
                 lane_change_needs=lambda c, state: []), mock.patch.object(tp, "needs_you", lambda *a, **k: []):
             listed = rd.needs_you(self.config(machine, forge={}), {"state": state, "journal": machine.journal()})
-        return {item["kind"]: item for item in listed
-                if item["kind"] in ("peerHeld", "generationDiffers", "seatSplit", "seatRequest", "scopeRequest")}
+        shared = [item for item in listed
+                  if item["kind"] in ("peerHeld", "generationDiffers", "seatSplit", "seatRequest", "scopeRequest")]
+        # Each is listed once, and none holds the close: each is the record's word, not a finish line.
+        self.assertEqual(len({item["kind"] for item in shared}), len(shared), [item["kind"] for item in shared])
+        self.assertEqual([item["kind"] for item in shared if item["holding"]], [])
+        return {item["kind"]: item for item in shared}
 
     def test_a_peer_held_for_its_updates_or_its_release_is_named_on_the_machine_that_reads_it(self) -> None:
         label_a, label_b = self.labels()
