@@ -1103,6 +1103,39 @@ class FullHealthAcrossSeatsTests(AcrossSeatsFixture):
         self.assertEqual(kinds, ["posture.changed", "fullhealth.skipped", "posture.changed", "fullhealth.skipped"])
 
 
+class BlockerAcrossSeatsTests(AcrossSeatsFixture):
+    """A blocker resolved on one seat leaves every seat's "Needs you": the resolution travels in the carried
+    resolutions log, by the blocker's origin, whichever seat recorded or resolved it."""
+
+    def blockers(self, machine) -> list[str]:
+        """The blocker items ``machine``'s pass lists, by their text, with nothing outside the record answering."""
+        with self.on(machine), mock.patch.multiple(
+                rd, tracker_conf=lambda c: {}, base_head=lambda c: None, full_health_running=lambda c: None,
+                lead_listener=lambda *a, **k: {"pid": 1}, decision_owed=lambda c, doc: False,
+                lane_change_needs=lambda c, state: []), mock.patch.object(tp, "needs_you", lambda *a, **k: []):
+            listed = rd.needs_you(self.config(machine, forge={}), {"state": machine.state(), "journal": machine.journal()})
+        return [item["text"] for item in listed if item["kind"] == "blocker"]
+
+    def resolve(self, machine, text: str) -> None:
+        """``machine``'s lead resolves the blocker it reads with ``text``, as lead-resolve does."""
+        [entry] = [e for e in machine.journal() if e["kind"] == "blocker.recorded" and e["data"]["text"] == text]
+        with self.on(machine), contextlib.redirect_stdout(io.StringIO()):
+            rd.lead_resolve(types.SimpleNamespace(id=str(entry["id"]), why="Fixed upstream."))
+
+    def test_a_blocker_resolved_on_either_seat_is_gone_from_both_lists(self) -> None:
+        for recorder, resolver in ((self.a, self.a), (self.a, self.b), (self.b, self.b), (self.b, self.a)):
+            text = f"blocked, recorded on {recorder.repo.name}, resolved on {resolver.repo.name}"
+            state_tool.append_journal(recorder.directory, kind="blocker.recorded", data={"text": text})
+            self.carry()
+            # Both seats list it before it is resolved.
+            self.assertEqual([any(text in said for said in self.blockers(m)) for m in (self.a, self.b)], [True, True],
+                             text)
+            self.resolve(resolver, text)
+            self.carry()
+            self.assertEqual([any(text in said for said in self.blockers(m)) for m in (self.a, self.b)], [False, False],
+                             text)
+
+
 class EvidenceAcrossSeatsTests(AcrossSeatsFixture):
     """D22: only the delivery holder records and publishes evidence, from the carried app-checks log in lane-tenure
     order, on the merged base; lane clips never count; taking delivery sets the earlier page aside."""
@@ -1316,6 +1349,49 @@ class PublisherFixture(CoLeadFixture):
         self.b.take()
         return next(entry for entry in reversed(self.a.journal()) if entry["kind"] == "scope.transferred")
 
+
+
+class TrackerLagAcrossSeatsTests(PublisherFixture):
+    """Only the seat holding delivery posts tracker updates, so only it judges whether the tracker lags the record."""
+
+    def lag(self, machine, closing: bool = False) -> list[str]:
+        """The tracker's "Needs you" texts ``machine``'s pass reads in publisher mode."""
+        doc = {"state": machine.state(), "journal": machine.journal()}
+        return [item["text"] for item in tp.needs_you(doc, machine.directory, machine.repo / "flow-log", KEY, self.CONF,
+                                                      closing=closing)]
+
+    def test_a_seat_without_delivery_lists_no_lag_for_what_the_delivery_holder_posted(self) -> None:
+        self.decide(self.a, "Take the left lane.")
+        self.publish(self.a)
+        self.exchange(self.a, self.b)
+        self.assertEqual(self.lag(self.a), [])
+        self.assertEqual(self.lag(self.b), [])
+        # A closing pass names each start still waiting only where updates are posted.
+        state_tool.append_journal(self.a.directory, kind="lane.assigned", lane="lane-2", subject="APP-2",
+                                  data={"title": "Again"})
+        self.exchange(self.a, self.b)
+        self.assertEqual([text for text in self.lag(self.a, closing=True) if "start never recorded" in text],
+                         [f"APP-2: start never recorded (journal entry {self.a.journal()[-1]['id']} waits for its "
+                          "lane-start)"])
+        self.assertEqual(self.lag(self.b, closing=True), [])
+
+    def test_a_real_lag_still_shows_on_the_delivery_holder_and_nowhere_else(self) -> None:
+        self.decide(self.a, "Take the left lane.")
+        self.publish(self.a)
+        unposted = self.decide(self.a, "Take the right lane.")
+        self.exchange(self.a, self.b)
+        self.assertEqual(self.lag(self.a), [f"The tracker publisher hasn't posted journal entries {unposted['id']}"])
+        self.assertEqual(self.lag(self.b), [])
+        # Once delivery is handed to b, a no longer judges the lag: b's publisher posts from here on, once b has taken
+        # what a carried, and from then b judges it, from the ledger position a passed on.
+        transfer = self.hand_over()
+        self.assertEqual(self.lag(self.a), [])
+        self.assertEqual(self.lag(self.b), [])
+        rd.take_delivery(self.config(self.b))
+        on_b = lambda entry: next(found["id"] for found in self.b.journal() if found["origin"] == entry["origin"])
+        # Nothing a posted is owed again: only the unposted entry and the hand-over's own transfer.
+        self.assertEqual(self.lag(self.b), [f"The tracker publisher hasn't posted journal entries {on_b(unposted)}, "
+                                            f"{on_b(transfer)}"])
 
 
 class HandoverTests(PublisherFixture):

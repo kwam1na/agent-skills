@@ -454,6 +454,10 @@ label for another seat's; `saidAll` for a reader with no seat, naming every owne
 alone, "Someone" or "the lead". The list's `summary` is worded for the writing seat and its `summaryAll` for a reader
 with no seat. An unshared record's list carries none of these and says "you" for every person's call.
 
+On a shared record only the seat holding `delivery` posts tracker updates, so only it says in "Needs you" that the
+tracker lags the record, once it has taken what the seat that passed `delivery` to it carried. No other seat writes
+the tracker ledger, so no other seat lists a tracker lag.
+
 | Who | Command | What it does |
 | --- | --- | --- |
 | Lead | `plan-sync --plan P [--message M]` | From a checkout on the plan's branch: composes the working copy's plan with the remote branch section by section, commits and pushes it. A section changed on both sides is refused with `plan.sections_overlap`, naming it with both diffs, before anything is written. A push rejected because a peer pushed first composes again, up to 5 times; the sixth rejection is `plan.push_exhausted`. Once it has synced, it rebuilds the plan's one view: the planning record's `plan.json` when one holds the plan, else the plan's own preview while it has one, saying `plan view: ...` when that changed something. |
