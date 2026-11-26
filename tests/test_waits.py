@@ -942,6 +942,12 @@ class SeatStampTests(unittest.TestCase):
         self.assertEqual(run_delivery.needs_summary(self.release, listed, seats, SEAT_B),
                          "1 thing needs you; 1 more needs Ama's lead, and all of them are holding up the finish.")
 
+    def test_with_no_viewer_an_item_with_no_seat_keeps_its_place_behind_the_persons_calls(self) -> None:
+        seats = run_delivery.need_seats(self.release, shared(record()))
+        listed = [{"holding": True, "who": "operator", "seat": SEAT_B}, {"holding": True, "who": "lead"}]
+        self.assertEqual(run_delivery.needs_summary(self.release, listed, seats),
+                         "1 thing needs Ben; 1 more needs the lead, and all of them are holding up the finish.")
+
     def test_a_count_of_the_pieces_waiting_reaches_every_reading(self) -> None:
         document = shared(record())
         queue(document, "APP-1", "stopped")
