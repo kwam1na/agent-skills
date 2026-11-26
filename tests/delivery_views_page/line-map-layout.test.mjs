@@ -113,3 +113,28 @@ test("a long name on Now is cut to three lines and shown whole on the page's car
   expect([seen.clamp, seen.overflow]).toEqual(["3", "hidden"]);
   expect(seen.card).toBe(name);
 });
+
+test("a lane's \"+N more\" marker takes its own slot on the line, after its last stop, rather than sitting on that stop", async () => {
+  const document = record();
+  // Lane 2 gets four open stories: three stops are drawn and the fourth folds into "+1".
+  document.state.planned.push({ subject: "APP-6", title: "APP-6", lane: "lane-2", stage: "planned" },
+    { subject: "APP-7", title: "APP-7", lane: "lane-2", stage: "planned" });
+  let seen = null;
+  await openPage(pageWithRuns(waited(document), {}, { config: CONFIG }), { now: NOW, steps: [{ run(window) {
+    const more = window.document.querySelector(".seg.more");
+    const stops = more && more.parentElement;
+    const style = more && window.getComputedStyle(more);
+    seen = more && { text: more.textContent, last: stops.lastElementChild === more,
+      before: more.previousElementSibling.querySelector(".stop-btn") !== null,
+      position: style.position, flex: style.flex || style.getPropertyValue("flex-basis"), place: style.placeItems,
+      paddingTop: style.paddingTop, top: style.top };
+  } }] });
+  expect(seen === null).toBe(false);
+  expect([seen.text, seen.last, seen.before]).toEqual(["+1", true, true]);
+  // An absolutely placed marker has no box of its own on the line: with no left it falls onto the last stop's label.
+  expect(seen.position).toBe("relative");
+  expect(seen.top === "" || seen.top === "auto").toBe(true);
+  // In the flow it is a slot like a stop's, its count where a stop's mark would sit.
+  expect(seen.place).toBe("start center");
+  expect(seen.paddingTop).toBe("14px");
+});
