@@ -99,20 +99,39 @@ A live page reads its run summaries again from the view the server renders
 three seconds after each pushed record, every 30 seconds, and at once on each
 `event: runs`, which the server sends only after the views are written.
 
-Now leads with where the delivery stands, under its kicker and name: one
-sentence naming the stage and who it waits on, up to four marks, and at most one
-fact. Every word comes from the record, the supervisor's Needs you list and the
+Now's headline is the delivery's name, under its kicker. Beneath it a status row
+says where the delivery stands: up to four marks, with one sentence beside them
+naming the stage and who it waits on, and at most one fact under that sentence.
+Every word comes from the record, the supervisor's Needs you list and the
 forge's facts on the integration's change request; none names a repository's own
 check, branch or command.
 
+People never run delivery commands by hand; the lead does. So no word the page
+shows a person names a command or its flags, in Now, Needs you, the checks or a
+close that stopped partway: it says what the lead does next ("until the lead
+restarts them", "Clears when the lead resolves it"), or, when a person must act,
+the decision or the step that is theirs, such as marking a change request ready.
+The commands stay in each Needs you item's `text` and `clears`, which the lead
+reads; its row's `said` words, which the page shows, never carry them.
+
+For the same reason the page never names the supervisor, the lead's background
+process: it says what a person notices. "Updates stopped 7 days ago" and "Last
+update 20 minutes ago", each "· may be out of date", join "No update for 3
+hours"; Needs you is "Hidden while updates are stopped, until the lead restarts
+them"; a close that stopped partway is one "the lead finishes by resuming".
+
 - **The marks.** Each is `done`, `live`, `stop` or `todo`, drawn by its shape:
   filled ink, a ring with a halo, the stop colour, a faint ring. The live one is
-  labelled with its holder (the lead, you, the forge or a lane) and any count,
-  such as "Suite · 34 min · lead" or "Review · round 2 · lead". While stories
+  labelled with any count, such as "Suite · 34 min" or "Review · round 2", and
+  with its holder only when that is you or the forge ("Merge · you"); the lead
+  and the lanes go unnamed, since the live ring already says the delivery is
+  moving. Its holder stays in the mark's `data-who` either way. While stories
   land the marks are the lanes, each with its landed stories ("Lane 1 · 2 of 4"),
-  stopped first, then done, then at work; past three lanes the rest share the
-  third mark; the last is Rejoin, or Landed without an integration. Once every
-  story has landed on an integration they are Suite, Review, Merge and Landed.
+  drawn as rows in lane-number order whose threads curve into the one finish
+  after them: Rejoin, or Landed without an integration. Past three lanes, two
+  keep their rows, stopped first, then done, then at work, and the rest share
+  the third. Once every story has landed on an integration they are Suite,
+  Review, Merge and Landed, one after another.
 - **The stages.** Stories still landing: "6 of 9 stories are in. A3 is in
   review.", naming the story being checked, in review, queued or built. Then the
   rejoin: the suite runs next; running ("The full suite is running: 28 min,

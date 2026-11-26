@@ -1976,10 +1976,29 @@ def _pid_runs(pid: object) -> bool:
     return True
 
 
+# Why updates stopped, as a person reads it, by the reason the status file records. The status file's own `said` is
+# the lead's wording and may name a command, so the banner never shows it; a reason it doesn't know is left unsaid.
+BANNER_REASONS = {"close": "the delivery closed", "replaced": "a new record replaced this one",
+                  "held": "the lead stopped them to close the delivery", "upgrade": "they're restarting on a newer version",
+                  "signal": "they were stopped from outside"}
+
+
+def banner_moment(at: object) -> str:
+    """When updates stopped, as a person says it ("on Nov 11 at 10:05 UTC"); the recorded text when it isn't a time."""
+    if not isinstance(at, str) or not at:
+        return ""
+    try:
+        moment = datetime.datetime.fromisoformat(at.replace("Z", "+00:00")).astimezone(datetime.timezone.utc)
+    except ValueError:
+        return f" at {at}"
+    return f" on {moment.strftime('%b')} {moment.day} at {moment.strftime('%H:%M')} UTC"
+
+
 def supervisor_banner(status_file: Path | None) -> str | None:
-    """What the page says of the supervisor, from the status file it writes: nothing while the file says `running`
-    and its pid runs; that it is down, since when and why, once it says `stopped`; and that it stopped without
-    recording why when it says `running` for a pid that no longer runs. Each names the file's restart command."""
+    """What the page says of the supervisor, from the status file it writes, in a person's words: nothing while the file
+    says `running` and its pid runs; that updates stopped, when and, for a reason it knows, why, once it says `stopped`;
+    and that they stopped without warning when it says `running` for a pid that no longer runs. People never restart it
+    by hand, so where it can restart the banner says the lead does, and names neither the command nor the pid."""
     if status_file is None:
         return None
     try:
@@ -1989,14 +2008,16 @@ def supervisor_banner(status_file: Path | None) -> str | None:
     if not isinstance(status, dict):
         return None
     restart = status.get("restart")
-    tail = f" Restart it with {restart}." if isinstance(restart, str) and restart else ""
+    why = status.get("why")
+    # A stop on the way to closing the delivery doesn't come back, so only other stops say the lead restarts them.
+    tail = " The lead restarts them." if isinstance(restart, str) and restart and why not in ("close", "held") else ""
     if status.get("state") == "running":
         if _pid_runs(status.get("pid")):
             return None
-        return f"The supervisor (pid {status.get('pid')}) stopped without recording why." + tail
+        return "Updates stopped without warning." + tail
     if status.get("state") == "stopped":
-        why = status.get("said") or status.get("why") or "no reason recorded"
-        return f"The supervisor is down since {status.get('at') or 'an unrecorded time'}: {why}." + tail
+        reason = BANNER_REASONS.get(why) if isinstance(why, str) else None
+        return f"Updates stopped{banner_moment(status.get('at'))}" + (f": {reason}." if reason else ".") + tail
     return None
 
 

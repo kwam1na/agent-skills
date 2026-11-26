@@ -65,7 +65,7 @@
   var storyDepthChosen = null;
   // What the page last showed, so a change can be animated rather than just swapped in.
   var prev = { figures: Object.create(null), runningCheck: null, stages: null, story: null, progress: null, lanes: null, byLane: null, parked: null, dots: null, selected: null, lineScroll: null,
-    checkingHeight: null };
+    checkingHeight: null, checkPage: null };
   var lastGood = null;
   var nativeReviews = {};
   try { nativeReviews = JSON.parse(document.getElementById("delivery-reviews").textContent); } catch (error) { nativeReviews = {}; }
@@ -465,7 +465,7 @@
       });
     }, { rootMargin: "-45% 0px -45% 0px" });
     Array.prototype.forEach.call(app.querySelectorAll(".chapter"), function (section) { watch.observe(section); });
-    // The longest entrance: .7s of rise after the last row's .3s delay, with a little to spare.
+    // The longest entrance: .7s of fade after the last row's .3s delay, with a little to spare.
     var ENTRANCE_MS = 1100;
     // Each chapter settles into place the first time it comes into view; it is fully visible before and after.
     // Once settled it is marked arrived, so a redraw's new rows never play the entrance again.
@@ -1156,7 +1156,7 @@
     if (!current || !isObject(current.baseRerun) || item.stage !== "checking") { return null; }
     return current.subject !== undefined && current.subject !== null && String(current.subject) === subjectOf(item) ? current.baseRerun : null;
   }
-  var RERUN_WORDS = "Failed, waiting on the main line's rerun";
+  var RERUN_WORDS = "Failed · rerunning on the main line";
   function pieceWords(doc, item) { return rerunOf(doc, item) ? RERUN_WORDS : stageWords(item); }
   /** A piece that hadn't landed when its delivery closed isn't in any stage any more. */
   function unlandedAtClose(doc, piece) { return Boolean(closedEntry(doc)) && !isLanded(piece); }
@@ -1397,6 +1397,31 @@
     }
     return null;
   }
+  /**
+   * Stage 1's second beat, as the checks sheet below says it: the piece being checked, or the pieces checked together,
+   * and how its run stands once it has an outcome. A run with a failed check won't merge (a batch won't land as one),
+   * and a failure the queue is rerunning on the main line is said as that. Any other moving piece reads as it is.
+   */
+  function checkedWords(doc, all, next) {
+    var item = next.piece.item, subject = subjectOf(item);
+    if (next.where !== "is being checked") { return [" ", issue(subject), " " + next.where + "."]; }
+    var current = checkingNow(doc);
+    var batch = current ? batchNow(doc, all) : null;
+    var steps = current ? list(current.steps).filter(isObject) : [];
+    var failed = steps.some(function (step) { return step.state === "failed" || step.state === "timed_out"; });
+    if (batch && batch.some(function (member) { return subjectOf(member) === subject; })) {
+      var names = batch.length === 2 ? [issue(subjectOf(batch[0])), " and ", issue(subjectOf(batch[1]))] : [batch.length + " pieces"];
+      return [" "].concat(names, [failed ? " won't land as one." : " are being checked together."]);
+    }
+    var own = current && current.subject !== undefined && current.subject !== null && String(current.subject) === subject;
+    if (own && rerunOf(doc, item)) { return [" ", issue(subject), " failed a check, now being rerun on the main line."]; }
+    if (own && failed) { return [" ", issue(subject), " won't merge from this run."]; }
+    // Every check finished, none failed, and at least one passed or was reused: as the sheet's tick says, it has passed.
+    var passed = steps.length > 0 && steps.every(function (step) { return DONE[step.state]; }) &&
+      steps.some(function (step) { return step.state === "passed" || step.state === "reused"; });
+    if (own && passed) { return [" ", issue(subject), " passed its checks and waits to land."]; }
+    return [" ", issue(subject), " " + next.where + "."];
+  }
   /** The row the lead named as the broken base's repair, while the base awaits one. */
   function repairOf(all) {
     return all.filter(function (piece) { return !piece.planned && isObject(piece.item.repair) && !isLanded(piece); })[0] || null;
@@ -1437,7 +1462,14 @@
       var state = rest.map(function (made) { return made.state; }).sort(function (a, b) { return MARK_RANK[a] - MARK_RANK[b]; })[0];
       marks = marks.slice(0, 2).concat([nowMark(rest.length + " more lanes", state)]);
     }
-    return marks.map(function (made) { return nowMark(made.label, made.state); }).concat([nowMark(last, closedEntry(doc) && all.every(isLanded) && (last !== "Rejoin" || Boolean((integrationOf(doc) || {}).landed)) ? "done" : "todo")]);
+    // The lanes run side by side, so their rows read in lane-number order; the state order above only chose which lanes
+    // keep a row of their own, and the lanes sharing one come last.
+    var folded = marks.filter(function (made) { return made.at === undefined; });
+    marks = marks.filter(function (made) { return made.at !== undefined; }).sort(function (a, b) {
+      return a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" });
+    }).concat(folded);
+    // Each lane's mark says it is one, so the page can draw the lanes side by side feeding the finish that follows them.
+    return marks.map(function (made) { var lane = nowMark(made.label, made.state); lane.lane = true; return lane; }).concat([nowMark(last, closedEntry(doc) && all.every(isLanded) && (last !== "Rejoin" || Boolean((integrationOf(doc) || {}).landed)) ? "done" : "todo")]);
   }
   /** The rejoin's four marks, the one at `at` live (or stopped) with its holder and its count, those before it done. */
   function rejoinMarks(at, state, who, count) {
@@ -1580,7 +1612,7 @@
     } else {
       var next = moving(all);
       // The count turns digit by digit as a live update moves it, as every count on the page does.
-      stage = { sentence: [figures(el("span"), "now", landed + " of " + all.length), all.length === 1 ? " story is in." : " stories are in."].concat(next ? [" ", issue(subjectOf(next.piece.item)), " " + next.where + "."] : []),
+      stage = { sentence: [figures(el("span"), "now", landed + " of " + all.length), all.length === 1 ? " story is in." : " stories are in."].concat(next ? checkedWords(doc, all, next) : []),
         marks: laneMarks(doc, all, step ? "Rejoin" : "Landed") };
     }
     var now = { sentence: stage.sentence, stop: false, marks: stage.marks, fact: stage.fact || null };
@@ -1619,33 +1651,80 @@
     var stale = null;
     if (NEEDS && NEEDS.unreadable !== true && seconds(NEEDS.at) !== null) {
       var since = Math.max(0, Date.now() / 1000 - seconds(NEEDS.at));
-      if (NEEDS.running !== true) { stale = "The lead's supervisor stopped " + spanWords(since) + " ago, so this page may be out of date."; }
+      if (NEEDS.running !== true) { stale = "Updates stopped " + spanWords(since) + " ago · may be out of date"; }
       else if (seconds(NEEDS.staleAfter) === null || Date.now() / 1000 > seconds(NEEDS.staleAfter)) {
-        stale = "The lead's supervisor last reported " + spanWords(since) + " ago, so this page may be out of date.";
+        stale = "Last update " + spanWords(since) + " ago · may be out of date";
       }
     }
     var updated = seconds(meta.updatedAt);
-    if (!stale && updated !== null && Date.now() / 1000 - updated > 90 * 60) { stale = "No update for " + spanWords(Date.now() / 1000 - updated) + ", so this page may be out of date."; }
+    if (!stale && updated !== null && Date.now() / 1000 - updated > 90 * 60) { stale = "No update for " + spanWords(Date.now() / 1000 - updated) + " · may be out of date"; }
     if (stale) { now.fact = { text: stale, stop: true }; }
     return now;
+  }
+  /** The lanes' threads into the finish: one curve per lane from its row to the middle, then the shared run to the
+   * finish. A landed lane's thread is solid ink, a paused or stopped one dashed in the stop colour, the rest dashed. */
+  function mergeThreads(lanes, finish, stop) {
+    var ns = "http://www.w3.org/2000/svg", row = 24, height = lanes.length * row, mid = height / 2;
+    var svg = document.createElementNS(ns, "svg");
+    // A list holds only items, so the drawing is an item of its own, hidden from a screen reader, which hears the marks.
+    var holder = el("li", "now-threads");
+    holder.setAttribute("aria-hidden", "true");
+    holder.style.gridRow = "1 / span " + lanes.length;
+    svg.setAttribute("viewBox", "0 0 100 " + height);
+    svg.setAttribute("preserveAspectRatio", "none");
+    holder.appendChild(svg);
+    var thread = function (d, kind) {
+      var path = document.createElementNS(ns, "path");
+      path.setAttribute("d", d);
+      path.setAttribute("class", "now-thread is-" + kind);
+      path.setAttribute("vector-effect", "non-scaling-stroke");
+      svg.appendChild(path);
+    };
+    lanes.forEach(function (made, at) {
+      var y = at * row + row / 2;
+      var kind = made.state === "done" ? "done" : made.state === "stop" || (stop && made.state === "live") ? "held" : "ahead";
+      thread("M 0 " + y + " C 30 " + y + ", 30 " + mid + ", 60 " + mid, kind);
+    });
+    thread("M 60 " + mid + " L 100 " + mid, finish.state === "done" ? "done" : "ahead");
+    return holder;
   }
   /** Now's lead as the page draws it. */
   function nowBlock(doc, all) {
     var now = nowState(doc, all);
     var box = el("div", "now-state");
-    box.appendChild(add.apply(null, [el("h2", "now-sentence" + (now.stop ? " is-stop" : ""))].concat(now.sentence)));
+    // A stop spends its colour on the words that name it, before the colon, on their own line; what follows reads in ink.
+    var said = now.sentence, lead = now.stop && typeof said[0] === "string" ? /^([^:]{1,60}):\s*([\s\S]*)$/.exec(said[0]) : null;
+    if (lead) { said = [el("span", "now-stop-lead", lead[1]), el("span", "sr", ": "), lead[2]].concat(said.slice(1)); }
+    box.appendChild(add.apply(null, [el("h2", "now-sentence" + (now.stop ? " is-stop" : ""))].concat(said)));
     if (now.marks.length) {
       var marks = el("ol", "now-marks");
       marks.setAttribute("aria-label", "Where it stands");
+      // Lanes run side by side, not one after another: while stories land, each lane is a row whose thread curves into
+      // the one finish after them, which fills only once every lane is in.
+      var finish = now.marks[now.marks.length - 1];
+      var lanes = now.marks.slice(0, -1);
+      var merge = lanes.length > 0 && !finish.lane && lanes.every(function (made) { return made.lane; });
+      if (merge) { marks.classList.add("is-merge"); }
       now.marks.forEach(function (made) {
-        var li = el("li", "now-mark is-" + made.state);
+        // Under a stop, a live mark is paused where it stands: its ring says so, so the marks agree with the sentence.
+        var paused = now.stop && made.state === "live";
+        var li = el("li", "now-mark is-" + made.state + (paused ? " is-paused" : ""));
         li.setAttribute("data-state", made.state);
         if (made.who) { li.setAttribute("data-who", made.who); }
         var dot = el("span", "now-dot");
         dot.setAttribute("aria-hidden", "true");
-        add(li, dot, el("span", "now-mark-label", made.who ? made.label + " · " + made.who : made.label), el("span", "sr", ", " + MARK_WORDS[made.state]));
+        // A holder is named only when it changes what the reader does: you, or the forge holding it. The lead and the
+        // lanes are the delivery moving under its own steam, which the live ring already says.
+        var named = made.who === "you" || made.who === "forge";
+        add(li, dot, el("span", "now-mark-label", named ? made.label + " · " + made.who : made.label), el("span", "sr", ", " + (paused ? "paused" : MARK_WORDS[made.state])));
+        if (merge && made === finish) { li.classList.add("is-finish"); li.style.gridRow = "1 / span " + lanes.length; }
         marks.appendChild(li);
       });
+      if (merge) {
+        marks.insertBefore(mergeThreads(lanes, finish, now.stop), marks.lastChild);
+        // Where the threads meet, so the sentence beside them starts on the finish's line and reads on from it.
+        box.style.setProperty("--merge-mid", lanes.length * 12 + "px");
+      }
       box.appendChild(marks);
     }
     if (now.fact) { box.appendChild(add.apply(null, [el("p", "now-fact" + (now.fact.stop ? " is-stop" : ""))].concat(now.fact.nodes || [now.fact.text]))); }
@@ -1681,10 +1760,13 @@
       placeCard(title);
     });
     title.addEventListener("mouseleave", hideCard);
-    // The kicker is one line: the tracker item the delivery's work is listed under, linked when the renderer linked it,
-    // then how long it has run.
+    // The kicker is one line: the repository the work lands in, the tracker item it is listed under, linked when the
+    // renderer linked it, then how long it has run.
     var kicker = el("div", "kicker");
-    if (parent) { add(kicker, issue(parent)); }
+    // The repository the work lands in leads, as the configuration names it, so a page among several reads as this one's
+    // first; then the tracker item.
+    if (text(VIEW.repository)) { add(kicker, el("span", "kicker-repo", text(VIEW.repository))); }
+    if (parent) { add(kicker, kicker.firstChild ? " · " : null, issue(parent)); }
     if (status) { add(kicker, kicker.firstChild ? " · " : null, el("span", "now-status", status[2])); }
     // How long the delivery has run, from the record's first entry: to now while it delivers, to its close once delivered.
     // The start, and for a closed one the end, read on pointing at it, in local time with UTC beside it.
@@ -1724,7 +1806,7 @@
     // Before anything has landed, the page looks ahead: what is about to be delivered, rather than how much of it is zero.
     var fresh = !closed && all.length > 0 && landed === 0 && !step && !partDone.length;
     inner.parentNode.classList.toggle("is-fresh", fresh);
-    // Now leads, under the delivery's name: one sentence, its marks and at most one fact.
+    // The delivery's name is the headline; under it, Now's status row: one sentence, its marks and at most one fact.
     var nowNode = nowBlock(doc, all);
     var nodes = (kicker.firstChild ? [kicker, title] : [title]).concat([nowNode]);
     // The outcome when it says more than the name, then how much of the plan is proven and how often it changed,
@@ -1746,6 +1828,8 @@
     // While a piece is checked, the checks lead: their sheet stands right under the sentence that names the piece, as
     // wide as the rows beneath it. Otherwise it keeps its place below.
     var leading = panel && panel.classList.contains("live");
+    // Under a stop nothing is checked, so a sheet of pieces waiting their turn steps back to a quiet well.
+    if (panel && !leading && nowNode.querySelector(".now-sentence.is-stop")) { panel.classList.add("is-held"); }
     if (leading) { panel.classList.add("is-leading"); nodes.splice(nodes.indexOf(nowNode) + 1, 0, panel); }
     else if (panel) { nodes.push(panel); }
     var supervisor = needsYou(doc, all, Boolean(closed));
@@ -2041,22 +2125,18 @@
     if (isObject(current.baseRerun)) {
       var rerunChecks = list(current.baseRerun.checks).map(text).filter(Boolean);
       var rerunSince = spoken(current.baseRerun.startedAt);
-      add(box, el("div", "ck-rerun", "Rerunning " + (rerunChecks.length ? rerunChecks.join(", ") : "the failing checks") +
-        " on the main line, to tell whether it fails there too" + (rerunSince ? " · started " + rerunSince : "")));
-      // A lone piece's rerun says what it is for, when it should end, and how the lead may end it sooner.
-      if (!batch && byId[current.subject]) {
-        var rerunEnd = rerunEndsAt(doc, current.baseRerun, rerunChecks);
-        var endWords = "";
-        if (rerunEnd !== null) {
-          var left = rerunEnd - Date.now() / 1000;
-          endWords = left >= 60 ? " · expected to end in " + spokenDuration(left)
-            : left > -60 ? " · expected to end about now" : " · expected to have ended " + spokenDuration(-left) + " ago";
-        }
-        add(box, el("div", "ck-rerun ck-rerun-why", (rerunChecks.length ? spokenList(rerunChecks) : "A check") +
-          " failed on " + text(current.subject) + "; the rerun decides whether the main line or the piece broke it" + endWords));
-        add(box, el("div", "ck-rerun ck-rerun-alt", "To end it sooner: the lane hands off a fixed head and the lead accepts " +
-          "it, or the lead names the main line broken with lead-base-broken."));
+      // One line under the title says it all: which checks failed, that the main line is rerunning them to tell whose
+      // failure it is, and when that should be known, by the failed checks' own history, or else since when it ran.
+      // How the lead may end it sooner is the lead's to know, not the reader's.
+      var rerunEnd = rerunEndsAt(doc, current.baseRerun, rerunChecks);
+      var whenWords = rerunSince ? " · started " + rerunSince : "";
+      if (rerunEnd !== null) {
+        var left = rerunEnd - Date.now() / 1000;
+        whenWords = left >= 60 ? " · about " + spokenDuration(left) + " left"
+          : left > -60 ? " · should end about now" : " · should have ended " + spokenDuration(-left) + " ago";
       }
+      add(box, el("div", "ck-rerun", (rerunChecks.length ? spokenList(rerunChecks) : "A check") + " failed. The main line is " +
+        "rerunning " + (rerunChecks.length > 1 ? "them" : "it") + " to tell whose failure it is" + whenWords + "."));
     }
     // Checks the lead chose never pass for the provider's answer: each member's reason is said beside the run, one
     // line each until opened, after the run's progress, which is what the panel is for.
@@ -2121,46 +2201,70 @@
       // Once a check fails, the piece cannot merge from this run, whatever is still to run.
       if (failed) {
         box.classList.add("failed");
-        var left = steps.length - done;
-        // A failed batch still lands the pieces ahead of the one that broke it, so it only won't land as one.
-        add(box, add(el("div", "ck-verdict"), el("b", null, batch ? "The batch won't land as one." : "Won't merge from this run."),
-          el("span", null, " " + failed + " failed" + (left ? " · " + left + " still to run" : "") + (batch ? " · the pieces ahead of the one that broke it can still land" : ""))));
+        // The outcome is said once, in the header beside its mark: the piece won't merge from this run, or a batch won't
+        // land as one. A rerun on the main line keeps its own words, which already say the run failed. The counts are the
+        // sheet's last line, so they aren't said here too; a batch adds only what its header can't: what can still land.
+        var outcome = head.querySelector(".ck-h-words");
+        if (batch) { outcome.textContent = "Won't land as one · " + batch.length + " pieces"; }
+        else if (!waitsOnRerun && outcome.firstChild && outcome.firstChild.nodeType === 3) { outcome.firstChild.data = "Won't merge from this run"; }
+        if (batch) { add(box, el("div", "ck-verdict", "The pieces ahead of the one that broke it can still land.")); }
       }
       var line = null;
-      // Up to twelve checks read in three groups: in progress (the running row below), then waiting, then completed.
+      // Each part of the sheet says one thing: the header's count how far along the run is, the running rows what is
+      // happening now, and the fold what is left, by name. A run line joins them only where the record times the checks
+      // of a long or failed run, since it alone shows when each ran and what ran alongside it. Untimed, nothing stands in
+      // for it: a strip of equal stretches would only say the count again.
       var groups = null;
-      if (steps.length <= 12 && !failed) {
-        var group = function (title, members) {
-          var row = el("div", "ck-steps");
-          members.forEach(function (step) {
-            // Each check's mark draws its state; the state's word is there for a screen reader.
-            var state = STEP_WORDS[step.state] ? step.state : "pending";
-            var chip = add(el("span", "ck-step " + state), el("span", "sr", STEP_WORDS[state] + ": "), stepName(step));
-            // A title cut short is there whole to read on pointing at it.
-            if (text(step.title).length > TITLE_SHOWN) { chip.setAttribute("title", text(step.title)); }
-            row.appendChild(chip);
-          });
-          return add(el("div", "ck-group"), add(el("div", "ck-group-h"), title, el("span", "ck-group-n", String(members.length))), row);
+      line = steps.length > 12 || failed ? runLine(current, steps) : null;
+      if (line) { add(box, line); }
+      else if (!failed) {
+        // One list ordered by state: what waits its turn, then what passed, was reused or was skipped.
+        var STATE_ORDER = { pending: 0, passed: 1, reused: 2, skipped: 3 };
+        var rank = function (step) { var state = STEP_WORDS[step.state] ? step.state : "pending"; return state in STATE_ORDER ? STATE_ORDER[state] : 0; };
+        var listed = steps.filter(function (step) { return step.state !== "running"; }).sort(function (a, b) {
+          return rank(a) - rank(b) || steps.indexOf(a) - steps.indexOf(b);
+        });
+        var checkList = el("ol", "ck-list");
+        var checkRow = function (step) {
+          // The mark draws the state and the order groups it, so no row repeats it in words; a screen reader hears it
+          // before the name. Only a reused result says so after its name: its tick alone would read as a fresh pass.
+          var state = STEP_WORDS[step.state] ? step.state : "pending";
+          var row = add(el("li", "ck-step " + state), el("span", "sr", STEP_WORDS[state] + ": "), stepName(step),
+            state === "reused" ? el("span", "ck-item-note", " · reused") : null);
+          // The note repeats what a screen reader already heard before the name.
+          var note = row.querySelector(".ck-item-note");
+          if (note) { note.setAttribute("aria-hidden", "true"); }
+          // A title cut short is there whole to read on pointing at it.
+          if (text(step.title).length > TITLE_SHOWN) { row.setAttribute("title", text(step.title)); }
+          return row;
         };
-        var waitingSteps = steps.filter(function (step) { return !DONE[step.state] && step.state !== "running"; });
-        var doneSteps = steps.filter(function (step) { return DONE[step.state]; });
-        groups = [waitingSteps.length ? group("Waiting", waitingSteps) : null, doneSteps.length ? group("Completed", doneSteps) : null].filter(Boolean);
-      } else if ((line = runLine(current, steps))) {
-        add(box, line);
-      } else {
-        // With no check times to place, each check takes an equal stretch, in the same well and marks as the run line.
-        // The record's order is not the order they ran, so the strip reads as progress instead: what is done from the
-        // left, then what is running (named in its row below), then what is still to run.
-        var bar = el("div", "ck-bar");
-        var ranked = steps.filter(function (step) { return DONE[step.state]; })
-          .concat(steps.filter(function (step) { return step.state === "running"; }))
-          .concat(steps.filter(function (step) { return !DONE[step.state] && step.state !== "running"; }));
-        ranked.forEach(function (step) { bar.appendChild(el("span", STEP_WORDS[step.state] ? step.state : "pending")); });
-        var toRun = ranked.length - done - ranked.filter(function (step) { return step.state === "running"; }).length;
-        var foot = add(el("div", "ck-bar-foot"), el("span", null, stripReason(current, steps)), toRun ? el("span", null, toRun + " waiting") : null);
-        foot.setAttribute("aria-hidden", "true");
-        bar.setAttribute("aria-hidden", "true");
-        add(box, add(el("div", "ck-bar-well"), bar, foot));
+        // Ten checks to a page, so a long run's list reads in steps rather than a column down the page. The page read
+        // stays across live redraws of the same run, moved back only when the list has grown too short for it.
+        var PAGE_SIZE = 10;
+        var pageCount = Math.ceil(listed.length / PAGE_SIZE);
+        var pageKey = text(current.startedAt) + "|" + text(current.subject);
+        var page = prev.checkPage && prev.checkPage.run === pageKey ? Math.min(prev.checkPage.page, Math.max(0, pageCount - 1)) : 0;
+        var pager = pageCount > 1 ? el("div", "ck-pager") : null;
+        var showPage = function () {
+          prev.checkPage = { run: pageKey, page: page };
+          checkList.replaceChildren.apply(checkList, listed.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map(checkRow));
+          checkList.setAttribute("start", String(page * PAGE_SIZE + 1));
+          if (!pager) { return; }
+          var from = page * PAGE_SIZE + 1, to = Math.min(listed.length, (page + 1) * PAGE_SIZE);
+          var step = function (by, words, mark) {
+            var button = add(el("button", "ck-page-step"), mark);
+            button.type = "button";
+            button.setAttribute("aria-label", words);
+            button.disabled = page + by < 0 || page + by >= pageCount;
+            button.addEventListener("click", function () { page += by; showPage(); });
+            return button;
+          };
+          var where = el("span", "ck-page-where", from + "–" + to + " of " + listed.length);
+          where.setAttribute("aria-live", "polite");
+          pager.replaceChildren(step(-1, "Previous checks", "‹"), where, step(1, "Next checks", "›"));
+        };
+        showPage();
+        groups = listed.length ? [checkList].concat(pager ? [pager] : []) : [];
       }
       if (failed) { add(box, failedChecks(doc, batch ? batch.map(subjectOf) : [current.subject === undefined || current.subject === null ? "" : String(current.subject)], current, failedSteps)); }
       // The check shown running at the last draw: when it has finished since, its row settles, marks its result and flips
@@ -2244,21 +2348,12 @@
    * numbered above its end as the list below it numbers it, and the waiting checks trail off as rings at the right.
    * Null when the record has no check times to place, or lacks one for a check that ran.
    */
-  /** Why the strip stands in for the run line, in the words of its foot. */
-  function stripReason(current, steps) {
-    var start = seconds(current.startedAt);
-    if (start !== null && start >= Date.now() / 1000) { return "the run's clock is ahead of this one"; }
-    if (start === null && steps.every(function (step) { return !RAN[step.state] || seconds(step.startedAt) !== null; })) {
-      return "no start recorded for the run";
-    }
-    return steps.some(function (step) { return seconds(step.startedAt) !== null; }) ? "times missing for some checks" : "no times recorded";
-  }
   function runLine(current, steps) {
     var start = seconds(current.startedAt);
     var now = Date.now() / 1000;
     var timed = steps.filter(function (step) { return seconds(step.startedAt) !== null; });
     // Every check that ran needs a time to place it: with only some timed, the line would show those few crowded at now
-    // and leave the rest out, so the strip below, in order of progress, is drawn instead. A reused or skipped check
+    // and leave the rest out, so no line is drawn and the sheet's count and list say it instead. A reused or skipped check
     // never ran here, so the runner gives it no time and it needs none.
     var untimed = steps.some(function (step) { return RAN[step.state] && seconds(step.startedAt) === null; });
     if (start === null || now <= start || !timed.length || untimed) { return null; }
@@ -2418,9 +2513,10 @@
    */
   /**
    * A close that stopped partway: the record's started mark for the closing entry with no finished mark for it, and no
-   * supervisor running a current pass to finish it. It names what finishes it: a resumed supervisor when the record
-   * meets the close condition, and lead-close otherwise, since a resumed supervisor would hold on what is unmet. A
-   * record with no marks, or marks for an earlier close, closed as before.
+   * supervisor running a current pass to finish it. It says how the lead finishes it, in a person's words: by resuming
+   * the close when the record meets the close condition, and otherwise with a close that doesn't wait for the tracker,
+   * since a resumed one would hold on what is unmet. A record with no marks, or marks for an earlier close, closed as
+   * before.
    */
   function closeStoppedPartway(doc, closed) {
     var meta = isObject(doc.state.meta) ? doc.state.meta : {};
@@ -2438,8 +2534,8 @@
       && list(state.lanes).filter(isObject).every(function (lane) { return lane.state === "idle" || lane.state === "done"; });
     var box = add(el("div", "attention close-partway"), add(el("div", "ah"), persona("supervisor"), "The close stopped partway"));
     return add(box, el("p", "needs-none", "The delivery was closed, but its close-out stopped before it finished. " + (met
-      ? "Finish it with lead-run --resume."
-      : "Finish it with lead-close, which doesn't wait for the tracker; a resumed supervisor would hold on what is still open.")));
+      ? "The lead finishes it by resuming the close."
+      : "The lead finishes it with a close that doesn't wait for the tracker, since a resumed close would hold on what is still open.")));
   }
   // Keys that all share a prefix such as "V26-" show without it on the line and beside a "Needs you" row.
   function keyPrefix(all) {
@@ -2503,15 +2599,19 @@
     }
     var words = isObject(NEEDS.words) ? NEEDS.words : {};
     var box = add(el("div", "needs-you"), add(el("div", "ah"), persona("supervisor"), text(words.heading) || "Needs you"));
-    function none(said) { return add(box, el("p", "needs-none", said)); }
-    if (NEEDS.unreadable === true) { return none("Unavailable: the supervisor's list can't be read, so it isn't shown."); }
+    // A list the page can't show is a notice, not a sheet of work: the box says so, and the page draws it as one line.
+    // Its words say once that the list is hidden and why, and who brings it back: the lead, never a command to type.
+    function unavailable() {
+      box.classList.add("is-unavailable");
+      return add(box, add.apply(null, [el("p", "needs-none")].concat([].slice.call(arguments))));
+    }
+    if (NEEDS.unreadable === true) { return unavailable("Hidden: this list can't be read."); }
     if (NEEDS.running !== true) {
-      return none("Unavailable: the supervisor isn't running, so its list isn't shown. lead-run --resume starts it again.");
+      return unavailable("Hidden while updates are stopped, until the lead restarts them.");
     }
     var stale = seconds(NEEDS.staleAfter);
     if (stale === null || Date.now() / 1000 > stale) {
-      return none("Unavailable: the supervisor's list is from " + (ago(NEEDS.at) || "an unknown time") +
-        ", more than a pass old, so it isn't shown. Its supervisor may have stopped.");
+      return unavailable("Hidden: the list is from " + (ago(NEEDS.at) || "an unknown time") + ", more than a pass old. Updates may have stopped.");
     }
     // Every word of a row comes from the list, which the supervisor said from the table of wait sentences; the page
     // only lays it out. Holding rows lead, and within each, the rows the reader acts on.

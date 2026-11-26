@@ -1777,6 +1777,12 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
         "runs": config["runs"] is not None,
         "lenses": config["lenses"],
     }
+    # The repository the delivery's work lands in, for the page's kicker: only when the configuration names exactly one.
+    # With several forges it doesn't say which this delivery's is, so the kicker names none rather than guess.
+    repositories = {forge.get("repository") for forge in config["forges"] if isinstance(forge, dict)
+                    and isinstance(forge.get("repository"), str) and forge.get("repository")}
+    if len(repositories) == 1:
+        view["repository"] = next(iter(repositories))
     data = {"document": document, "runs": runs, "reviews": reviews, "view": view,
             "links": page_links(document, runs, config, reviews, plan=plan, repository=repository), "plan": plan,
             "needs": needs}

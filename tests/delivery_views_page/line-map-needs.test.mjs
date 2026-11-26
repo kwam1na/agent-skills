@@ -48,14 +48,18 @@ test("an empty current list draws no rows, only the sentence its supervisor gave
 test("a stopped supervisor's list is unavailable and none of its items show", async () => {
   const box = await shown(needs({ running: false, stoppedAt: "2026-01-01T11:59:50Z" }));
   expect(box.querySelector(".needs-none").textContent)
-    .toBe("Unavailable: the supervisor isn't running, so its list isn't shown. lead-run --resume starts it again.");
+    .toBe("Hidden while updates are stopped, until the lead restarts them.");
+  // People never run the command: the notice names none, and draws as a line rather than a sheet.
+  expect(box.querySelector("code")).toBeNull();
+  expect(box.textContent).not.toMatch(/\blead-[a-z]+|--[a-z]|supervisor/i);
+  expect(box.classList.contains("is-unavailable")).toBe(true);
   expect(box.querySelector("li")).toBeNull();
 });
 
 test("a list older than a pass is unavailable, and says how old", async () => {
   const box = await shown(needs(), "2026-01-01T12:05:00Z");
   expect(box.querySelector(".needs-none").textContent)
-    .toBe("Unavailable: the supervisor's list is from 5m 30s ago, more than a pass old, so it isn't shown. Its supervisor may have stopped.");
+    .toBe("Hidden: the list is from 5m 30s ago, more than a pass old. Updates may have stopped.");
   expect(box.querySelector("li")).toBeNull();
   expect((await shown(needs(), "2026-01-01T12:01:30Z")).querySelectorAll("li").length).toBe(3);
 });
@@ -65,7 +69,7 @@ test("a list that can't be read is unavailable, and the rest of the page still d
     JSON.stringify(needs({ staleAfter: "soon" })), JSON.stringify(needs({ items: "none" }))]) {
     const [page] = await openPage(renderPage(document(), { config, needs: bad }), { now: NOW });
     expect(page.app.querySelector(".needs-you .needs-none").textContent)
-      .toBe("Unavailable: the supervisor's list can't be read, so it isn't shown.");
+      .toBe("Hidden: this list can't be read.");
     expect(page.app.querySelector(".needs-you li")).toBeNull();
     expect(page.app.querySelector("#now .now-sentence").textContent).toBe("Nothing is on the line yet.");
   }
@@ -92,7 +96,7 @@ test("a live push takes the list from the page the server renders after it", asy
   const [before, pending, after] = await openPage(first, { now: NOW, rendered: later, steps: [{ push: pushed }, { wait: 3100 }] });
   expect(before.app.querySelectorAll(".needs-you li").length).toBe(3);
   expect(pending.app.querySelectorAll(".needs-you li").length).toBe(3);
-  expect(after.app.querySelector(".needs-you .needs-none").textContent).toContain("the supervisor isn't running");
+  expect(after.app.querySelector(".needs-you .needs-none").textContent).toContain("Hidden while updates are stopped");
 });
 
 test("an open page picks up a pass's new list on its timer, with no record push", async () => {
@@ -131,5 +135,5 @@ test("a closed delivery shows the box only while a running, current list still h
     expect(await box(list)).toBeNull();
   }
   const open = await shown({ ...needs(), running: false });
-  expect(open.textContent).toContain("lead-run --resume starts it again");
+  expect(open.textContent).toContain("until the lead restarts them");
 });
