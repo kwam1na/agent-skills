@@ -253,6 +253,10 @@
   }
   var needsBlock = document.getElementById("delivery-needs");
   var NEEDS = needsBlock ? readNeeds(needsBlock.textContent) : null;
+  // The seat the local page is drawn for, as the renderer embedded it on a shared record. The hosted page has none, and
+  // names every owner by label.
+  var viewerBlock = document.getElementById("delivery-viewer");
+  var VIEWER = viewerBlock ? text(readNeeds(viewerBlock.textContent).seat) || null : null;
   // What each lane has pushed, as the supervisor's branch read wrote it beside the record: { at, lanes, files, more },
   // or { unreadable }. With no block no pass has read the branches yet.
   var filesBlock = document.getElementById("delivery-files");
@@ -1549,7 +1553,7 @@
       var fact = failingFact(step);
       fact = fact ? { text: fact } : null;
       if (pendingChecks()) { return { sentence: [allInNow, requestLink(true), "'s checks are still running."], marks: rejoinMarks(2, "live", "forge"), fact: fact }; }
-      return { sentence: [allInNow, requestLink(true), " waits for your merge."], marks: rejoinMarks(2, "live", "you"), fact: fact };
+      return { sentence: [allInNow, requestLink(true), " waits for " + rejoinWhose(doc) + " merge."], marks: rejoinMarksFor(doc, rejoinMarks(2, "live", "you")), fact: fact };
     }
     var running = rejoinRoundRunning(doc, step);
     if (running) {
@@ -1575,7 +1579,7 @@
       if (suite.result === "over-budget") {
         var spent = typeof suite.seconds === "number" ? suite.seconds : null, budget = typeof suite.budgetSeconds === "number" ? suite.budgetSeconds : null;
         var over = spent !== null && budget !== null ? Math.max(1, Math.round((spent - budget) / 60)) + " min over budget" : "over budget";
-        return { sentence: ["Every test passed, " + over + ". It's your call to accept."], marks: rejoinMarks(0, "live", "you"),
+        return { sentence: ["Every test passed, " + over + ". It's " + rejoinWhose(doc) + " call to accept."], marks: rejoinMarksFor(doc, rejoinMarks(0, "live", "you")),
           fact: spent !== null && budget !== null ? { text: Math.round(spent / 60) + " min against a budget of " + Math.round(budget / 60) + " min." } : null };
       }
       if (suitePasses(step.latest.suite)) { return { sentence: ["The full suite passed. The integration review runs next."], marks: rejoinMarks(1, "live", "lead") }; }
@@ -1632,19 +1636,27 @@
     }
     // The reader's own call, from a current list: it takes the sentence, and the live mark becomes theirs.
     var current = NEEDS && NEEDS.running === true && seconds(NEEDS.staleAfter) !== null && Date.now() / 1000 <= seconds(NEEDS.staleAfter);
-    var call = current ? list(NEEDS.items).filter(function (item) { return isObject(item) && item.who === "operator"; })[0] : null;
+    var call = current ? list(NEEDS.items).filter(function (item) { return isObject(item) && yours(doc, item); })[0] : null;
+    // Another seat's call takes nothing over: its mark names that seat, when no one is named on it yet.
+    var other = current && !call ? list(NEEDS.items).filter(function (item) { return isObject(item) && theirs(doc, item); })[0] : null;
+    if (other) {
+      var asked = text(other.lane) ? laneLabel(text(other.lane)) : "";
+      var marked = (asked ? now.marks.filter(function (made) { return made.label.split(" · ")[0] === asked; })[0] : null) || liveMark;
+      if (marked && !marked.who) { marked.who = "seat"; marked.name = theirs(doc, other); }
+    }
     if (call) {
-      var said = isObject(call.said) ? call.said : {};
+      var said = needSaid(doc, call);
       var words = (text(said.headline) || text(call.text)).replace(/\s+$/, "");
       now.sentence = [/[.?!]$/.test(words) ? words : words + "."];
       now.stop = false;
       // The mark that becomes theirs: the asking lane's when the item names a lane drawn as a mark, else the live one.
       var asking = text(call.lane) ? laneLabel(text(call.lane)) : "";
-      var yours = (asking ? now.marks.filter(function (made) { return made.label.split(" · ")[0] === asking; })[0] : null) || liveMark;
-      if (yours) {
-        yours.who = "you";
-        if (yours.state === "todo") { yours.state = "live"; }
-        if (!(now.fact && now.fact.stop)) { now.fact = { text: yours.label.split(" · ")[0] + " waits on you." }; }
+      var mine = (asking ? now.marks.filter(function (made) { return made.label.split(" · ")[0] === asking; })[0] : null) || liveMark;
+      if (mine) {
+        mine.who = "you";
+        delete mine.name;
+        if (mine.state === "todo") { mine.state = "live"; }
+        if (!(now.fact && now.fact.stop)) { now.fact = { text: mine.label.split(" · ")[0] + " waits on you." }; }
       }
     }
     // A page that may be out of date says so as its fact: a stopped or silent supervisor, or a record with no recent update.
@@ -1715,8 +1727,8 @@
         dot.setAttribute("aria-hidden", "true");
         // A holder is named only when it changes what the reader does: you, or the forge holding it. The lead and the
         // lanes are the delivery moving under its own steam, which the live ring already says.
-        var named = made.who === "you" || made.who === "forge";
-        add(li, dot, el("span", "now-mark-label", named ? made.label + " · " + made.who : made.label), el("span", "sr", ", " + (paused ? "paused" : MARK_WORDS[made.state])));
+        var named = made.who === "you" || made.who === "forge" ? made.who : made.who === "seat" ? text(made.name) : "";
+        add(li, dot, el("span", "now-mark-label", named ? made.label + " · " + named : made.label), el("span", "sr", ", " + (paused ? "paused" : MARK_WORDS[made.state])));
         if (merge && made === finish) { li.classList.add("is-finish"); li.style.gridRow = "1 / span " + lanes.length; }
         marks.appendChild(li);
       });
@@ -1808,7 +1820,8 @@
     inner.parentNode.classList.toggle("is-fresh", fresh);
     // The delivery's name is the headline; under it, Now's status row: one sentence, its marks and at most one fact.
     var nowNode = nowBlock(doc, all);
-    var nodes = (kicker.firstChild ? [kicker, title] : [title]).concat([nowNode]);
+    var seats = seatLine(doc);
+    var nodes = (kicker.firstChild ? [kicker, title] : [title]).concat(seats ? [seats] : [], [nowNode]);
     // The outcome when it says more than the name, then how much of the plan is proven and how often it changed,
     // linked to the plan chapter.
     var said = outcome && outcome !== text(meta.headline) && outcome !== name ? outcome : null;
@@ -1835,9 +1848,9 @@
     var supervisor = needsYou(doc, all, Boolean(closed));
     // "Needs you" is a sheet of its own, as wide as the rows. When something on it waits on the reader, it leads Now,
     // right under the sentence, ahead of any running checks: that is what the reader is here to do.
-    var yours = supervisor && Boolean(supervisor.querySelector(".needs-row[data-who='operator']"));
+    var ownCall = supervisor && Boolean(supervisor.querySelector(".needs-row[data-yours]"));
     if (supervisor) { supervisor.classList.add("is-sheet"); }
-    if (yours) { supervisor.classList.add("is-leading"); nodes.splice(nodes.indexOf(nowNode) + 1, 0, supervisor); }
+    if (ownCall) { supervisor.classList.add("is-leading"); nodes.splice(nodes.indexOf(nowNode) + 1, 0, supervisor); }
     else if (supervisor) { nodes.push(supervisor); }
     var left = closed ? leftOpen(doc, all) : null;
     if (left) { nodes.push(left); }
@@ -2633,15 +2646,18 @@
     // Every word of a row comes from the list, which the supervisor said from the table of wait sentences; the page
     // only lays it out. Holding rows lead, and within each, the rows the reader acts on.
     var items = list(NEEDS.items).filter(isObject).map(function (item, at) { return { item: item, at: at }; });
-    var rank = function (entry) { return (entry.item.holding === true ? 0 : 2) + (entry.item.who === "operator" ? 0 : 1); };
+    var rank = function (entry) { return (entry.item.holding === true ? 0 : 2) + (yours(doc, entry.item) ? 0 : 1); };
     items.sort(function (a, b) { return rank(a) - rank(b) || a.at - b.at; });
-    if (text(NEEDS.summary)) { box.appendChild(el("p", "needs-summary", text(NEEDS.summary))); }
+    // The pass's sentence for its own seat; a page with no seat reads the one that names every owner.
+    var summary = collabOf(doc) && !viewerOf(doc) ? text(NEEDS.summaryAll) : text(NEEDS.summary);
+    if (summary) { box.appendChild(el("p", "needs-summary", summary)); }
     if (!items.length) { return box; }
     var ul = el("ul", "needs-rows");
     items.forEach(function (entry) {
-      var item = entry.item, said = isObject(item.said) ? item.said : {};
-      var li = el("li", "needs-row " + (item.holding === true ? "is-holding" : "is-quiet"));
+      var item = entry.item, said = needSaid(doc, item);
+      var li = el("li", "needs-row " + (item.holding === true ? "is-holding" : "is-quiet") + (theirs(doc, item) ? " is-theirs" : ""));
       li.setAttribute("data-who", text(item.who));
+      if (yours(doc, item)) { li.setAttribute("data-yours", ""); }
       var margin = needsMargin(doc, all, item);
       var meta = add(el("div", "nr-meta"), el("span", "nr-who", text(said.who)));
       if (item.holding === true) { add(meta, add(el("span", "nr-holding"), el("span", "nr-dot"), text(words.holding))); }
@@ -3216,7 +3232,7 @@
       var request = standing(step, "requested") ? step.latest.requested : null;
       said = ["Ready. "].concat(request ? ["The change request ", changeLink(request.data.changeRequest), " is open at ",
         rejoinHead(step, request.data.head, false), ". "] : ["A change request into " + step.target + " can open. "],
-        ["The merge is the operator's."]);
+        [collabOf(doc) ? "The merge is " + (rejoinOwner(doc) ? rejoinOwner(doc) + "'s." : "yours.") : "The merge is the operator's."]);
     } else if (suitePasses(suite) && roundApproves(round) && text(suite.data.head) !== text(round.data.head)) {
       said = ["Needs a passing suite and an approving round at one head."];
     } else {
@@ -5817,9 +5833,91 @@
     });
     return { first: first, held: held, passed: passed, last: last };
   }
-  /** Who holds `delivery`, `queue` or a lane: its holder once passed on, the first seat until then. */
+  /** Who holds a scope: its holder once passed on, the first seat until then; a plan section nobody holds is the
+   * delivery holder's, and `seat:<id>` is always `<id>`'s. */
   function holderOf(register, scope) {
-    return scope in register.held ? register.held[scope] : register.first;
+    if (/^seat:./.test(scope)) { return scope.slice(5); }
+    if (scope in register.held) { return register.held[scope]; }
+    return /^plan:/.test(scope) ? holderOf(register, "delivery") : register.first;
+  }
+  /* Whose a call is, on a shared record. The pass stamps each Needs you item with its scope and the seat holding it, and
+     words it three ways; the page only checks the stamp against the journal and picks the words for its reader. */
+  var registerSeen = { doc: null, register: null };
+  function registerOf(doc) {
+    if (registerSeen.doc !== doc) { registerSeen = { doc: doc, register: scopeRegister(doc) }; }
+    return registerSeen.register;
+  }
+  /** The seat an item's pass stamped it with, and whether the journal has since given its scope to another seat. */
+  function needSeat(doc, item) {
+    var seat = text(item.seat), scope = text(item.scope);
+    if (!collabOf(doc) || !seat) { return { seat: null, outrun: false }; }
+    return { seat: seat, outrun: Boolean(scope) && holderOf(registerOf(doc), scope) !== seat };
+  }
+  /** The seat this page is drawn for, when it is one of the record's seats; a page for any other seat has none. */
+  function viewerOf(doc) {
+    var collab = collabOf(doc);
+    return collab && VIEWER && isObject(collab.seats) && isObject(collab.seats[VIEWER]) ? VIEWER : null;
+  }
+  /** The reader's own call. Unshared, every person's call is; shared, only one whose stamped seat is this page's and
+   * still holds it. A page with no seat has none. */
+  function yours(doc, item) {
+    if (!collabOf(doc)) { return item.who === "operator"; }
+    if (item.who !== "operator" || !viewerOf(doc)) { return false; }
+    var owner = needSeat(doc, item);
+    return owner.seat === viewerOf(doc) && !owner.outrun;
+  }
+  /** Another seat's person's call, still theirs: that seat's label; otherwise none. */
+  function theirs(doc, item) {
+    var collab = collabOf(doc);
+    if (!collab || item.who !== "operator") { return null; }
+    var owner = needSeat(doc, item);
+    return owner.seat && !owner.outrun && owner.seat !== viewerOf(doc) ? seatName(seatLabels(doc, collab), owner.seat) : null;
+  }
+  /** The words an item reads on this page: the pass's own for its seat, every owner by label with no seat, and by role
+   * when the stamp can't be trusted. */
+  function needSaid(doc, item) {
+    var pick = function (name) { return isObject(item[name]) ? item[name] : null; };
+    if (!collabOf(doc)) { return pick("said") || {}; }
+    var owner = needSeat(doc, item);
+    if (!owner.seat || owner.outrun) { return pick("saidRole") || pick("saidAll") || pick("said") || {}; }
+    return (viewerOf(doc) ? pick("said") : pick("saidAll") || pick("saidRole")) || pick("said") || {};
+  }
+  /** Whose the rejoin's person words are, the delivery holder's: null for the reader's own, else the holder's label. */
+  function rejoinOwner(doc) {
+    var collab = collabOf(doc);
+    if (!collab) { return null; }
+    var holder = holderOf(registerOf(doc), "delivery");
+    return holder && holder === viewerOf(doc) ? null : seatName(seatLabels(doc, collab), holder);
+  }
+  /** "your" for the reader's own merge, "Ama's" for another's. */
+  function rejoinWhose(doc) { var owner = rejoinOwner(doc); return owner ? owner + "'s" : "your"; }
+  /** The rejoin's marks with its person mark given to the delivery holder when that isn't the reader. */
+  function rejoinMarksFor(doc, marks) {
+    var owner = rejoinOwner(doc);
+    if (owner) { marks.forEach(function (made) { if (made.who === "you") { made.who = "seat"; made.name = owner; } }); }
+    return marks;
+  }
+  /** Whose page this is on a shared record: the reader's seat and what it holds, then who else writes it; with no seat,
+   * every seat that writes it. Nothing on a record nobody shares. */
+  function seatLine(doc) {
+    var collab = collabOf(doc);
+    if (!collab) { return null; }
+    var labels = seatLabels(doc, collab), register = registerOf(doc);
+    var seats = isObject(collab.seats) ? collab.seats : {};
+    var admitted = Object.keys(seats).filter(function (seat) { return isObject(seats[seat]) && seats[seat].admitted === true; });
+    var box = el("div", "seat-line");
+    var viewer = viewerOf(doc);
+    if (viewer) {
+      var held = ["delivery", "queue"].filter(function (scope) { return holderOf(register, scope) === viewer; })
+        .concat(list(doc.state.lanes).filter(function (lane) { return isObject(lane) && text(lane.id) && holderOf(register, "lane:" + lane.id) === viewer; })
+          .map(function (lane) { return laneLabel(lane.id).toLowerCase(); }));
+      add(box, el("span", "seat-chip", [seatName(labels, viewer)].concat(held.length ? ["holds " + held[0]].concat(held.slice(1)) : []).join(" · ")));
+      var others = admitted.filter(function (seat) { return seat !== viewer; }).map(function (seat) { return seatName(labels, seat); });
+      if (others.length) { add(box, el("span", "seat-shared", "Shared with " + spokenList(others))); }
+    } else {
+      add(box, el("span", "seat-shared", "Shared by " + spokenList(admitted.map(function (seat) { return seatName(labels, seat); }))));
+    }
+    return box;
   }
   /** A queue handed on that its new holder has not yet taken up: no entry of that seat has seen the transfer. */
   function queueMoving(doc, register) {
