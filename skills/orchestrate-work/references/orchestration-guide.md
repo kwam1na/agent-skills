@@ -407,6 +407,11 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   stopped, blocked on the lead, or in "Needs you" itself, whose item then says
   how many pieces wait on it; or nothing holds a planned story any more and its
   lane is idle, so it is free to start. Neither holds the close.
+- On a shared record, "you" is the seat that holds the call. Each "Needs you"
+  item names the scope whose call it is and the seat holding it, and is worded
+  for the seat that wrote the list, for a reader with no seat, and by role, so
+  no seat reads "you" for another seat's call (run-delivery's "Collaboration"
+  says how).
 
 ### 4. Run the queue
 

@@ -1,5 +1,6 @@
 {
   "description": [
+    "On a shared record the supervisor stamps each \"Needs you\" item with the scope whose call it is and the seat holding it, and words it for its own seat (said), for a reader with no seat (saidAll) and by role (saidRole), with summaryAll beside summary; an unshared record's list is unchanged.",
     "An integration lead's doctor --delivery, lead-integrate and status line name each delivery registered on its integration target with what its queue is checking and has queued, and the supervisor journals target.settled once a target peer has merged and every target peer's queue has been empty for the window, 600 seconds unless lead-wait --target-quiet sets the record's own; with no integration target, or no delivery on it, nothing changes.",
     "lead-init and lead-run --resume end with the one live view the lead opens in the host's browser pane, unasked: the hosted view when hosted is enabled and has a URL, else the local live view's address, and nothing while no supervisor runs; delivery.orient names the same view to a lead, never to a lane.",
     "Optional host-native Linear tracker adapter layered on the run-delivery profile, whose commands run on POSIX hosts only.",

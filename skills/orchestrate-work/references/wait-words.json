@@ -156,7 +156,7 @@
     }
   },
   "needsYou": {
-    "description": "What \"Needs you\" says: the two forms a wait reaches it in, the item for a stopped story no other item names, and each row's headline, why, what clears it and who acts, by the item's kind, with the list's heading, opening sentence, holding mark and age, and the heading of what a closed delivery left open.",
+    "description": "What \"Needs you\" says: the two forms a wait reaches it in, the item for a stopped story no other item names, and each row's headline, why, what clears it and who acts, by the item's kind, with the list's heading, opening sentence, holding mark and age, and the heading of what a closed delivery left open. On a shared record who acts is worded for its reader: you or the lead for the seat that holds the call, the holder's label for anyone else, and someone or the lead when no seat can be named; the opening sentence puts the reader's own calls first and counts each other owner's as more.",
     "templates": {
       "count": {
         "by": "count",
@@ -270,7 +270,10 @@
         "by": "who",
         "cases": {
           "operator": "You",
-          "lead": "The lead"
+          "lead": "The lead",
+          "otherSeat": "{label}",
+          "otherLead": "{label}'s lead",
+          "someone": "Someone"
         },
         "otherwise": "{who:lane}"
       },
@@ -278,7 +281,10 @@
         "by": "who",
         "cases": {
           "operator": "you",
-          "lead": "the lead"
+          "lead": "the lead",
+          "otherSeat": "{label}",
+          "otherLead": "{label}'s lead",
+          "someone": "someone"
         },
         "otherwise": "{who:lane}"
       },
@@ -289,6 +295,14 @@
         },
         "otherwise": "{count} things need {whom}"
       },
+      "more": {
+        "by": "count",
+        "cases": {
+          "1": "1 more needs {whom}"
+        },
+        "otherwise": "{count} more need {whom}"
+      },
+      "shared": "{first}[; {more:list}]",
       "summary": {
         "by": "shape",
         "cases": {
