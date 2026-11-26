@@ -1154,6 +1154,10 @@ class NeedsBlockTests(unittest.TestCase):
                     written["summaryAll"] = "2 things need Ama's lead, and both are holding up the finish."
                     for each in items:
                         each.pop("scope")
+                else:
+                    # The scope alone marks the list shared: an item whose seat the pass couldn't resolve has none.
+                    for each in items:
+                        each.pop("seat")
                 self.write(written)
                 block = render.read_needs_block(self.state)
                 self.assertNotIn("summary", block)
@@ -1277,6 +1281,11 @@ class ViewerSeatTests(unittest.TestCase):
         self.seated(SEAT_A, key="SHOP-91")
         self.assertIsNone(render.viewer_seat(self.state, shared_record()), "a seat on another record")
         self.assertEqual(render.viewer_seat(self.state, shared_record("SHOP-91")), SEAT_A)
+        # A malformed collab member, in a checkout seated for its key, draws for nobody rather than raising.
+        for collab in ({"key": "SHOP-91"}, {"key": "SHOP-91", "seats": [SEAT_A]},
+                       {"key": ["SHOP-91"], "seats": {SEAT_A: {}}}, {"key": None, "seats": {SEAT_A: {}}}):
+            with self.subTest(collab=collab):
+                self.assertIsNone(render.viewer_seat(self.state, {"state": {"meta": {"collab": collab}}}))
 
 
 class LeftOpenTests(unittest.TestCase):
