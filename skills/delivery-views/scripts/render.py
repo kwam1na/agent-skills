@@ -1445,8 +1445,11 @@ _MOMENT = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.
 
 
 # What a "Needs you" row is drawn from beside its words: its facts, each text when present, and the story it waits on.
-NEED_FACTS = ("kind", "who", "lane", "subject", "state", "since")
+NEED_FACTS = ("kind", "who", "lane", "subject", "state", "since", "scope", "seat")
 NEED_SAID = ("headline", "why", "clears", "who")
+# On a shared record each item is worded three ways: for the seat that wrote the list, for a reader with no seat, and
+# by role alone. The page picks one; it never words an item itself.
+NEED_WORDINGS = ("said", "saidAll", "saidRole")
 NEEDS_WORDS = ("heading", "holding", "age")
 
 
@@ -1458,9 +1461,10 @@ def need_row(item: dict, cut) -> dict:
     blocker = item.get("blocker")
     if isinstance(blocker, dict) and isinstance(blocker.get("subject"), str):
         row["blocker"] = {name: cut(blocker[name]) for name in ("subject", "lane", "state") if isinstance(blocker.get(name), str)}
-    said = item.get("said")
-    if isinstance(said, dict):
-        row["said"] = {name: cut(said[name]) for name in NEED_SAID if isinstance(said.get(name), str)}
+    for wording in NEED_WORDINGS:
+        said = item.get(wording)
+        if isinstance(said, dict):
+            row[wording] = {name: cut(said[name]) for name in NEED_SAID if isinstance(said.get(name), str)}
     return row
 
 
@@ -1514,8 +1518,9 @@ def read_needs_block(state_directory: Path) -> dict | None:
     if written["running"]:
         block["staleAfter"] = written["staleAfter"]
     # The list's own words: its opening sentence, and its heading, holding mark and age form, each text or left out.
-    if isinstance(written.get("summary"), str):
-        block["summary"] = cut(written["summary"])
+    for name in ("summary", "summaryAll"):
+        if isinstance(written.get(name), str):
+            block[name] = cut(written[name])
     if isinstance(written.get("words"), dict):
         block["words"] = {name: cut(value) for name, value in written["words"].items()
                           if name in NEEDS_WORDS and isinstance(value, str)}
@@ -1528,12 +1533,29 @@ def read_needs_block(state_directory: Path) -> dict | None:
         for row, item in zip(block["items"], items):
             if item.get("kind") in NEEDS_QUIET:
                 row["holding"] = False
+        # A shared list's sentences name seats, which only the pass that wrote them can say: both go rather than keep
+        # the claim, as when the table can't say one.
+        if "summaryAll" in written or any("scope" in item for item in items):
+            block.pop("summary", None)
+            block.pop("summaryAll", None)
+            return block
         try:
             block["summary"] = cut(needs_summary([{**item, "holding": item["holding"] and item.get("kind") not in NEEDS_QUIET}
                                                   for item in items]))
         except (OSError, ValueError, KeyError, TypeError):
             block.pop("summary", None)
     return block
+
+
+def viewer_seat(state_directory: Path, document: object) -> str | None:
+    """The seat the local page is drawn for: this checkout's seat on a shared record, when it is one of the record's
+    seats. None for a record nobody shares, whatever seat the checkout holds, and never on the hosted page."""
+    state = document.get("state") if isinstance(document, dict) else None
+    collab = review_state.collab_of(state) if isinstance(state, dict) else None
+    if not isinstance(collab, dict) or not isinstance(collab.get("key"), str) or not isinstance(collab.get("seats"), dict):
+        return None
+    seat = review_state.local_seat(state_directory, collab["key"])
+    return seat if seat is not None and seat in collab["seats"] else None
 
 
 # The page
@@ -1800,7 +1822,9 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
 
 def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
                     plan: dict | None = None, needs: dict | None = None, files: dict | None = None,
-                    operator: str | None = None, repository: Path | None = None, forge: dict | None = None) -> str:
+                    operator: str | None = None, repository: Path | None = None, forge: dict | None = None,
+                    viewer: str | None = None) -> str:
+    """The local page. ``viewer`` is the seat it is drawn for, embedded on its own: the hosted cut never carries one."""
     data = line_map_data(document, runs, config, theme_key=theme_key, history=history, plan=plan, needs=needs,
                          files=files, repository=repository, forge=forge)
     document, runs, reviews, view = (data[key] for key in ("document", "runs", "reviews", "view"))
@@ -1826,6 +1850,8 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
         f'<script type="application/json" id="delivery-view">{embed(view)}</script>',
         *([f'<script type="application/json" id="delivery-plan">{embed(plan)}</script>'] if plan is not None else []),
         *([f'<script type="application/json" id="delivery-needs">{embed(needs)}</script>'] if needs is not None else []),
+        *([f'<script type="application/json" id="delivery-viewer">{embed({"seat": viewer})}</script>']
+          if viewer is not None else []),
         *([f'<script type="application/json" id="delivery-files">{embed(files)}</script>'] if files is not None else []),
         *([f'<script type="application/json" id="delivery-left-open">{embed(data["leftOpen"])}</script>']
           if data.get("leftOpen") is not None else []),
@@ -1914,7 +1940,8 @@ def line_map(arguments: argparse.Namespace) -> int:
                            needs=read_needs_block(inputs.state_directory),
                            files=read_lane_changes_block(inputs.state_directory),
                            forge=read_forge_block(inputs.state_directory, document),
-                           operator=checkout_operator(inputs.root), repository=inputs.root)
+                           operator=checkout_operator(inputs.root), repository=inputs.root,
+                           viewer=viewer_seat(inputs.state_directory, document))
     sys.stdout.write(page)
     return 0
 

@@ -395,6 +395,10 @@ Lane 1, tier 2, after V26-3994. Test-first. Files:
 
 Lane 2, tier 2, not blocked. Added mid-delivery: The operator saw lane 1's +2 marker overlap the 3998 label on this delivery's own line
 
+### V26-4002. List the checks the lead chose when their fold opens
+
+Lane 2, tier 2, not blocked. Added mid-delivery: The operator found the single-piece fold opens to nothing on this delivery's own page, and asked for the checks as a list
+
 ## Units and order
 
 | Tier | Lane | Items, in order | Owns |

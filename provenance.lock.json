@@ -250,7 +250,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "3b0121be0749b2dbaefb7a14711aba44e7329b04cf65541ce31297d97cc61dc2"
+          "sha256": "375cedf1d20900952b33a69f5831a795de89c8653d6514c5d92a1b0f9703a86d"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",

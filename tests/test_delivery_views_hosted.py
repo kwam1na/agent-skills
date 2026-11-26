@@ -482,6 +482,23 @@ class CollectionTests(unittest.TestCase):
              mock.patch.object(hosted.render,'read_needs_block',side_effect=final_optional):
             with self.assertRaisesRegex(hosted.PublishError,'source_changed'):hosted.collect(self.inputs)
 
+    def test_a_shared_records_cut_reads_no_seat(self):
+        """The hosted page has no seat: collecting a shared record never asks which seat this checkout holds, and its cut
+        names none, while the shared list's stamps and wordings go with it."""
+        self.document['meta']['collab']={'key':'APP-9','peers':{},'seats':{'s-aaaaaaaaaaaa':{'label':'Ama','admitted':True,'approver':True},
+                                                               's-bbbbbbbbbbbb':{'label':'Ben','admitted':True,'approver':True}}}
+        self.write_state()
+        said={'headline':'Ben marks the draft ready','why':'w','clears':'c','who':'Ben'}
+        (self.state/'needs-you.json').write_text(json.dumps({'spec':'delivery-needs-you/1','running':False,'at':'2026-11-15T00:00:00Z',
+            'summaryAll':'1 thing needs Ben.','items':[{'holding':False,'source':'acceptance','text':'t','clears':'c','kind':'drafts',
+            'who':'operator','scope':'queue','seat':'s-bbbbbbbbbbbb','said':said,'saidAll':said,'saidRole':said}]}))
+        with mock.patch.object(hosted.render.review_state,'local_seat',return_value='s-bbbbbbbbbbbb') as local:
+            cut=hosted.collect(self.inputs)
+        local.assert_not_called()
+        self.assertNotIn('viewer',cut)
+        self.assertEqual(cut['needs']['summaryAll'],'1 thing needs Ben.')
+        self.assertEqual((cut['needs']['items'][0]['scope'],cut['needs']['items'][0]['seat']),('queue','s-bbbbbbbbbbbb'))
+
     def prepare_watch(self):
         (self.root/'.git').mkdir();(self.root/'views.json').write_text(json.dumps(CFG))
         (self.root/'binding.json').write_text(json.dumps({'state':{'directory':'state','publishers':[{'argv':['must-not-run']}]}}))
