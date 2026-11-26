@@ -1,0 +1,4996 @@
+{
+  "delivery-state/1": {
+    "$id": "urn:agent-skills:orchestrate-work:delivery-state:1",
+    "title": "delivery-state/1",
+    "description": "Where a decomposed delivery stands. The lead writes every field except the runner-owned ones; the state tool owns version and meta.updatedAt.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "version",
+      "meta",
+      "lanes",
+      "queue",
+      "finish",
+      "followups",
+      "leases",
+      "extensions"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "delivery-state/1"
+      },
+      "version": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "meta": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "headline",
+          "updatedAt",
+          "baseHead",
+          "releasedHead",
+          "checking"
+        ],
+        "properties": {
+          "headline": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "$ref": "#/$defs/timestamp"
+          },
+          "baseHead": {
+            "$ref": "#/$defs/optionalCommit"
+          },
+          "releasedHead": {
+            "$ref": "#/$defs/optionalCommit"
+          },
+          "checking": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "now",
+              "next"
+            ],
+            "properties": {
+              "now": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "subject",
+                      "title",
+                      "startedAt",
+                      "steps"
+                    ],
+                    "properties": {
+                      "subject": {
+                        "$ref": "#/$defs/name"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "startedAt": {
+                        "$ref": "#/$defs/timestamp"
+                      },
+                      "base": {
+                        "description": "For a lone candidate's run: the base it is checked against, by branch and head. A check.superseded that ends the run names it.",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "ref",
+                          "head"
+                        ],
+                        "properties": {
+                          "ref": {
+                            "$ref": "#/$defs/name"
+                          },
+                          "head": {
+                            "$ref": "#/$defs/commit"
+                          }
+                        }
+                      },
+                      "steps": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "label",
+                            "state"
+                          ],
+                          "properties": {
+                            "label": {
+                              "$ref": "#/$defs/name"
+                            },
+                            "state": {
+                              "$ref": "#/$defs/stepState"
+                            },
+                            "startedAt": {
+                              "$ref": "#/$defs/timestamp"
+                            },
+                            "finishedAt": {
+                              "$ref": "#/$defs/timestamp"
+                            },
+                            "expectedSeconds": {
+                              "description": "The median of the step's last passing durations in the check history; absent with no history.",
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "reusedFrom": {
+                              "description": "For a reused check: the head of the lane's run it was reused from.",
+                              "$ref": "#/$defs/commit"
+                            },
+                            "title": {
+                              "description": "The check's readable name, copied by the runner from the provider's or the binding's check and cut to 200 characters. Absent when the check has none; a view then names the check by its id.",
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            }
+                          }
+                        }
+                      },
+                      "baseRerun": {
+                        "description": "Present while the queue re-runs a candidate's failing checks on the base, after they failed and before the verdict: the candidate has failed and waits on the re-run to tell whether the failure is the base's own.",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "startedAt",
+                          "checks"
+                        ],
+                        "properties": {
+                          "startedAt": {
+                            "$ref": "#/$defs/timestamp"
+                          },
+                          "checks": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/$defs/name"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "next": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/name"
+                }
+              }
+            }
+          },
+          "planFile": {
+            "description": "Optional, the lead's: where the delivery's approved plan is kept. It is only shown: a record naming one with no plan.json beside it says the plan chapter is missing.",
+            "$ref": "#/$defs/name"
+          },
+          "trackerParent": {
+            "description": "Optional, the lead's: the tracker reference of the item the delivery's work is listed under, for a bound tracker snapshot command.",
+            "$ref": "#/$defs/name"
+          },
+          "checkHistory": {
+            "description": "Written by the runner. The last five passing durations and the flake-retry count of each check, and the last five whole check runs, in seconds. Absent until the runner first records a run.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "checks",
+              "runs"
+            ],
+            "properties": {
+              "checks": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "seconds",
+                    "flakes"
+                  ],
+                  "properties": {
+                    "seconds": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "flakes": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              },
+              "runs": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "baseReruns": {
+            "description": "Runner-owned: the latest base re-runs the queue judged, newest last, at most 100: each check's id, the base head the re-run checked out, its verdict, and the candidate it was re-run for. select warns when a selected check's latest re-run at the current base head failed. Absent until the first.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "check",
+                "baseHead",
+                "result",
+                "subject",
+                "recordedAt"
+              ],
+              "properties": {
+                "check": {
+                  "$ref": "#/$defs/name"
+                },
+                "baseHead": {
+                  "$ref": "#/$defs/commit"
+                },
+                "result": {
+                  "enum": [
+                    "passed",
+                    "failed"
+                  ]
+                },
+                "subject": {
+                  "$ref": "#/$defs/name"
+                },
+                "recordedAt": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            }
+          },
+          "hold": {
+            "description": "Set by the lead to pause the runner's serve mode; absent or null lets it run.",
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reason",
+                  "since"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "since": {
+                    "$ref": "#/$defs/timestamp"
+                  }
+                }
+              }
+            ]
+          },
+          "statusOverride": {
+            "description": "Set by the lead. A status line shown instead of the derived one until expiresAt; ignored after it.",
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "text",
+                  "setAt",
+                  "expiresAt"
+                ],
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "setAt": {
+                    "$ref": "#/$defs/timestamp"
+                  },
+                  "expiresAt": {
+                    "$ref": "#/$defs/timestamp"
+                  }
+                }
+              }
+            ]
+          },
+          "handoffsNeedAcceptance": {
+            "description": "Set by the lead. true makes every lane hand-off wait as pending until the lead accepts it; absent or false, a hand-off is accepted as it is made.",
+            "type": "boolean"
+          },
+          "integration": {
+            "description": "Set by lead-init only when the delivery declares an integrationTarget: the integration base its stories land on, the target it rejoins, and the remote both are fetched from. A record without it is a delivery with no integration step.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "base",
+              "target",
+              "remote"
+            ],
+            "properties": {
+              "base": {
+                "$ref": "#/$defs/name"
+              },
+              "target": {
+                "$ref": "#/$defs/name"
+              },
+              "remote": {
+                "$ref": "#/$defs/name"
+              }
+            }
+          },
+          "sources": {
+            "description": "Written by serve's refresh: per source (tracker, forge and siblings), whether the record observes it, has a stale read of it (and when it was last read), or does not observe it because the binding declares no command. Changes only when a source's status does.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "tracker": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "since"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "observed",
+                      "stale",
+                      "not_observed"
+                    ]
+                  },
+                  "since": {
+                    "$ref": "#/$defs/timestamp"
+                  },
+                  "lastReadAt": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/$defs/timestamp"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "forge": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "since"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "observed",
+                      "stale",
+                      "not_observed"
+                    ]
+                  },
+                  "since": {
+                    "$ref": "#/$defs/timestamp"
+                  },
+                  "lastReadAt": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/$defs/timestamp"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "siblings": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "since"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "observed",
+                      "stale",
+                      "not_observed"
+                    ]
+                  },
+                  "since": {
+                    "$ref": "#/$defs/timestamp"
+                  },
+                  "lastReadAt": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/$defs/timestamp"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          },
+          "sourceReports": {
+            "description": "Written by serve's refresh: what the last applied reconcile could not settle and left for the lead, such as a change request closed without merging. Replaced only by the next applied reconcile.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "subject",
+                "note"
+              ],
+              "properties": {
+                "subject": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/$defs/name"
+                    }
+                  ]
+                },
+                "note": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "closing": {
+            "description": "The close's two marks, each naming its delivery.closed journal entry. The state tool writes started in the same write as that entry; finished is written once the archive has landed, in the live record and the archived copy. Started with no finished mark for the same entry, and no close running, is a close that stopped partway. A mark for an earlier entry doesn't count.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "started"
+            ],
+            "properties": {
+              "started": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "entry",
+                  "at"
+                ],
+                "properties": {
+                  "entry": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "at": {
+                    "$ref": "#/$defs/timestamp"
+                  }
+                }
+              },
+              "finished": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "entry",
+                  "at"
+                ],
+                "properties": {
+                  "entry": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "at": {
+                    "$ref": "#/$defs/timestamp"
+                  }
+                }
+              }
+            }
+          },
+          "writerGeneration": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "releaseId",
+              "archiveSha256"
+            ],
+            "properties": {
+              "releaseId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "archiveSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "baseMove": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "from",
+              "to",
+              "defaultHead",
+              "archiveSha256"
+            ],
+            "properties": {
+              "from": {
+                "$ref": "#/$defs/commit"
+              },
+              "to": {
+                "$ref": "#/$defs/commit"
+              },
+              "defaultHead": {
+                "$ref": "#/$defs/commit"
+              },
+              "archiveSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "phase": {
+            "description": "Optional, the delivery holder's: planning while a shared record's plan is drafted, delivery once lead-init adopts it. Absent means delivery.",
+            "enum": [
+              "planning",
+              "delivery"
+            ]
+          },
+          "collab": {
+            "description": "Present only on a shared record, which plan-open creates; a record without it is unshared and behaves as it always has. Its key names the partition refs and each checkout's seat. Its seats are derived from the seat.requested, seat.admitted and seat.labeled entries and never written directly. Its peers and heldReason are this machine's own and never carried to another.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "seats",
+              "peers"
+            ],
+            "properties": {
+              "key": {
+                "description": "The delivery key, fixed when the shared record is created: refs/agent-skills/<key>/<seat> and the git setting agent-skills.seat.<key> are named by it.",
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9-]{0,63}$"
+              },
+              "seats": {
+                "description": "Each seat by id: its latest label, shown only and never read to decide anything, whether the delivery holder has admitted it, and whether it approves the plan.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "label",
+                    "admitted",
+                    "approver"
+                  ],
+                  "properties": {
+                    "label": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "admitted": {
+                      "type": "boolean"
+                    },
+                    "approver": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              },
+              "peers": {
+                "description": "Machine-local: each other seat whose partition this machine has fetched, by id: the last seq of it ingested, when it was last fetched, and why it is held, or null while it is ingested.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "through",
+                    "fetchedAt",
+                    "heldReason"
+                  ],
+                  "properties": {
+                    "through": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "fetchedAt": {
+                      "$ref": "#/$defs/timestamp"
+                    },
+                    "heldReason": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/$defs/partitionHeld"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "heldReason": {
+                "description": "Machine-local: seat_split once this checkout's push found its seat's chain on the remote diverged from its own; every later write from this checkout is refused, and collab join --new-seat gives it a fresh seat.",
+                "enum": [
+                  "seat_split"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "siblings": {
+        "description": "Sibling deliveries of the same epic in other repositories, by their hosted links: lead-sibling adds and removes one, and reconcile writes what each sibling-snapshot/1 read shows. Optional; the hosted snapshot carries it without each sibling's hosted link, which grants read access to that delivery.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "link",
+            "addedAt"
+          ],
+          "properties": {
+            "name": {
+              "description": "The lead's label for the sibling, unique in the record.",
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "link": {
+              "description": "The sibling's hosted live view, <origin>/d/<64 hex>. lead-sibling admits a secure origin, or a loopback receiver for tests.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9+.-]*://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?/d/[a-f0-9]{64}$"
+            },
+            "addedAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "lastOutcome": {
+              "description": "The outcome of the latest read reconcile applied, of any outcome. Absent until the first. The sibling is fresh only while it is read.",
+              "enum": [
+                "read",
+                "stale",
+                "unavailable",
+                "incompatible",
+                "other-epic"
+              ]
+            },
+            "lastAttemptAt": {
+              "description": "When the sibling's current lastOutcome began: the time of the read that changed the outcome. Later reads with the same outcome leave it as it was.",
+              "$ref": "#/$defs/timestamp"
+            },
+            "readAt": {
+              "description": "When the last read that changed the sibling was taken: its stories, trackerParent, updatedAt, closing and terminal come from that read. A later read that changes nothing leaves it as it was, so it can be older than the latest read.",
+              "$ref": "#/$defs/timestamp"
+            },
+            "trackerParent": {
+              "$ref": "#/$defs/name"
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "closing": {
+              "type": "object"
+            },
+            "terminal": {
+              "type": "boolean"
+            },
+            "stories": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "subject",
+                  "title",
+                  "stage"
+                ],
+                "properties": {
+                  "subject": {
+                    "$ref": "#/$defs/name"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "stage": {
+                    "enum": [
+                      "planned",
+                      "building",
+                      "review",
+                      "settled",
+                      "queued",
+                      "syncing",
+                      "synced",
+                      "checking",
+                      "checked",
+                      "merging",
+                      "merged",
+                      "stopped"
+                    ]
+                  },
+                  "changeRequest": {
+                    "$ref": "#/$defs/name"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "lanes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "title",
+            "focus",
+            "state",
+            "waitingOn",
+            "since"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "focus": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "idle",
+                "assigned",
+                "working",
+                "reviewing",
+                "handed",
+                "blocked",
+                "waiting",
+                "done"
+              ],
+              "description": "waiting: the lane waits for the story its waitingOn names to land, and will go on by itself. It is progress, not a question: it doesn't wake a wait, isn't in \"Needs you\" and doesn't hold the close. Its waitingOn names a story the record holds."
+            },
+            "waitingOn": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "since": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "focusAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "focusBy": {
+              "enum": [
+                "runner"
+              ]
+            },
+            "waitingBy": {
+              "description": "Kept by the tool alone: which writer set the row's waitingOn, present while waitingOn is set. Only a wait the queue (runner) set ends when the lane next writes its focus without setting one, or at a new hand-off or put-back; a wait the lane or the lead set stays until they change it. A row written before the tool kept it reads as the queue's when focusBy is runner.",
+              "enum": [
+                "runner",
+                "lane",
+                "lead"
+              ]
+            },
+            "restedFrom": {
+              "description": "Kept by the tool alone: the lane's own last word, its state and when it said it, kept when the queue (runner) speaks over the row, as it does when it rests a lane whose candidate merged. It carries forward while the queue's words stand, and ends at the lane's or the lead's next word or a new hand-off.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "state",
+                "at"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "idle",
+                    "assigned",
+                    "working",
+                    "reviewing",
+                    "handed",
+                    "blocked",
+                    "waiting",
+                    "done"
+                  ]
+                },
+                "at": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            },
+            "waitingFrom": {
+              "description": "Kept by the tool alone: the state a waiting row left, and when, carried across every write while the row stays waiting, whoever writes, and removed when it returns. A landing or settlement of the story it waits on returns it to this state in the same write; any other write that takes the row out of waiting removes it and clears a waitingOn that still names that story.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "state",
+                "at"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "idle",
+                    "assigned",
+                    "working",
+                    "reviewing",
+                    "handed",
+                    "blocked",
+                    "done"
+                  ]
+                },
+                "at": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            },
+            "freed": {
+              "description": "Kept by the tool alone: the landing or settlement that last returned the row from waiting, by the story's key, and when, so a wait names the lanes it freed. Carried until the row waits again.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "by",
+                "at"
+              ],
+              "properties": {
+                "by": {
+                  "$ref": "#/$defs/name"
+                },
+                "at": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            }
+          }
+        }
+      },
+      "queue": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "order",
+            "subject",
+            "title",
+            "lane",
+            "stage",
+            "head",
+            "syncedHead",
+            "leadInputs",
+            "reportedRounds",
+            "runId",
+            "checks"
+          ],
+          "properties": {
+            "order": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "subject": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "lane": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/name"
+                }
+              ]
+            },
+            "assignedLane": {
+              "description": "The lead's subsequent assignment. The lane that handed off the candidate and its evidence stay on the queue item.",
+              "$ref": "#/$defs/name"
+            },
+            "stage": {
+              "enum": [
+                "queued",
+                "syncing",
+                "synced",
+                "checking",
+                "checked",
+                "merging",
+                "merged",
+                "stopped"
+              ]
+            },
+            "after": {
+              "description": "The planned entry's after, carried at hand-off. Optional.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            },
+            "files": {
+              "description": "The planned entry's files, carried at hand-off, so an unlanded story in the queue still holds the files it names. Optional.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "head": {
+              "$ref": "#/$defs/commit"
+            },
+            "syncedHead": {
+              "$ref": "#/$defs/optionalCommit"
+            },
+            "supersededAt": {
+              "description": "The candidate's failed head, set when the lead named the base broken with --self-repair: the candidate holds its own fix, so base.repaired never queues this head again, and its next hand-off accepted at another head becomes the named repair.",
+              "$ref": "#/$defs/commit"
+            },
+            "leadInputs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            },
+            "reportedRounds": {
+              "description": "The review rounds the lane reported at hand-off. The fallback only when the journal holds no review.round entries for the subject.",
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              ]
+            },
+            "runId": {
+              "description": "The opaque id of the run, in the adopter's delivery product, that built the work. The lane sets it at hand-off; null when the adopter records no runs.",
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/name"
+                }
+              ]
+            },
+            "checks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "state"
+                ],
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/name"
+                  },
+                  "state": {
+                    "$ref": "#/$defs/stepState"
+                  },
+                  "detail": {
+                    "type": "string"
+                  },
+                  "failures": {
+                    "description": "The failing test or step ids the binding's failure pattern found in the check's output.",
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/name"
+                    }
+                  },
+                  "log": {
+                    "description": "The check's output, relative to the state directory.",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reusedFrom": {
+                    "description": "For a reused check: the head of the lane's run it was reused from.",
+                    "$ref": "#/$defs/commit"
+                  },
+                  "title": {
+                    "description": "The check's readable name, copied by the runner from the provider's or the binding's check and cut to 200 characters. Absent when the check has none; a view then names the check by its id.",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "baseRerun": {
+                    "description": "For a check that failed on the candidate and was re-run on the base: that re-run's failing tests, as the binding's failure pattern finds them, and its output, relative to the state directory. After a declared flake's retry there, the retry's.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "log"
+                    ],
+                    "properties": {
+                      "failures": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/$defs/name"
+                        }
+                      },
+                      "log": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "node": {
+                    "description": "The version of the first node on the PATH the check ran with, after the binding's and its profile's environment, as node --version prints it less its v; null when that PATH held no node. Absent on a check that didn't run, and on a record written before the runner recorded it.",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "nodeBelowMinimum": {
+                    "description": "Set only when the runtime declares a nodeMinimum and node is below it. It explains a failure; the check's state is still what the check itself returned. Absent otherwise.",
+                    "type": "boolean"
+                  },
+                  "environment": {
+                    "description": "The environment facts of the check's run. Absent on a check that didn't run, and on a row written before the runner recorded them.",
+                    "$ref": "#/$defs/runEnvironment"
+                  },
+                  "host": {
+                    "description": "The host facts of the check's run. Absent on a check that didn't run, and on a row written before the runner recorded them.",
+                    "$ref": "#/$defs/runHost"
+                  }
+                }
+              }
+            },
+            "changeRequest": {
+              "$ref": "#/$defs/name"
+            },
+            "trackerStarted": {
+              "description": "Carried from the planned element by a hand-off, and by a reconcile that queues planned work it finds merged: true when reconcile had seen the work's ticket started. A rejected hand-off hands it back to the planned element. Absent otherwise.",
+              "const": true
+            },
+            "pending": {
+              "description": "Set by a lane's hand-off when the binding needs the lead to accept it; the runner takes the candidate once the lead accepts. A reconcile sets it too on planned work it finds merged under that policy, until it records the merge. Recording the candidate's merge clears it. An item merged under an earlier version may still carry it, which means nothing, until a reconcile with a forge snapshot clears it. Absent otherwise.",
+              "const": true
+            },
+            "evidence": {
+              "description": "Written only by a lane's hand-off: the lane's own runs of checks, each with the head and tree it ran on and its definition's digest, and, from a run-checks record, where it ran, how long it took, when, and its environment and host facts. The runner reuses a passing run when its record applies to the tree it checks.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "check",
+                  "definition",
+                  "head",
+                  "tree",
+                  "result",
+                  "recordedAt"
+                ],
+                "properties": {
+                  "check": {
+                    "$ref": "#/$defs/name"
+                  },
+                  "definition": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "head": {
+                    "$ref": "#/$defs/commit"
+                  },
+                  "tree": {
+                    "$ref": "#/$defs/commit"
+                  },
+                  "result": {
+                    "enum": [
+                      "passed",
+                      "failed"
+                    ]
+                  },
+                  "recordedAt": {
+                    "$ref": "#/$defs/timestamp"
+                  },
+                  "where": {
+                    "description": "runner for a run by run-checks or the queue; checkout for a run in the lane's own checkout.",
+                    "enum": [
+                      "runner",
+                      "checkout"
+                    ]
+                  },
+                  "environment": {
+                    "$ref": "#/$defs/runEnvironment"
+                  },
+                  "host": {
+                    "$ref": "#/$defs/runHost"
+                  },
+                  "seconds": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "at": {
+                    "$ref": "#/$defs/timestamp"
+                  }
+                }
+              }
+            },
+            "leadSelection": {
+              "description": "Written only by the state tool's select command: the checks the lead chose for this candidate at its reviewed head, and why. The runner uses them instead of the provider's answer when the binding's selection.lead is true and head is still the candidate's reviewed head. A hand-off at a new head drops it. Absent otherwise.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "head",
+                "checks",
+                "reason",
+                "recordedAt"
+              ],
+              "properties": {
+                "head": {
+                  "$ref": "#/$defs/commit"
+                },
+                "checks": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/check"
+                  }
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "recordedAt": {
+                  "$ref": "#/$defs/timestamp"
+                },
+                "reuse": {
+                  "description": "Optional, written by select --reuse: the lead's grant to reuse the hand-off's records of these checks at this head, counting a path the candidate doesn't change as unread, why, and the decision.recorded entry that journals it.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "checks",
+                    "why",
+                    "decision"
+                  ],
+                  "properties": {
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/name"
+                      }
+                    },
+                    "why": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "decision": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            },
+            "repair": {
+              "description": "Written only by the state tool's repair command: the lead named this candidate as the broken base's repair, while it was queued. While the base awaits repair, serve takes only this row, alone. Its merge journals base.repaired, and a base.repaired journaled any way clears the mark. Absent otherwise.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "namedAt"
+              ],
+              "properties": {
+                "namedAt": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            },
+            "checkSelection": {
+              "description": "Written by the runner when it selects checks: whether its latest checks came from the lead's selection or the provider's answer. For the lead's, the reviewed head it was recorded at and the lead's reason. For a provider refusal under selection.refusalStops, outcome provider_refused and the provider's own words in detail. A hand-off at a new head drops it. Absent until the runner first selects.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "by"
+              ],
+              "properties": {
+                "by": {
+                  "enum": [
+                    "lead",
+                    "provider"
+                  ]
+                },
+                "head": {
+                  "$ref": "#/$defs/commit"
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "outcome": {
+                  "enum": [
+                    "provider_refused"
+                  ]
+                },
+                "detail": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "fallback": {
+                  "description": "Under selection.lead, with no lead selection for the candidate: the binding's fallback checks it runs instead, named so the views say the candidate checks on the fallback. Absent otherwise.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            },
+            "acceptedRegionPaths": {
+              "description": "Written at acceptance. The candidate's region-owned paths, kept so revoking the last claim cannot remove queue enforcement.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            },
+            "namedChecks": {
+              "description": "Written only by a hand-off: the checks the lane ran, by catalogue id, which the lead's acceptance proposes beside the checks matching the diff. A hand-off without them drops them. Absent otherwise.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      },
+      "liveFlakes": {
+        "description": "Lead-owned temporary flake declarations scoped to a base commit and check.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "baseHead",
+            "check",
+            "ref"
+          ],
+          "properties": {
+            "baseHead": {
+              "$ref": "#/$defs/commit"
+            },
+            "check": {
+              "$ref": "#/$defs/name"
+            },
+            "ref": {
+              "$ref": "#/$defs/name"
+            },
+            "tests": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            }
+          }
+        }
+      },
+      "laneOwnership": {
+        "description": "Lead-owned whole-file claims by lane. Absent on records that still use the delivery configuration.",
+        "type": "object",
+        "additionalProperties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/name"
+          }
+        }
+      },
+      "laneRegions": {
+        "description": "Lead-owned claims on committed text blobs. Line coordinates are one-based and half-open.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "lane",
+            "path",
+            "baseHead",
+            "start",
+            "end"
+          ],
+          "properties": {
+            "lane": {
+              "$ref": "#/$defs/name"
+            },
+            "path": {
+              "$ref": "#/$defs/name"
+            },
+            "baseHead": {
+              "$ref": "#/$defs/commit"
+            },
+            "start": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 2
+            },
+            "story": {
+              "description": "The story of the claim's lane it is for: released when that story lands. A claim without one is the lane's.",
+              "$ref": "#/$defs/name"
+            },
+            "regrant": {
+              "description": "Set when a landing left the claim unable to map to the merge, and it was neither the landed story's nor carried: why, and the merge. A regrant to its lane and story, or its revocation, clears it.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reason",
+                "merge"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "merge": {
+                  "$ref": "#/$defs/commit"
+                }
+              }
+            }
+          }
+        }
+      },
+      "regionsSettled": {
+        "description": "The id of the last candidate.merged whose region claims were settled: 0 before any.",
+        "type": "integer",
+        "minimum": 0
+      },
+      "planned": {
+        "description": "Work the lead knows is under way but has not handed to the queue. Optional; the lead owns it.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "subject",
+            "title",
+            "lane",
+            "stage"
+          ],
+          "properties": {
+            "subject": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "lane": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/name"
+                }
+              ]
+            },
+            "stage": {
+              "enum": [
+                "planned",
+                "building",
+                "review",
+                "settled"
+              ],
+              "description": "settled: closed with no change needed, the lead having accepted the lane's evidence that the work's criteria already hold on the base; it never enters the queue, and counts as done."
+            },
+            "after": {
+              "description": "The stories the plan orders before this one, from the delivery file. Optional; lead-init, lead-brief, the reconcile sweep and lead-assign fill it where a planned entry lacks it, and the hand-off carries it into the queue. A story without it waits on no order.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            },
+            "files": {
+              "description": "The paths the story's plan section names in its Files: sentence. Optional; filled and carried as after is. A story without it waits on no files, and holds none.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "changeRequest": {
+              "$ref": "#/$defs/name"
+            },
+            "runId": {
+              "description": "The run that is building the work, as in the queue. Optional; the lane binds it at start with bind-run, which never replaces a bound run nor binds one another subject holds, the lead's patch may write it, reconcile keeps it, and the hand-off carries it unless it names another.",
+              "$ref": "#/$defs/name"
+            },
+            "trackerStarted": {
+              "description": "True once reconcile has seen the work's ticket started in the tracker; absent until then. Only work whose ticket was started is reported when its ticket is back in the tracker's backlog. Optional; reconcile writes it and keeps it.",
+              "type": "boolean"
+            },
+            "noChange": {
+              "description": "A no-change hand-off: the lane's evidence that the work's criteria already hold, the base head the evidence ran at, and when it was handed. settledAt is the lead's acceptance, set with stage settled. Optional; written by handoff --no-change and the lead's accept.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "evidence",
+                "baseHead",
+                "handedAt"
+              ],
+              "properties": {
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4000
+                },
+                "baseHead": {
+                  "$ref": "#/$defs/commit"
+                },
+                "handedAt": {
+                  "$ref": "#/$defs/timestamp"
+                },
+                "settledAt": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            }
+          }
+        }
+      },
+      "tickets": {
+        "description": "Each ticket's own title and summary from the tracker, keyed by subject, for the views. Optional; reconcile keeps it from tracker snapshots, writing only what changed.",
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "title"
+          ],
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string",
+              "maxLength": 1000
+            }
+          }
+        }
+      },
+      "outside": {
+        "description": "The tracker's children of the parent that a scoped tracker snapshot puts outside this delivery: another repository's work, with its state, status and the values that place it elsewhere, for the views' \"Elsewhere\" section. Optional; reconcile keeps it from the last tracker snapshot that carries an outside list, and never adds these as planned work or follow-ups.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "subject",
+            "state"
+          ],
+          "properties": {
+            "subject": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "backlog",
+                "started",
+                "completed",
+                "canceled"
+              ]
+            },
+            "status": {
+              "type": "string",
+              "minLength": 1
+            },
+            "marks": {
+              "description": "The values of each scoped kind the item carries, by kind: its components, its labels, or its summary's own marker.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "component": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "label": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "prefix": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "finish": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "text",
+            "met"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "text": {
+              "type": "string"
+            },
+            "met": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "followups": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "title",
+            "reference"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "reference": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "leases": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "holder",
+            "since"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "holder": {
+              "$ref": "#/$defs/name"
+            },
+            "since": {
+              "$ref": "#/$defs/timestamp"
+            }
+          }
+        }
+      },
+      "extensions": {
+        "type": "object"
+      }
+    },
+    "$defs": {
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "timestamp": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      },
+      "commit": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+      },
+      "optionalCommit": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/$defs/commit"
+          }
+        ]
+      },
+      "stepState": {
+        "enum": [
+          "pending",
+          "running",
+          "passed",
+          "failed",
+          "skipped",
+          "timed_out",
+          "reused",
+          "superseded"
+        ]
+      },
+      "argv": {
+        "description": "A non-empty list of strings, run without a shell.",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "check": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "argv",
+          "cwd",
+          "reasons",
+          "prerequisites"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/name"
+          },
+          "argv": {
+            "$ref": "#/$defs/argv"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "prerequisites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            }
+          },
+          "environmentProfile": {
+            "$ref": "#/$defs/name"
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "parallelSafe": {
+            "description": "true lets the runner run this check at the same time as other parallelSafe checks, up to the binding's parallelChecks. A check without it runs alone.",
+            "type": "boolean"
+          },
+          "title": {
+            "description": "A readable name for a person, such as \"Webapp e2e (Playwright)\", shown in place of the id where the check is reported. Optional; the id stays the check's name everywhere else. The runner copies it into the delivery record, cut to 200 characters.",
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "runEnvironment": {
+        "description": "The environment a check ran with, as its run record says it: the names it received, sorted, and a sha256 over the sorted name=value pairs that decide the run (LANG, every LC_*, the binding's inherit names, its environment and the check's profile). No value is recorded.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "names",
+          "digest"
+        ],
+        "properties": {
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      },
+      "runHost": {
+        "description": "The host a check ran on, as its run record says it: the system, release and machine, and the sha256 of each tool it names (its program, each prepare step's, and the binding's reuse.tools) resolved on its PATH with links followed, or null for one not found.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "platform",
+          "tools"
+        ],
+        "properties": {
+          "platform": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tools": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "seat": {
+        "description": "A seat's id: s- and 12 lowercase hex characters, made when the seat is created.",
+        "type": "string",
+        "pattern": "^s-[0-9a-f]{12}$"
+      },
+      "partitionHeld": {
+        "description": "Why a peer's partition is held, not ingested: its writer generation differs from this one's, or its slice would leave the record invalid.",
+        "enum": [
+          "generation_differs",
+          "slice_invalid"
+        ]
+      }
+    }
+  },
+  "delivery-journal/2": {
+    "$id": "urn:agent-skills:orchestrate-work:delivery-journal:2",
+    "title": "delivery-journal/2",
+    "description": "One append-only journal entry: a fact of a registered kind, with what caused it and what it answers. The journal is a file of these entries, one per line, with ids allocated by the state tool in sequence from 1.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "at",
+      "kind",
+      "lane",
+      "subject",
+      "data"
+    ],
+    "properties": {
+      "id": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "at": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      },
+      "kind": {
+        "description": "A kind journal-kinds.json lists. The state tool checks it against the registry, which also refuses a kind beginning x., reserved for an adopter's own registry.",
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$"
+      },
+      "lane": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string",
+            "minLength": 1
+          }
+        ]
+      },
+      "subject": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string",
+            "minLength": 1
+          }
+        ]
+      },
+      "data": {
+        "description": "The kind's facts, in the shape its entry in journal-kinds.json gives: each typed field checked, each prose field a person's own words. The state tool checks it against the registry.",
+        "type": "object"
+      },
+      "because": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "description": "Earlier entries in this journal this one happened because of, by id. The registry says where a cause is required."
+      },
+      "answers": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "description": "Earlier entries in this journal this one answers, by id, only between the pairs of kinds the registry lists."
+      },
+      "occurredAt": {
+        "description": "When the event happened, where that is earlier than when it was journaled: an entry's instant is its occurredAt when it has one, and its at otherwise. A recovered merge carries it, and null means unknown.",
+        "anyOf": [
+          {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "origin": {
+        "description": "Present on every entry of a shared record and on none of an unshared one: the seat that wrote the entry, its seq, dense from 1 for each seat, and seen, the last seq of each other seat that seat had ingested when it wrote it. An entry is ingested only once every entry its seen names is present. because and answers still name local ids here: a partition carries them by origin, and ingest translates them.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "seat",
+          "seq",
+          "seen"
+        ],
+        "properties": {
+          "seat": {
+            "description": "A seat's id: s- and 12 lowercase hex characters, made when the seat is created.",
+            "type": "string",
+            "pattern": "^s-[0-9a-f]{12}$"
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "seen": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    }
+  },
+  "journal-kinds/1": {
+    "$id": "urn:agent-skills:orchestrate-work:journal-kinds:1",
+    "title": "journal-kinds/1",
+    "description": "The registry of journal kinds, references/journal-kinds.json: the only place a kind or a tone is described. Each kind gives its data's fields, typed or prose, its links, whether it opens a thread, its altitude and tone, its label, its words and explanation, and its tracker update.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "prose",
+      "tones",
+      "types",
+      "kinds"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "journal-kinds/1"
+      },
+      "prose": {
+        "description": "The names a prose field may have. Every other field is typed.",
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "tones": {
+        "description": "What each tone means to a reader, by tone, in the order a legend lists them. A setback is named by the problem tone's word.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "landed",
+          "ready",
+          "decision",
+          "problem",
+          "note"
+        ],
+        "properties": {
+          "landed": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ready": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "problem": {
+            "type": "string",
+            "minLength": 1
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "types": {
+        "description": "Each field type by name, as a schema in this file's dialect. A type may refer to another as #/$defs/<name>.",
+        "type": "object",
+        "additionalProperties": {
+          "type": "object"
+        }
+      },
+      "kinds": {
+        "description": "Each kind by name. No name begins x., which is reserved for an adopter's own registry.",
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/$defs/kind"
+        }
+      }
+    },
+    "$defs": {
+      "template": {
+        "description": "A head or line: a template with named fields, or variants chosen by one field's value.",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "by",
+              "cases",
+              "otherwise"
+            ],
+            "properties": {
+              "by": {
+                "type": "string",
+                "minLength": 1
+              },
+              "cases": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "otherwise": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "kind": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "altitude",
+          "tone",
+          "label",
+          "data",
+          "because",
+          "answers",
+          "opensThread",
+          "words",
+          "explain",
+          "tracker",
+          "instruction"
+        ],
+        "properties": {
+          "altitude": {
+            "enum": [
+              "headline",
+              "story",
+              "bookkeeping"
+            ]
+          },
+          "tone": {
+            "enum": [
+              "landed",
+              "ready",
+              "decision",
+              "problem",
+              "note"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "data": {
+            "description": "The kind's fields, each naming a type from types, prose ones \"prose\" or \"proseList\".",
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "optional": {
+                  "const": true
+                }
+              }
+            }
+          },
+          "because": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "required"
+            ],
+            "properties": {
+              "required": {
+                "type": "boolean"
+              }
+            }
+          },
+          "answers": {
+            "description": "The kinds an entry of this kind may answer.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "opensThread": {
+            "description": "Whether an entry of this kind opens a thread, or that it does unless the named flag is true.",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "unless"
+                ],
+                "properties": {
+                  "unless": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            ]
+          },
+          "words": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "head",
+              "line"
+            ],
+            "properties": {
+              "head": {
+                "$ref": "#/$defs/template"
+              },
+              "line": {
+                "$ref": "#/$defs/template"
+              }
+            }
+          },
+          "explain": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tracker": {
+            "description": "Where an entry of this kind posts, and under what heading; null posts nothing.",
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "posts",
+                  "heading"
+                ],
+                "properties": {
+                  "posts": {
+                    "enum": [
+                      "ticket",
+                      "epic",
+                      "ticket-or-epic"
+                    ]
+                  },
+                  "heading": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            ]
+          },
+          "instruction": {
+            "description": "The kind's tracker instruction, as the guide's table prints it: what its update holds beyond where it posts and under what heading, or, beginning \"None: \", why it posts nothing.",
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "affected-checks/1": {
+    "$id": "urn:agent-skills:orchestrate-work:affected-checks:1",
+    "title": "affected-checks/1",
+    "description": "A provider's answer to which checks a candidate's diff requires. The provider reads the request (#/$defs/request) on stdin and writes this document on stdout. Beyond this shape, the runner refuses an answer whose check ids repeat, whose prerequisites name an unselected check or form a cycle, whose cwd leaves the checkout, or whose timeout exceeds the binding's ceiling.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "checks",
+      "widened",
+      "uncovered"
+    ],
+    "properties": {
+      "checks": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/check"
+        }
+      },
+      "widened": {
+        "description": "True when the provider selected more than the diff's known impact, for example because some impact was unknown.",
+        "type": "boolean"
+      },
+      "uncovered": {
+        "description": "Changed paths the provider could not map to any check. A non-empty list adds the binding's fallback checks.",
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/path"
+        }
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "$defs": {
+      "path": {
+        "type": "string",
+        "minLength": 1
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "commit": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+      },
+      "check": {
+        "description": "One check to run. argv must be a non-empty list. cwd is relative to the checkout root. environmentProfile names a binding profile; the runner refuses an unknown one.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "argv",
+          "cwd",
+          "reasons",
+          "prerequisites"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/name"
+          },
+          "argv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "prerequisites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            }
+          },
+          "environmentProfile": {
+            "$ref": "#/$defs/name"
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "parallelSafe": {
+            "description": "true lets the runner run this check at the same time as other parallelSafe checks, up to the binding's parallelChecks. A check without it runs alone.",
+            "type": "boolean"
+          },
+          "title": {
+            "description": "A readable name for a person, such as \"Webapp e2e (Playwright)\", shown in place of the id where the check is reported. Optional; the id stays the check's name everywhere else. The runner copies it into the delivery record, cut to 200 characters.",
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "change": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "status"
+        ],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/path"
+          },
+          "status": {
+            "description": "The git name-status letter: added, copied, deleted, modified, renamed or type-changed.",
+            "enum": [
+              "A",
+              "C",
+              "D",
+              "M",
+              "R",
+              "T"
+            ]
+          },
+          "oldPath": {
+            "$ref": "#/$defs/path"
+          }
+        }
+      },
+      "request": {
+        "description": "What the runner passes on stdin. changes are computed between baseHead and head with rename detection; oldPath is present for renames and copies.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "base",
+          "baseHead",
+          "head",
+          "changes"
+        ],
+        "properties": {
+          "base": {
+            "$ref": "#/$defs/name"
+          },
+          "baseHead": {
+            "$ref": "#/$defs/commit"
+          },
+          "head": {
+            "$ref": "#/$defs/commit"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/change"
+            }
+          }
+        }
+      }
+    }
+  },
+  "merge-queue-result/1": {
+    "$id": "urn:agent-skills:orchestrate-work:merge-queue-result:1",
+    "title": "merge-queue-result/1",
+    "description": "What one merge-queue runner subcommand did. A stopped result names one reason; queueStopped is true when the reason stops the whole queue rather than only the candidate.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "subcommand",
+      "candidate",
+      "outcome",
+      "stop",
+      "startedAt",
+      "finishedAt",
+      "base",
+      "baseHead",
+      "head",
+      "syncedHead",
+      "mergedHead",
+      "hooksBypassed",
+      "selection",
+      "checks",
+      "release",
+      "notes"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "merge-queue-result/1"
+      },
+      "subcommand": {
+        "enum": [
+          "sync",
+          "check",
+          "merge",
+          "run",
+          "release",
+          "batch",
+          "serve"
+        ]
+      },
+      "candidate": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/$defs/name"
+          }
+        ]
+      },
+      "outcome": {
+        "enum": [
+          "synced",
+          "checked",
+          "merged",
+          "released",
+          "stopped",
+          "refused"
+        ]
+      },
+      "stop": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "reason",
+              "detail",
+              "paths",
+              "queueStopped"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/$defs/reason"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/name"
+                }
+              },
+              "queueStopped": {
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      },
+      "startedAt": {
+        "$ref": "#/$defs/timestamp"
+      },
+      "finishedAt": {
+        "$ref": "#/$defs/timestamp"
+      },
+      "base": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/$defs/name"
+          }
+        ]
+      },
+      "baseHead": {
+        "$ref": "#/$defs/optionalCommit"
+      },
+      "head": {
+        "$ref": "#/$defs/optionalCommit"
+      },
+      "syncedHead": {
+        "$ref": "#/$defs/optionalCommit"
+      },
+      "mergedHead": {
+        "$ref": "#/$defs/optionalCommit"
+      },
+      "hooksBypassed": {
+        "type": "boolean"
+      },
+      "selection": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "providers",
+              "fallbackReasons",
+              "widened",
+              "uncovered",
+              "checks"
+            ],
+            "properties": {
+              "providers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "source",
+                    "outcome",
+                    "detail"
+                  ],
+                  "properties": {
+                    "source": {
+                      "enum": [
+                        "base",
+                        "candidate"
+                      ]
+                    },
+                    "outcome": {
+                      "enum": [
+                        "selected",
+                        "missing",
+                        "failed",
+                        "timed_out",
+                        "malformed"
+                      ]
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "fallbackReasons": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "provider_missing",
+                    "provider_failed",
+                    "provider_timed_out",
+                    "provider_malformed",
+                    "uncovered",
+                    "empty_selection"
+                  ]
+                }
+              },
+              "widened": {
+                "type": "boolean"
+              },
+              "uncovered": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/name"
+                }
+              },
+              "checks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/name"
+                }
+              },
+              "lead": {
+                "description": "Present only when the checks are the lead's selection rather than the provider's answer: each candidate's selection, at the reviewed head it was recorded for, with the lead's reason. No provider ran, so providers is empty.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "members"
+                ],
+                "properties": {
+                  "members": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "subject",
+                        "head",
+                        "reason",
+                        "recordedAt",
+                        "checks"
+                      ],
+                      "properties": {
+                        "subject": {
+                          "$ref": "#/$defs/name"
+                        },
+                        "head": {
+                          "$ref": "#/$defs/commit"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "recordedAt": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "checks": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/name"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "checks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "state",
+            "exitCode",
+            "seconds"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "state": {
+              "enum": [
+                "passed",
+                "failed",
+                "skipped",
+                "timed_out",
+                "reused"
+              ]
+            },
+            "exitCode": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "failures": {
+              "description": "Each failing test or step the binding's failure pattern found in the output, with its message.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "message"
+                ],
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/name"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "log": {
+              "description": "The check's output, relative to the state directory.",
+              "type": "string",
+              "minLength": 1
+            },
+            "retried": {
+              "description": "The first run of a check whose failures all matched a declared flake, which was retried once.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "flake",
+                "failures",
+                "log",
+                "exitCode"
+              ],
+              "properties": {
+                "flake": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "failures": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "message"
+                    ],
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/name"
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "log": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "exitCode": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ]
+                }
+              }
+            },
+            "reusedFrom": {
+              "description": "For a reused check: the candidate whose lane ran it, the head it ran on, and that head's tree.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "subject",
+                "head",
+                "tree"
+              ],
+              "properties": {
+                "subject": {
+                  "$ref": "#/$defs/name"
+                },
+                "head": {
+                  "$ref": "#/$defs/commit"
+                },
+                "tree": {
+                  "$ref": "#/$defs/commit"
+                }
+              }
+            },
+            "node": {
+              "description": "The version of the first node on the PATH the check ran with, after the binding's and its profile's environment, as node --version prints it less its v; null when that PATH held no node. Absent on a check that didn't run, and on a record written before the runner recorded it.",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "nodeBelowMinimum": {
+              "description": "Set only when the runtime declares a nodeMinimum and node is below it. It explains a failure; the check's state is still what the check itself returned. Absent otherwise.",
+              "type": "boolean"
+            },
+            "environment": {
+              "description": "The environment facts of the check's run. Absent on a check that didn't run.",
+              "$ref": "#/$defs/runEnvironment"
+            },
+            "host": {
+              "description": "The host facts of the check's run. Absent on a check that didn't run.",
+              "$ref": "#/$defs/runHost"
+            }
+          }
+        }
+      },
+      "release": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ref",
+              "commit",
+              "targets"
+            ],
+            "properties": {
+              "ref": {
+                "$ref": "#/$defs/name"
+              },
+              "commit": {
+                "$ref": "#/$defs/optionalCommit"
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "state",
+                    "exitCode",
+                    "approvedBy"
+                  ],
+                  "properties": {
+                    "id": {
+                      "$ref": "#/$defs/name"
+                    },
+                    "state": {
+                      "enum": [
+                        "passed",
+                        "failed",
+                        "skipped",
+                        "timed_out"
+                      ]
+                    },
+                    "exitCode": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "integer"
+                        }
+                      ]
+                    },
+                    "approvedBy": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "$defs": {
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "timestamp": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      },
+      "commit": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+      },
+      "optionalCommit": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/$defs/commit"
+          }
+        ]
+      },
+      "reason": {
+        "enum": [
+          "candidate_moved",
+          "source_conflict",
+          "lease_required",
+          "lease_withdraw_failed",
+          "sync_step_failed",
+          "prepare_failed",
+          "runner_error",
+          "unstable_regeneration",
+          "shared_output_irreproducible",
+          "shared_output_generator_failed",
+          "undeclared_change",
+          "unreviewed_change",
+          "push_refused",
+          "not_synced",
+          "dirty_checkout",
+          "no_checks",
+          "profile_unknown",
+          "selection_invalid",
+          "provider_refused",
+          "check_failed",
+          "base_broken",
+          "base_rerun_stopped",
+          "superseded",
+          "base_moved",
+          "ready_refused",
+          "review_not_current",
+          "merge_refused",
+          "merged_unverified",
+          "batch_tree_mismatch",
+          "binding_invalid",
+          "candidate_unknown",
+          "candidate_unresolved",
+          "already_merged",
+          "queue_locked",
+          "ref_invalid",
+          "ref_not_on_base",
+          "approval_required",
+          "release_failed",
+          "interrupted"
+        ]
+      },
+      "runEnvironment": {
+        "description": "The environment a check ran with, as its run record says it: the names it received, sorted, and a sha256 over the sorted name=value pairs that decide the run (LANG, every LC_*, the binding's inherit names, its environment and the check's profile). No value is recorded.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "names",
+          "digest"
+        ],
+        "properties": {
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      },
+      "runHost": {
+        "description": "The host a check ran on, as its run record says it: the system, release and machine, and the sha256 of each tool it names (its program, each prepare step's, and the binding's reuse.tools) resolved on its PATH with links followed, or null for one not found.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "platform",
+          "tools"
+        ],
+        "properties": {
+          "platform": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tools": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "orchestration-binding/1": {
+    "$id": "urn:agent-skills:orchestrate-work:orchestration-binding:1",
+    "title": "orchestration-binding/1",
+    "description": "How the merge-queue runner works in one repository, read from .agents/orchestration.json in the base checkout. Every command is an argv list run without a shell. A placeholder ({candidate}, {branch}, {head}, {expectedHead}, {base}, {baseHead}, {treeSha}, {ref}, {workRoot}, {checkMode}) replaces a whole argv element or a whole environment value, never part of a longer string. Paths and patterns are relative to the checkout root; in a pattern, * matches within one path segment and ** matches any number of segments. Beyond this shape, the runner refuses a binding whose merge argv lacks a whole {expectedHead} element, or whose checks name an unknown environment profile or exceed checkTimeoutCeiling. The checkMode placeholder is available only in the ready and merge hook context: exactly single for a merge without a batch-synced head, otherwise batch. It is runner-derived context, not admission evidence.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "base",
+      "workRoot",
+      "candidate",
+      "prepare",
+      "hooks",
+      "regenerable",
+      "postSync",
+      "leadInputs",
+      "profiles",
+      "provider",
+      "alwaysRun",
+      "fallback",
+      "checkTimeoutSeconds",
+      "checkTimeoutCeiling",
+      "environment",
+      "ready",
+      "merge",
+      "release",
+      "fullHealth",
+      "leases",
+      "state"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "orchestration-binding/1"
+      },
+      "base": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "remote",
+          "ref"
+        ],
+        "properties": {
+          "remote": {
+            "$ref": "#/$defs/name"
+          },
+          "ref": {
+            "description": "The base branch name, without refs/heads/.",
+            "$ref": "#/$defs/name"
+          }
+        }
+      },
+      "bases": {
+        "description": "The other bases this binding serves besides base.ref, each an exact branch name without refs/heads/ or a pattern in which * matches any run of characters within one segment of the name, never a /, such as [\"main\", \"integration-*\"]. A delivery, the merge queue's --base and run-delivery's --base must name base.ref or a base that matches one. base.ref stays the default. Without bases, the binding serves base.ref alone. The binding is read from the base itself, so every base it serves carries a binding that lists it.",
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/name"
+        }
+      },
+      "workRoot": {
+        "description": "The directory for the runner's temporary checkouts, relative to the checkout's top level unless absolute; the runner refuses a --repo below the top level. It must not contain any checkout of the repository git lists, apart from the leftover checkouts under workRoot/checkouts that the runner marks as its own, nor the git directory or the common git directory. Inside a git directory it must sit beside git's own folders, never in one. Inside any checkout of the repository it must hold no tracked file, sit in no submodule, and be ignored there. workRoot/checkouts and workRoot/empty-hooks must not be a symlink or junction. Paths are compared without case or Unicode normal form.",
+        "$ref": "#/$defs/name"
+      },
+      "candidate": {
+        "description": "Resolves {candidate} to a JSON object {branch, head} on stdout.",
+        "$ref": "#/$defs/argv"
+      },
+      "prepare": {
+        "description": "Run, in order, in every fresh checkout before anything else uses it.",
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/argv"
+        }
+      },
+      "hooks": {
+        "description": "bypass runs every git command, and every argv, with core.hooksPath set to an empty directory under workRoot.",
+        "enum": [
+          "bypass",
+          "run"
+        ]
+      },
+      "regenerable": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "paths",
+          "regenerators"
+        ],
+        "properties": {
+          "paths": {
+            "description": "Generated-only files or patterns. A merge conflict confined to these takes the base side and is regenerated.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/path"
+            }
+          },
+          "regenerators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/argv"
+            }
+          },
+          "listings": {
+            "description": "Optional. For a regenerable path, a command that reads one version of the file on stdin and prints the outputs that version lists, as a JSON array of strings. When the path conflicts, the runner lists it at the merge base, the base and the candidate. If the candidate's listing changed it stops with source_conflict naming the path, since regeneration can't restore what the candidate added or removed; if only the base's changed it takes the base side and regenerates. A listing that fails, prints nothing or prints anything else, or a version without the path, stops with source_conflict and never regenerates. A regenerable path with no listing regenerates as before.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "argv"
+              ],
+              "properties": {
+                "path": {
+                  "description": "One regenerable file, named exactly.",
+                  "$ref": "#/$defs/path"
+                },
+                "argv": {
+                  "$ref": "#/$defs/argv"
+                }
+              }
+            }
+          },
+          "shared": {
+            "description": "Optional. Regenerable files or patterns any lane may change with no claim, because the trusted binding's own generators reproduce them. A lane's review-prepare, review-reduce and handoff, the lead's lead-accept and the queue's sync each verify a candidate's change to one: in a fresh worktree of the candidate's commit, after the binding's prepare commands, each changed output is reset to its merge-base bytes, the lead inputs, regenerators and postSync steps run once, and the output must then hold the candidate's bytes. Otherwise the candidate stops with shared_output_irreproducible, or with shared_output_generator_failed when a step fails or times out. The binding that decides what is shared is always the base's, never the candidate's. Every path a pattern matches must be a regenerable path, and none may be the binding file or a file a regenerator's argv names. A binding that declares any needs a regenerator, and no lead input that names a lease. A listing stays a shared output as before, and adding or removing an output it lists still needs its owner. Without this member a binding behaves as before.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/path"
+            }
+          }
+        }
+      },
+      "postSync": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/step"
+        }
+      },
+      "leadInputs": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "argv",
+            "paths"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "argv": {
+              "$ref": "#/$defs/argv"
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/path"
+              }
+            },
+            "lease": {
+              "description": "The lease the lead must hold before this input runs.",
+              "$ref": "#/$defs/name"
+            },
+            "timeoutSeconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      },
+      "profiles": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "environment"
+          ],
+          "properties": {
+            "environment": {
+              "$ref": "#/$defs/environment"
+            }
+          }
+        }
+      },
+      "provider": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "argv",
+              "cwd",
+              "timeoutSeconds",
+              "providerInputs"
+            ],
+            "properties": {
+              "argv": {
+                "$ref": "#/$defs/argv"
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "providerInputs": {
+                "description": "Paths whose change makes the candidate checkout's provider run too; its selection is added to the base checkout's.",
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/path"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "alwaysRun": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/check"
+        }
+      },
+      "fallback": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/check"
+        }
+      },
+      "selection": {
+        "description": "Optional. lead: true lets the lead choose a candidate's checks from its diff with the state tool's select command; the runner then runs the lead's selection and alwaysRun instead of the provider's answer and fallback, while the selection is for the candidate's reviewed head. A candidate without one is checked as before. Off when absent. refusalStops: true, which needs lead: true, makes a provider that exits non-zero stop the candidate as provider_refused instead of widening to fallback: no check runs, and the candidate is held, never merged, until the lead's selection for its reviewed head lets it be checked. Off when absent. catalogue, guards and readers make the lead's selections cheaper to write: select --checks takes catalogue ids, comma-separated, as well as a JSON list of full entries; every guard is added to each lead selection; and a candidate changing a file a readers entry names gets that entry's checks. Each is optional and changes nothing when absent. readers and unread also let a base move carry a selected check's run to the new base, with no run again, when the move changed nothing the check reads (see readers and unread).",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "lead"
+        ],
+        "properties": {
+          "lead": {
+            "type": "boolean"
+          },
+          "refusalStops": {
+            "type": "boolean"
+          },
+          "catalogue": {
+            "description": "Named checks the lead selects by id. Each has the shape of an alwaysRun entry, an id no alwaysRun or fallback check uses, and prerequisites only among the catalogue's own ids. select resolves an id to its entry here, with its prerequisites, and refuses an unknown id, naming it.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/check"
+            }
+          },
+          "guards": {
+            "description": "Catalogue ids added to every lead selection, whatever it names, such as a repository's corpus and qualification tests.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            }
+          },
+          "readers": {
+            "description": "What reads a file, named here rather than inferred from what a test mentions. A lead selection for a candidate whose diff from the base changes a path matching paths includes checks, catalogue ids, such as every reader of a schema and the captured fixtures written to it. A plain entry says only which checks a change to its paths adds, never what else they read. An entry with complete: true says its paths are everything its checks read, their own test modules among them; a check's read set is known only when every entry naming it is complete, and is then the paths of all of them, which a base move outside it does not make the check run again.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "paths",
+                "checks"
+              ],
+              "properties": {
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "description": "At least one; checked beyond this shape."
+                },
+                "checks": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/name"
+                  }
+                },
+                "complete": {
+                  "description": "true: paths are everything these checks read. Absent or false: a plain entry.",
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "unread": {
+            "description": "Patterns for paths no check reads, such as prose a test never opens. A base move whose every changed file matches one carries every selected check and the alwaysRun ones, with no run again. The binding file never matches.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/path"
+            }
+          }
+        }
+      },
+      "checkTimeoutSeconds": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "checkTimeoutCeiling": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "environment": {
+        "$ref": "#/$defs/environment"
+      },
+      "inherit": {
+        "description": "Optional. Names a check and a prepare step inherit from the runner's environment, beyond the fixed baseline every one gets: PATH, HOME, USER, LOGNAME, SHELL, TMPDIR, LANG and every LC_* name. Every other inherited name is dropped from them, and a failed run's output names what was dropped. The runner's own steps (its git, candidate, regenerators, postSync, lead inputs, provider, ready, merge, release and fullHealth) still inherit its whole environment. A listed name's value is in the run's environment digest. None when absent.",
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/name"
+        }
+      },
+      "ready": {
+        "$ref": "#/$defs/argv"
+      },
+      "merge": {
+        "description": "Merges the candidate at exactly {expectedHead}, which must appear as a whole element.",
+        "$ref": "#/$defs/argv"
+      },
+      "reviewGate": {
+        "description": "Optional. A command the runner runs after ready and before merge, at the synced head, at a single merge and at each batch landing. Exit 0 says the candidate's change-request review is current at that head; any other exit, or running past timeoutSeconds, stops the candidate with review_not_current and nothing merges. The command may wait for the forge's pipeline itself, within its timeout. Its argv must name the head as a whole element, {expectedHead} or {head}. Its output is kept under the state directory, as a failed check's is, and only that log's path reaches the record. Absent, merging is unchanged.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "argv"
+        ],
+        "properties": {
+          "argv": {
+            "$ref": "#/$defs/argv"
+          },
+          "timeoutSeconds": {
+            "description": "Seconds the gate may run; checkTimeoutSeconds when absent, and never above checkTimeoutCeiling.",
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "release": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "argv",
+            "stopsOnFailure",
+            "requiresApproval"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "argv": {
+              "$ref": "#/$defs/argv"
+            },
+            "stopsOnFailure": {
+              "type": "boolean"
+            },
+            "requiresApproval": {
+              "type": "boolean"
+            },
+            "timeoutSeconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      },
+      "fullHealth": {
+        "$ref": "#/$defs/argv"
+      },
+      "fullHealthTimeoutSeconds": {
+        "description": "Optional. The seconds a fullHealth run may take, after each merge and at close-out: a positive integer of at most 2147483 (the most a process wait takes, which the runner checks), not bound by checkTimeoutCeiling, which bounds the queue's checks. checkTimeoutSeconds when absent.",
+        "type": "integer",
+        "minimum": 1
+      },
+      "fullHealthRerun": {
+        "description": "Optional. How a failed fullHealth is re-checked once, in the checkout it ran in, before it breaks the base: failurePattern's first group names a failing test, at every match in the run's whole output; argv runs those tests, {tests} becoming one argument for each; a rerun that exits 0 with output ranPattern matches makes the run flaky, journalled as base.flaky. A run whose output unrecheckedPattern matches, such as a crashed or timed-out unit, is not re-checked. Absent, a failure breaks the base.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "argv",
+          "failurePattern",
+          "ranPattern"
+        ],
+        "properties": {
+          "argv": {
+            "$ref": "#/$defs/argv"
+          },
+          "failurePattern": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ranPattern": {
+            "type": "string",
+            "minLength": 1
+          },
+          "unrecheckedPattern": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "leases": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "description",
+            "defaultHolder"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "description": {
+              "type": "string"
+            },
+            "defaultHolder": {
+              "$ref": "#/$defs/name"
+            },
+            "materialize": {
+              "$ref": "#/$defs/argv"
+            },
+            "withdraw": {
+              "$ref": "#/$defs/argv"
+            }
+          }
+        }
+      },
+      "state": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "directory",
+          "renderers",
+          "publishers"
+        ],
+        "properties": {
+          "directory": {
+            "description": "The delivery state directory, relative to the repository root unless absolute.",
+            "$ref": "#/$defs/name"
+          },
+          "renderers": {
+            "description": "Each renderer is a built-in or an argv, never both. output is a relative path under the state directory. {stateDirectory} in an argv is the resolved state directory.",
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "builtin",
+                    "output"
+                  ],
+                  "properties": {
+                    "id": {
+                      "$ref": "#/$defs/name"
+                    },
+                    "builtin": {
+                      "enum": [
+                        "markdown",
+                        "static-page"
+                      ]
+                    },
+                    "output": {
+                      "$ref": "#/$defs/output"
+                    },
+                    "timeoutSeconds": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "argv",
+                    "output"
+                  ],
+                  "properties": {
+                    "id": {
+                      "$ref": "#/$defs/name"
+                    },
+                    "argv": {
+                      "$ref": "#/$defs/argv"
+                    },
+                    "output": {
+                      "$ref": "#/$defs/output"
+                    },
+                    "timeoutSeconds": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "publishers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "argv"
+              ],
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/name"
+                },
+                "argv": {
+                  "$ref": "#/$defs/argv"
+                },
+                "timeoutSeconds": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "description": "Each publisher is an argv the render wrapper runs with the validated record on stdin."
+          },
+          "snapshotMaxAgeSeconds": {
+            "description": "How old a forge or tracker snapshot may be before reconcile refuses it, in seconds. Optional; 900 when absent, and --max-age overrides it.",
+            "type": "integer",
+            "minimum": 1
+          },
+          "trackerSnapshot": {
+            "description": "Optional: the repository's command that prints a work-snapshot/1 tracker snapshot of the delivery's work, for tracker-snapshot to run. {parent} in argv is the record's meta.trackerParent. {stateDirectory} is the resolved state directory the command runs for.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "argv"
+            ],
+            "properties": {
+              "argv": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "forgeSnapshot": {
+            "description": "Optional: the repository's command that prints a work-snapshot/1 forge snapshot of the delivery's change requests, for forge-snapshot and serve's refresh to run. {parent} in argv is the record's meta.trackerParent. {stateDirectory} is the resolved state directory the command runs for.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "argv"
+            ],
+            "properties": {
+              "argv": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "siblingSnapshot": {
+            "description": "Optional: the repository's command that prints a sibling-snapshot/1 read of each sibling delivery the record names, for serve's refresh to run. delivery-views ships one: hosted.py siblings --state-dir {stateDirectory}. {stateDirectory} is the resolved state directory the command runs for.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "argv"
+            ],
+            "properties": {
+              "argv": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "workHints": {
+            "description": "Optional: the repository's command that prints a work-hints/1 document of each item's files and priority, for next to run. {parent} in argv is the record's meta.trackerParent. {stateDirectory} is the resolved state directory the command runs for.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "argv"
+            ],
+            "properties": {
+              "argv": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "refreshSeconds": {
+            "description": "Optional. How often serve reads the declared forge and tracker snapshots and reconciles them, in seconds, at most 86400; 180 when absent, and 0 turns it off.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "liveHome": {
+            "description": "Optional. The id of a declared argv renderer whose HTML view the live server serves at its front page, as it serves /view/<output>; the built-in page when absent.",
+            "type": "string",
+            "minLength": 1
+          },
+          "liveRuns": {
+            "description": "Optional. The runs page and the run store the live server follows. renderer is the id of a declared argv renderer whose HTML view is the front page while there is no record. inventory.argv is the runtime's runs command, the same argv as .agents/delivery-views.json's runs, to which live appends list --json once at start to read runsDir; timeoutSeconds bounds it, 10 when absent. Without it, live never runs the inventory or reads the store.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "renderer",
+              "inventory"
+            ],
+            "properties": {
+              "renderer": {
+                "type": "string",
+                "minLength": 1
+              },
+              "inventory": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "argv"
+                ],
+                "properties": {
+                  "argv": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "timeoutSeconds": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          },
+          "statusOverrideMaxAgeSeconds": {
+            "description": "Optional. How long a lead's status override lasts before the derived status line returns; 14400 when absent.",
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "parallelChecks": {
+        "description": "How many parallelSafe checks may run at once. Optional; 1 when absent, so every check runs alone.",
+        "type": "integer",
+        "minimum": 1
+      },
+      "batch": {
+        "description": "How the batch subcommand finds the candidate that failed a batch's checks. Optional.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "culpritSearch"
+        ],
+        "properties": {
+          "culpritSearch": {
+            "description": "bisect checks the fewest prefixes of the batch; serial checks each prefix in order. bisect when absent.",
+            "enum": [
+              "bisect",
+              "serial"
+            ]
+          }
+        }
+      },
+      "checkOutput": {
+        "description": "Optional. failurePattern is a regular expression, matched line by line against a failed check's output, with a named group id and an optional named group message; each match is a failing test or step.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "failurePattern"
+        ],
+        "properties": {
+          "failurePattern": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "flakes": {
+        "description": "Optional. Known flakes: a check id, the regular expressions its flaky failure ids match (absent: the whole check is flaky), and the reference that tracks the flake. A failed check whose failures all match is retried once.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "check",
+            "ref"
+          ],
+          "properties": {
+            "check": {
+              "$ref": "#/$defs/name"
+            },
+            "tests": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      },
+      "reuse": {
+        "description": "Optional. How a lane's recorded runs are reused. Every check whose definition the tree determines is reusable by default. tools names programs every check may call, each recorded by the sha256 of the file it resolves to on the check's PATH. exclude names a check whose recorded run is never reused or carried, with why, which the queue's note quotes; without a provider each id must be one of the binding's checks.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "check",
+                "why"
+              ],
+              "properties": {
+                "check": {
+                  "$ref": "#/$defs/name"
+                },
+                "why": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "$defs": {
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "path": {
+        "type": "string",
+        "minLength": 1
+      },
+      "output": {
+        "description": "A relative path under the state directory: not absolute, and no .. segment.",
+        "type": "string",
+        "pattern": "^(?![A-Za-z]:)(?:[^/\\\\.]|\\.[^/\\\\.]|\\.\\.[^/\\\\])[^/\\\\]*(?:[/\\\\](?:[^/\\\\.]|\\.[^/\\\\.]|\\.\\.[^/\\\\])[^/\\\\]*)*$"
+      },
+      "argv": {
+        "description": "A non-empty list of strings, run without a shell.",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "environment": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "step": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "argv",
+          "paths"
+        ],
+        "properties": {
+          "argv": {
+            "$ref": "#/$defs/argv"
+          },
+          "paths": {
+            "description": "The only paths this step may change.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/path"
+            }
+          }
+        }
+      },
+      "check": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "argv",
+          "cwd",
+          "reasons",
+          "prerequisites"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/name"
+          },
+          "argv": {
+            "$ref": "#/$defs/argv"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "prerequisites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            }
+          },
+          "environmentProfile": {
+            "$ref": "#/$defs/name"
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "parallelSafe": {
+            "description": "true lets the runner run this check at the same time as other parallelSafe checks, up to the binding's parallelChecks. A check without it runs alone.",
+            "type": "boolean"
+          },
+          "title": {
+            "description": "A readable name for a person, such as \"Webapp e2e (Playwright)\", shown in place of the id where the check is reported. Optional; the id stays the check's name everywhere else. The runner copies it into the delivery record, cut to 200 characters.",
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "work-hints/1": {
+    "$id": "urn:agent-skills:orchestrate-work:work-hints:1",
+    "title": "work-hints/1",
+    "description": "What the lead knows about the work beside its tracker state: the files each item is expected to touch, and its priority. The lead writes it; next reads it to rank a lane's next work.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "items"
+    ],
+    "properties": {
+      "items": {
+        "description": "Keyed by subject, as in work-snapshot/1.",
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "files": {
+              "description": "Paths the item is expected to touch, relative to the repository: a file, a folder ending in /, or a glob.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/path"
+              }
+            },
+            "changedFiles": {
+              "description": "The files the item's change actually touches, once it has one. Preferred over files when present.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/path"
+              }
+            },
+            "priority": {
+              "description": "1 is the most urgent, 4 the least; null when it has none.",
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "integer",
+                  "enum": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ]
+                }
+              ]
+            },
+            "blockers": {
+              "description": "The subjects this item comes after, from the plan's order (run-delivery's lead-hints passes the delivery file's after keys). next reads them beside the tracker's blockedBy: one stops blocking once the record holds it merged or settled with no change needed, or the tracker snapshot holds it completed or canceled.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "$defs": {
+      "path": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "sibling-snapshot/1": {
+    "$id": "urn:agent-skills:orchestrate-work:sibling-snapshot:1",
+    "title": "sibling-snapshot/1",
+    "description": "One read of each sibling delivery the record names, from its published hosted snapshot, as delivery-views' hosted.py siblings prints it. reconcile applies it entry by entry: an entry older than snapshotMaxAgeSeconds counts as stale.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "takenAt",
+      "siblings"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "sibling-snapshot/1"
+      },
+      "takenAt": {
+        "$ref": "#/$defs/timestamp"
+      },
+      "siblings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "link",
+            "readAt",
+            "outcome"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "link": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9+.-]*://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?/d/[a-f0-9]{64}$"
+            },
+            "readAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "outcome": {
+              "enum": [
+                "read",
+                "stale",
+                "unavailable",
+                "incompatible",
+                "other-epic"
+              ]
+            },
+            "trackerParent": {
+              "$ref": "#/$defs/name"
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "closing": {
+              "type": "object"
+            },
+            "stale": {
+              "type": "boolean"
+            },
+            "terminal": {
+              "type": "boolean"
+            },
+            "stories": {
+              "description": "The sibling's stories, from its body's planned and queue: present only when the outcome is read or stale.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "subject",
+                  "title",
+                  "stage"
+                ],
+                "properties": {
+                  "subject": {
+                    "$ref": "#/$defs/name"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "stage": {
+                    "enum": [
+                      "planned",
+                      "building",
+                      "review",
+                      "settled",
+                      "queued",
+                      "syncing",
+                      "synced",
+                      "checking",
+                      "checked",
+                      "merging",
+                      "merged",
+                      "stopped"
+                    ]
+                  },
+                  "changeRequest": {
+                    "$ref": "#/$defs/name"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "$defs": {
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "timestamp": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      }
+    }
+  },
+  "work-snapshot/1": {
+    "$id": "urn:agent-skills:orchestrate-work:work-snapshot:1",
+    "title": "work-snapshot/1",
+    "description": "What the lead's forge or tracker said about the epic's work at one moment. The lead writes it with its own tools; the state tool never calls a forge or tracker.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "takenAt",
+      "source",
+      "items"
+    ],
+    "properties": {
+      "takenAt": {
+        "$ref": "#/$defs/timestamp"
+      },
+      "source": {
+        "enum": [
+          "forge",
+          "tracker"
+        ]
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "subject",
+            "state"
+          ],
+          "properties": {
+            "subject": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "description": "Tracker snapshots only: the ticket's summary as plain text, at most 1000 characters; the snapshot's maker shortens a longer one.",
+              "type": "string",
+              "maxLength": 1000
+            },
+            "state": {
+              "enum": [
+                "backlog",
+                "started",
+                "completed",
+                "canceled",
+                "open",
+                "draft",
+                "merged",
+                "closed"
+              ]
+            },
+            "status": {
+              "description": "Tracker snapshots only, optional: the tracker's own name for the item's status. A snapshot that gives offeredTransitions gives this too.",
+              "type": "string",
+              "minLength": 1
+            },
+            "offeredTransitions": {
+              "description": "Tracker snapshots only, optional: the names of the moves the tracker offers from that status, each once. Readiness before assignment walks the configured start moves, counting a move whose configured target is the status as made, and reads whether the first move not yet made is among them. An item with a status and without this field is on a tracker that restricts no move, so that move reads as offered; with neither, readiness isn't checked.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "changeRequest": {
+              "$ref": "#/$defs/name"
+            },
+            "head": {
+              "$ref": "#/$defs/commit"
+            },
+            "blockedBy": {
+              "description": "Tracker snapshots only: the subjects of the items that block this one. Blockers are the tracker's: reconcile ignores any a forge snapshot carries.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            },
+            "criteria": {
+              "description": "Tracker snapshots only, optional: the item's acceptance criteria, each one line of plain text, in the order its Acceptance Criteria section lists them, at most 50; the snapshot's maker shortens one longer than 600 characters. Absent when the item has no such section. lead-setup drafts a story's criteria from it.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 600
+              }
+            },
+            "mergedAt": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+              "description": "Forge merges only: verified source occurrence time, no later than takenAt. Omit when unknown."
+            },
+            "unmarked": {
+              "description": "Tracker snapshots only, optional: true when the snapshot is scoped and the item carries no value of any scoped kind, such as no component. It stays in scope, flagged, so a forgotten tag shows rather than vanishing.",
+              "const": true
+            }
+          }
+        }
+      },
+      "parent": {
+        "description": "Tracker snapshots only, optional: the epic's own item, the parent the snapshot lists the children of, and its state. A lead command with no --delivery counts a delivery whose parent is completed or canceled as closed.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "subject",
+          "state"
+        ],
+        "properties": {
+          "subject": {
+            "$ref": "#/$defs/name"
+          },
+          "state": {
+            "enum": [
+              "backlog",
+              "started",
+              "completed",
+              "canceled"
+            ]
+          }
+        }
+      },
+      "outside": {
+        "description": "Tracker snapshots only, optional: the parent's children a scope puts outside this delivery, because each carries a value of a scoped kind and matches none. Present whenever the snapshot is scoped, empty when none is outside. reconcile never adds these as planned work or follow-ups, never reports on them, and clears a copy it added earlier.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "subject",
+            "state"
+          ],
+          "properties": {
+            "subject": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "description": "Optional: the ticket's summary, as an item's, kept so work of this delivery the tracker files elsewhere keeps it.",
+              "type": "string",
+              "maxLength": 1000
+            },
+            "state": {
+              "enum": [
+                "backlog",
+                "started",
+                "completed",
+                "canceled"
+              ]
+            },
+            "status": {
+              "type": "string",
+              "minLength": 1
+            },
+            "blockedBy": {
+              "description": "Optional: the subjects of the parent's children that block this one, as an item's.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            },
+            "marks": {
+              "description": "The values of each scoped kind the item carries, by kind: its components, its labels, or its summary's own marker.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "component": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "label": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "prefix": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "statusStates": {
+        "description": "Tracker snapshots only, optional: the states the snapshot's maker was told to read named statuses as, by status name, in place of their category. reconcile reports a merged story whose ticket moves to a status mapped to started.",
+        "type": "object",
+        "additionalProperties": {
+          "enum": [
+            "backlog",
+            "started",
+            "completed",
+            "canceled"
+          ]
+        }
+      }
+    },
+    "$defs": {
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "timestamp": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      },
+      "commit": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+      }
+    }
+  },
+  "machine-claim/1": {
+    "$id": "urn:agent-skills:orchestrate-work:machine-claim:1",
+    "title": "machine-claim/1",
+    "description": "One claim in the machine ledger, claims/<id>.json in the machine directory every repository on the machine shares. Its process holds the file's lock from enqueue to release; a reader that can take the lock removes the file, whatever pid says, and one that can't counts the claim as live. The pid is for display only.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "id",
+      "state",
+      "slots",
+      "exclusive",
+      "kind",
+      "subject",
+      "label",
+      "repository",
+      "delivery",
+      "story",
+      "pid",
+      "enqueuedAt",
+      "startedAt",
+      "expectedEnd",
+      "estimate",
+      "admittedBy",
+      "why"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "machine-claim/1"
+      },
+      "id": {
+        "$ref": "#/$defs/claimId"
+      },
+      "state": {
+        "enum": [
+          "waiting",
+          "running"
+        ]
+      },
+      "slots": {
+        "$ref": "#/$defs/slots"
+      },
+      "exclusive": {
+        "type": "boolean"
+      },
+      "kind": {
+        "$ref": "#/$defs/kind"
+      },
+      "subject": {
+        "$ref": "#/$defs/name",
+        "description": "The check id, turn, lead-suite, fullHealth or the caller's label."
+      },
+      "label": {
+        "$ref": "#/$defs/name"
+      },
+      "repository": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/name"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "delivery": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/name"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/name"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "pid": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "enqueuedAt": {
+        "$ref": "#/$defs/timestamp"
+      },
+      "startedAt": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/timestamp"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "expectedEnd": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/timestamp"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "estimate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "seconds",
+          "slots",
+          "from"
+        ],
+        "properties": {
+          "seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slots": {
+            "$ref": "#/$defs/slots"
+          },
+          "from": {
+            "enum": [
+              "measured",
+              "none"
+            ]
+          }
+        }
+      },
+      "admittedBy": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/admittedBy"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "why": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/name"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "$defs": {
+      "timestamp": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "kind": {
+        "enum": [
+          "check",
+          "fullHealth",
+          "suite",
+          "run"
+        ]
+      },
+      "admittedBy": {
+        "enum": [
+          "capacity",
+          "alone",
+          "slot",
+          "now",
+          "admit"
+        ]
+      },
+      "slots": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "claimId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{32}$"
+      }
+    }
+  },
+  "machine-capacity/1": {
+    "$id": "urn:agent-skills:orchestrate-work:machine-capacity:1",
+    "title": "machine-capacity/1",
+    "description": "capacity.json in the machine directory: how many slots the machine bears, set with machine.py capacity --slots N --why. Without it, capacity is the core count.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "slots",
+      "setAt",
+      "why"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "machine-capacity/1"
+      },
+      "slots": {
+        "$ref": "#/$defs/slots"
+      },
+      "setAt": {
+        "$ref": "#/$defs/timestamp"
+      },
+      "why": {
+        "$ref": "#/$defs/name"
+      }
+    },
+    "$defs": {
+      "timestamp": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "slots": {
+        "type": "integer",
+        "minimum": 1
+      }
+    }
+  },
+  "machine-costs/1": {
+    "$id": "urn:agent-skills:orchestrate-work:machine-costs:1",
+    "title": "machine-costs/1",
+    "description": "costs.json in the machine directory: for each repository, kind and subject, the last five passed runs and, apart, the last five that failed or timed out. A claim's estimate takes medians over the passed runs only; cpuSeconds is null where the system has no wait4.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "entries"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "machine-costs/1"
+      },
+      "entries": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repository",
+            "kind",
+            "subject",
+            "passed",
+            "failed"
+          ],
+          "properties": {
+            "repository": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/name"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "$ref": "#/$defs/kind"
+            },
+            "subject": {
+              "$ref": "#/$defs/name"
+            },
+            "passed": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/run"
+              }
+            },
+            "failed": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/run"
+              }
+            }
+          }
+        }
+      }
+    },
+    "$defs": {
+      "timestamp": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "kind": {
+        "enum": [
+          "check",
+          "fullHealth",
+          "suite",
+          "run"
+        ]
+      },
+      "run": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "seconds",
+          "cpuSeconds",
+          "result",
+          "at"
+        ],
+        "properties": {
+          "seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "cpuSeconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result": {
+            "enum": [
+              "passed",
+              "failed",
+              "timedOut"
+            ]
+          },
+          "at": {
+            "$ref": "#/$defs/timestamp"
+          }
+        }
+      }
+    }
+  },
+  "machine-history/1": {
+    "$id": "urn:agent-skills:orchestrate-work:machine-history:1",
+    "title": "machine-history/1",
+    "description": "One line of history.jsonl in the machine directory, which keeps its last 1,000 entries: an admission with how long it waited, an override (now or admit) with its reason, a capped wait that gave up, or a capacity change.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "at",
+      "event"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "machine-history/1"
+      },
+      "at": {
+        "$ref": "#/$defs/timestamp"
+      },
+      "event": {
+        "enum": [
+          "admitted",
+          "override",
+          "gave-up",
+          "capacity"
+        ]
+      },
+      "claim": {
+        "$ref": "#/$defs/claimId"
+      },
+      "kind": {
+        "$ref": "#/$defs/kind"
+      },
+      "subject": {
+        "$ref": "#/$defs/name"
+      },
+      "label": {
+        "$ref": "#/$defs/name"
+      },
+      "repository": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/name"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "delivery": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/name"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/name"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "slots": {
+        "$ref": "#/$defs/slots"
+      },
+      "admittedBy": {
+        "$ref": "#/$defs/admittedBy"
+      },
+      "why": {
+        "$ref": "#/$defs/name"
+      },
+      "waitedSeconds": {
+        "type": "number",
+        "minimum": 0
+      },
+      "holders": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/claimId"
+        }
+      },
+      "capacity": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/slots"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "$defs": {
+      "timestamp": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "kind": {
+        "enum": [
+          "check",
+          "fullHealth",
+          "suite",
+          "run"
+        ]
+      },
+      "admittedBy": {
+        "enum": [
+          "capacity",
+          "alone",
+          "slot",
+          "now",
+          "admit"
+        ]
+      },
+      "slots": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "claimId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{32}$"
+      }
+    }
+  },
+  "delivery-partition/1": {
+    "$id": "urn:agent-skills:orchestrate-work:delivery-partition:1",
+    "title": "delivery-partition/1",
+    "description": "One seat's partition of a shared record, the partition.json of each commit on refs/agent-skills/<key>/<seat>, beside journal.jsonl, that seat's own entries in seq order with their links by origin. Every other seat fetches it and ingests it into its own record.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "seat",
+      "generation",
+      "through",
+      "slice"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "delivery-partition/1"
+      },
+      "seat": {
+        "$ref": "#/$defs/seat"
+      },
+      "generation": {
+        "description": "The writer generation of the seat's record, or null for an unpinned one. A partition whose archiveSha256 differs from the reader's own pin is held, never ingested, until the lagging machine upgrades.",
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "releaseId",
+              "archiveSha256"
+            ],
+            "properties": {
+              "releaseId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "archiveSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        ]
+      },
+      "through": {
+        "description": "The seat's last own seq: journal.jsonl holds its entries 1 to through.",
+        "type": "integer",
+        "minimum": 0
+      },
+      "slice": {
+        "description": "Every value of the record this seat's own writes set, each by path and with the origin of the write that set it and the other seat's value it replaced. A path names the record's own fields: meta/<field>, a top-level field, a keyed array's presence as <array>[], one of its elements by the patch layer's keyed selector, such as queue[subject=K], and a field of one, such as queue[subject=K]/stage; never an index. An entry carries removed: true in place of value for an element or field its writer deleted. regionsSettled, and a queue element's leadSelection.reuse.decision, name journal entries: they are carried by origin and translated to local ids on ingest.",
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/sliceEntry"
+        }
+      },
+      "carried": {
+        "description": "What this seat's machine carries for its peers (D21): from its first delivery handover, what it kept as it passed delivery on, its hosted publisher's identity, so the public link stays, how far its tracker ledger had posted, by each seat's last seq every entry up to which it covered, its evidence notes and its friction stub; and its machine-local inputs.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "hostedIdentity": {
+            "description": "The hosted publisher's identity sidecar as this seat last kept it, with no publication pending, or null where it published nothing.",
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "spec",
+                  "publicId",
+                  "ownerId",
+                  "epoch",
+                  "sequence"
+                ],
+                "properties": {
+                  "spec": {
+                    "const": "hosted-delivery-identity/1"
+                  }
+                }
+              }
+            ]
+          },
+          "trackerThrough": {
+            "description": "For each seat, by its id, the last seq up to which the tracker ledger covered every entry of that seat.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "inputs": {
+            "description": "This seat's machine-local inputs its peers read: its own entries of each carried flow log, by log and file key, each with its writer's seat and tenure and the journal entries it names by origin; its lanes' merged or settled stories whose checkout is still on its machine; and, from the delivery holder, the origin of the closing delivery.closed once its close archived, and the built plan.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "logs": {
+                "description": "Each carried flow log, by its name, and its entries by file key: the delivery or a story.",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "acceptance": {
+                    "$ref": "#/$defs/carriedLog"
+                  },
+                  "app-checks": {
+                    "$ref": "#/$defs/carriedLog"
+                  },
+                  "lane-starts": {
+                    "$ref": "#/$defs/carriedLog"
+                  },
+                  "videos": {
+                    "$ref": "#/$defs/carriedLog"
+                  },
+                  "tracker-marks": {
+                    "$ref": "#/$defs/carriedLog"
+                  },
+                  "full-health": {
+                    "$ref": "#/$defs/carriedLog"
+                  },
+                  "resolutions": {
+                    "$ref": "#/$defs/carriedLog"
+                  }
+                }
+              },
+              "checkoutsLeft": {
+                "description": "The subjects of this seat's lanes' merged or settled stories whose checkout still exists on its machine.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "closedEntry": {
+                "description": "The origin of the delivery.closed whose close this seat archived, or null.",
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/$defs/origin"
+                  }
+                ]
+              },
+              "plan": {
+                "description": "The delivery holder's built plan.json, which other seats show instead of building their own, or null.",
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          },
+          "evidenceNotes": {
+            "description": "The evidence-notes.json this seat kept when it last passed delivery on, so the page's title, intro and notes stay; null where it kept none.",
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object"
+              }
+            ]
+          },
+          "friction": {
+            "description": "The friction stub this seat kept when it last passed delivery on, or null.",
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "$defs": {
+      "seat": {
+        "description": "A seat's id: s- and 12 lowercase hex characters, made when the seat is created.",
+        "type": "string",
+        "pattern": "^s-[0-9a-f]{12}$"
+      },
+      "origin": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "seat",
+          "seq"
+        ],
+        "properties": {
+          "seat": {
+            "$ref": "#/$defs/seat"
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "seen": {
+            "description": "What the writing seat had ingested of every other seat when it wrote the value, by each seat's last seq. A write that journals nothing takes its seat's last entry as its seq, so this is what says which scopes the seat held: one it took since that entry still counts.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      },
+      "sliceEntry": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "origin"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "origin": {
+            "$ref": "#/$defs/origin"
+          },
+          "value": {
+            "description": "The value the write set; absent when removed is true."
+          },
+          "removed": {
+            "const": true
+          },
+          "replaces": {
+            "description": "The other seat's value this write replaced, by that seat, its seq and the digest of the value as carried, so every machine can tell this write follows it. Absent for a write that replaced no other seat's value.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "seat",
+              "seq",
+              "digest"
+            ],
+            "properties": {
+              "seat": {
+                "$ref": "#/$defs/seat"
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{16}$"
+              }
+            }
+          }
+        }
+      },
+      "carriedLog": {
+        "description": "One carried flow log's entries, by file key, in its writer's order.",
+        "type": "object",
+        "additionalProperties": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "by",
+              "tenure"
+            ],
+            "properties": {
+              "by": {
+                "$ref": "#/$defs/seat"
+              },
+              "tenure": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/$defs/origin"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
