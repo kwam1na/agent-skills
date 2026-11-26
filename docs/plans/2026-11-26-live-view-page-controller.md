@@ -80,11 +80,17 @@ approving it.
    an in-page link to another chapter) adds one history entry. Following the
    scroll in the one-page layout, a redraw, the first route, the layout switch,
    an outside address, Back and Forward, and an item link within the chapter
-   already shown add none. (Epic decision, made exact.)
+   already shown add none. In the one-page layout nothing the controller does
+   adds an entry: every chapter is on the one page, so Back leaves it. An outside
+   address change adds the browser's own entry and no second one. (Epic
+   decision, made exact.)
 3. **One entry for every address change.** One delegated click handler on
-   `document` takes any same-page `#id` link, wherever it sits (the rail and
-   chapters in `#app`, the chapter tab and the corner name in `.corner` and
-   `body`), cancels the browser's jump and calls `go`. `popstate` and
+   `document` takes a same-page `#id` link whose target is a chapter or lies
+   inside one, wherever the link sits (the rail and chapters in `#app`, the
+   chapter tab and the corner name in `.corner` and `body`), cancels the
+   browser's jump and calls `go`. Any other `#id` link, such as the hosted
+   shell's skip link to `#app`, and every link to another document are left to
+   the browser. `popstate` and
    `hashchange` both go to one routing entry, which does nothing when the
    address already equals `page.here()`, so a Back that fires both events, or an
    address the controller wrote itself, routes once. `location.hash`,
@@ -236,8 +242,15 @@ five parts below, in order.
   (replace, item-or-top), `history` (none, item-or-top), `layout` (replace,
   top), `first` (replace, item-or-top), `follow` (replace, none). `go` reads the
   rule from the table and branches on no reason by name; an unknown reason
-  throws. It resolves item, then chapter, then (from SLICE-3) each fold holding
-  the item, opened; writes the address; then scrolls once.
+  throws. In the one-page layout `push` and `push-if-chapter-changes` write as
+  `replace` (decision 2), for every reason, declared or built in. It resolves
+  item, then chapter, then (from SLICE-3) each fold holding the item, opened;
+  writes the address; then scrolls once.
+- **`page.start({chapters, show})`** is how a page puts itself under the
+  controller: its chapter ids and the function that shows one. Until a page
+  calls it, `page.js` binds no handler and routes nothing, so the runs and
+  history pages are untouched by it until SLICE-6. The line map calls it from
+  SLICE-2; the runs and history pages, as one-chapter pages, from SLICE-6.
 - **Scroll by reason** is the only scroll write on a page outside the launcher
   panel. A turn lands instantly; an item lands centred in one move, smooth only
   when `page.motion(true)` allows; a redraw keeps the reader's place by anchor
@@ -268,7 +281,8 @@ adds its rows to an "Extending the page" section of
 
 | To add | Call | It gets, with no other code |
 | --- | --- | --- |
-| a kind of navigation | `page.reasons.<name> = {address, scroll}`, then `page.go(location, name)` | its history entry or none, one scroll by its rule, folds opened to the item |
+| a kind of navigation | `page.reasons.<name> = {address, scroll}`, then `page.go(location, name)` | its history entry or none (always none in the one-page layout), one scroll by its rule, folds opened to the item |
+| a page | `page.start({chapters, show})` | routing, links, Back and Forward, by the same rules |
 | a sideways-scrolling region | `page.sideways(key, node)` | its place kept through redraws |
 | a redraw trigger | `page.redraw(draw, why)` | the place, focus and open state kept, merged within a frame |
 | something open, closed or picked | `page.state(key, {saved})` | kept through redraws; with `saved`, through reloads |
@@ -298,8 +312,8 @@ it stops and asks.
    the line map's scroll where it was; a push leaves the runs page's scroll
    where it was.
 2. In paged layout, each page turn adds one history entry; Back twice and
-   Forward once step through the chapters in order, each at its top; nothing
-   else adds an entry.
+   Forward once step through the chapters in order, each at its top; the
+   controller adds no other entry, and none at all in the one-page layout.
 3. A link to `#<id>` inside a closed fold, loaded fresh or followed in the page,
    opens the chapter and every fold holding the target, scrolls once, and the
    folds stay open through the next redraw.
@@ -330,8 +344,8 @@ it stops and asks.
 
 ## Stories
 
-All slices change `page.js`; SLICE-6 runs in a second lane once the controller's
-calls are complete. The delivery starts once V26-3993's V26-3996 has landed on
+Every slice runs in one lane, in order: each changes `page.js`, `SKILL.md` or the
+page lane's shared harness, and each builds on the one before. The delivery starts once V26-3993's V26-3996 has landed on
 `main`.
 
 ### SLICE-0. Give every delivery view one shared page asset
@@ -353,6 +367,9 @@ Lane 1, tier 1, not blocked. Test-first. Files:
   `build-assets.mjs` prepends it to the renderer's input.
 - The new output in the four profiles, the provenance lock (added by hand, then
   the writer), the catalog entry and the release-integration core payload pin.
+- The page tests that evaluate `run-summary.js` alone
+  (`rich-words.test.mjs` 10-15, `line-map-plan-review.test.mjs` 383-386)
+  evaluate `page.js` before it, as the pages do.
 - Tests, each shown red on the slice's base:
   - **Loaded first.** Each of the three rendered pages has `page.js`'s banner
     before `run-summary.js`'s; the built hosted renderer starts with it.
@@ -362,8 +379,9 @@ Lane 1, tier 1, not blocked. Test-first. Files:
     doesn't. Mutant: the keyboard clause applied with `fromReader` false.
   - **Reader motion.** After a keydown a fold opens without its height ease;
     after a pointer press it eases again. Mutant: a sticky keyboard flag.
-  - **One check.** A pin: `prefers-reduced-motion` appears in `page.js` only,
-    across every asset, in either quote style. Mutant: a copy in `runs.js`.
+  - **One check.** A pin: among the `.js` assets, `prefers-reduced-motion`
+    appears in `page.js` only, in either quote style. The stylesheets' media
+    queries are out of the pin. Mutant: a copy in `runs.js`.
 
 ### V26-4003. Keep the reader's place when the live view redraws itself
 
@@ -394,7 +412,9 @@ Lane 1, tier 3, after V26-4003. Test-first. Files:
   `document` and the one routing entry for `popstate` and `hashchange`
   (decisions 2 and 3). `route`, `showPage`'s scroll branch, `revealPage` and
   `followScroll` move into `page.js`; every write in the inventory's scroll and
-  address table except the launcher list's goes through `go`.
+  address table except the launcher list's goes through `go`. The line map
+  calls `page.start`. The check pager's local `page` (`line-map.js` 2246) is
+  renamed so it no longer shadows the controller.
 - `keepPlace` and `prev.lineScroll` retire into the redraw anchor and
   `page.sideways` (decision 5).
 - The CSS smooth-scroll rule goes (decision 9).
@@ -403,10 +423,16 @@ Lane 1, tier 3, after V26-4003. Test-first. Files:
 - Tests, each shown red on the slice's base:
   - **Push and replace.** In paged layout, a rail click, a chapter-tab click,
     the corner name, an arrow, a scroll-past and a launcher page each grow
-    `history.length` by one. A tick, a push, a layout switch, an outside
-    `hashchange`, an item link within the chapter shown and, in the one-page
-    layout, scroll-following and a chapter-tab click grow it by none. Mutants:
-    `go` always replacing; the tab's links left to the browser.
+    `history.length` by one. A tick, a push, a layout switch, an item link
+    within the chapter shown and, in the one-page layout, scroll-following, a
+    chapter-tab click and a What's left row that goes to The line grow it by
+    none. In paged layout a What's left row that goes to The line grows it by
+    one, and Back from there returns to What's left. An outside `location.hash`
+    change grows it by exactly one, the browser's own, and shows the named
+    chapter. The hosted shell's skip link to `#app` is not prevented. Mutants:
+    `go` always replacing; the tab's links left to the browser;
+    `push-if-chapter-changes` always replacing; `go` ignoring the layout; `go`
+    pushing for `address`; the handler taking every `#id`.
   - **Back and Forward.** Turn Now, The line, What's left; Back: The line; Back:
     Now; Forward: The line; each at its top, `history.length` unchanged across
     them. Mutant: `go` pushing for `history`.
@@ -417,6 +443,12 @@ Lane 1, tier 3, after V26-4003. Test-first. Files:
     plan unit, a decision reference, a setback link, Back, and an outside
     `hashchange`. Mutants: `revealPage` scrolling as well; the setback link's
     bare `focus()`; `popstate` and `hashchange` routed apart.
+  - **An outside address within the chapter still routes.** With the plan
+    chapter shown, an outside `location.hash` change to `#plan-decision-3`
+    makes exactly one move, to decision 3, and grows `history.length` by
+    exactly one (from SLICE-3 it also opens the decisions fold and decision
+    3). Mutant: the routing guard
+    comparing the chapter alone.
   - **Focus goes with the link.** A decision reference and a setback link leave
     focus on the decision's summary and on the setback. Mutant: the focus move
     dropped.
@@ -573,7 +605,7 @@ Lane 1, tier 6, after SLICE-4. Test-first. Files:
 
 ### SLICE-6. Bring the runs and history pages onto the controller
 
-Lane 2, tier 6, after SLICE-4. Test-first. Files:
+Lane 1, tier 7, after SLICE-5. Test-first. Files:
 `skills/delivery-views/assets/runs.js`,
 `skills/delivery-views/assets/history.js`,
 `skills/delivery-views/SKILL.md`,
@@ -581,10 +613,15 @@ Lane 2, tier 6, after SLICE-4. Test-first. Files:
 `tests/delivery_views_page/history-page.test.mjs` (new) and
 `tests/test_delivery_views_history.py`.
 
-- The runs page draws through `page.redraw`, its run rows are disclosures on
-  `page.fold` keyed `run:<runId>`, its links to `#now` and `#ended` and its
-  links to the line map go through `go`, and every focusable element carries a
-  key. Its refetch on a push or runs event keeps place, open rows and focus.
+- The runs page calls `page.start` as a one-chapter page and draws through
+  `page.redraw`; its run rows are disclosures on `page.fold` keyed
+  `run:<runId>`, and every focusable element carries a key. A deep link to
+  `#now`, `#ended` or a run opens through the controller's first route. Its
+  links to the line map, the history page and the previews stay ordinary links
+  that leave the page. Its refetch on a push or runs event keeps place, open
+  rows and focus.
+- `runs.js` and `history.js` rename their local `page` (`runs.js` 9,
+  `history.js` 52) so it no longer shadows the controller.
 - The history page's run rows are disclosures on `page.fold` keyed
   `history:<row key>`, each filled on its first open as today, and keyed for
   focus. A deep link to `#<row key>` opens it.
@@ -600,6 +637,17 @@ Lane 2, tier 6, after SLICE-4. Test-first. Files:
     the new gate (the existing test at `runs.test.mjs` 106, unchanged).
   - **History deep link.** A first load at a row's id opens that row and
     scrolls it into view once. Mutant: the row left shut.
+  - **Links away still leave.** A click on the runs page's line map link is
+    not prevented. Mutant: the handler taking a link to another document.
+  - **Every focusable element has a key.** SLICE-4's check, over the same
+    selector, on the runs page fixture (with previews, open and ended runs) and
+    on every history golden case. Mutant: the runs page's links built without
+    a key.
+  - **Disclosures only through the fold.** A pin: `runs.js` and `history.js`
+    set no `hidden` or `aria-expanded` themselves. Mutant: a run row left on its
+    own click handler.
+  - **No storage.** A pin: neither `runs.js` nor `history.js` names
+    `localStorage` or `sessionStorage`, shown red by planting one.
   - **Same pins.** SLICE-2's and SLICE-4's source pins cover `runs.js` and
     `history.js`; shown red by planting a `scrollTo` in `runs.js`.
   - The runs and history goldens pass unchanged.
@@ -608,14 +656,12 @@ Lane 2, tier 6, after SLICE-4. Test-first. Files:
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | SLICE-0, V26-4003, SLICE-2, SLICE-3, SLICE-4, SLICE-5 | `skills/delivery-views/assets/page.js`, `skills/delivery-views/assets/line-map.js`, `skills/delivery-views/assets/line-map.css`, `skills/delivery-views/assets/run-summary.js`, `skills/delivery-views/scripts/render.py`, `skills/delivery-views/SKILL.md`, `hosted/delivery-viewer/scripts/build-assets.mjs`, `hosted/delivery-viewer/src/viewer.ts`, `profiles/delivery-views.json`, `profiles/jira.json`, `profiles/linear.json`, `profiles/run-delivery.json`, `tests/delivery_views_page/`, `tests/test_release_integration.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_hosted.py`, `tests/test_delivery_views_hosted_projection.py` |
-| 6 | 2 | SLICE-6 | `skills/delivery-views/assets/runs.js`, `skills/delivery-views/assets/history.js`, `tests/delivery_views_page/runs.test.mjs`, `tests/delivery_views_page/history-page.test.mjs`, `tests/test_delivery_views_history.py` |
+| 1 | 1 | SLICE-0, V26-4003, SLICE-2, SLICE-3, SLICE-4, SLICE-5, SLICE-6 | `skills/delivery-views/assets/`, `skills/delivery-views/scripts/render.py`, `skills/delivery-views/SKILL.md`, `hosted/delivery-viewer/scripts/build-assets.mjs`, `hosted/delivery-viewer/src/viewer.ts`, `profiles/delivery-views.json`, `profiles/jira.json`, `profiles/linear.json`, `profiles/run-delivery.json`, `tests/delivery_views_page/`, `tests/test_release_integration.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_hosted.py`, `tests/test_delivery_views_hosted_projection.py`, `tests/test_delivery_views_history.py` |
 
-Lane 1 holds the controller throughout, because each of its slices builds on the
-one before. SLICE-6 needs only the calls SLICE-4 completes, so it runs beside
-SLICE-5. Lane 1 releases `runs.test.mjs` to lane 2 when SLICE-4 merges; both
-lanes add a section to `SKILL.md`, in different paragraphs, so the merge queue
-serializes it. Shared files: `provenance.lock.json` and the `delivery-views`
+One lane, because every slice changes `page.js` or the page lane's shared
+harness, and both lanes would otherwise write `SKILL.md`. SLICE-6 needs only the
+calls SLICE-4 completes; it comes after SLICE-5 so no two stories hold the same
+files at once. Shared files: `provenance.lock.json` and the `delivery-views`
 catalog entry change in every story; a lock-only conflict is resolved by the
 provenance writer, as `AGENTS.md` says. No story uses a fixed port or browser
 session.
