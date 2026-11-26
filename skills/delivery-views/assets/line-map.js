@@ -4706,6 +4706,92 @@
     }
     return add(row, name, criteria, status);
   }
+  /** A plan decision as `{head, body}`: a headed one as the plan reader wrote it, or one text as a headline alone. */
+  function decisionOf(entry) {
+    if (typeof entry === "string") { return text(entry) ? { head: text(entry), body: [] } : null; }
+    if (!isObject(entry) || !text(entry.head)) { return null; }
+    var body = list(entry.body).map(function (block) {
+      if (typeof block === "string") { return text(block) || null; }
+      var items = isObject(block) ? list(block.items).map(text).filter(Boolean) : [];
+      return items.length ? items : null;
+    }).filter(Boolean);
+    return { head: text(entry.head), body: body };
+  }
+  // The headed decisions the reader opened, by number, kept across the plan's redraws until the page reloads.
+  var decisionsOpen = Object.create(null);
+  /** A decision's words through the page's one formatter, with "decision N", for a number the list holds, a link to it. */
+  function decisionWords(words, count) {
+    var nodes = [], last = 0, match, pattern = /\bdecision (\d+)\b/gi;
+    function plain(part) { if (part) { nodes = nodes.concat(linked(part)); } }
+    while ((match = pattern.exec(words)) !== null) {
+      var n = Number(match[1]);
+      if (n < 1 || n > count) { continue; }
+      plain(words.slice(last, match.index));
+      var ref = el("a", "pd-ref", match[0]);
+      ref.href = "#plan-decision-" + n;
+      ref.addEventListener("click", (function (to) { return function (event) { event.preventDefault(); openDecision(to); }; })(n));
+      nodes.push(ref);
+      last = match.index + match[0].length;
+    }
+    plain(words.slice(last));
+    return nodes;
+  }
+  /** Opens a decision a reference names, and brings it to the reader. */
+  function openDecision(n) {
+    var row = document.getElementById("plan-decision-" + n);
+    var box = row ? row.querySelector("details") : null;
+    if (!row) { return; }
+    if (box) { box.open = true; decisionsOpen[n] = true; }
+    if (typeof row.scrollIntoView === "function") { row.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    var summary = row.querySelector("summary");
+    if (summary) { summary.focus(); }
+  }
+  /**
+   * The plan's decisions, numbered as the plan numbers them: each headline always shows, so the calls read at a glance,
+   * and a decision with reasons opens to its paragraphs and bullets. One control opens or closes every one of them.
+   */
+  function decisionList(decisions) {
+    var box = el("div", "plan-decided");
+    var rows = el("ol", "plan-decisions");
+    var boxes = [];
+    var all = el("button", "pd-all");
+    all.type = "button";
+    function sayAll() { all.textContent = boxes.every(function (entry) { return entry.open; }) ? "Close all" : "Open all"; }
+    decisions.forEach(function (decision, i) {
+      var n = i + 1;
+      var row = el("li", "pd");
+      row.id = "plan-decision-" + n;
+      var head = add.apply(null, [el("span", "pd-head")].concat(decisionWords(decision.head, decisions.length)));
+      var line = [el("span", "pd-n", String(n)), head];
+      if (!decision.body.length) {
+        rows.appendChild(add(row, add.apply(null, [el("div", "pd-line")].concat(line))));
+        return;
+      }
+      var body = el("div", "pd-body");
+      decision.body.forEach(function (block) {
+        if (typeof block === "string") { body.appendChild(add.apply(null, [el("p")].concat(decisionWords(block, decisions.length)))); return; }
+        var bullets = el("ul");
+        block.forEach(function (item) { bullets.appendChild(add.apply(null, [el("li")].concat(decisionWords(item, decisions.length)))); });
+        body.appendChild(bullets);
+      });
+      var fold = el("details", "pd-fold");
+      fold.setAttribute("data-n", String(n));
+      if (decisionsOpen[n]) { fold.open = true; }
+      fold.addEventListener("toggle", function () { decisionsOpen[n] = fold.open; sayAll(); });
+      boxes.push(fold);
+      rows.appendChild(add(row, add(fold, add.apply(null, [el("summary", "pd-line")].concat(line)), body)));
+    });
+    if (boxes.length) {
+      all.addEventListener("click", function () {
+        var open = !boxes.every(function (entry) { return entry.open; });
+        boxes.forEach(function (entry) { entry.open = open; decisionsOpen[entry.getAttribute("data-n")] = open; });
+        sayAll();
+      });
+      sayAll();
+      box.appendChild(add(el("div", "pd-tools"), all));
+    }
+    return add(box, rows);
+  }
   /** A fold the reader opens; open folds are remembered for this page. */
   function fold(name, label, count, body) {
     var box = el("details", "plan-fold");
@@ -5153,12 +5239,10 @@
     if (!otherLayout) { folds.appendChild(fold("units", "All units", shownUnits.length, all)); }
     if (review) { folds.appendChild(reviewFold(review)); }
     if (preview) {
-      var decisions = list(preview.decisions).map(text).filter(Boolean);
-      var decided = el("ul", "plan-decisions");
-      decisions.forEach(function (entry) { decided.appendChild(add.apply(null, [el("li")].concat(linked(entry)))); });
+      var decisions = list(preview.decisions).map(decisionOf).filter(Boolean);
       // Before the plan records a decision, the fold says what will appear in it.
       folds.appendChild(fold("decisions", "Decisions", decisions.length ? decisions.length : null,
-        decisions.length ? decided : el("p", "waiting", "The plan's decisions will show here once it records them.")));
+        decisions.length ? decisionList(decisions) : el("p", "waiting", "The plan's decisions will show here once it records them.")));
     }
     var changes = list(plan.changes).filter(isObject);
     var changeBox = el("div", "plan-changes");

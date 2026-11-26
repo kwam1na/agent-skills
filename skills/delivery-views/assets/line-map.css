@@ -1109,7 +1109,32 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 .redline del { color: var(--held); }
 .redline ins { color: var(--ink); text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
 .plan-clipped { margin: 0; font-size: 13px; color: var(--faint); }
-.plan-decisions li { color: var(--ink); }
+/* The plan's decisions: a numbered headline each, read at a glance; one with reasons opens to its paragraphs and bullets. */
+.plan-decided { display: grid; gap: 4px; }
+.pd-tools { display: flex; justify-content: flex-end; }
+.pd-all { border: 0; background: none; padding: 2px 0; font: 500 12px/1 var(--text); color: var(--faint); cursor: pointer; }
+.pd-all:hover { color: var(--ink); }
+.plan-decisions { gap: 0; }
+.pd { border-top: 1px solid var(--hair); scroll-margin: 96px; }
+.pd:first-child { border-top: 0; }
+.pd-line { display: grid; grid-template-columns: 28px minmax(0, 1fr) 14px; column-gap: 12px; align-items: baseline; padding: 11px 0; }
+summary.pd-line { cursor: pointer; list-style: none; }
+summary.pd-line::-webkit-details-marker { display: none; }
+summary.pd-line::after { content: ""; align-self: center; justify-self: end; width: 5px; height: 5px; margin-top: -3px;
+  border-right: 1.5px solid var(--faint); border-bottom: 1.5px solid var(--faint); transform: rotate(45deg); transition: transform .15s ease; }
+.pd-fold[open] > summary.pd-line::after { transform: rotate(-135deg); margin-top: 3px; }
+summary.pd-line:hover::after { border-color: var(--ink); }
+.pd-n { font: 500 12px/22px var(--mono); color: var(--faint); text-align: right; font-variant-numeric: tabular-nums; }
+.pd-head { font-size: 14.5px; line-height: 22px; font-weight: 500; color: var(--ink); text-wrap: pretty; overflow-wrap: anywhere; }
+.pd-fold[open] .pd-head { font-weight: 600; }
+.pd-body { margin: -4px 0 0 40px; padding-bottom: 14px; max-width: 72ch; font-size: 14px; line-height: 1.55; color: var(--soft);
+  display: grid; gap: 8px; overflow-wrap: anywhere; text-wrap: pretty; }
+.pd-body p, .pd-body ul { margin: 0; }
+.pd-body ul { padding: 0; list-style: none; display: grid; gap: 4px; }
+.pd-body li { position: relative; padding-left: 16px; }
+.pd-body li::before { content: ""; position: absolute; left: 3px; top: .72em; width: 4px; height: 4px; border-radius: 50%; background: var(--edge); }
+.pd-ref { color: var(--ink); text-decoration: underline; text-decoration-color: var(--edge); text-underline-offset: 3px; }
+.pd-ref:hover { text-decoration-color: var(--ink); }
 .plan-approvals li { color: var(--ink); font-size: 14px; }
 .plan-approvals li span { font-size: 13px; font-weight: 600; color: var(--wait); }
 .plan-approvals li.done span { color: var(--ink); }

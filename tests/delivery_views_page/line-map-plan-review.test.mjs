@@ -264,7 +264,7 @@ test("the unreviewed and the open preview read in full as pinned", async () => {
     "All units2UnitCriteriaStatusSHOP-91Saved addressesCriterion 1 of SHOP-91 SHOP-91.1Criterion 2 of SHOP-91 SHOP-91.23 proofs left" +
     "No review is recorded for it.It hasn't been handed off yet.It still has to merge.SHOP-92Address book exportCriterion 1 of SHOP-92 SHOP-92.1" +
     "3 proofs leftNo review is recorded for it.It hasn't been handed off yet.It still has to merge.";
-  const tail = "Decisions2Addresses are kept per account, never per device.No new renderer version.Waived proofs0No proof was waived." +
+  const tail = "Decisions21Addresses are kept per account, never per device.2No new renderer version.Waived proofs0No proof was waived." +
     "Approvals ahead2Waiting Product Owner signs off the copyWaiting The operator approves the planOut of scope1Importing addresses" +
     "The full outcomeShoppers keep their addresses between visits.";
   const calm = "Nothing in the plan needs attention right now.";
@@ -293,8 +293,8 @@ test("the decisions fold lists every decision, and a plan outside the delivery l
   const app = await previewShown("preview-other");
   const decisions = app.querySelector('#plan .plan-fold[data-fold="decisions"]');
   expect(decisions.querySelector("summary").textContent).toBe("Decisions2");
-  expect([...decisions.querySelectorAll(".plan-decisions li")].map((node) => node.textContent)).toEqual(
-    ["Addresses are kept per account, never per device.", "No new renderer version."]);
+  expect([...decisions.querySelectorAll(".plan-decisions > li")].map((node) => node.textContent)).toEqual(
+    ["1Addresses are kept per account, never per device.", "2No new renderer version."]);
   expect(app.querySelector("#plan .plan-layout").textContent).toBe("This plan isn't in the delivery layout, so it shows no stories.");
   expect(app.querySelector('#plan .plan-fold[data-fold="units"]')).toBeNull();
   expect(app.querySelector("#plan .plan-open")).toBeNull();
@@ -302,7 +302,7 @@ test("the decisions fold lists every decision, and a plan outside the delivery l
   // A decision reads through the page's one formatter: what it quotes as code reads as code, and nothing becomes markup.
   const quoted = previewDelivery({ rounds: 1, decisions: ["Keep `plan.json` whole.", "<b>never markup</b>"] });
   const rich = (await openPage(render(quoted.document, quoted.plan), { now: NOW, store: false })).pop().app;
-  const items = [...rich.querySelectorAll("#plan .plan-decisions li")];
+  const items = [...rich.querySelectorAll("#plan .plan-decisions > li .pd-head")];
   expect(items.map((node) => [node.textContent, node.querySelector("code")?.textContent ?? null, node.querySelector("b")])).toEqual(
     [["Keep plan.json whole.", "plan.json", null], ["<b>never markup</b>", null, null]]);
   // A preview that records no decisions still draws the fold, saying what will appear there, with no zero.
@@ -392,4 +392,48 @@ test("the run summary takes the preview's wording only when asked, for a deferra
   expect(pill({})).toBe("Approved with 1 deferrable note");
   expect(pill(undefined)).toBe("Approved with 1 deferrable note");
   assert.doesNotMatch(dom.window.runSummaryNode(summary, { preview: true }).textContent, /approv/i);
+});
+
+// A headed decision: its number and headline always show; its paragraphs and bullets open beneath it, one at a time or all
+// together, and a reference to another decision by number opens that one.
+const HEADED = [
+  { head: "An item no scope raised belongs to the queue holder.", body: ["Drafts to mark ready are the only such item."] },
+  { head: "The supervisor words each item.", body: ["Three wordings, as decision 1 has it:",
+    { items: ["`said`, for the seat that wrote the list;", "<b>saidAll</b>, for no seat."] }, "Decision 7 doesn't exist."] },
+  "A plain decision still reads.",
+];
+const HEADED_FOLD = '#plan .plan-fold[data-fold="decisions"]';
+async function headedShown(steps = []) {
+  const { document, plan } = previewDelivery({ rounds: 1, decisions: HEADED });
+  return openPage(render(document, plan), { now: NOW, store: false, steps: [{ toggle: HEADED_FOLD }, ...steps] });
+}
+
+test("a headed decision shows its number and headline, and opens to its paragraphs and bullets", async () => {
+  const snaps = await headedShown();
+  const fold = snaps[1].app.querySelector(HEADED_FOLD);
+  const rows = [...fold.querySelectorAll(".plan-decisions > li")];
+  expect(rows.map((row) => [row.querySelector(".pd-n").textContent, row.querySelector(".pd-head").textContent,
+    row.querySelector("details") ? row.querySelector("details").open : null])).toEqual([
+    ["1", "An item no scope raised belongs to the queue holder.", false],
+    ["2", "The supervisor words each item.", false],
+    ["3", "A plain decision still reads.", null]]);
+  const body = rows[1].querySelector(".pd-body");
+  expect([...body.children].map((node) => node.tagName)).toEqual(["P", "UL", "P"]);
+  expect([...body.querySelectorAll("li")].map((node) => node.textContent)).toEqual(
+    ["said, for the seat that wrote the list;", "<b>saidAll</b>, for no seat."]);
+  expect([body.querySelector("code").textContent, body.querySelector("b")]).toEqual(["said", null]);
+  expect(fold.querySelector(".pd-all").textContent).toBe("Open all");
+});
+
+test("open all opens every headed decision, and a reference to another decision opens it", async () => {
+  const snaps = await headedShown([{ click: `${HEADED_FOLD} .pd-all` }, { click: `${HEADED_FOLD} .pd-all` },
+    { toggle: `${HEADED_FOLD} .plan-decisions > li:nth-child(2) details` }, { click: `${HEADED_FOLD} .pd-ref` }]);
+  const open = (app) => [...app.querySelectorAll(`${HEADED_FOLD} .plan-decisions details`)].map((node) => node.open);
+  expect([open(snaps[2].app), snaps[2].app.querySelector(`${HEADED_FOLD} .pd-all`).textContent]).toEqual([[true, true], "Close all"]);
+  expect([open(snaps[3].app), snaps[3].app.querySelector(`${HEADED_FOLD} .pd-all`).textContent]).toEqual([[false, false], "Open all"]);
+  // Only a number the list holds is a reference: "decision 1" links to the first, "Decision 7" stays words.
+  const refs = [...snaps[4].app.querySelectorAll(`${HEADED_FOLD} .pd-ref`)];
+  expect(refs.map((node) => [node.textContent, node.getAttribute("href")])).toEqual([["decision 1", "#plan-decision-1"]]);
+  expect(open(snaps[5].app)).toEqual([true, true]);
+  expect(snaps[5].app.querySelector("#plan-decision-1").tagName).toBe("LI");
 });

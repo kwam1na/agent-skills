@@ -6968,7 +6968,7 @@ def build_preview(c, plan: Path, text: str, commit: str, at: str, store: Path, a
     approvals_body = next((body for level, name, body in sections if level == 2 and name == "Approval handoffs"), "")
     decisions_body = next((body for level, name, body in sections if level == 2 and name.startswith("Decisions")), "")
     lists = {"units": units, "finish": plan_list_all(finish_body), "approvals": plan_list_all(approvals_body),
-             "outOfScope": preview_out_of_scope(sections), "decisions": plan_list_all(decisions_body)}
+             "outOfScope": preview_out_of_scope(sections), "decisions": plan_decisions(decisions_body)}
     dropped = []
     for member, (cap, one, many) in PREVIEW_CAPS.items():
         over = len(lists[member]) - cap
@@ -9065,6 +9065,72 @@ def plan_list_all(body: str) -> list[str]:
         elif items and line[:1] in (" ", "\t") and line.strip():
             items[-1] += " " + line.strip()
     return [plan_line(text) for text in items if text.strip()]
+
+
+# A decision's body: at most this many paragraphs and lists, and this many bullets in a list, as the plan contract has it.
+PLAN_DECISION_BLOCKS = 20
+PLAN_DECISION_ITEMS = 20
+
+
+def plan_decisions(body: str) -> list[dict]:
+    """Each top-level list item of a plan's decisions section, before its first subheading, as a headed decision:
+    `{head, body?}`. Its bold lead is the head, or without one its first sentence. The rest keeps its paragraphs and
+    its bulleted lists, as text blocks and `{items}`; each block or bullet is one line of at most 600 characters."""
+    decided: list[list[str]] = []
+    for line in body.splitlines()[1:]:
+        if line.startswith("#"):
+            break
+        if re.match(r"^(?:[-*+]|\d+[.)])\s+", line):
+            decided.append([line])
+        elif decided and (not line.strip() or line[:1] in (" ", "\t")):
+            decided[-1].append(line)
+    return [decision for decision in map(plan_decision, decided) if decision]
+
+
+def plan_decision(lines: list[str]) -> dict | None:
+    """One decision's lines, its marker first, as `{head, body?}`; None when it holds no words."""
+    blocks: list[str | list[str]] = []
+    gap = True
+    for n, line in enumerate(lines):
+        words = re.sub(r"^(?:[-*+]|\d+[.)])\s+", "", line) if n == 0 else line
+        if not words.strip():
+            gap = True
+            continue
+        bullet = re.match(r"^\s+[-*+]\s+(.*)$", words) if n else None
+        if bullet:
+            if not (blocks and isinstance(blocks[-1], list)) or gap:
+                blocks.append([])
+            blocks[-1].append(bullet.group(1))
+        elif blocks and isinstance(blocks[-1], list) and not gap:
+            blocks[-1][-1] += " " + words.strip()
+        elif blocks and isinstance(blocks[-1], str) and not gap:
+            blocks[-1] += " " + words.strip()
+        else:
+            blocks.append(words.strip())
+        gap = False
+    if not blocks or not isinstance(blocks[0], str):
+        return None
+    first = re.sub(r"\s+", " ", blocks[0]).strip()
+    lead = re.match(r"^\*\*(.+?)\*\*\s*(.*)$", first)
+    if lead:
+        head, rest = lead.group(1).strip(), lead.group(2)
+        joined = re.match(r"^([,;.:])\s*(.*)$", rest)
+        if joined:
+            head, rest = head.rstrip(".") + ".", joined.group(2)
+            rest = rest[:1].upper() + rest[1:]
+    else:
+        sentence = re.match(r"^(.+?[.!?])\s+(\S.*)$", first)
+        head, rest = (sentence.group(1), sentence.group(2)) if sentence else (first, "")
+    said = [rest] if rest.strip() else []
+    said += blocks[1:]
+
+    def plain(words: str) -> str:
+        return plan_line(re.sub(r"\*\*(.+?)\*\*", r"\1", words))
+
+    out: list[str | dict] = []
+    for block in said[:PLAN_DECISION_BLOCKS]:
+        out.append({"items": [plain(item) for item in block[:PLAN_DECISION_ITEMS]]} if isinstance(block, list) else plain(block))
+    return {"head": plain(head), **({"body": out} if out else {})}
 
 
 def plan_line(text: str) -> str:

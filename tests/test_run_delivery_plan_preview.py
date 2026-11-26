@@ -252,8 +252,8 @@ class PlanPreviewTests(unittest.TestCase):
         self.assertEqual(plan["outOfScope"], ["Importing addresses.", "Sharing addresses between accounts."])
         self.assertEqual(plan["preview"], {
             "plan": "docs/plans/addresses.md", "commit": head, "approval": "agents-only", "layout": "delivery",
-            "decisions": ["**Per account.** Addresses are kept per account. - never per device;",
-                          "Exports are CSV only."]})
+            "decisions": [{"head": "Per account.", "body": ["Addresses are kept per account.", {"items": ["never per device;"]}]},
+                          {"head": "Exports are CSV only."}]})
         self.assertEqual((plan["requiredLenses"], plan["changes"], plan["evidence"]), ([], [], {}))
         self.assertEqual([kind["id"] for kind in plan["proofKinds"]], ["review", "handed", "merged"])
         self.assertNotIn("planReview", plan)
@@ -563,6 +563,70 @@ def runs(pid: int) -> bool:
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class PlanDecisionTests(unittest.TestCase):
+    """How the plan reader turns a plan's decisions section into headed decisions, without a fixture repository."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import importlib.util
+
+        path = Path(__file__).resolve().parents[1] / "skills/run-delivery/scripts/run_delivery.py"
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        sys.path.insert(0, str(path.parent))
+        try:
+            spec = importlib.util.spec_from_file_location("run_delivery_for_decisions", path)
+            cls.rd = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(cls.rd)
+        finally:
+            sys.path.remove(str(path.parent))
+            sys.dont_write_bytecode = previous
+
+    def read(self, section: str) -> list:
+        return self.rd.plan_decisions("## Decisions\n\n" + section)
+
+    def test_a_bold_lead_heads_the_decision_and_its_paragraphs_and_bullets_are_kept(self) -> None:
+        self.assertEqual(self.read(
+            "Read me first, not a decision.\n\n"
+            "1. **The supervisor words each item.** Headlines embed the actor, so the page\n"
+            "   can't swap a name in. Three wordings:\n"
+            "   - `said`, for the seat that wrote\n"
+            "     the list;\n"
+            "   - `saidAll`, for no seat.\n"
+            "\n"
+            "   The hosted page reads `saidAll`.\n"
+            "2. **The summary is the pass's.**\n"
+            "## Next\n- not a decision\n"), [
+            {"head": "The supervisor words each item.",
+             "body": ["Headlines embed the actor, so the page can't swap a name in. Three wordings:",
+                      {"items": ["`said`, for the seat that wrote the list;", "`saidAll`, for no seat."]},
+                      "The hosted page reads `saidAll`."]},
+            {"head": "The summary is the pass's."}])
+
+    def test_a_lead_that_runs_on_into_its_sentence_ends_at_the_bold(self) -> None:
+        self.assertEqual(self.read("- **Compounding is the lead's work**, in the `delivery` scope.\n"
+                                   "- **No round bound**; it runs to alignment.\n"
+                                   "- **Two lenses**. Both of them.\n"), [
+            {"head": "Compounding is the lead's work.", "body": ["In the `delivery` scope."]},
+            {"head": "No round bound.", "body": ["It runs to alignment."]},
+            {"head": "Two lenses.", "body": ["Both of them."]}])
+
+    def test_without_a_bold_lead_the_first_sentence_heads_it(self) -> None:
+        self.assertEqual(self.read("- Exports are CSV only. Nothing else is asked for, and **Excel** waits.\n"
+                                   "- One sentence, with no full stop\n"), [
+            {"head": "Exports are CSV only.", "body": ["Nothing else is asked for, and Excel waits."]},
+            {"head": "One sentence, with no full stop"}])
+
+    def test_a_long_decision_is_kept_whole_and_only_an_overlong_block_is_cut(self) -> None:
+        long, overlong = "a" * 500 + ".", "b" * 700
+        decided = self.read(f"- **Long.** {long}\n\n  {long}\n\n  {overlong}\n")
+        self.assertEqual(decided, [{"head": "Long.", "body": [long, long, "b" * 599 + "\u2026"]}])
+        many = self.read("- **Many.** One.\n" + "".join(f"  - item {n}\n" for n in range(25)) + "".join(
+            f"\n  Paragraph {n}.\n" for n in range(25)))
+        self.assertEqual(len(many[0]["body"]), self.rd.PLAN_DECISION_BLOCKS)
+        self.assertEqual(len(many[0]["body"][1]["items"]), self.rd.PLAN_DECISION_ITEMS)
+
+
 class ServedPreviewTests(unittest.TestCase):
     """plan-view and the plan-review commands serving and publishing the preview, end to end: one fixture repository,
     a fake hosted origin that the publisher reaches through a shim, and real live servers and watchers, each stopped by
