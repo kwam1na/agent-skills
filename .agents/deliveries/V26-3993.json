@@ -179,6 +179,17 @@
           "text": "With more open stories than the line shows, the +N marker takes its own slot and overlaps no stop's label; a row with no marker draws as today."
         }
       ]
+    },
+    "V26-4002": {
+      "title": "List the checks the lead chose when their fold opens",
+      "lane": "lane-2",
+      "why": "The operator found the single-piece fold opens to nothing on this delivery's own page, and asked for the checks as a list",
+      "criteria": [
+        {
+          "id": "v26-4002-1",
+          "text": "Opening a lead-chosen checks note lists every check of the run by name and state, so the opened fold always shows more than its closed summary; a batch still opens to each piece's reason first."
+        }
+      ]
     }
   },
   "finish": [
