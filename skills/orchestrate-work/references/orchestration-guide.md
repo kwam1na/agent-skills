@@ -561,11 +561,13 @@ renders, publishers included, after each of its own writes.
   file on every page it serves: `pid`, `state` (`running` or `stopped`),
   `at`, and optionally `why`, `said` and `restart`. While it says `running`
   and its pid runs, the page shows no banner. Once it says `stopped`, the page
-  says the supervisor is down, since when and why; a file still marked
-  `running` for a pid that no longer runs says the supervisor stopped without
-  recording why. Each names the file's `restart` command, and an open page
-  follows the file without a reload. Without the option the view renders as
-  it always has.
+  says updates stopped, when, and for a reason it knows why, in a person's
+  words; a file still marked `running` for a pid that no longer runs says
+  updates stopped without warning. When the file gives a `restart` command,
+  each adds that the lead restarts them, except after a stop for closing: the
+  banner is for people, who never run the command, so it names neither the
+  command nor the pid, nor the lead's own wording of the reason. An open page follows the file without a reload. Without
+  the option the view renders as it always has.
 - `render_state.py live --repo PATH` lists, on every built-in page it
   serves, the other deliveries registered on this record's base beside the
   repository's git common directory, each with its supervisor (live, stale

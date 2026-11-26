@@ -1651,14 +1651,17 @@ class LiveViewAddressTests(unittest.TestCase):
         self.assertEqual((status["pid"], status["state"]), (first["pid"], "running"))
         self.assertIsNone(banner_of(address))
         self.assertNotIn("The supervisor", page_of(address))
-        # Stopped on a named signal: recorded, and the same view says so, with when and how to restart it.
+        # Stopped on a named signal: recorded, and the same view says so in a person's words, with when and that the lead
+        # restarts them; the command and the pid stay in the lead's own status line.
         self.stop_supervisor(fx)
         status = status_of(fx.tmp / "record")
         self.assertEqual((status["pid"], status["state"], status["why"], status["signal"]),
                          (first["pid"], "stopped", "signal", "SIGTERM"))
         said = banner_of(address)
-        self.assertIn(f"The supervisor is down since {status['at']}: it received SIGTERM.", said)
-        self.assertIn("lead-run --resume", said)
+        self.assertTrue(said.startswith("Updates stopped on "), said)
+        self.assertTrue(said.endswith(" UTC: they were stopped from outside. The lead restarts them."), said)
+        self.assertNotIn("lead-run", said)
+        self.assertNotIn(str(first["pid"]), said)
         self.assertIn(html.escape(said), page_of(address))
         # Every lead command's line names the address while the view serves.
         down = f"supervisor: down (it received SIGTERM); live view {address}; restart it with "
@@ -1683,14 +1686,15 @@ class LiveViewAddressTests(unittest.TestCase):
         self.assertIn({"name": "live", "pid": view}, second["children"])
         self.assertEqual(status_of(fx.tmp / "record")["state"], "running")
         self.assertIsNone(banner_of(address))
-        # SIGHUP and SIGINT are recorded the same way, each named; the view stays and is adopted again.
+        # SIGHUP and SIGINT are recorded the same way, each named in the record; the banner says, for people, that they
+        # were stopped from outside; the view stays and is adopted again.
         for sig, name in ((signal.SIGHUP, "SIGHUP"), (signal.SIGINT, "SIGINT")):
             with self.subTest(signal=name):
                 stopped = self.stop_supervisor(fx, sig)
                 status = status_of(fx.tmp / "record")
                 self.assertEqual((status["pid"], status["state"], status["why"], status["signal"]),
                                  (stopped, "stopped", "signal", name))
-                self.assertIn(f"it received {name}.", banner_of(address))
+                self.assertIn(": they were stopped from outside. The lead restarts them.", banner_of(address))
                 code, out = fx.flow("lead-run", "--resume", cwd=m, env=running(fx))
                 self.assertEqual(code, 0, out)
                 self.assertEqual((live_of(fx)["pid"], lock_of(fx)["address"]), (view, address))
@@ -1718,8 +1722,7 @@ class LiveViewAddressTests(unittest.TestCase):
         self.assertEqual(listeners(port_of(address)), [view])
         self.assertEqual(status_of(fx.tmp / "record")["state"], "running")
         said = banner_of(address)
-        self.assertIn("stopped without recording why", said)
-        self.assertIn("lead-run --resume", said)
+        self.assertEqual(said, "Updates stopped without warning. The lead restarts them.")
         self.assertIn(html.escape(said), page_of(address))
         code, out = fx.flow("lead-reconcile", cwd=m)
         self.assertIn(f"supervisor: down (stopped without recording why); live view {address}; restart it with ", out)

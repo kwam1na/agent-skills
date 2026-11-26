@@ -520,6 +520,17 @@ class NeedsYouRowTests(unittest.TestCase):
     def said(self, document: dict, items: list[dict]) -> list[dict]:
         return run_delivery.say_needs(self.RELEASE, document, [dict(item) for item in items])
 
+    def test_no_word_a_row_shows_a_person_names_a_command_or_the_supervisor(self) -> None:
+        # People never run delivery commands by hand; the lead does. So the words the views draw for a row say what the
+        # lead does, or the step that is a person's, and never a command, its flags or the supervisor: those stay in an
+        # item's text, which the lead reads.
+        table = json.loads(WORDS.read_text(encoding="utf-8"))["needsYou"]["templates"]
+        forbidden = re.compile(r"\blead-[a-z]+|--[a-z]|\bsupervisor\b", re.IGNORECASE)
+        said = [(field, case, words) for field in ("headline", "why", "clears") for case, words in
+                [*table[field].get("cases", {}).items(), ("otherwise", table[field].get("otherwise", ""))]]
+        self.assertTrue(said)
+        self.assertEqual([(field, case, words) for field, case, words in said if forbidden.search(words)], [])
+
     def test_a_blocked_lane_names_who_its_question_waits_on_and_the_story_it_is_on(self) -> None:
         document = record()
         row(document, "lane-2").update(state="blocked", focus="which API", waitingOn="lead")
@@ -646,7 +657,7 @@ class NeedsYouRowTests(unittest.TestCase):
             "runnerHold": ({"entry": 7, "detail": "a break"}, {}, "The queue holds serving"),
             "blocker": ({"entry": 7, "detail": "the API"}, {"subject": "APP-1"}, "Blocker 7 on APP-1"),
             "listener": ({"detail": "Lane 1 can't reach the lead."}, {}, "The lead isn't listening"),
-            "flapping": ({"name": "publisher", "log": "p.log"}, {}, "The supervisor's publisher won't stay up"),
+            "flapping": ({"name": "publisher", "log": "p.log"}, {}, "Updates keep stopping"),
             "drafts": ({"subjects": ["APP-1", "APP-2"]}, {}, "APP-1 and APP-2 wait to be marked ready"),
             "laneBlocked": ({"focus": "which API"}, {"lane": "lane-2", "subject": "APP-1"}, "Lane 2 is blocked on APP-1"),
             "laneAsks": ({"focus": "which API"}, {"lane": "lane-2"}, "Lane 2 waits on the lead"),

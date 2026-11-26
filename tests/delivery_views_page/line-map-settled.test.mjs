@@ -93,7 +93,7 @@ test("a close that stopped partway with only settled planned work left meets the
   const closed = document.journal.at(-1);
   document.state.meta.closing = { started: { entry: closed.id, at: closed.at } };
   const [shown] = await openPage(renderPage(document, { config: CONFIG }), { now: NOW, store: false });
-  expect(shown.app.querySelector("#now .close-partway p").textContent).toContain("Finish it with lead-run --resume.");
+  expect(shown.app.querySelector("#now .close-partway p").textContent).toContain("The lead finishes it by resuming the close.");
 });
 
 test("a lane's rule is solid up to its settled stop when work after it is still to come", async () => {

@@ -278,20 +278,22 @@ test("shows a ticket's own title and summary when its id is hovered, wherever th
   expect(ids.every((id) => id.getAttribute("href") === `https://tracker.example/issue/${id.getAttribute("data-ticket")}`)).toBe(true);
 });
 
-test("shows a long list of checks as a bar when the record has no check times, with the running one named", async () => {
+test("lists a long run's checks by name, ten to a page, when the record has no check times, with the running one named", async () => {
   const document = fixtureDocument();
   document.state.meta.checking.now.steps = Array.from({ length: 36 }, (_, index) => ({
     label: `shop.check.${index}`, state: index < 4 ? "passed" : index === 4 ? "running" : "pending",
   }));
   document.state.meta.checking.now.steps[4].startedAtUnreadable = true;
   const [{ app }] = await open(document);
-  expect(app.querySelectorAll(".ck-step")).toHaveLength(0);
+  // No times to place, so no run line, and nothing stands in for one: the checks are listed by name, a page at a time.
   expect(app.querySelector(".run-line")).toBeNull();
-  expect(app.querySelectorAll(".ck-bar span")).toHaveLength(36);
+  expect(app.querySelector(".ck-bar")).toBeNull();
+  expect(app.querySelectorAll(".ck-list li")).toHaveLength(10);
+  expect(app.querySelector(".ck-pager .ck-page-where")?.textContent).toBe("1–10 of 35");
   document.state.meta.checking.now.steps[4].startedAt = "2026-10-22T05:09:00Z";
   const [{ app: timed }] = await open(document);
   expect(timed.querySelector(".checking").textContent).toContain("Running shop.check.4 · 1m");
-  expect(timed.querySelector(".checking").textContent).toContain("4 of 36 checks done");
+  expect(timed.querySelector(".checking .ck-chosen > summary")?.textContent).toMatch(/^4 done, 31 waiting/);
 });
 
 test("puts failed checks first, says the piece won't merge from this run, and sets the lead's notes beside them", async () => {
@@ -325,8 +327,11 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   );
   const [{ app }] = await open(document);
   const checking = app.querySelector(".checking");
-  // The verdict comes from the check states alone.
-  expect(checking.querySelector(".ck-verdict")?.textContent).toBe("Won't merge from this run. 2 failed · 8 still to run");
+  // The outcome comes from the check states alone, said once, in the header; the counts are the sheet's last line.
+  expect(checking.querySelector(".ck-h-words")?.textContent).toBe("Won't merge from this run · PAY-2361");
+  expect(checking.querySelector(".ck-verdict")).toBeNull();
+  // Now's sentence says what the sheet says.
+  expect(app.querySelector("#now .now-sentence")?.textContent).toMatch(/ PAY-2361 won't merge from this run\.$/);
   // The run on the clock: a capsule per started check, failed stops numbered as the list,
   // the running one at now with its time so far, and the waiting ones trailing off.
   const line = checking.querySelector("svg.run-line");
@@ -348,9 +353,10 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   ahead.state.meta.checking.now.startedAt = "2026-10-22T05:10:00Z";
   const [{ app: aheadApp }] = await open(ahead);
   expect(aheadApp.querySelector(".run-line")).toBeNull();
-  expect(aheadApp.querySelector(".ck-bar")).not.toBeNull();
-  // Every check is timed there, so the strip's foot gives the run's clock as the reason, not missing times.
-  expect(aheadApp.querySelector(".ck-bar-foot span")?.textContent).toBe("the run's clock is ahead of this one");
+  // Nothing stands in for it, and the page says nothing about the record's clocks: the failures and the counts carry it.
+  expect(aheadApp.querySelector(".ck-bar")).toBeNull();
+  expect(aheadApp.querySelectorAll(".ck-fails li")).toHaveLength(2);
+  expect(aheadApp.querySelector(".checking").textContent).not.toContain("clock is ahead");
   // A reused or skipped check never ran here, so the runner gives it no time; the line is still drawn from the rest.
   const reusedUntimed = JSON.parse(JSON.stringify(document));
   delete reusedUntimed.state.meta.checking.now.steps[5].startedAt;
@@ -361,15 +367,15 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   const [{ app: reusedApp }] = await open(reusedUntimed);
   expect(reusedApp.querySelector(".run-line")).not.toBeNull();
   expect(reusedApp.querySelector(".ck-bar")).toBeNull();
-  // A started check with no time can't be placed, so the run falls back to the strip rather than leave it out, and the
-  // failed checks keep their numbers in the list.
+  // A started check with no time can't be placed, so no line is drawn rather than leave it out, nothing stands in for
+  // it, and the failed checks keep their numbers in the list.
   const untimed = JSON.parse(JSON.stringify(document));
   delete untimed.state.meta.checking.now.steps[3].startedAt;
   delete untimed.state.meta.checking.now.steps[3].finishedAt;
   const [{ app: untimedApp }] = await open(untimed);
   expect(untimedApp.querySelector(".run-line")).toBeNull();
-  expect(untimedApp.querySelector(".ck-bar-foot span")?.textContent).toBe("times missing for some checks");
-  expect(untimedApp.querySelectorAll(".ck-bar span")).toHaveLength(20);
+  expect(untimedApp.querySelector(".ck-bar")).toBeNull();
+  expect(untimedApp.querySelector(".checking").textContent).not.toContain("times missing");
   expect([...untimedApp.querySelectorAll(".ck-fails .g.num")].map((number) => number.textContent)).toEqual(["1", "2"]);
   expect([...checking.querySelectorAll(".ck-fails .g.num")].map((number) => number.textContent)).toEqual(["1", "2"]);
   expect(line.querySelector(".rl-time.running")?.textContent).toBe("20m 00s so far");
@@ -410,7 +416,7 @@ test("names each check by the title its provider gave, by its id where none was 
   const shown = [...checking.querySelectorAll(".ck-step")].map((step) => step.textContent);
   const cut = long.slice(0, 79) + "…";
   expect(shown).toEqual(["waiting: " + cut, "waiting: payments behavior scenarios",
-    "passed: Webapp typecheck (tsc)", "passed: checkout unit tests", "reused: convex audit"]);
+    "passed: Webapp typecheck (tsc)", "passed: checkout unit tests", "reused: convex audit · reused"]);
   // The full title is there to read on the cut one, and the id stays the check's name for everything that matches on it.
   expect(checking.querySelector(".ck-step.pending").getAttribute("title")).toBe(long);
   // Record text never becomes markup.
@@ -461,7 +467,7 @@ test("draws a passed post-merge fullHealth and a provider's refused selection in
   }
 });
 
-test("says what a lone piece's rerun is for, when it should end by the failed check's own history, and how to end it sooner", async () => {
+test("says in one line what failed and that the main line reruns it, and when that should end by the failed check's own history", async () => {
   const document = fixtureDocument();
   const now = document.state.meta.checking.now;
   Object.assign(now.steps.find((step) => step.label === "storefront build"), { state: "failed", finishedAt: "2026-10-22T05:06:50Z" });
@@ -469,42 +475,32 @@ test("says what a lone piece's rerun is for, when it should end by the failed ch
   // Two checks in the history: the end is the rerun's start plus the failed check's last time, not the other's.
   document.state.meta.checkHistory = { checks: { "storefront build": { seconds: [300, 600], flakes: 0 },
                                                  "payments unit": { seconds: [60], flakes: 0 } }, runs: [] };
+  const rerun = async () => (await open(document))[0].app.querySelector(".checking .ck-rerun")?.textContent;
+  const said = (checks, them, when) => checks + " failed. The main line is rerunning " + them + " to tell whose failure it is" + when + ".";
+  expect(await rerun()).toBe(said("storefront build", "it", " · about 7 minutes left"));
+  // How the lead may end it sooner is the lead's to know: the page names no way to end it, and no command.
   const [shown] = await open(document);
-  const checking = shown.app.querySelector(".checking");
-  expect(checking.querySelector(".ck-rerun-why")?.textContent).toBe("storefront build failed on PAY-2361; the rerun decides " +
-    "whether the main line or the piece broke it · expected to end in 7 minutes");
-  expect(checking.querySelector(".ck-rerun-alt")?.textContent).toBe("To end it sooner: the lane hands off a fixed head and " +
-    "the lead accepts it, or the lead names the main line broken with lead-base-broken.");
-  // With no history for the failed check, there is no expected end, never a guess.
+  expect(shown.app.querySelector(".checking .ck-rerun-alt")).toBeNull();
+  expect(shown.app.querySelector(".checking").textContent).not.toMatch(/\blead-[a-z]+|--[a-z]|To end it sooner/);
+  // With no history for the failed check there is no expected end, never a guess: it says when the rerun started.
   delete document.state.meta.checkHistory.checks["storefront build"];
-  const [unknown] = await open(document);
-  expect(unknown.app.querySelector(".checking .ck-rerun-why")?.textContent).toBe("storefront build failed on PAY-2361; the " +
-    "rerun decides whether the main line or the piece broke it");
+  expect(await rerun()).toBe(said("storefront build", "it", " · started 3 minutes ago"));
   // Two rerun checks end after both their last times; one of them without history leaves the end out.
   document.state.meta.checkHistory.checks["storefront build"] = { seconds: [300], flakes: 0 };
   document.state.meta.checkHistory.checks["payments unit"] = { seconds: [120], flakes: 0 };
   document.state.meta.checking.now.baseRerun.checks = ["storefront build", "payments unit"];
-  const [both] = await open(document);
-  expect(both.app.querySelector(".checking .ck-rerun-why")?.textContent).toBe("storefront build and payments unit failed on " +
-    "PAY-2361; the rerun decides whether the main line or the piece broke it · expected to end in 4 minutes");
+  expect(await rerun()).toBe(said("storefront build and payments unit", "them", " · about 4 minutes left"));
   // Started at 05:07 and read at 05:10: one past its expected end says by how much, one due now says about now.
-  for (const [build, unit, words] of [[60, 0, " · expected to have ended 2 minutes ago"],
-                                      [120, 60, " · expected to end about now"]]) {
+  for (const [build, unit, when] of [[60, 0, " · should have ended 2 minutes ago"], [120, 60, " · should end about now"]]) {
     document.state.meta.checkHistory.checks["storefront build"] = { seconds: [build], flakes: 0 };
     document.state.meta.checkHistory.checks["payments unit"] = { seconds: [unit], flakes: 0 };
-    const [due] = await open(document);
-    expect(due.app.querySelector(".checking .ck-rerun-why")?.textContent).toBe("storefront build and payments unit " +
-      "failed on PAY-2361; the rerun decides whether the main line or the piece broke it" + words);
+    expect(await rerun()).toBe(said("storefront build and payments unit", "them", when));
   }
   delete document.state.meta.checkHistory.checks["payments unit"];
-  const [partly] = await open(document);
-  expect(partly.app.querySelector(".checking .ck-rerun-why")?.textContent).toBe("storefront build and payments unit failed " +
-    "on PAY-2361; the rerun decides whether the main line or the piece broke it");
+  expect(await rerun()).toBe(said("storefront build and payments unit", "them", " · started 3 minutes ago"));
   // Without a running rerun nothing of it shows.
   delete document.state.meta.checking.now.baseRerun;
-  const [none] = await open(document);
-  expect(none.app.querySelector(".checking .ck-rerun-why")).toBeNull();
-  expect(none.app.querySelector(".checking .ck-rerun-alt")).toBeNull();
+  expect(await rerun()).toBeUndefined();
 });
 
 test("says a piece whose check failed is waiting on the main line's rerun, on the line, in its detail and in the now block", async () => {
@@ -522,14 +518,16 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   const steps = [{ click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-2361"]' }];
   const [first, shown] = await open(document, { steps });
   const checking = first.app.querySelector(".checking");
-  expect(checking.querySelector(".ck-h-words")?.textContent).toBe("Failed, waiting on the main line's rerun · PAY-2361");
+  expect(checking.querySelector(".ck-h-words")?.textContent).toBe("Failed · rerunning on the main line · PAY-2361");
   expect(checking.querySelector(".ck-rerun")?.textContent)
-    .toBe("Rerunning storefront build on the main line, to tell whether it fails there too · started 3 minutes ago");
-  expect(checking.querySelector(".ck-verdict")?.textContent).toMatch(/^Won't merge from this run\./);
+    .toBe("storefront build failed. The main line is rerunning it to tell whose failure it is · started 3 minutes ago.");
+  expect(first.app.querySelector("#now .now-sentence")?.textContent).toMatch(/ PAY-2361 failed a check, now being rerun on the main line\.$/);
+  // The header already says it failed; the counts are the sheet's last line, so no verdict line repeats them.
+  expect(checking.querySelector(".ck-verdict")).toBeNull();
   const stop = first.app.querySelector(':is(.stop-btn, .mg-tick)[data-subject="PAY-2361"]');
-  expect(stop.getAttribute("aria-label")).toBe("Retry card payments once on a dropped connection, Failed, waiting on the main line's rerun");
+  expect(stop.getAttribute("aria-label")).toBe("Retry card payments once on a dropped connection, Failed · rerunning on the main line");
   const meta = shown.app.querySelector("#detail .d-meta");
-  expect(meta.querySelector(".d-stage").textContent).toContain("Failed, waiting on the main line's rerun · Waiting on the rerun since 3 minutes ago");
+  expect(meta.querySelector(".d-stage").textContent).toContain("Failed · rerunning on the main line · Waiting on the rerun since 3 minutes ago");
   expect(meta.querySelector(".d-stage-time").getAttribute("aria-label")).toBe("Recorded base rerun start: 2026-10-22T05:07:00Z");
   // The piece's merge check lists the rerun after the failure, and names it as the last step.
   const history = shown.app.querySelector("#detail .mh");
@@ -563,15 +561,15 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
     { at: "2026-10-22T05:05:00Z", id: 14, kind: "check.started", lane: "storefront", subject: "PAY-2362", data: members },
   );
   const [batchShown] = await open(batch);
-  expect(batchShown.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
+  // A batch with a failed check won't land as one, said in its header; the rerun line says the same for a batch.
+  expect(batchShown.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Won't land as one · 2 pieces");
   expect(batchShown.app.querySelector(".checking .ck-rerun")?.textContent)
-    .toBe("Rerunning storefront build on the main line, to tell whether it fails there too · started 3 minutes ago");
-  // A batch's rerun is never ended early, so it names no way to end it.
+    .toBe("storefront build failed. The main line is rerunning it to tell whose failure it is · started 3 minutes ago.");
   expect(batchShown.app.querySelector(".checking .ck-rerun-alt")).toBeNull();
   // The same failure before the rerun starts, or once it is over, is a check that failed, not a wait on the main line.
   delete document.state.meta.checking.now.baseRerun;
   const [before] = await open(document);
-  expect(before.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Checking · PAY-2361");
+  expect(before.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Won't merge from this run · PAY-2361");
   expect(before.app.querySelector(".checking .ck-rerun")).toBeNull();
   expect(before.app.querySelector(':is(.stop-btn, .mg-tick)[data-subject="PAY-2361"]').getAttribute("aria-label"))
     .toBe("Retry card payments once on a dropped connection, Being checked before merge");
@@ -937,8 +935,8 @@ test("draws whatever the record has, and says so when it has nothing to draw", a
   for (const document of [{ state: {} }, { state: { meta: {}, queue: null, lanes: "x" }, journal: [null, 3] }, { state: { meta: { checking: { now: { steps: [null, {}] } } } } }]) {
     const [{ app }] = await open(document);
     expect(app.querySelector("#now h1.title")?.textContent).toBe("Delivery");
-    // No tracker item and no start: no kicker at all, rather than an empty one above the name.
-    expect(app.querySelector("#now .kicker")).toBeNull();
+    // No tracker item and no start: the kicker is only the repository the configuration names, never an empty line.
+    expect(app.querySelector("#now .kicker")?.textContent).toBe("acme/shop");
     expect(app.querySelector("#line")?.textContent).toContain("No work on the line yet.");
     expect(app.querySelector("#left .left-number")?.textContent).toBe("0pieces to go");
   }
@@ -1005,6 +1003,7 @@ test("shows pieces checked as one batch together, each with its change request",
   const [{ app }] = await open(batch());
   const checking = app.querySelector(".checking");
   expect(checking.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
+  expect(app.querySelector("#now .now-sentence")?.textContent).toMatch(/ PAY-2361 and PAY-2362 are being checked together\.$/);
   expect([...checking.querySelectorAll(".ck-members li a")].map((link) => link.getAttribute("href"))).toEqual([
     "https://github.com/acme/shop/pull/1106", "https://github.com/acme/shop/pull/1107"]);
   expect(checking.textContent).toContain("One test run for all of them; each lands only if it matches what was tested");
@@ -1031,8 +1030,9 @@ test("shows pieces checked as one batch together, each with its change request",
     data: { check: "shop.check.aa", timedOut: false, failing: [], more: 0, log: "logs/batch-aa.log" } },
   { at: "2026-10-22T05:06:00Z", id: 14, kind: "blocker.recorded", lane: null, subject: "PAY-2362", because: [13], data: { text: "shop.check.aa fails on the receipt page." } });
   const [{ app: failingApp }] = await open(failing);
-  expect(failingApp.querySelector(".ck-verdict")?.textContent).toBe(
-    "The batch won't land as one. 1 failed · 1 still to run · the pieces ahead of the one that broke it can still land");
+  // The outcome is the header's; below it only what the header can't say: what can still land.
+  expect(failingApp.querySelector(".ck-h-words")?.textContent).toBe("Won't land as one · 2 pieces");
+  expect(failingApp.querySelector(".ck-verdict")?.textContent).toBe("The pieces ahead of the one that broke it can still land.");
   expect(failingApp.querySelector(".ck-fails li")?.textContent).toContain("Log: logs/batch-aa.log");
   expect(failingApp.querySelector(".ck-fails li .ck-note")?.textContent).toBe("Work was blocked on PAY-2362. shop.check.aa fails on the receipt page.");
 
@@ -1272,13 +1272,16 @@ test("reads unreadable times as unknown, never as the start of time", async () =
   expect(app.querySelector(".checking")?.textContent).not.toMatch(/started|[0-9]{3,}d/);
 });
 
-test("draws checks as chips up to twelve, says a run is stale after ninety minutes", async () => {
+test("lists checks by name, ten to a page, says a run is stale after ninety minutes", async () => {
   const steps = (length) => Array.from({ length }, (_, index) => ({ label: `check ${index}`, state: "pending" }));
   const document = fixtureDocument();
-  document.state.meta.checking.now.steps = steps(12);
-  expect((await open(document))[0].app.querySelectorAll(".ck-step")).toHaveLength(12);
+  document.state.meta.checking.now.steps = steps(10);
+  const ten = (await open(document))[0].app;
+  expect([ten.querySelectorAll(".ck-list li").length, ten.querySelector(".ck-pager")]).toEqual([10, null]);
   document.state.meta.checking.now.steps = steps(13);
-  expect((await open(document))[0].app.querySelector(".ck-bar")).not.toBeNull();
+  const thirteen = (await open(document))[0].app;
+  expect([thirteen.querySelectorAll(".ck-list li").length, thirteen.querySelector(".ck-page-where")?.textContent]).toEqual([10, "1–10 of 13"]);
+  expect(thirteen.querySelector(".ck-bar")).toBeNull();
   document.state.meta.updatedAt = "2026-10-22T03:40:00Z";
   expect((await open(document))[0].app.querySelector(".since")?.className.trim()).toBe("fact since");
   document.state.meta.updatedAt = "2026-10-22T03:41:00Z";
@@ -1334,20 +1337,33 @@ test("the delivery's name heads the page, without a ticket key the kicker alread
   expect(other.querySelector("#now h1.title").textContent).toBe("PAY-2354: checkout resilience");
   // The kicker is the ticket and the time, with no state word; with no ticket it is the time alone.
   const kicker = other.querySelector("#now .kicker");
-  expect(kicker.firstChild.tagName).toBe("A");
-  expect(kicker.textContent).toMatch(/^PAY-9 · Started .+ ago$/);
-  expect((await shown(named("Checkout resilience"))).querySelector("#now .kicker").textContent).toMatch(/^Started .+ ago$/);
+  // The repository leads, then the tracker item, linked, then how long it has run.
+  expect([kicker.firstChild.className, kicker.querySelector("a")?.textContent]).toEqual(["kicker-repo", "PAY-9"]);
+  expect(kicker.textContent).toMatch(/^acme\/shop · PAY-9 · Started .+ ago$/);
+  expect((await shown(named("Checkout resilience"))).querySelector("#now .kicker").textContent).toMatch(/^acme\/shop · Started .+ ago$/);
   // The headline is the name; where the delivery stands is Now's sentence, right under it.
   expect(other.querySelector("#now h1.title .now-sentence")).toBeNull();
   expect(other.querySelector("#now h1.title").nextElementSibling.className).toBe("now-state");
   // It never wraps: a kicker too long for its line ends in an ellipsis.
   const css = readFileSync(path.join(ROOT, "skills/delivery-views/assets/line-map.css"), "utf8");
+  // A chapter arrives by fading its rows in; nothing slides.
+  expect(css).toContain(".chapter.arrive .inner > * { animation: arrive-fade var(--move) var(--ease) both; }");
+  expect(css).toContain("@keyframes arrive-fade { from { opacity: .25; } to { opacity: 1; } }");
+  expect(css).not.toMatch(/@keyframes rise\b/);
   expect(css).toContain(".kicker { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; "
     + "white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }");
-  // Now's sentence leads in the display face; the name steps back above it.
-  expect(css).toContain(".now-sentence { margin: 0; font-family: var(--display); font-weight: 400;");
+  // The name leads in the display face at its largest; Now's sentence rides beside the marks as their caption, in the
+  // text face, past a hairline under the name.
+  expect(css).toContain(".chapter-now .title { font-size: clamp(38px, 6vw, 64px); font-weight: 300; line-height: 1.04; max-width: 17ch;");
+  expect(css).toContain(".now-state { display: grid; grid-template-columns: minmax(240px, 420px) minmax(0, 1fr); "
+    + "grid-template-areas: \"marks said\" \"marks fact\";");
+  expect(css).toContain(".now-sentence { grid-area: said; margin: -3px 0 0; font-family: var(--text); font-weight: 400;");
+  expect(css).not.toContain("steps back to a quiet second line");
   // The skill's page says the same opening.
   const skill = readFileSync(path.join(ROOT, "skills/delivery-views/SKILL.md"), "utf8").replace(/\s+/g, " ");
+  expect(skill).toContain("Now's headline is the delivery's name, under its kicker. Beneath it a status row says where the "
+    + "delivery stands: up to four marks, with one sentence beside them naming the stage and who it waits on, and at most "
+    + "one fact under that sentence.");
   expect(skill).toContain("Now's sentence says \"Delivered <day>: N stories landed.\" only when every piece and every live plan "
     + "unit landed");
   expect(skill).toContain("The line map shows the first as Now's sentence, and the siblings' sentences below it; the Markdown view and "

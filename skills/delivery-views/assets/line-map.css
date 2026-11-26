@@ -102,21 +102,29 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .inner { width: 100%; max-width: 980px; margin-inline: auto; display: grid; gap: 24px; }
 .kicker { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .title { margin: 0; font-family: var(--display); font-weight: 500; font-size: clamp(28px, 4.2vw, 44px); line-height: 1.1; letter-spacing: -0.02em; max-width: 24ch; }
-/* On Now the delivery's name steps back to a quiet second line under its kicker: the sentence beneath it leads. */
-.chapter-now .title { font-size: clamp(20px, 2.4vw, 26px); font-weight: 400; line-height: 1.2; max-width: 40ch; color: var(--soft); text-wrap: balance;
-  /* At most three lines, so the sentence under it sits at one height however long the name is; the whole name is
+/* On Now the delivery's name is the headline, in the display face at its largest and lightest. */
+.chapter-now .title { font-size: clamp(38px, 6vw, 64px); font-weight: 300; line-height: 1.04; max-width: 17ch; color: var(--ink); text-wrap: balance;
+  /* At most three lines, so the status row under it sits at one height however long the name is; the whole name is
      read out, and shown on the page's card when the name is cut. */
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
-/* Now's lead, as direction D draws it: one sentence in the display face, the four marks on one thread, the one fact quiet
-   beneath. A mark's shape is its state: done is filled ink, live a ring with a halo, stop the stop colour, todo a faint
-   ring. The thread is solid where the work has passed and dashed ahead of it. Trouble alone is coloured. */
-.now-state { display: grid; gap: 28px; }
-.now-sentence { margin: 0; font-family: var(--display); font-weight: 400; font-size: clamp(30px, 4.6vw, 48px); line-height: 1.12;
-  letter-spacing: -0.015em; max-width: 22ch; color: var(--ink); text-wrap: pretty; overflow-wrap: anywhere; }
-.now-sentence a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+/* Now's status row, past a hairline under the name: the marks on one thread at the left, the sentence beside them as
+   their caption, the one fact quiet beneath it. The sentence comes first in the page's order, so it is read first; the
+   grid only places it. A mark's shape is its state: done is filled ink, live a ring with a halo, stop the stop colour,
+   todo a faint ring. The thread is solid where the work has passed and dashed ahead of it. Trouble alone is coloured. */
+.now-state { display: grid; grid-template-columns: minmax(240px, 420px) minmax(0, 1fr); grid-template-areas: "marks said" "marks fact";
+  column-gap: 32px; row-gap: 6px; align-items: start; padding-top: 22px; border-top: 1px solid var(--hair); }
+.now-state:not(:has(> .now-marks)) { grid-template-columns: minmax(0, 1fr); grid-template-areas: "said" "fact"; }
+.now-sentence { grid-area: said; margin: -3px 0 0; font-family: var(--text); font-weight: 400; font-size: 17px; line-height: 1.4;
+  max-width: 46ch; color: var(--ink); text-wrap: pretty; overflow-wrap: anywhere; }
+.now-sentence a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .now-sentence a:hover { color: var(--soft); }
 .now-sentence.is-stop { color: var(--held); }
-.now-marks { display: flex; align-items: flex-start; max-width: 640px; margin: 0; padding: 0; list-style: none; }
+/* A stop says itself once: the words that name it stand on their own line in the stop colour, and the reason reads
+   under them in ink. The colon between stays for a screen reader, which hears one sentence. A stop sentence with no
+   such words keeps the stop colour whole. */
+.now-sentence.is-stop:has(.now-stop-lead) { color: var(--ink); }
+.now-stop-lead { display: block; margin-bottom: 2px; color: var(--held); font-weight: 500; }
+.now-marks { grid-area: marks; display: flex; align-items: flex-start; margin: 0; padding: 0; list-style: none; }
 .now-mark { position: relative; flex: 1 1 0; min-width: 0; display: grid; grid-template-rows: 12px auto; row-gap: 10px; padding-right: 8px; }
 .now-mark:last-child { flex: none; padding-right: 0; }
 .now-mark::after { content: ""; position: absolute; top: 5px; left: 12px; right: 0; height: 2px;
@@ -128,16 +136,49 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .now-mark.is-live .now-dot { border: 2px solid var(--ink); background: var(--paper); box-shadow: 0 0 0 4px color-mix(in oklab, var(--ink) 9%, transparent); }
 .now-mark.is-stop .now-dot { background: var(--held); box-shadow: 0 0 0 4px color-mix(in oklab, var(--held) 16%, transparent); }
 .now-mark.is-todo .now-dot { border: 2px solid var(--hair); background: var(--paper); }
+/* A live mark under a stop is paused where it stands: a pause glyph in the stop colour, two bars in the dot's place,
+   and a quiet label. */
+.now-mark.is-paused .now-dot { border: 0; background: var(--paper); box-shadow: none; }
+.now-mark.is-paused .now-dot::before, .now-mark.is-paused .now-dot::after { content: ""; position: absolute; top: 1px; width: 3px; height: 10px;
+  border-radius: 1px; background: var(--held); }
+.now-mark.is-paused .now-dot::before { left: 2px; }
+.now-mark.is-paused .now-dot::after { right: 2px; }
+.now-mark.is-live.is-paused .now-mark-label { color: var(--soft); }
 .now-mark-label { font-size: 12px; line-height: 16px; color: var(--faint); overflow-wrap: anywhere; }
 .now-mark.is-live .now-mark-label { color: var(--ink); font-weight: 500; }
 .now-mark.is-stop .now-mark-label { color: var(--held); font-weight: 500; }
-.now-fact { margin: 0; font-size: 14px; line-height: 1.45; color: var(--soft); max-width: 60ch; }
+/* While stories land the lanes run side by side: each lane is a row, its label then its mark, and its thread curves
+   into the one finish on the right, which sits where the threads meet. A landed lane's thread is solid ink; one paused
+   or stopped is dashed in the stop colour; the rest are dashed. The run to the finish turns solid once it is reached. */
+.now-marks.is-merge { display: grid; grid-template-columns: max-content minmax(48px, 1fr) max-content; grid-auto-rows: 24px; align-items: center; }
+.now-marks.is-merge > .now-mark { grid-column: 1; display: flex; flex-direction: row-reverse; justify-content: flex-start; align-items: center;
+  gap: 8px; padding: 0; }
+.now-marks.is-merge > .now-mark::after { content: none; }
+.now-marks.is-merge > .now-mark.is-finish { grid-column: 3; flex-direction: row; gap: 8px; align-self: center; }
+.now-marks.is-merge .now-mark-label { white-space: nowrap; }
+/* Beside merging lanes the sentence starts on the finish's line, its first line centred where the threads meet, so the
+   run reads on into it: "● Landed  Delivered Nov 18: 5 stories landed." On a narrow page the row stacks and it doesn't. */
+.now-state:has(> .now-marks.is-merge) > .now-sentence { margin-top: calc(var(--merge-mid, 12px) - 0.5lh); }
+@media (max-width: 720px) { .now-state:has(> .now-marks.is-merge) > .now-sentence { margin-top: 0; } }
+.now-threads { grid-column: 2; align-self: stretch; height: 100%; list-style: none; }
+.now-threads svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.now-thread { fill: none; stroke: var(--edge); stroke-width: 1.5; stroke-dasharray: 4 4; opacity: .75; }
+.now-thread.is-done { stroke: var(--ink); stroke-width: 2; stroke-dasharray: none; opacity: 1; }
+.now-thread.is-held { stroke: var(--held); opacity: .8; }
+.now-fact { grid-area: fact; margin: 0; font-size: 13px; line-height: 1.45; color: var(--faint); max-width: 60ch; }
+/* On a narrow page the row stacks: the marks, then the sentence and its fact. */
+@media (max-width: 720px) { .now-state { grid-template-columns: minmax(0, 1fr); grid-template-areas: "marks" "said" "fact"; row-gap: 8px; }
+  .now-state > .now-marks { margin-bottom: 10px; } }
 .now-fact a { color: inherit; text-underline-offset: 3px; }
+/* The fact under a stop stays quiet, so the stop is said once; a stop fact under a calm sentence, such as a page that may
+   be out of date, keeps the stop colour, since nothing above it says so. */
 .now-fact.is-stop { color: var(--held); }
+.now-sentence.is-stop ~ .now-fact.is-stop { color: var(--faint); }
 .chapter-now .now-state + .plan-now, .chapter-now .now-state + .say { margin-top: -6px; }
 .title b { font-weight: 500; }
 .say { margin: 0; color: var(--soft); max-width: 60ch; font-size: 16px; }
 .kicker .issue-link { white-space: nowrap; }
+.kicker-repo { font: 450 11.5px/16px var(--mono); color: var(--soft); white-space: nowrap; }
 .mono { font-family: var(--mono); font-size: 0.92em; }
 .waiting { color: var(--faint); font-size: 15px; margin: 0; }
 
@@ -147,7 +188,8 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 /* The sheet's surface is its own layer, so anything drawn behind the sheet sits under it rather than over it. */
 .checking::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--lift); box-shadow: var(--shadow-sheet); }
 .checking > * { min-width: 0; }
-.checking.failed::after { box-shadow: var(--shadow-sheet), inset 0 0 0 1.5px var(--held); }
+/* A failed run says so once: its mark and the header's words carry the stop colour, and the sheet itself stays a plain
+   sheet, so the failure reads as one statement rather than a frame of red around everything. */
 .ck-h { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); display: flex; align-items: center; gap: 8px; }
 .ck-count { margin-left: auto; font: 500 13px/18px var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
 .ck-count i { font-style: normal; color: var(--faint); }
@@ -165,12 +207,29 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .checking.failed .ck-h { color: var(--held); }
 .ck-t { font-size: 17px; line-height: 24px; font-weight: 550; overflow-wrap: anywhere; }
 .ck-s { font-size: 13px; line-height: 18px; color: var(--faint); }
+/* Under a stop nothing is checked, so pieces waiting their turn sit in a flat well rather than on a sheet. */
+.checking.is-held::after { background: var(--well); box-shadow: none; }
+.checking.is-held .ck-t { font-weight: 500; color: var(--soft); }
 .ck-next { padding-top: 12px; border-top: 1px solid var(--hair); color: var(--soft); font-size: 14px; }
 /* Up to twelve checks read in groups, in progress, waiting and completed, each under a quiet heading with its count. */
-.ck-group { display: grid; gap: 4px; }
-.ck-group-h { display: flex; align-items: baseline; gap: 6px; margin-bottom: -4px; font-size: 12px; font-weight: 500; color: var(--faint); }
-.ck-group-n { font: 500 11px/1 var(--mono); color: var(--faint); }
-.ck-group .ck-step.pending { color: var(--faint); }
+/* The checks opened to read by name: one list ordered by state, a check per row behind its mark, the names in one
+   column. The mark says the state and the order groups it, so no row repeats it in words; only a reused result says so
+   after its name. What waits is quiet; reused and skipped results a step softer. */
+.ck-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.ck-list .ck-step { min-height: 28px; padding: 4px 0 4px 24px; }
+.ck-list .ck-step.pending { color: var(--faint); }
+.ck-list .ck-step.reused, .ck-list .ck-step.skipped { color: var(--soft); }
+.ck-item-note { font: 400 12px/20px var(--text); color: var(--faint); }
+/* A long list reads ten at a time: a quiet pager under it, in the list's own columns. The previous arrow is centred on
+   the marks' column and the range starts on the names' column, so the pager reads as the list's last row; the next arrow
+   follows the range. An end it can't step past is greyed. */
+.ck-pager { display: flex; align-items: center; gap: 4px; margin: 2px 0 0 -6px; font-size: 12px; color: var(--faint); }
+.ck-page-where { padding-right: 4px; font-variant-numeric: tabular-nums; }
+.ck-page-step { width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 7px;
+  background: none; color: var(--soft); font: 500 16px/1 var(--text); cursor: pointer; }
+.ck-page-step:hover:not(:disabled) { background: var(--well); color: var(--ink); }
+.ck-page-step:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.ck-page-step:disabled { color: var(--hair); cursor: default; }
 .ck-steps { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 2px 16px; }
 .ck-step { position: relative; display: block; min-height: 28px; padding: 4px 0 4px 24px; font: 400 13px/20px var(--mono); color: var(--soft); overflow-wrap: anywhere; }
 .ck-step::before, .ck-step::after { content: ""; position: absolute; box-sizing: border-box; }
@@ -179,7 +238,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .ck-step.running::before { left: 0; top: 7px; width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--hair); border-top-color: var(--ink); }
 .ck-step.passed, .ck-step.reused { color: var(--ink); }
 .ck-step.passed::before { left: 4px; top: 8px; width: 5px; height: 9px; border-right: 1.75px solid var(--ink); border-bottom: 1.75px solid var(--ink); transform: rotate(40deg); }
-.ck-step.reused::before { left: 1px; top: 8px; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--ink); border-left-color: transparent; }
+.ck-step.reused::before { left: 4px; top: 8px; width: 5px; height: 9px; border-right: 1.75px solid var(--soft); border-bottom: 1.75px solid var(--soft); transform: rotate(40deg); }
 .ck-step.skipped::before { left: 1px; top: 8px; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--edge); }
 .ck-step.skipped::after { left: 4px; top: 13.25px; width: 6px; height: 1.5px; background: var(--edge); }
 .ck-step.failed, .ck-step.timed_out { color: var(--held); font-weight: 500; }
@@ -189,13 +248,6 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 /* Past twelve checks with no times, the run is a row of capsules in a groove. */
 /* The checks without times: equal capsules in the run line's well, in its marks: done quiet, running solid,
    failed held, waiting as hollow outlines. */
-.ck-bar-well { padding: 14px 14px 8px; border-radius: 10px; background: var(--well); max-width: 592px; box-sizing: border-box; }
-.ck-bar { display: flex; gap: 2px; height: 6px; }
-.ck-bar span { flex: 1; min-width: 2px; border-radius: 999px; box-shadow: inset 0 0 0 1.25px var(--edge); opacity: .55; }
-.ck-bar span.passed, .ck-bar span.reused, .ck-bar span.skipped { background: var(--ink); box-shadow: none; opacity: .2; }
-.ck-bar span.running { background: var(--ink); box-shadow: none; opacity: 1; }
-.ck-bar span.failed, .ck-bar span.timed_out { background: var(--held); box-shadow: none; opacity: 1; }
-.ck-bar-foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; font: 400 11px/16px var(--mono); color: var(--faint); }
 /* The check running now, as the highlighted row of the sheet. */
 /* The check running now, as the highlighted row of the sheet. Its mark is a ring whose arc turns while it runs; when it
    finishes the arc closes into the ring and its result draws inside, a check in ink or a cross in held. */
@@ -219,7 +271,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 /* A lead's choice of checks is one line until opened; the run's progress above is what the panel is for. */
 .ck-chosen { font-size: 13px; line-height: 18px; color: var(--faint); }
 .ck-chosen + .ck-chosen { margin-top: -8px; }
-.ck-rest { display: grid; gap: 12px; padding: 10px 0 2px 16px; }
+.ck-rest { display: grid; gap: 12px; padding: 6px 0 2px 16px; }
 .ck-fallback { font-size: 13px; line-height: 18px; color: var(--faint); margin: 0; }
 .ck-chosen > summary { cursor: pointer; list-style: none; position: relative; padding-left: 16px; }
 .ck-chosen > summary::-webkit-details-marker { display: none; }
@@ -245,6 +297,14 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .needs-you .ah { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--soft); }
 .needs-you .needs-summary { margin: 0; font-size: 15px; }
 .needs-you .needs-none, .needs-you .needs-more { margin: 0; color: var(--soft); font-size: 14px; }
+/* A list the page can't show is one quiet line, not a sheet: its heading, a hairline, then the notice, all on one
+   18px line so the icon, the heading and the words share a centre. A notice too long for the line wraps under itself. */
+.needs-you.is-sheet.is-unavailable { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; column-gap: 12px; padding: 0; }
+.needs-you.is-sheet.is-unavailable::after { content: none; }
+.needs-you.is-unavailable .ah { height: 18px; gap: 6px; padding-right: 12px; border-right: 1px solid var(--hair);
+  font-size: 13px; line-height: 18px; font-weight: 500; color: var(--faint); white-space: nowrap; }
+.needs-you.is-unavailable .ah .persona { width: 14px; height: 14px; }
+.needs-you.is-unavailable .needs-none { font-size: 13px; line-height: 18px; color: var(--faint); text-wrap: pretty; }
 .needs-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
 .needs-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; align-items: start; }
 .needs-row .a1 { font-weight: 600; overflow-wrap: anywhere; }
@@ -528,9 +588,7 @@ svg.d-stage-icon.is-merged { width: 16px; height: 16px; border: 0; border-radius
 .issue-link:hover, .issue-link:focus-visible { color: var(--ink); text-decoration-color: currentColor; }
 a.issue-link { color: inherit; cursor: pointer; }
 /* Failures read like a "Needs you" row: colour only in the marks, the words in ink and soft grey. */
-.ck-verdict { margin: 0; font-size: 15px; }
-.ck-verdict b { font-weight: 600; }
-.ck-verdict span { color: var(--soft); font-size: 14px; }
+.ck-verdict { margin: 0; font-size: 14px; color: var(--soft); }
 .run-line { display: block; width: 100%; max-width: 592px; height: auto; overflow: visible; padding: 10px 14px 6px; box-sizing: border-box; border-radius: 10px; background: var(--well); }
 /* A check run: each check a capsule on the run's clock, overlapping checks stacked in rows. Passed checks are quiet, the
    long ones a little less; the running one is solid ink with a soft glow; a failure is held and numbered. */
@@ -550,11 +608,11 @@ a.issue-link { color: inherit; cursor: pointer; }
 .ck-fails .g.num { width: 16px; height: 16px; margin-left: -2px; border: 1.5px solid var(--held); border-radius: 50%; font-size: 10px; line-height: 13px; text-align: center; padding: 0; }
 .ck-failures { margin: 0; }
 .ck-fails { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.ck-fails li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 10px; margin: 0 -10px; border-radius: 6px; background: var(--held-wash); }
+.ck-fails li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 10px; margin: 0 -10px; border-radius: 6px; background: var(--well); }
 .ck-fails .g { color: var(--held); }
 .ck-fb { min-width: 0; }
 .ck-fh { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0 12px; }
-.ck-f { font: 500 13px/20px var(--mono); color: var(--held); overflow-wrap: anywhere; }
+.ck-f { font: 500 13px/20px var(--mono); color: var(--ink); overflow-wrap: anywhere; }
 .ck-d { color: var(--soft); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
 .ck-k { font-family: var(--text); color: var(--faint); }
 .ck-tests { font: 400 12px/18px var(--mono); color: var(--ink); overflow-wrap: anywhere; margin-top: 4px; }
@@ -564,7 +622,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .ck-fails .ck-note { margin-top: 8px; padding: 7px 10px; border-radius: 6px; background: color-mix(in oklab, var(--lift) 72%, transparent); }
 .ck-log { font: 400 11px/16px var(--mono); color: var(--faint); margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ck-batch-note { font-size: 13px; line-height: 18px; color: var(--faint); padding-left: 28px; margin-top: -6px; }
-.ck-rerun { font-size: 13px; line-height: 18px; color: var(--soft); padding-left: 28px; }
+.ck-rerun { margin: -4px 0 0; font-size: 14px; line-height: 20px; color: var(--soft); max-width: 72ch; text-wrap: pretty; }
 .ck-more { margin: 14px 0 0 24px; padding-top: 10px; border-top: 1px solid var(--hair); }
 /* An agent's icon, from the persona set; it takes the colour of the words beside it. */
 .persona { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
@@ -845,7 +903,6 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 /* Motion marks only what is happening now, and rests under reduced motion. */
 @media (prefers-reduced-motion: no-preference) {
   .checking.live:not(.failed) .ck-dot:not(.is-ready):not(.is-done), .ck-step.running::before, .ck-run .ck-run-mark { animation: spin var(--beat) linear infinite; }
-  .ck-bar span.running { animation: breathe calc(var(--beat) * 2) ease-in-out infinite; }
   /* A failure's entry arrives once its row has turned over to the next check: handOff's SETTLE_MS and HOLD_MS (1.38s),
      then TURN_OUT_MS and TURN_IN_MS (1.88s in all). It holds its collapsed start only until then; once arrived nothing clips it. */
   .ck-fails li.arriving { animation: fail-arrive var(--quick) var(--ease) 1.9s backwards; }
@@ -878,13 +935,14 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
   /* A setback still standing breathes on the page's one slow pulse; a closed one is still. */
   .beat.setback.is-standing .setback-sheet { animation: live calc(var(--beat) * 2) ease-in-out infinite; }
   @keyframes slide-in { from { opacity: .2; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
-  .chapter.arrive .inner > * { animation: rise var(--move) var(--ease) both; }
+  /* A chapter arriving in view fades its rows in, one after another; nothing moves, so the page never slides. */
+  .chapter.arrive .inner > * { animation: arrive-fade var(--move) var(--ease) both; }
   .chapter.arrive .inner > *:nth-child(2) { animation-delay: .06s; }
   .chapter.arrive .inner > *:nth-child(3) { animation-delay: .12s; }
   .chapter.arrive .inner > *:nth-child(4) { animation-delay: .18s; }
   .chapter.arrive .inner > *:nth-child(5) { animation-delay: .24s; }
   .chapter.arrive .inner > *:nth-child(n+6) { animation-delay: .3s; }
-  @keyframes rise { from { opacity: .25; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  @keyframes arrive-fade { from { opacity: .25; } to { opacity: 1; } }
   /* A changed digit flips: the words hide it while its layer rolls the old digit out below and the new one in from
      above, each drawn with no words of its own. The new one stays until the words show their own digit again. */
   ::highlight(flip-hold) { color: transparent; }

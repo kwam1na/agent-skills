@@ -644,9 +644,11 @@ the command that restarts it. Each reason is written by what stops it:
 - `signal`: any other SIGTERM, SIGINT or SIGHUP the supervisor receives, naming it.
 
 The view reads the file on every page it serves (`render_state.py live --status-file`). While the supervisor runs, the
-page shows no banner. Once it is down, the page says so, since when and why, and names `lead-run --resume`; a file
-still marked `running` for a pid that no longer runs says the supervisor stopped without recording why, as a killed
-one leaves it.
+page shows no banner. Once it is down, the banner says, in a person's words, that updates stopped, when, and for a
+reason it knows (`close`, `replaced`, `held`, `upgrade`, `signal`) why; a file still marked `running` for a pid that no
+longer runs says updates stopped without warning, as a killed one leaves it. People never restart it by hand, so the
+banner names neither `lead-run --resume` nor the pid: it says the lead restarts them, except after a stop for closing.
+The lead's own status line, below, keeps the command.
 
 Every lead command's status line names the view's address while the view serves:
 

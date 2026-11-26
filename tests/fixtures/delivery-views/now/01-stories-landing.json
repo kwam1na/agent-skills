@@ -413,11 +413,6 @@
     "stop": false,
     "marks": [
       [
-        "Lane 3 · 2 of 2",
-        "done",
-        null
-      ],
-      [
         "Lane 1 · 2 of 4",
         "live",
         null
@@ -425,6 +420,11 @@
       [
         "Lane 2 · 2 of 3",
         "live",
+        null
+      ],
+      [
+        "Lane 3 · 2 of 2",
+        "done",
         null
       ],
       [

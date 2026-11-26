@@ -51,8 +51,10 @@ for (const fixture of FIXTURES) {
   test(`${fixture.title}: Now says the stage, marks it with its holder and states its fact`, async () => {
     const app = await drawn(fixture);
     const shown = nowOf(app);
-    // The marks' labels carry the holder after a middle dot, as the canvas draws them.
-    const expected = { ...fixture.expected, marks: fixture.expected.marks.map(([label, state, who]) => [who ? `${label} · ${who}` : label, state, who]) };
+    // A mark's label names its holder after a middle dot only when that changes what the reader does: you, or the
+    // forge. The lead and the lanes go unnamed; every holder stays in the mark's data-who.
+    const named = (who) => who === "you" || who === "forge";
+    const expected = { ...fixture.expected, marks: fixture.expected.marks.map(([label, state, who]) => [named(who) ? `${label} · ${who}` : label, state, who]) };
     expect(shown).toEqual(expected);
     // Never more than the four marks the canvas draws.
     expect(shown.marks.length <= 4).toBe(true);
@@ -70,6 +72,66 @@ test("a tracker behind the record, with nothing else holding, is named nowhere i
   expect(box).not.toContain("holding up the finish");
   // Needs you keeps the item, below Now.
   expect(app.querySelector("#now .needs-you").textContent).toContain("The tracker is behind the record");
+});
+
+test("while stories land the lanes are rows whose threads curve into the one finish, and later stages stay one thread", async () => {
+  const landing = await drawn(FIXTURES.find((fixture) => fixture.name === "01-stories-landing"));
+  const marks = landing.querySelector("#now ol.now-marks");
+  // A list holds only items: the drawing is an item of its own, hidden from a screen reader, one curve per lane and the
+  // run to the finish.
+  expect(marks.classList.contains("is-merge")).toBe(true);
+  expect([...marks.children].every((child) => child.tagName === "LI")).toBe(true);
+  const threads = marks.querySelector("li.now-threads");
+  expect([threads.getAttribute("aria-hidden"), threads.querySelectorAll("svg path.now-thread").length]).toEqual(["true", 4]);
+  // The finish stands where the threads meet: beside every lane row, and the sentence starts on its line.
+  expect(marks.querySelector("li.is-finish").style.gridRow).toBe("1 / span 3");
+  expect(landing.querySelector("#now .now-state").style.getPropertyValue("--merge-mid")).toBe("36px");
+  // A stopped lane's thread, like a paused one, is drawn in the stop colour.
+  const stopped = await drawn(FIXTURES.find((fixture) => fixture.name === "14-work-stopped"));
+  expect(stopped.querySelectorAll("#now .now-thread.is-held").length > 0).toBe(true);
+  // The rejoin's stages run one after another: one thread, no rows.
+  const suite = await drawn(FIXTURES.find((fixture) => fixture.name === "03-suite-running"));
+  expect([suite.querySelector("#now .now-marks.is-merge"), suite.querySelector("#now .now-threads")]).toEqual([null, null]);
+});
+
+test("a stop says itself once: only the words naming it carry the stop colour, and the fact under it stays quiet", async () => {
+  const stopped = (await drawn(FIXTURES.find((fixture) => fixture.name === "14-work-stopped"))).querySelector("#now .now-sentence");
+  // The words before the colon are the stop's own; the sentence reads the same as it did whole.
+  expect([...stopped.querySelectorAll(".now-stop-lead")].map((node) => node.textContent)).toEqual(["The queue has stopped"]);
+  expect(stopped.textContent).toBe("The queue has stopped: the main line is broken. B3 is the repair.");
+  // A calm sentence over a stop fact has no such words: the fact keeps the stop colour, since nothing above says it.
+  const stale = (await drawn(FIXTURES.find((fixture) => fixture.name === "15-out-of-date"))).querySelector("#now .now-sentence");
+  expect(stale.querySelector(".now-stop-lead")).toBe(null);
+  const css = readFileSync(path.resolve(NOW_FIXTURES, "../../../../skills/delivery-views/assets/line-map.css"), "utf8");
+  expect(css).toContain(".now-sentence.is-stop:has(.now-stop-lead) { color: var(--ink); }");
+  expect(css).toContain(".now-stop-lead { display: block; margin-bottom: 2px; color: var(--held); font-weight: 500; }");
+  // The colon between the stop's name and its reason is heard, not seen: the name stands on its own line.
+  expect([...stopped.querySelectorAll(".sr")].map((node) => node.textContent)).toEqual([": "]);
+  expect(css).toContain(".now-sentence.is-stop ~ .now-fact.is-stop { color: var(--faint); }");
+});
+
+test("under a stop the marks agree with the sentence, and what sits below Now steps back", async () => {
+  const stopped = await drawn(FIXTURES.find((fixture) => fixture.name === "14-work-stopped"));
+  // The live mark is paused where it stands, and says so to a screen reader; its state is still live.
+  const paused = [...stopped.querySelectorAll("#now .now-mark.is-paused")];
+  expect(paused.map((mark) => [mark.querySelector(".now-mark-label").textContent, mark.getAttribute("data-state"),
+    mark.querySelector(".sr").textContent])).toEqual([["Lane 1 · 2 of 4", "live", ", paused"]]);
+  // Pieces waiting their turn under a stop sit in a quiet well, not on a sheet.
+  expect([...stopped.querySelectorAll("#now .checking")].map((panel) => [panel.classList.contains("live"), panel.classList.contains("is-held")]))
+    .toEqual([[false, true]]);
+  // A calm page pauses nothing.
+  const calm = await drawn(FIXTURES.find((fixture) => fixture.name === "01-stories-landing"));
+  expect(calm.querySelector("#now .now-mark.is-paused")).toBe(null);
+  // A Needs you list the page can't show is a notice, drawn as one line; its words are unchanged.
+  const stale = await drawn(FIXTURES.find((fixture) => fixture.name === "15-out-of-date"));
+  const notice = stale.querySelector("#now .needs-you");
+  expect([notice.classList.contains("is-unavailable"), notice.querySelector(".needs-none").textContent])
+    .toEqual([true, "Hidden while updates are stopped, until the lead restarts them."]);
+  const css = readFileSync(path.resolve(NOW_FIXTURES, "../../../../skills/delivery-views/assets/line-map.css"), "utf8");
+  expect(css).toContain(".now-mark.is-paused .now-dot { border: 0; background: var(--paper); box-shadow: none; }");
+  expect(css).toContain(".now-mark.is-paused .now-dot::before, .now-mark.is-paused .now-dot::after { content: \"\"; position: absolute;");
+  expect(css).toContain(".needs-you.is-sheet.is-unavailable::after { content: none; }");
+  expect(css).toContain(".checking.is-held::after { background: var(--well); box-shadow: none; }");
 });
 
 test("Now names no command, branch the record doesn't give, or check of this repository in any state", async () => {
@@ -92,7 +154,7 @@ test("a stale record with a stopped supervisor puts the stop-colour fact over an
   const old = { ...stale, integration: null, document: { ...stale.document, state: { ...stale.document.state,
     meta: { ...stale.document.state.meta, updatedAt: "2026-10-30T09:00:00Z" } } } };
   const shown = nowOf(await drawn(old));
-  expect([shown.fact, shown.factStop]).toEqual(["No update for 3 hours, so this page may be out of date.", true]);
+  expect([shown.fact, shown.factStop]).toEqual(["No update for 3 hours · may be out of date", true]);
 });
 
 test("the count line and the drift sentence the old top of Now carried are gone", async () => {
@@ -118,8 +180,9 @@ test("the reader's call goes to the lane that asks while stories land, and its f
   const call = FIXTURES.find((fixture) => fixture.name === "13-needs-your-call");
   const shown = nowOf(await drawn({ ...landing, needs: call.needs }));
   expect(shown.sentence).toBe(call.expected.sentence);
-  expect(shown.marks).toEqual([["Lane 3 · 2 of 2", "done", null], ["Lane 1 · 2 of 4", "live", null],
-    ["Lane 2 · 2 of 3 · you", "live", "you"], ["Rejoin", "todo", null]]);
+  // The lanes read in lane-number order, side by side into the rejoin.
+  expect(shown.marks).toEqual([["Lane 1 · 2 of 4", "live", null], ["Lane 2 · 2 of 3 · you", "live", "you"],
+    ["Lane 3 · 2 of 2", "done", null], ["Rejoin", "todo", null]]);
   expect(shown.fact).toBe("Lane 2 waits on you.");
 });
 
@@ -130,7 +193,7 @@ test("a delivery closed with stories unlanded draws no lane at work and no rejoi
     { id: journal.length + 1, at: "2026-10-30T11:00:00Z", kind: "delivery.closed", lane: null, subject: "APP-10", data: {} }] } };
   const shown = nowOf(await drawn(closed));
   expect(shown.sentence).toBe("Closed Oct 30: 6 of 9 stories landed.");
-  expect(shown.marks.map(([, state]) => state)).toEqual(["done", "todo", "todo", "todo"]);
+  expect(shown.marks.map(([, state]) => state)).toEqual(["todo", "todo", "done", "todo"]);
 });
 
 /** A fixture by name, with entries appended to its journal under the delivery's key and its meta changed. */
@@ -188,7 +251,7 @@ test("the target moving yields to a suite at the new head, and a silent supervis
   expect(nowOf(await drawn(running)).sentence).toBe("All 9 stories are in. The full suite is running: 10 min.");
   const silent = derived("08-waits-for-merge", { integration: null, needs: { spec: "delivery-needs-you/1", running: true, at: "2026-10-30T11:40:00Z",
     staleAfter: "2026-10-30T11:45:00Z", items: [] } });
-  expect(nowOf(await drawn(silent)).fact).toBe("The lead's supervisor last reported 20 minutes ago, so this page may be out of date.");
+  expect(nowOf(await drawn(silent)).fact).toBe("Last update 20 minutes ago · may be out of date");
 });
 
 test("a forge block with a malformed count draws nothing of the forge, and a passing suite with no round sends the review next", async () => {
@@ -198,7 +261,7 @@ test("a forge block with a malformed count draws nothing of the forge, and a pas
   const suite = passed.document.journal.find((entry) => entry.kind === "integration.suite");
   const green = { ...passed, document: { ...passed.document, journal: passed.document.journal.map((entry) => entry === suite ? { ...entry, data: { ...entry.data, result: "passed" } } : entry) } };
   const shown = nowOf(await drawn(green));
-  expect([shown.sentence, shown.marks[1]]).toEqual(["The full suite passed. The integration review runs next.", ["Review · lead", "live", "lead"]]);
+  expect([shown.sentence, shown.marks[1]]).toEqual(["The full suite passed. The integration review runs next.", ["Review", "live", "lead"]]);
 });
 
 test("a delivery closed with every story in but never rejoined draws its Rejoin mark to come", async () => {

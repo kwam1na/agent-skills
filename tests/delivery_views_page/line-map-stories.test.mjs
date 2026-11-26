@@ -243,8 +243,14 @@ test("the kicker ends with how long the delivery has run, a time element that sa
   expect(lines[0].length).toBe(2);
   expect(running).toEqual(["5 hours 50 minutes so far"]);
   expect(time.getAttribute("tabindex")).toBe("0");
-  // The kicker is that one fact when the record names no tracker item: no state word, nothing before it.
-  expect(time.parentNode.textContent).toBe("Started 5 h 50 min ago");
+  // With no tracker item the kicker is the repository the work lands in, as the forge names it, then that one fact.
+  expect(time.parentNode.textContent).toBe("acme/shop · Started 5 h 50 min ago");
+  expect(time.parentNode.firstChild.className).toBe("kicker-repo");
+  // With more than one forge the configuration doesn't say which repository this delivery's work lands in, so the
+  // kicker names none rather than guess.
+  const two = { ...FORGE, forges: [...FORGE.forges, { ...FORGE.forges[0], repository: "acme/other" }] };
+  const [both] = await openPage(pageWithRuns(underway(), {}, { config: two }), { now: NOW, store: false });
+  expect(both.app.querySelector("#now .kicker").textContent).toBe("Started 5 h 50 min ago");
   expect((await at("2026-10-30T06:40:00Z")).textContent).toBe("Started 30 min ago");
   // A whole hour says no minutes; from 48 hours it says days, to the nearest.
   for (const [now, said] of [["2026-10-30T12:10:00Z", "6 h"], ["2026-11-01T06:09:00Z", "47 h 59 min"], ["2026-11-01T06:10:00Z", "2 days"],

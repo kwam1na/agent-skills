@@ -141,30 +141,30 @@ function closing({ finish = true, marks = "started", earlier = false, needs = nu
 }
 const partway = async (page) => (await open(page))[0].app.querySelector("#now .close-partway");
 
-test("a close that stopped partway says so and names a resumed supervisor when the record meets the close condition", async () => {
+test("a close that stopped partway says so and that the lead resumes it when the record meets the close condition", async () => {
   const box = await partway(closing());
   expect(box.querySelector(".ah").textContent).toBe("The close stopped partway");
-  expect(box.querySelector("p").textContent).toBe("The delivery was closed, but its close-out stopped before it finished. Finish it with lead-run --resume.");
+  expect(box.querySelector("p").textContent).toBe("The delivery was closed, but its close-out stopped before it finished. The lead finishes it by resuming the close.");
   // Now still says the delivery closed.
   expect((await open(closing()))[0].app.querySelector("#now .now-sentence").textContent).toBe("Delivered Oct 30: 1 story landed.");
 });
 
-test("a planned piece the plan removed holds nothing, so the close still finishes with a resumed supervisor", async () => {
-  expect((await partway(closing({ removed: "removed" }))).querySelector("p").textContent).toContain("Finish it with lead-run --resume.");
-  expect((await partway(closing({ removed: "kept" }))).querySelector("p").textContent).toContain("Finish it with lead-close");
+test("a planned piece the plan removed holds nothing, so the lead still finishes the close by resuming it", async () => {
+  expect((await partway(closing({ removed: "removed" }))).querySelector("p").textContent).toContain("The lead finishes it by resuming the close.");
+  expect((await partway(closing({ removed: "kept" }))).querySelector("p").textContent).toContain("The lead finishes it with a close that doesn't wait for the tracker");
 });
 
-test("a story left unmerged, or a lane still busy, means only lead-close can finish the close", async () => {
+test("a story left unmerged, or a lane still busy, means only a close that doesn't wait for the tracker can finish it", async () => {
   for (const shape of [{ stage: "stopped" }, { stage: "queued" }, { lane: "working" }, { lane: "blocked" }]) {
     const text = (await partway(closing(shape))).querySelector("p").textContent;
-    expect([shape, text.includes("Finish it with lead-close, which doesn't wait for the tracker")]).toEqual([shape, true]);
+    expect([shape, text.includes("The lead finishes it with a close that doesn't wait for the tracker")]).toEqual([shape, true]);
   }
 });
 
-test("a close that stopped partway on a record short of its close condition names lead-close, which doesn't wait for the tracker", async () => {
+test("a close that stopped partway on a record short of its close condition says the lead closes without waiting for the tracker", async () => {
   const box = await partway(closing({ finish: false }));
   expect(box.querySelector("p").textContent).toBe("The delivery was closed, but its close-out stopped before it finished. "
-    + "Finish it with lead-close, which doesn't wait for the tracker; a resumed supervisor would hold on what is still open.");
+    + "The lead finishes it with a close that doesn't wait for the tracker, since a resumed close would hold on what is still open.");
 });
 
 test("a finished close, a record with no marks, a mark for an earlier close and a close still running show no partway box", async () => {

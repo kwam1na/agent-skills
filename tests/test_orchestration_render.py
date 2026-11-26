@@ -1636,12 +1636,12 @@ class LiveTests(DeliveryStateFixture):
         self.assertIsNone(said)
         self.assertIn(b'id="supervisor-banner" style="font-weight:bold" hidden></p>', page)
         self.assertIn(b'fetch("/supervisor"', page)
-        # Stopped on a named signal: the same view says so on the next page, with when and how to restart it.
+        # Stopped on a named signal: the same view says so on the next page, in a person's words: when, why, and that the
+        # lead restarts them, never the command or the pid.
         self.status_file(pid=os.getpid(), state="stopped", at="2026-11-11T10:05:00Z", why="signal", signal="SIGTERM",
                          said="it received SIGTERM")
         page, said = self.banner(client)
-        self.assertEqual(said, "The supervisor is down since 2026-11-11T10:05:00Z: it received SIGTERM. Restart it "
-                               "with python3 -B tool.py lead-run --resume.")
+        self.assertEqual(said, "Updates stopped on Nov 11 at 10:05 UTC: they were stopped from outside. The lead restarts them.")
         self.assertIn(said.encode("utf-8"), page)
         self.assertNotIn(b"font-weight:bold\" hidden", page)
         # Still marked running, by a pid that no longer runs: killed, so it recorded nothing.
@@ -1649,8 +1649,8 @@ class LiveTests(DeliveryStateFixture):
         gone.wait(10)
         self.status_file(pid=gone.pid, state="running", at="2026-11-11T10:00:00Z")
         page, said = self.banner(client)
-        self.assertEqual(said, f"The supervisor (pid {gone.pid}) stopped without recording why. Restart it with "
-                               "python3 -B tool.py lead-run --resume.")
+        self.assertEqual(said, "Updates stopped without warning. The lead restarts them.")
+        self.assertNotIn(str(gone.pid), said)
         self.assertIn(said.encode("utf-8"), page)
         # Running again: the banner clears.
         self.status_file(pid=os.getpid(), state="running", at="2026-11-11T10:10:00Z")
@@ -1672,9 +1672,11 @@ class LiveTests(DeliveryStateFixture):
             status, page = client.get("")
         self.assertEqual(status, 200)
         text = page.decode("utf-8")
-        self.assertIn('<body class="x">\n<p role="alert" id="supervisor-banner" style="font-weight:bold">The supervisor '
-                      "is down since 2026-11-11T10:05:00Z: lead-close asked it to stop. Restart it with python3 -B "
-                      "tool.py lead-run --resume.</p>", text)
+        # A stop for closing doesn't come back, so it names no restart; the lead's own wording of it, naming a command,
+        # is never shown.
+        self.assertIn('<body class="x">\n<p role="alert" id="supervisor-banner" style="font-weight:bold">Updates stopped '
+                      "on Nov 11 at 10:05 UTC: the lead stopped them to close the delivery.</p>", text)
+        self.assertNotIn("lead-close", text)
         self.assertLess(text.index("supervisor-banner"), text.index("own home"))
 
     def test_without_a_home_view_the_front_page_is_the_built_in_page(self) -> None:
@@ -3032,7 +3034,7 @@ const [scriptPath] = process.argv.slice(2);
 const program = fs.readFileSync(scriptPath, "utf8");
 const banner = { textContent: "", hidden: true };
 globalThis.document = { getElementById: (id) => (id === "supervisor-banner" ? banner : null) };
-const answers = [{ banner: "The supervisor is down since then: it received SIGTERM." }, { banner: null }];
+const answers = [{ banner: "Updates stopped on Nov 11 at 10:05 UTC: they were stopped from outside." }, { banner: null }];
 const asked = [];
 globalThis.fetch = (url) => {
   asked.push(url);
@@ -3063,7 +3065,7 @@ new Function(program)();
         shown = json.loads(result.stdout)
         self.assertEqual(shown["every"], render_state.SUPERVISOR_POLL_MS)
         self.assertEqual(shown["asked"], ["/supervisor", "/supervisor"])
-        self.assertEqual(shown["seen"], [{"text": "The supervisor is down since then: it received SIGTERM.", "hidden": False},
+        self.assertEqual(shown["seen"], [{"text": "Updates stopped on Nov 11 at 10:05 UTC: they were stopped from outside.", "hidden": False},
                                          {"text": "", "hidden": True}])
 
     def test_large_counts_are_whole_numbers_never_exponents(self) -> None:
