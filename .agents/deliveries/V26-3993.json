@@ -90,7 +90,7 @@
       "criteria": [
         {
           "id": "v26-3996-1",
-          "text": "Drawn as a and as b, the same shared record gives each person their own call in Now and as \"· you\", the other's call under the other's label, and the rejoin owned by the delivery holder."
+          "text": "Drawn as a and as b, the same shared record gives each person their own call in Now and as \"\u00b7 you\", the other's call under the other's label, and the rejoin owned by the delivery holder."
         },
         {
           "id": "v26-3996-2",
@@ -166,6 +166,17 @@
         {
           "id": "v26-4000-2",
           "text": "The pinned owner table (V26-3994) covers any kind added."
+        }
+      ]
+    },
+    "V26-4001": {
+      "title": "Give a lane's \"+N more\" marker its own slot on the line",
+      "lane": "lane-2",
+      "why": "The operator saw lane 1's +2 marker overlap the 3998 label on this delivery's own line",
+      "criteria": [
+        {
+          "id": "v26-4001-1",
+          "text": "With more open stories than the line shows, the +N marker takes its own slot and overlaps no stop's label; a row with no marker draws as today."
         }
       ]
     }

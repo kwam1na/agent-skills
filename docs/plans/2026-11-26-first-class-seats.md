@@ -391,6 +391,10 @@ Lane 1, tier 2, after V26-3994. Test-first. Files:
   for the machine-local ones, the admitting or answering holder's scope for the
   requests.
 
+### V26-4001. Give a lane's "+N more" marker its own slot on the line
+
+Lane 2, tier 2, not blocked. Added mid-delivery: The operator saw lane 1's +2 marker overlap the 3998 label on this delivery's own line
+
 ## Units and order
 
 | Tier | Lane | Items, in order | Owns |
