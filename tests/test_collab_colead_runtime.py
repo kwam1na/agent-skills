@@ -1065,6 +1065,26 @@ class FullHealthAcrossSeatsTests(AcrossSeatsFixture):
                 self.assertEqual(rd.post_merge_step(c), said)
         self.assertEqual(len(launched), 2)
 
+    def test_both_seats_lists_stamp_a_draft_as_the_queue_holders_and_only_its_holder_reads_you(self) -> None:
+        state_tool.handoff(self.b.directory, lane="lane-1", subject="APP-1", head=HEAD, change_request="cr-1")
+        self.exchange(self.b, self.a)
+        listed = {}
+        for machine in (self.a, self.b):
+            c = self.config(machine, forge={"mergeNeedsReady": True})
+            with self.on(machine), mock.patch.multiple(
+                    rd, tracker_conf=lambda c: {}, base_head=lambda c: None, full_health_running=lambda c: None,
+                    read_log=lambda *a, **k: [], lead_listener=lambda *a, **k: {"pid": 1}, authority=lambda: {},
+                    decision_owed=lambda c, doc: False, lane_change_needs=lambda c, state: []), \
+                    mock.patch.object(tp, "needs_you", lambda *a, **k: []):
+                [listed[machine.seat()]] = [item for item in rd.needs_you(c, {"state": machine.state(),
+                                                                             "journal": machine.journal()})
+                                            if item["kind"] == "drafts"]
+        self.assertEqual({seat: (item["scope"], item["seat"]) for seat, item in listed.items()},
+                         {self.first: ("queue", self.second), self.second: ("queue", self.second)})
+        label_b = self.labels()[1]
+        self.assertEqual((listed[self.second]["said"]["who"], listed[self.first]["said"]["who"]), ("You", label_b))
+        self.assertEqual({item["saidAll"]["who"] for item in listed.values()}, {label_b})
+
     def test_a_posture_note_one_seat_journalled_is_not_journalled_again_by_the_other(self) -> None:
         facts = {"from": "gate", "to": "focused", "source": "AGENTS.md", "why": "A declared posture."}
         with self.on(self.a):

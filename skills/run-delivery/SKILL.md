@@ -446,6 +446,14 @@ seat endorses one plan commit, and `lead-setup` and `lead-init` take the record 
 and follows the peer's entries with `collab watch` under the host's monitor. `references/config.md` has the rules and
 the `collab` settings.
 
+On a shared record, "you" is the seat that holds the call. Each seat's supervisor stamps every item of its "Needs you"
+list with `scope`, whose call it is (`delivery`, `queue`, `lane:<id>`, `plan:<anchor>`, or `seat:<id>` for what only
+that machine can do or read), and `seat`, the seat holding that scope at the pass, left out when no seat can be named.
+It words each item three ways: `said` for itself, saying "you" or "the lead" only for its own calls and the holder's
+label for another seat's; `saidAll` for a reader with no seat, naming every owner by label; and `saidRole` by role
+alone, "Someone" or "the lead". The list's `summary` is worded for the writing seat and its `summaryAll` for a reader
+with no seat. An unshared record's list carries none of these and says "you" for every person's call.
+
 | Who | Command | What it does |
 | --- | --- | --- |
 | Lead | `plan-sync --plan P [--message M]` | From a checkout on the plan's branch: composes the working copy's plan with the remote branch section by section, commits and pushes it. A section changed on both sides is refused with `plan.sections_overlap`, naming it with both diffs, before anything is written. A push rejected because a peer pushed first composes again, up to 5 times; the sixth rejection is `plan.push_exhausted`. Once it has synced, it rebuilds the plan's one view: the planning record's `plan.json` when one holds the plan, else the plan's own preview while it has one, saying `plan view: ...` when that changed something. |
