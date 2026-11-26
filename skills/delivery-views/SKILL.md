@@ -1271,6 +1271,22 @@ A planning record's plan chapter keeps the preview's line: "Endorsed by
 current or stale, before that. Like any preview's, it says no form of
 "approve".
 
+On a shared record, "you" is the seat that holds the call. The local page is
+drawn for its checkout's seat, which the renderer embeds; the hosted page has
+none. A Needs you item is yours only when it is a person's call, its pass
+stamped it with your seat, and the journal still gives that seat the item's
+scope: only then does it take Now's sentence, mark "· you" and rank with your
+calls. Every other seat's person's call reads under its holder's label, quieter,
+and names that seat on its mark ("Merge · Ben"). The page words nothing itself:
+a row reads the pass's `said` on its own seat's page, `saidAll` with no seat,
+and `saidRole` when its seat is unknown or the journal has since given its
+scope to another seat; the summary is the pass's `summary`, or `summaryAll`
+with no seat. The rejoin's person words, the merge and the call to accept, are
+the delivery holder's. Under the headline the local page says whose it is,
+"<label> · holds delivery · lane 2" and "Shared with Ben", and the hosted page
+says "Shared by Ama and Ben". Every other "the lead" stays as written, since
+Seats already says who holds what.
+
 ### What the views show of siblings
 
 The state wrapper words what the record's siblings show once, as the
