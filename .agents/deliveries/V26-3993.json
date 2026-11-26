@@ -1,0 +1,218 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3993",
+  "headline": "V26-3993: say whose call it is on a shared delivery's pages",
+  "baseBranch": "integrate/first-class-seats",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-26-first-class-seats.md",
+  "laneBrief": "docs/plans/2026-11-26-first-class-seats.lane-brief.md",
+  "brief": {
+    "notes": null
+  },
+  "context": {
+    "sections": []
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/run-delivery/scripts/run_delivery.py",
+        "skills/run-delivery/scripts/tracker_publisher.py",
+        "skills/run-delivery/SKILL.md",
+        "skills/orchestrate-work/references/*",
+        "skills/orchestrate-work/SKILL.md",
+        "tests/test_waits.py",
+        "tests/test_collab_colead_runtime.py",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_run_delivery_tracker.py",
+        "tests/test_lead_wait.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/delivery-views/scripts/*",
+        "tests/test_delivery_views_render.py",
+        "tests/test_delivery_views_hosted.py",
+        "tests/test_delivery_views_hosted_projection.py",
+        "skills/delivery-views/assets/*",
+        "skills/delivery-views/SKILL.md",
+        "tests/delivery_views_page/*",
+        "tests/fixtures/delivery-views/line-map/*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3994": {
+      "title": "Stamp each Needs you item with its owner and word it for each reader",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3994-1",
+          "text": "On an unshared record, needs-you.json and the supervisor log are byte-identical to today's: no scope, seat, saidAll, saidRole or summaryAll."
+        },
+        {
+          "id": "v26-3994-2",
+          "text": "On the two-seat record, a draft is stamped queue/b on both seats' lists. b's said reads \"You\", a's reads \"Ben\", and both lists' saidAll read \"Ben\"."
+        },
+        {
+          "id": "v26-3994-3",
+          "text": "Lane 2 (a's) asking its lead reads \"the lead\" in a's said and \"Ama's lead\" in b's."
+        },
+        {
+          "id": "v26-3994-4",
+          "text": "Every emitted kind, from run_delivery.py and tracker_publisher.py, has exactly the owner the pinned table gives."
+        }
+      ]
+    },
+    "V26-3995": {
+      "title": "Give the local page its seat, and pass the stamps through",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3995-1",
+          "text": "A shared record's local page embeds the seat id, and its hosted page embeds none."
+        },
+        {
+          "id": "v26-3995-2",
+          "text": "An unshared record's page embeds no viewer, even when the checkout has a local seat."
+        },
+        {
+          "id": "v26-3995-3",
+          "text": "The new keys reach the page for a shared list, and a key outside the allowlist is still dropped."
+        }
+      ]
+    },
+    "V26-3996": {
+      "title": "Draw seats on Now, the marks, Needs you and the rejoin",
+      "lane": "lane-2",
+      "after": [
+        "V26-3995"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3996-1",
+          "text": "Drawn as a and as b, the same shared record gives each person their own call in Now and as \"· you\", the other's call under the other's label, and the rejoin owned by the delivery holder."
+        },
+        {
+          "id": "v26-3996-2",
+          "text": "An unresolved or outrun item reads by role only, even on a page with a viewer, and takes nothing over."
+        },
+        {
+          "id": "v26-3996-3",
+          "text": "Drawn with no viewer, at the rejoin stage, the page says \"you\" nowhere in Needs you, Now or the rejoin."
+        },
+        {
+          "id": "v26-3996-4",
+          "text": "The ten unshared line-map goldens and the unshared Now fixtures pass unchanged."
+        }
+      ]
+    },
+    "V26-3997": {
+      "title": "A blocker resolved on one seat stays listed on the other",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3997-1",
+          "text": "On the two-seat fixture, a blocker resolved on seat a is gone from seat b's Needs you list on b's next pass."
+        },
+        {
+          "id": "v26-3997-2",
+          "text": "An unshared record's behaviour is unchanged."
+        }
+      ]
+    },
+    "V26-3998": {
+      "title": "A seat without delivery shows a false tracker lag in Needs you",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3998-1",
+          "text": "On the two-seat fixture in publisher mode, with every entry posted by a, seat b's Needs you list has no trackerLag item."
+        },
+        {
+          "id": "v26-3998-2",
+          "text": "A real lag on a, the delivery holder, still shows."
+        }
+      ]
+    },
+    "V26-3999": {
+      "title": "The listener item names lanes another seat holds",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3999-1",
+          "text": "On the two-seat fixture, b with no lead-wait running raises no listener item for lane 2, which a holds."
+        },
+        {
+          "id": "v26-3999-2",
+          "text": "b still raises one for its own lane 1 when nothing listens."
+        },
+        {
+          "id": "v26-3999-3",
+          "text": "Unshared behaviour is unchanged."
+        }
+      ]
+    },
+    "V26-4000": {
+      "title": "Raise the Needs you items the shared-delivery docs promise but nothing emits",
+      "lane": "lane-1",
+      "after": [
+        "V26-3994"
+      ],
+      "criteria": [
+        {
+          "id": "v26-4000-1",
+          "text": "Every Needs you kind the docs name is emitted, or the doc no longer names it."
+        },
+        {
+          "id": "v26-4000-2",
+          "text": "The pinned owner table (V26-3994) covers any kind added."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "V26-3994, V26-3995, V26-3996, V26-3997, V26-3998, V26-3999 and V26-4000 land on integrate/first-class-seats through its merge queue, each with every criterion met, or, for a bug that doesn't reproduce, settled with the test that shows it",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration head, with --workers 4 --budget tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide's integration review says, merged into main, and CI's cut-release passes on the change request",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "kwamina",
+    "grantedOn": "2026-11-26"
+  },
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}
