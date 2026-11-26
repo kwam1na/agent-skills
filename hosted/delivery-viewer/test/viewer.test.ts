@@ -1458,7 +1458,7 @@ describe("the hosting status in the hero's live line", () => {
       close(dom);
     }
   });
-  it("says the status on its own while a fresh delivery draws no live line", async () => {
+  it("says a fresh delivery's status in its live line, as the page draws one before anything lands", async () => {
     const served = { now: (await revision(1, auxiliaryProjection("old"))) as Served };
     const { dom, document } = await hostedPage(served, false);
     try {
@@ -1471,11 +1471,12 @@ describe("the hosting status in the hero's live line", () => {
       dom.window.eval(built().renderer);
       await store.poll();
       expect(store.status().kind).toBe("current");
-      // Nothing has landed: the page looks ahead, with no live line under the hero.
+      // Nothing has landed: the page looks ahead, and still draws its live line, which says the hosting status.
       expect(document.querySelector(".is-fresh")).not.toBeNull();
-      expect(document.querySelector(".fact.since")).toBeNull();
-      expect(status(document).textContent).toBe("Progress confirmed");
-      expect(status(document).classList.contains("hosted-announce")).toBe(false);
+      // As for any current publication, the line says it, with no words of its own, and the region only announces.
+      await vi.waitFor(() => expect(line(document).dataset.hosting).toBe("current"));
+      expect(line(document).querySelector(".hosted-words")).toBeNull();
+      expect(status(document).classList.contains("hosted-announce")).toBe(true);
     } finally {
       close(dom);
     }
