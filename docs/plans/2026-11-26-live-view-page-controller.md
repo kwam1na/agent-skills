@@ -262,10 +262,13 @@ five parts below, in order.
   restore focus by key.
 - **`page.state(key, {saved})`** is one entry in the UI-state store: `get()`,
   `set(value)`. Saved entries use today's storage keys and formats (decision 8).
-- **`page.fold(node, {key, saved, oneLine, onSettle})`** is the one fold
-  primitive, for a `details` element or a disclosure `{button, region}`
+- **`page.fold(node, {key, saved, oneLine, onOpen, onSettle})`** is the one
+  fold primitive, for a `details` element or a disclosure `{button, region}`
   (decision 12): `runFold`'s motion, opened from the store on every draw,
-  recorded at the click. `runFold` in `run-summary.js` becomes a call to it.
+  recorded at the click. `onOpen` runs whenever the fold opens, by a click, by
+  the store on a redraw or by a deep link, so content filled on first open is
+  there however it opened. `runFold`'s `onChange` stays as the click's own
+  hook. `runFold` in `run-summary.js` becomes a call to it.
 - **Focus by key**: every element that takes focus carries `data-key` from
   `page.key(kind, id)`. A redraw puts focus back on the same key in the same
   region; a panel or fold that closes returns focus to the control that opened
@@ -429,7 +432,8 @@ Lane 1, tier 3, after V26-4003. Test-first. Files:
     none. In paged layout a What's left row that goes to The line grows it by
     one, and Back from there returns to What's left. An outside `location.hash`
     change grows it by exactly one, the browser's own, and shows the named
-    chapter. The hosted shell's skip link to `#app` is not prevented. Mutants:
+    chapter. A link to `#app` planted from a `run` step, as the hosted shell's
+    skip link is, is not prevented. Mutants:
     `go` always replacing; the tab's links left to the browser;
     `push-if-chapter-changes` always replacing; `go` ignoring the layout; `go`
     pushing for `address`; the handler taking every `#id`.
@@ -623,8 +627,9 @@ Lane 1, tier 7, after SLICE-5. Test-first. Files:
 - `runs.js` and `history.js` rename their local `page` (`runs.js` 9,
   `history.js` 52) so it no longer shadows the controller.
 - The history page's run rows are disclosures on `page.fold` keyed
-  `history:<row key>`, each filled on its first open as today, and keyed for
-  focus. A deep link to `#<row key>` opens it.
+  `history:<row key>`, each filled with its run summary from `onOpen` on its
+  first open, and keyed for focus. Each row gains `id` = its row key, so a deep
+  link to `#<row key>` opens it.
 - Neither page reads storage; every row's state is kept for the visit.
 - `SKILL.md`: the runs and history paragraphs say they follow the same page
   rules.
@@ -635,8 +640,9 @@ Lane 1, tier 7, after SLICE-5. Test-first. Files:
     adds a run above it: focus is on the same run. Mutant: keys by position.
   - **Open rows survive.** Open two runs, push: both open; the open panel shows
     the new gate (the existing test at `runs.test.mjs` 106, unchanged).
-  - **History deep link.** A first load at a row's id opens that row and
-    scrolls it into view once. Mutant: the row left shut.
+  - **History deep link.** A first load at a row's id opens that row, scrolls
+    it into view once, and the opened detail holds the run's summary. Mutants:
+    the row left shut; the fill left on a click handler.
   - **Links away still leave.** A click on the runs page's line map link is
     not prevented. Mutant: the handler taking a link to another document.
   - **Every focusable element has a key.** SLICE-4's check, over the same
