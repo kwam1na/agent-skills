@@ -207,6 +207,128 @@ test("says when the checks being run were chosen by the lead, with the lead's re
   expect(provider.querySelector(".checking").textContent).not.toContain("chosen by the lead");
 });
 
+/** The fixture with the piece being checked under the lead's own selection and, when given, these steps. */
+function chosenByLead(reason, steps) {
+  const document = fixtureDocument();
+  const subject = document.state.meta.checking.now.subject;
+  const item = document.state.queue.find((entry) => entry.subject === subject);
+  item.checkSelection = { by: "lead", head: item.head, reason };
+  if (steps) { document.state.meta.checking.now.steps = steps; }
+  return document;
+}
+
+/** Seventeen untimed checks, one failed and one running: the sheet counts them in a line and lists none by name. */
+const SEVENTEEN = Array.from({ length: 17 }, (_, index) => ({ label: `shop.check.${index}`,
+  state: index === 2 ? "failed" : index < 8 ? "passed" : index === 8 ? "running" : index === 5 ? "reused" : "pending" }));
+SEVENTEEN[5].state = "reused";
+
+/** A check list's rows as the sheet draws them: each row's state, what a screen reader hears first, and its name. */
+const rowsOf = (list) => [...list.querySelectorAll(":scope > li")].map((row) => [row.className, row.querySelector(".sr")?.textContent, row.textContent]);
+
+/** Whether a rule of the page's own stylesheet cuts this element to one line: read on the live page, since a
+ * snapshot is a copy without the page's styles. */
+const styleRules = (rules) => [...rules].flatMap((rule) => (rule.cssRules ? styleRules(rule.cssRules) : [rule]));
+const cutToOneLine = (node) => [...node.ownerDocument.styleSheets].flatMap((sheet) => styleRules(sheet.cssRules))
+  .filter((rule) => rule.style && (rule.style.getPropertyValue("white-space") === "nowrap" || rule.style.getPropertyValue("text-overflow") === "ellipsis"))
+  .some((rule) => node.matches(rule.selectorText));
+
+/** The lead's note, by its words, among the sheet's folds and lines. */
+const leadNote = (app) => [...app.querySelectorAll(".checking > .ck-chosen, .checking > .ck-chosen-line")]
+  .find((node) => (node.querySelector(":scope > summary") || node).textContent.startsWith("Checks chosen by the lead"));
+
+test("the lead's note opens to the sheet's own check list when the sheet only counts the checks", async () => {
+  const document = chosenByLead("only the retry path changed", SEVENTEEN);
+  const summary = ".checking > details.ck-chosen > summary";
+  const [closed, opened, paged] = await open(document, { steps: [{ click: summary }, { click: ".checking > details.ck-chosen .ck-page-step:last-child" }] });
+  // The sheet counts the run in a line and lists nothing by name.
+  expect(closed.app.querySelector(".checking > .ck-s")?.textContent).toMatch(/^6 passed, 1 reused, 1 failed, 1 running, 8 waiting/);
+  expect(closed.app.querySelectorAll(".checking .ck-list")).toHaveLength(1);
+  const note = leadNote(opened.app);
+  expect(note.tagName).toBe("DETAILS");
+  expect(note.hasAttribute("open")).toBe(true);
+  expect(note.querySelector(":scope > summary").textContent).toBe("Checks chosen by the lead, not the usual selection: only the retry path changed");
+  // The sheet's own list: by state, what waits (and what failed) first, then what passed and was reused, ten to a page.
+  const shown = note.querySelector("ol.ck-list");
+  expect(rowsOf(shown)).toEqual([
+    ["ck-step failed", "failed: ", "failed: shop.check.2"],
+    ...[9, 10, 11, 12, 13, 14, 15, 16].map((n) => ["ck-step pending", "waiting: ", `waiting: shop.check.${n}`]),
+    ["ck-step passed", "passed: ", "passed: shop.check.0"],
+  ]);
+  expect(shown.getAttribute("start")).toBe("1");
+  expect(note.querySelector(".ck-pager .ck-page-where")?.textContent).toBe("1–10 of 16");
+  const next = leadNote(paged.app).querySelector("ol.ck-list");
+  expect(rowsOf(next).map((row) => row[2])).toEqual(["passed: shop.check.1", "passed: shop.check.3", "passed: shop.check.4",
+    "passed: shop.check.6", "passed: shop.check.7", "reused: shop.check.5 · reused"]);
+  expect(next.getAttribute("start")).toBe("11");
+  expect(leadNote(paged.app).querySelector(".ck-pager .ck-page-where")?.textContent).toBe("11–16 of 16");
+});
+
+test("the lead's note is one line when the sheet already lists the checks, so the list is there once", async () => {
+  const reason = "only the retry path changed, and the payment provider's sandbox is down for the afternoon, so the " +
+    "contract checks that call it are left to tomorrow's run rather than failing on the sandbox today";
+  let cut = null;
+  const [{ app }] = await open(chosenByLead(reason), { steps: [{ run(window) {
+    cut = cutToOneLine(leadNote(window.document.querySelector("#app")));
+  } }] });
+  const note = leadNote(app);
+  expect(note.tagName).toBe("P");
+  expect(note.className).toBe("ck-chosen-line");
+  // Whole, and never cut to one line: nothing opens it.
+  expect(note.textContent).toBe("Checks chosen by the lead, not the usual selection: " + reason);
+  expect(cut).toBe(false);
+  expect(app.querySelectorAll(".checking ol.ck-list")).toHaveLength(1);
+  expect(note.querySelector("ol.ck-list")).toBeNull();
+});
+
+test("a lead's reason too long for one line reads whole once its note is opened", async () => {
+  const reason = "the provider's sandbox is down for the afternoon, so the contract checks that call it are left to tomorrow's run";
+  const seen = [];
+  const look = { run(window) {
+    const summary = leadNote(window.document.querySelector("#app")).querySelector(":scope > summary");
+    seen.push([summary.textContent, cutToOneLine(summary)]);
+  } };
+  await open(chosenByLead(reason, SEVENTEEN), { steps: [look, { click: ".checking > details.ck-chosen > summary" }, look] });
+  const [closed, opened] = seen;
+  const words = (one) => one;
+  // Cut to one line while closed, and whole once opened.
+  expect(words(closed)).toEqual(["Checks chosen by the lead, not the usual selection: " + reason, true]);
+  expect(words(opened)).toEqual(["Checks chosen by the lead, not the usual selection: " + reason, false]);
+});
+
+test("a batch's note opens to each piece's reason, then to the run's checks when the sheet only counts them", async () => {
+  const batched = (steps) => {
+    const document = fixtureDocument();
+    const members = { batch: ["PAY-2361", "PAY-2362"] };
+    document.state.queue[3].stage = "checking";
+    document.journal.push(
+      { at: "2026-10-22T05:05:00Z", id: 11, kind: "check.started", lane: "payments", subject: "PAY-2361", data: members },
+      { at: "2026-10-22T05:05:00Z", id: 12, kind: "check.started", lane: "storefront", subject: "PAY-2362", data: members },
+    );
+    const piece = (subject) => document.state.queue.find((entry) => entry.subject === subject);
+    piece("PAY-2361").checkSelection = { by: "lead", head: piece("PAY-2361").head, reason: "only the retry path changed" };
+    piece("PAY-2362").checkSelection = { by: "lead", head: piece("PAY-2362").head, reason: "copy only" };
+    if (steps) { document.state.meta.checking.now.steps = steps; }
+    return document;
+  };
+  const reasons = (note) => [...note.querySelectorAll(".ck-chosen-list li")].map((row) => row.textContent);
+  const expected = ["Retry card payments once on a dropped connectiononly the retry path changed", "Keep the order number on the receipt pagecopy only"];
+  // The sheet lists the checks itself: the note opens to the reasons alone.
+  const [{ app: listing }] = await open(batched());
+  const short = leadNote(listing);
+  expect(short.querySelector(":scope > summary").textContent).toBe("Checks chosen by the lead, not the usual selection · for both pieces");
+  expect(reasons(short)).toEqual(expected);
+  expect(short.querySelector("ol.ck-list")).toBeNull();
+  expect(listing.querySelectorAll(".checking ol.ck-list")).toHaveLength(1);
+  // The sheet only counts them: the reasons, then the same list.
+  const [{ app: counting }] = await open(batched(SEVENTEEN));
+  const long = leadNote(counting);
+  expect(reasons(long)).toEqual(expected);
+  const body = [...long.querySelector(".ck-rest").children].map((node) => node.className);
+  expect(body).toEqual(["ck-chosen-list", "ck-list", "ck-pager"]);
+  expect(rowsOf(long.querySelector("ol.ck-list"))[0]).toEqual(["ck-step failed", "failed: ", "failed: shop.check.2"]);
+  expect(counting.querySelectorAll(".checking ol.ck-list")).toHaveLength(1);
+});
+
 test("says when the piece being checked runs on the fallback because the lead chose no checks, naming it", async () => {
   const document = fixtureDocument();
   const subject = document.state.meta.checking.now.subject;
