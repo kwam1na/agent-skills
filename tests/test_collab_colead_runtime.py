@@ -1334,10 +1334,11 @@ class PublisherFixture(CoLeadFixture):
 class TrackerLagAcrossSeatsTests(PublisherFixture):
     """Only the seat holding delivery posts tracker updates, so only it judges whether the tracker lags the record."""
 
-    def lag(self, machine) -> list[str]:
+    def lag(self, machine, closing: bool = False) -> list[str]:
         """The tracker's "Needs you" texts ``machine``'s pass reads in publisher mode."""
         doc = {"state": machine.state(), "journal": machine.journal()}
-        return [item["text"] for item in tp.needs_you(doc, machine.directory, machine.repo / "flow-log", KEY, self.CONF)]
+        return [item["text"] for item in tp.needs_you(doc, machine.directory, machine.repo / "flow-log", KEY, self.CONF,
+                                                      closing=closing)]
 
     def test_a_seat_without_delivery_lists_no_lag_for_what_the_delivery_holder_posted(self) -> None:
         self.decide(self.a, "Take the left lane.")
@@ -1345,6 +1346,14 @@ class TrackerLagAcrossSeatsTests(PublisherFixture):
         self.exchange(self.a, self.b)
         self.assertEqual(self.lag(self.a), [])
         self.assertEqual(self.lag(self.b), [])
+        # A closing pass names each start still waiting only where updates are posted.
+        state_tool.append_journal(self.a.directory, kind="lane.assigned", lane="lane-2", subject="APP-2",
+                                  data={"title": "Again"})
+        self.exchange(self.a, self.b)
+        self.assertEqual([text for text in self.lag(self.a, closing=True) if "start never recorded" in text],
+                         [f"APP-2: start never recorded (journal entry {self.a.journal()[-1]['id']} waits for its "
+                          "lane-start)"])
+        self.assertEqual(self.lag(self.b, closing=True), [])
 
     def test_a_real_lag_still_shows_on_the_delivery_holder_and_nowhere_else(self) -> None:
         self.decide(self.a, "Take the left lane.")
@@ -1353,9 +1362,16 @@ class TrackerLagAcrossSeatsTests(PublisherFixture):
         self.exchange(self.a, self.b)
         self.assertEqual(self.lag(self.a), [f"The tracker publisher hasn't posted journal entries {unposted['id']}"])
         self.assertEqual(self.lag(self.b), [])
-        # Once delivery is handed to b, a no longer judges the lag: b's publisher posts from here on.
-        self.hand_over()
+        # Once delivery is handed to b, a no longer judges the lag: b's publisher posts from here on, once b has taken
+        # what a carried, and from then b judges it, from the ledger position a passed on.
+        transfer = self.hand_over()
         self.assertEqual(self.lag(self.a), [])
+        self.assertEqual(self.lag(self.b), [])
+        rd.take_delivery(self.config(self.b))
+        on_b = lambda entry: next(found["id"] for found in self.b.journal() if found["origin"] == entry["origin"])
+        # Nothing a posted is owed again: only the unposted entry and the hand-over's own transfer.
+        self.assertEqual(self.lag(self.b), [f"The tracker publisher hasn't posted journal entries {on_b(unposted)}, "
+                                            f"{on_b(transfer)}"])
 
 
 class HandoverTests(PublisherFixture):
