@@ -232,4 +232,5 @@ test("the seat line names only admitted seats, and a page for a seat the record 
   expect(stranger.seat).toEqual([["seat-shared", "Shared by Ama and Ben"]]);
   // It reads as the hosted page does: every owner by label.
   expect(stranger.rows).toEqual([["Ben", "Ben marks the draft ready", "theirs"]]);
+  expect(stranger.summary).toBe("the sentence naming every owner");
 });
