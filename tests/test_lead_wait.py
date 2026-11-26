@@ -1236,6 +1236,25 @@ class LeaseTests(unittest.TestCase):
         self.assertEqual(flow.listener_facts({"lanes": [lane("lane-1", "idle")], "queue": []}), {"lanes": [], "pieces": []})
 
 
+    def test_an_unshared_record_listens_for_every_lane_and_piece_and_a_seat_for_its_own(self) -> None:
+        lane = lambda name: {"id": name, "state": "working"}
+        state = {"lanes": [lane("lane-1"), lane("lane-2")],
+                 "queue": [{"subject": "A", "stage": "queued", "lane": "lane-2"}, {"subject": "B", "stage": "queued"},
+                           {"subject": "C", "stage": "stopped", "lane": None, "assignedLane": "lane-1"}]}
+        # Unshared, there are no roles: the record itself, every lane and piece.
+        self.assertIs(flow.held_lanes_view(state, None), state)
+        self.assertEqual(flow.listener_facts(flow.held_lanes_view(state, None)),
+                         {"lanes": ["lane-1", "lane-2"], "pieces": ["A", "B", "C"]})
+        # A seat holding lane 1 and not the queue hears lane 1 and the stopped piece assigned to it.
+        seat = {"seat": "s-bbbbbbbbbbbb", "delivery": False, "queue": False, "lanes": {"lane-1"}}
+        self.assertEqual(flow.listener_facts(flow.held_lanes_view(state, seat)), {"lanes": ["lane-1"], "pieces": ["C"]})
+        self.assertEqual(flow.listener_facts(flow.held_lanes_view(state, {**seat, "queue": True})),
+                         {"lanes": ["lane-1"], "pieces": ["B", "C"]})
+        # A piece not stopped goes by the lane it is on, whatever lane it was once assigned.
+        moved = {**state, "queue": [{"subject": "D", "stage": "queued", "lane": "lane-2", "assignedLane": "lane-1"}]}
+        self.assertEqual(flow.listener_facts(flow.held_lanes_view(moved, seat))["pieces"], [])
+
+
 class StandingTextTests(unittest.TestCase):
     def assert_phrases(self, path: Path, *phrases: str) -> None:
         text = " ".join(path.read_text(encoding="utf-8").split())

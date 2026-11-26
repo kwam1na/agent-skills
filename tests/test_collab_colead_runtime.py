@@ -1134,6 +1134,38 @@ class BlockerAcrossSeatsTests(AcrossSeatsFixture):
             self.carry()
             self.assertEqual([any(text in said for said in self.blockers(m)) for m in (self.a, self.b)], [False, False],
                              text)
+class ListenerAcrossSeatsTests(AcrossSeatsFixture):
+    """With no lead-wait running, a seat's "The lead isn't listening" item names only the lanes it holds, and the
+    pieces in the queue on them: another seat's lanes are that seat's lead's to hear."""
+
+    def listening(self, machine, lanes: dict[str, str], queue: list[dict] = ()) -> list[str]:
+        """The listener item's text in ``machine``'s pass, with the lanes in the states given and no lead-wait."""
+        state = machine.state()
+        state["lanes"] = [{**row, "state": lanes.get(row["id"], "idle")} for row in state["lanes"]]
+        state["queue"] = [*state["queue"], *queue]
+        with self.on(machine), mock.patch.multiple(
+                rd, tracker_conf=lambda c: {}, base_head=lambda c: None, full_health_running=lambda c: None,
+                lead_listener=lambda *a, **k: None, decision_owed=lambda c, doc: False, read_log=lambda *a, **k: [],
+                lane_change_needs=lambda c, state: []), mock.patch.object(tp, "needs_you", lambda *a, **k: []):
+            listed = rd.needs_you(self.config(machine, forge={}), {"state": state, "journal": machine.journal()})
+        return [item["text"] for item in listed if item["kind"] == "listener"]
+
+    def test_a_seat_with_no_lead_wait_names_only_its_own_lanes(self) -> None:
+        # a holds lane 2, b holds lane 1.
+        self.assertEqual(self.listening(self.b, {"lane-2": "working"}), [])
+        self.assertEqual(self.listening(self.b, {"lane-1": "working", "lane-2": "working"}),
+                         ["Lane 1 can't reach the lead. A hand-off or question from it will wait unseen until the lead "
+                          "is watching again."])
+        self.assertEqual(self.listening(self.a, {"lane-1": "working", "lane-2": "working"}),
+                         ["Lane 2 can't reach the lead. A hand-off or question from it will wait unseen until the lead "
+                          "is watching again."])
+        # A piece in the queue is its lane's seat's to hear.
+        piece = {"order": 1, "subject": "APP-2", "title": "Two", "lane": "lane-2", "stage": "queued", "head": HEAD,
+                 "syncedHead": None, "leadInputs": [], "reportedRounds": 1, "runId": None, "checks": []}
+        self.assertEqual(self.listening(self.b, {}, [piece]), [])
+        self.assertEqual(len(self.listening(self.a, {}, [piece])), 1)
+        # A piece on no lane is the queue holder's, a here.
+        self.assertEqual([len(self.listening(m, {}, [{**piece, "lane": None}])) for m in (self.a, self.b)], [1, 0])
 
 
 class SeatNeedsTests(AcrossSeatsFixture):
