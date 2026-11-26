@@ -1,0 +1,117 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-26-first-class-seats.md",
+  "planSha256": "6986be85dcb3b7df477f2e3c990ba88f9919be50f099d7470018be51368c8144",
+  "planCommit": "c81ed86fffb042c42985f98d85b169df85ab2033",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "ee1659357da0ed8153b8eb9e9a58db8dc1b7968b",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-26T18:51:35.629826Z",
+      "finishedAt": "2026-11-26T18:55:01.760578Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "3ad2dcd031714acfcf700aade00193e74ed474a4",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-26T18:56:25.295671Z",
+      "finishedAt": "2026-11-26T18:58:17.394971Z",
+      "open": [
+        "adversarial-testing-r2-1",
+        "adversarial-testing-r2-2"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "c81ed86fffb042c42985f98d85b169df85ab2033",
+      "outcome": "aligned",
+      "startedAt": "2026-11-26T18:58:38.464593Z",
+      "finishedAt": "2026-11-26T18:59:21.787441Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "first-class-seats.plan",
+        "candidateRef": "c81ed86fffb042c42985f98d85b169df85ab2033",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree SHA f9f8c8a4977c11f0202983f7dd6bacbfaca2ea4b at candidateRef c81ed86fffb042c42985f98d85b169df85ab2033, with HEAD at c81ed86fffb042c42985f98d85b169df85ab2033. The start identity check passed: `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty. The end identity check, repeated after the review, passed with the same tree and a clean status.",
+          "Delta derived myself: `git diff 3ad2dcd031714acfcf700aade00193e74ed474a4..c81ed86fffb042c42985f98d85b169df85ab2033` changes only docs/plans/2026-11-26-first-class-seats.md (11 lines added, 6 removed).",
+          "Carried findings: none open. outcome-correctness-r1-1, outcome-correctness-r1-2 and outcome-correctness-r1-3 closed in round 2 and are not relisted. The delta leaves decisions 8 to 10, which carry those fixes, untouched.",
+          "Delta review, no findings. First, the pass order is now `lane` filled, then stamped, then worded, so the wording can see the owner it names (docs/plans/2026-11-26-first-class-seats.md:164-167). This agrees with `say_needs` filling `lane` from the piece before it words the item (skills/run-delivery/scripts/run_delivery.py:13848-13858). Second, the new No-lane test pins the `delivery` fallback that the Contracts state. Third, the `seat:b` page case and scenario 6 now say a lane-less `blocker` is `who: lead`, as its producer emits it (skills/run-delivery/scripts/run_delivery.py:13690-13701). Under decision 10 such an item can't take over Now, so 'takes nothing over' agrees with the rule. Round 2's wording, 'can take over Now', had contradicted decision 10.",
+          "Model class: Claude Opus (claude-opus-5-5). Realization basis: host-convention. The host is a native subagent and exposes no progress or permission signals. No run ID applies.",
+          "Checks: none ran, as the brief says for a plan review (no scoped sensors, no test files in scope). No mutation or fault injection was run.",
+          "Approval conditions: this round raises no findings, so none applies."
+        ]
+      },
+      "resultSha256": "98ae7718ab760c305228ca436c39d644e990f19372c1a087b04e8635e3a27f08"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "first-class-seats.plan",
+        "candidateRef": "c81ed86fffb042c42985f98d85b169df85ab2033",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r2-1",
+            "state": "fixed",
+            "resolution": "SEATS-1 adds a **No lane** test, adopted as written: a `stopped` item whose piece has no lane, on the two-seat record, stamps `delivery`/a, and the mutant is the fallback stamping `queue` (docs/plans/2026-11-26-first-class-seats.md:253-254). Scenario 6 restates it (docs/plans/2026-11-26-first-class-seats.md:371-372)."
+          },
+          {
+            "id": "adversarial-testing-r2-2",
+            "state": "fixed",
+            "resolution": "The `seat:` page case now uses a real producer kind: a lane-less `blocker` with `who: lead`, stamped `seat:b`. Drawn as b, where b is not the first seat, it reads `said` (not `saidRole`) and takes nothing over. Drawn as a, it reads under b's label. The mutant is `holderOf`'s first-seat default (docs/plans/2026-11-26-first-class-seats.md:317-320). Scenario 6 drops \"b's page can lead with it\" (docs/plans/2026-11-26-first-class-seats.md:369-371). Nothing contradicts decision 10 any more."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA f9f8c8a4977c11f0202983f7dd6bacbfaca2ea4b. Start identity check: `git rev-parse HEAD^{tree}` gave f9f8c8a4977c11f0202983f7dd6bacbfaca2ea4b at HEAD c81ed86fffb042c42985f98d85b169df85ab2033, and `git status --porcelain` was empty. End identity check: the same tree SHA, and the status was empty.",
+          "Delta: `git diff 3ad2dcd031714acfcf700aade00193e74ed474a4..c81ed86fffb042c42985f98d85b169df85ab2033` changes only docs/plans/2026-11-26-first-class-seats.md (11 insertions, 6 deletions).",
+          "Carried findings: adversarial-testing-r2-1 and adversarial-testing-r2-2 were re-checked against the revision. Both proposed changes are adopted as written, and both approval conditions are met; for r2-2, the `seat:` case uses a kind a producer emits, with its real `who`.",
+          "Delta review: the Contracts paragraph now orders the pass as fill `lane`, then stamp, then word (docs/plans/2026-11-26-first-class-seats.md:164-167). That resolves the round-2 P3 note on stamp-versus-wording order, and SEATS-1's Wording test still fails if the order is wrong. The delta adds no new conditional without a test, and no absence-only or vacuous assertion.",
+          "Model class: Claude Opus (claude-opus-5-5), run as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals to this lens.",
+          "Scope: a plan review with no scoped checks or test files, so no tests ran and no mutants were planted. The review kept to the plan's delta.",
+          "Approval conditions: this round raises no findings, so there are none to state."
+        ]
+      },
+      "resultSha256": "499813169059a16121495df0275209be2d0a3675ff4d12be3fc2a8ba5e588f6a"
+    }
+  ],
+  "residualRisks": [
+    "3 review rounds; findings open after each round: 9, 2, 0."
+  ]
+}
