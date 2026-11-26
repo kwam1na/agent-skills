@@ -81,21 +81,32 @@ operator confirms or overturns them in approving this plan.
    who holds what (one statement per fact).
 8. **The supervisor words each item; the page doesn't.** Headlines embed the
    actor mid-sentence ("Lane 2 waits on the lead"), so the page can't swap a
-   name in. Each item carries its owner seat as stamped on the pass, and two sets
-   of words:
-   - `said`, worded for the seat that wrote the list;
-   - `saidAll`, worded for a reader with no seat.
+   name in. Each item carries its owner seat as stamped on the pass, and three
+   wordings:
+   - `said`, for the seat that wrote the list;
+   - `saidAll`, for a reader with no seat, with every owner named by label;
+   - `saidRole`, by role only, as decision 2 has it ("Someone", "The lead").
 
    Each seat's local page reads only its own list, so `said` is right there.
    The hosted page, fed by the delivery holder's list, reads `saidAll`. This
-   replaces the 2026-11-26 recommendation that the page derive each owner
+   replaces the 2026-11-26 recommendation that the page work out each owner
    itself. That only works for words the page writes, so it applies only to the
    rejoin (decision 4).
-9. **A stamp the record has since outrun reads as unresolved.** The page checks
-   each item's stamped seat against the holder the journal names now, using the
+9. **A stamp the record has since outrun reads by role.** The page checks each
+   item's stamped seat against the holder the journal names now, using the
    same `holderOf` the Seats chapter uses. If they differ, a scope moved after
-   the pass: the item reads `saidAll`, takes nothing over and never says "you".
-   The next pass words it again.
+   the pass. On every page, the hosted one included, the item then reads
+   `saidRole`, takes nothing over and never says "you". The next pass words it
+   again. A `seat:<id>` owner is held by `<id>` and is never outrun.
+10. **The page tells shared from unshared by `meta.collab`, not by a viewer.**
+    On an unshared record, "operator means you" stays exactly as today. On a
+    shared record, an item is yours only when it is a person's call
+    (`who: operator`), its stamped seat is the viewer's, and that seat still
+    holds the item's owner. A shared page with no viewer, or an item with no
+    stamped seat, has nothing that is yours.
+11. **The summary is the pass's.** `summary` and `summaryAll` are worded when
+    the list is written. An item that later reads as outrun still counts in
+    them until the next pass, the same lag as every other word in the list.
 
 ## Inventory and disposition
 
@@ -120,9 +131,9 @@ part of the work; `seat:` names who saw it.
 
 | Site | Today | Owner |
 | --- | --- | --- |
-| Now override (`nowState`) | first current `who: operator` item takes the sentence; its mark reads "· you"; fact "<mark> waits on you." | the item's stamped seat; takes over only when it is the viewer's |
+| Now override (`nowState`) | first current `who: operator` item takes the sentence; its mark reads "· you"; fact "<mark> waits on you." | takes over only when the item is yours (decision 10) |
 | Mark suffix (`nowBlock`) | names "you" or "the forge" | adds another seat's label for a person's call ("Merge · Ben") |
-| Needs you rank and rows (`needsYou`) | operator items first; `said.who` | the viewer's own calls first, then others'; rows show `said`, or `saidAll` per decision 9 |
+| Needs you rank and rows (`needsYou`) | operator items first; `said.who` | the viewer's own calls first, then others'; rows show `said`; `saidRole` when outrun (decision 9); `saidAll` with no viewer |
 | Needs you summary | "N things need you" | shared form: "1 thing needs you; 1 more needs Ben" |
 | Rejoin "waits for your merge", "It's your call to accept" (`rejoinStage`) | you | `delivery`, worded on the page |
 | Rejoin ledger "The merge is the operator's." | operator | `delivery`, worded on the page |
@@ -144,31 +155,40 @@ The full site list, with file and line as of `main` at `2ac337ca`, is in
 ### The Needs you list (`delivery-needs-you/1`, unchanged version)
 
 On a shared record only:
-- each item gains `scope` (`delivery`, `queue`, `lane:<id>`, `plan:<anchor>` or
-  `seat:<id>`), `seat` (the seat holding it at the pass, or absent when
-  unresolved) and `saidAll`, the same shape as `said`;
-- `summary` is worded for the writing seat, and `summaryAll` for no seat.
+- each item gains:
+  - `scope`: `delivery`, `queue`, `lane:<id>`, `plan:<anchor>` or `seat:<id>`;
+  - `seat`: the seat holding that scope at the pass, absent when unresolved;
+  - `saidAll` and `saidRole`, the same shape as `said`;
+- the list gains `summaryAll`, and its `summary` is worded for the writing seat.
 
-On an unshared record none of these keys is written, so `needs-you.json` and the
-supervisor log are byte-identical to today's. The version stays at 1: every
-added member is optional, and an unshared reader never sees one.
+The stamp is made after `say_needs` has filled each item's `lane` from its piece,
+so `stopped` and `unaccepted` items find their lane. An item with no lane where
+its kind wants one falls back to `delivery`.
+
+On an unshared record none of these keys is written, so `needs-you.json` and
+the supervisor log are byte-identical to today's. SEATS-1 adds the pin that
+proves it. The version stays at 1: every added member is optional, and an
+unshared list never carries one.
 
 ### What the page is given
 
-- `render.py` embeds the viewer's seat, `{seat, label}` from `local_seat`, only
-  when the record is shared and the seat resolves. Without it the page has no
-  viewer and treats every owner as another's.
-- `render.py`'s row allowlist passes `scope`, `seat` and `saidAll`, and the list
-  passes `summaryAll`. On an unshared record there is nothing extra to pass.
-- `hosted.py` embeds no viewer, and the page reads `saidAll` and `summaryAll`.
+- `render.py` embeds the viewer's seat id from `local_seat`, only when the record
+  is shared and the seat resolves. The page takes the viewer's label from the
+  record's seats with `seatLabels`, as the Seats chapter does.
+- `render.py`'s row allowlist passes `scope`, `seat`, `saidAll` and `saidRole`,
+  and the list passes `summaryAll`.
+- `hosted.py` embeds no viewer. The hosted page reads `saidAll` and `summaryAll`,
+  or `saidRole` per decision 9.
 - `holderOf` resolves an unheld `plan:<anchor>` to the delivery holder, matching
-  `delivery_state.holder`. Today it returns the first seat.
+  `delivery_state.holder`; today it returns the first seat. It treats
+  `seat:<id>` as held by `<id>`.
 
 ### The seat chip
 
-Shown on a shared record's local page with a resolved viewer: "<label> · holds
-delivery · lane 2", listing only the scopes held, then "Shared with Ben". On the
-hosted page: "Shared by Ama and Ben", with no chip. Never shown unshared.
+Shown only on a shared record's local page with a resolved viewer: "<label> ·
+holds delivery · lane 2", listing only the scopes held, then "Shared with Ben".
+The hosted page shows "Shared by Ama and Ben" and no chip. An unshared page shows
+neither.
 
 ## Finish line
 
@@ -176,13 +196,20 @@ hosted page: "Shared by Ama and Ben", with no chip. Never shown unshared.
    - each person's own call in Now's sentence and as "· you" on its mark;
    - the other's call under the other's label, in the quieter style;
    - a lane's call to its lead as "the lead" on its holder's page and "Ama's
-     lead" on the other.
+     lead" on the other, taking nothing over on either;
+   - the rejoin's "your merge" and "your call to accept" on the delivery
+     holder's page, and "Ama's merge" and "Ama's call to accept" on the other;
+   - the summary "1 thing needs you; 1 more needs Ben" on a, and the mirror on b.
 2. An item whose seat can't be resolved, or whose stamp the journal has outrun,
-   reads by role only on both pages and takes nothing over.
-3. The hosted page shows every owner by label and says "you" nowhere in Needs
-   you, Now or the rejoin.
-4. The ten unshared line-map goldens, the unshared `needs-you.json`
-   byte-identity check and the unshared render pins pass unchanged.
+   reads by role only on every page and takes nothing over, even on a page with
+   a viewer.
+3. The page drawn with no viewer, at the rejoin stage, shows every owner by
+   label and says "you" nowhere in Needs you, Now or the rejoin. The hosted
+   page is that page.
+4. Every unshared record draws as today:
+   - the new unshared list pin (SEATS-1) passes;
+   - the ten unshared line-map goldens and the unshared Now and Needs you page
+     tests pass unchanged.
 5. `skills/delivery-views/SKILL.md` and the orchestration guide state the rule
    once: on a shared record, "you" is the seat that holds the call.
 
@@ -195,6 +222,7 @@ Story keys are given when the items are created; the placeholders `SEATS-1` to
 
 Lane 1, tier 1, not blocked. Test-first. Files:
 `skills/run-delivery/scripts/run_delivery.py`,
+`skills/run-delivery/scripts/tracker_publisher.py`,
 `skills/orchestrate-work/references/wait-words.json`,
 `skills/orchestrate-work/references/orchestration-guide.md`,
 `skills/run-delivery/SKILL.md`, `tests/test_waits.py`,
@@ -202,20 +230,40 @@ Lane 1, tier 1, not blocked. Test-first. Files:
 `tests/test_run_delivery_supervisor.py`.
 
 - A `NEED_SCOPES` table beside the words table gives each kind its owner, as in
-  the inventory. A test fails if any emitted kind is missing from it.
+  the inventory.
 - One seat resolver per pass, built from one journal read, stamps `scope` and
-  `seat` in `needs_you()`, only on a shared record.
+  `seat` after `say_needs`, only on a shared record.
 - `say_needs` words each item for a viewer seat: `said` for the writing seat,
-  `saidAll` for none. `wait-words.json` gains the other-seat person, the other
-  seat's lead and "Someone" for `who` and `whom`, and the shared summary.
+  `saidAll` for none, `saidRole` by role. `wait-words.json` gains the
+  other-seat person, the other seat's lead and "Someone" for `who` and `whom`,
+  and the shared summary.
+- Tests, each shown red against the mutant named:
+  - **Unshared list.** `needs_you()` on an unshared record emitting an item of
+    every owner form: every item's key set is exactly today's, and the list has
+    no `summaryAll`. Mutant: the `meta.collab` guard removed.
+  - **Owner table.** `NEED_SCOPES` pinned as one literal mapping, kind to owner
+    form. Mutant: `report` and `stale` mapped to `delivery`.
+  - **Completeness.** The pinned mapping covers every kind emitted, read from
+    every producer of the list: `run_delivery.py` and `tracker_publisher.py`.
+    Mutant: a new kind in `tracker_publisher.py` with no row.
+  - **Blockers.** Three cases: a blocker with a lane, one with only a subject
+    whose piece is on a lane, and one with neither (`seat:<origin.seat>`).
+    Mutant: the subject branch skipped.
+  - **Feedback.** An unheld section after `delivery` has moved off the first
+    seat stamps the delivery holder. Mutant: the first seat.
+  - **Wording.** On a shared list, `said`, `saidAll` and `saidRole` for
+    scenarios 1, 2 and 4, plus `summary` and `summaryAll` for scenario 3.
+  - **Two seats.** One case in `FullHealthAcrossSeatsTests`, which already gives
+    the queue to b, so no new fixture is built: both seats' lists stamp a draft
+    `queue`/b.
 - Pins to re-derive in the same story:
   - `test_waits.py`'s source-layout check of producer dicts (around line 621)
     and its exact template key set (`TableTests`);
   - the whole-`said` comparisons and summary sentences in `test_waits.py`;
   - the supervisor test's `said.who` check.
 
-  Each is re-derived, not loosened: the source-layout check learns the stamp's
-  position, or the stamp is added after the producer dict.
+  Each is re-derived, not loosened. The stamp is added after the producer dict,
+  so the source-layout check keeps its pattern.
 
 ### SEATS-2. Give the local page its seat, and pass the stamps through
 
@@ -226,10 +274,16 @@ Lane 2, tier 1, not blocked. Test-first. Files:
 `tests/test_delivery_views_hosted.py` and
 `tests/test_delivery_views_hosted_projection.py`.
 
-- The viewer embed, the allowlist additions and the hosted `saidAll` choice, as
+- The viewer embed, the allowlist additions and the hosted wording choice, as
   in Contracts.
-- The exact row key pin (around line 1083) gains the new keys for a shared list
-  only. A second assertion pins the unshared key set as today's.
+- Tests:
+  - The exact row key pin (around line 1083) gains the new keys for a shared
+    list.
+  - A key outside the allowlist is still dropped.
+  - An unshared record's page embeds no viewer, even when the checkout has a
+    local seat. Mutant: the shared check removed.
+  - A shared record's local page embeds the seat id, and the hosted page embeds
+    none.
 - Not blocked by SEATS-1: the contract above fixes the list's shape, and the
   tests use hand-written lists.
 
@@ -239,73 +293,93 @@ Lane 2, tier 2, after SEATS-2. Test-first. Files:
 `skills/delivery-views/assets/line-map.js`, `skills/delivery-views/SKILL.md`,
 `tests/delivery_views_page/` and `tests/fixtures/delivery-views/line-map/`.
 
-- A `yours(item)` helper replaces "operator means you":
-  - true only when the item's stamped seat is the viewer's and still holds its
-    scope;
-  - false with no viewer, so on the hosted page.
-- `nowState`, `nowBlock` and `needsYou` use it, along with the seat label on
-  marks and the rank rule.
-- The rejoin's person words are worded for the delivery holder.
-- The `holderOf` plan-section fix, the seat chip and the "shared with" line.
-- Tests:
-  - a page test that draws one shared fixture as seat a, as seat b, with no
-    viewer and with an outrun stamp;
-  - the `colead` and `plan-shared` goldens recaptured;
-  - the ten unshared goldens untouched.
-- It comes after SEATS-2 because it takes over SEATS-2's lane files list, and
-  its page test asserts the embed SEATS-2 writes. It is not blocked by SEATS-1.
+- A `yours(item)` helper, as decision 10 defines it, replaces "operator means
+  you" in `nowState`, `nowBlock` and `needsYou`. Rank: holding first, then
+  yours, then the rest.
+- Marks add another seat's label for a person's call ("Merge · Ben").
+- Rows read `said`, or `saidRole` when outrun; with no viewer, `saidAll`.
+- The rejoin's person words are worded on the page for the delivery holder.
+- The `holderOf` fixes, the seat chip and the "shared with" line.
+- A page-test fixture, made from the `colead` case's document, at an
+  integration-base rejoin stage, with two seats' Needs you lists.
+- Page cases, each shown red against the mutant named:
+  - drawn as a and as b: finish line 1. Mutant: rejoin worded for the queue
+    holder.
+  - a `who: lead` item stamped with the viewer's seat takes nothing over.
+    Mutant: `yours` without the `who` test.
+  - with a viewer, an operator item with `scope` and no `seat` reads "Someone",
+    takes nothing over and ranks with the others'. Mutant: an absent seat
+    falling back to "operator means you".
+  - an outrun stamp reads `saidRole`. Mutant: `saidAll`.
+  - an item stamped `seat:b`, drawn as b where b is not the first seat, reads
+    `said` and can take over Now; drawn as a, it reads under b's label.
+    Mutant: `seat:` judged by `holderOf`'s first-seat default.
+  - `delivery` moved from a to b, then a `feedback` item on an unheld section
+    stamped b: b's call on b's page, under b's label on a's. Mutant: `holderOf`
+    unchanged.
+  - drawn with no viewer: finish line 3. Mutant: the hosted page reading `said`.
+  - the unshared Now fixtures (`now-fixtures.mjs`) and the Needs you rank pass
+    unchanged.
+- The `colead` and `plan-shared` goldens are recaptured. The ten unshared
+  goldens are untouched.
+- Comes after SEATS-2 because it takes over SEATS-2's lane, and its cases assert
+  the embed SEATS-2 writes. Not blocked by SEATS-1.
 
 ## Units and order
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | SEATS-1 | `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/SKILL.md`, `skills/orchestrate-work/references/`, `tests/test_waits.py`, `tests/test_collab_colead_runtime.py`, `tests/test_run_delivery_supervisor.py` |
+| 1 | 1 | SEATS-1 | `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`, `skills/orchestrate-work/references/`, `tests/test_waits.py`, `tests/test_collab_colead_runtime.py`, `tests/test_run_delivery_supervisor.py` |
 | 1 | 2 | SEATS-2 | `skills/delivery-views/scripts/`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_hosted.py`, `tests/test_delivery_views_hosted_projection.py` |
 | 2 | 2 | SEATS-3 | `skills/delivery-views/assets/`, `skills/delivery-views/SKILL.md`, `tests/delivery_views_page/`, `tests/fixtures/delivery-views/line-map/` |
 
 Shared files: `provenance.lock.json` and each touched skill's catalog entry
-change in every story. The merge queue serializes them, and a conflict only in
-the lock is resolved by taking either side and running the provenance writer,
-as `AGENTS.md` says. No story uses a fixed port or browser session. The page
-lane runs under Node from the checkout's own `node_modules/`.
+change in every story. The merge queue serializes them. A conflict only in the
+lock is resolved by taking either side and running the provenance writer, as
+`AGENTS.md` says. No story uses a fixed port or browser session. The page lane
+runs under Node from the checkout's own `node_modules/`.
 
 ## Test scenarios
 
-1. Two seats, a holds delivery and lane 2, b holds the queue and lane 1. A draft
-   waits to be marked ready.
-   - b's list stamps `queue`/b, and its `said` reads "You".
-   - a's list stamps `queue`/b, and its `said` reads "Ben".
-   - Both lists' `saidAll` read "Ben".
+Two seats: a (Ama) holds delivery and lane 2; b (Ben) holds the queue and
+lane 1.
+
+1. A draft waits to be marked ready.
+   - Both lists stamp `queue`/b.
+   - b's `said` reads "You"; a's reads "Ben".
+   - Both lists' `saidAll` read "Ben"; `saidRole` reads "Someone".
 2. Lane 2 asks its lead.
-   - a reads "Lane 2 waits on the lead".
-   - b reads "Lane 2 waits on Ama's lead".
-   - No "you" on either page.
-3. One call each: each page leads with its own call and lists the other's under
-   the other's label.
-4. Unresolved: a checkout with no local seat writes items with no `seat`. Both
-   pages read "Someone", and nothing takes over Now.
-5. An outrun stamp: the queue moves from b to a after b's pass. b's page reads
-   `saidAll` for the drafts item, which no longer takes over Now. a's next pass
-   reads "You".
-6. A blocker journaled by the supervisor on b, with no lane, is stamped
-   `seat:b`.
-7. Unshared: an existing unshared fixture's `needs-you.json`, rendered page and
-   goldens are byte-identical before and after.
-8. Hosted: the delivery holder's published page shows "Ben" and "Ama" by label,
-   no chip, "Shared by Ama and Ben", and never "you".
+   - a reads "Lane 2 waits on the lead"; b reads "Lane 2 waits on Ama's lead".
+   - No "you" on either page, and nothing takes over Now.
+3. One call each, at the rejoin stage:
+   - each page leads with its own call and lists the other's under the other's
+     label;
+   - the summary reads "1 thing needs you; 1 more needs Ben" on a and the mirror
+     on b;
+   - the rejoin is Ama's: "your merge" on a, "Ama's merge" on b.
+4. Unresolved: an item with no `seat`, drawn as a with a viewer, reads
+   "Someone" and takes nothing over.
+5. An outrun stamp: the queue moves from b to a after b's pass. On b's page,
+   and with no viewer, the drafts item reads `saidRole` and takes nothing over.
+   a's next pass reads "You".
+6. Blockers: one on lane 1 stamps `lane:lane-1`/b; one with only a subject on
+   lane 2 stamps `lane:lane-2`/a; one the supervisor journaled on b with
+   neither stamps `seat:b`/b, and b's page can lead with it.
+7. Feedback after `delivery` moves from a to b, on an unheld section, is b's.
+8. Unshared: every item's key set and the list's keys are today's; the page,
+   the goldens and the Now cases are unchanged.
+9. No viewer (the hosted page): owners by label, "Shared by Ama and Ben", no
+   chip, and no "you" in Needs you, Now or the rejoin.
 
 ## Execution posture
 
 `test-first` for every story. Each new behaviour has a clear expected outcome,
-and the unshared byte-identity is already pinned by existing tests that must
-stay green unchanged.
+and each test above names the mutant it must fail on.
 
 ## Sensors
 
-- SEATS-1: `tests.test_waits`, and `tests.test_collab_colead_runtime` with one
-  added case in a class that already gives the queue to b
-  (`FullHealthAcrossSeatsTests`), so no new fixture is built.
-  `tests.test_run_delivery_supervisor` for the re-derived pins.
+- SEATS-1: `tests.test_waits`, `tests.test_collab_colead_runtime` and
+  `tests.test_run_delivery_supervisor`.
 - SEATS-2: `tests.test_delivery_views_render`, `tests.test_delivery_views_hosted`
   and `tests.test_delivery_views_hosted_projection`.
 - SEATS-3: `tests/test_delivery_views_page.py` (the Node page lane, including
@@ -314,12 +388,12 @@ stay green unchanged.
   `scripts/update-provenance.py --check`.
 - Before any release that carries this: the full suite with
   `--workers 4 --budget tests/suite-budget.json` on Python 3.11, per
-  `AGENTS.md`. Added tests are pure functions or reuse existing fixtures, so
-  the budget is kept without raising a ceiling.
+  `AGENTS.md`. Added tests are pure functions, page cases or one case in an
+  existing fixture class, so the budget is kept without raising a ceiling.
 
 ## Approval handoffs
 
-1. The operator approves this plan, including decisions 1 to 9.
+1. The operator approves this plan, including decisions 1 to 11.
 2. The stories and the four out-of-scope bugs are created with
    `$create-linear-ticket`, under V26-3959's project.
 3. Delivery runs under `orchestrate-work`. No release is cut by this plan.
