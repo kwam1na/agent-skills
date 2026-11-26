@@ -397,9 +397,10 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 /* A row's landed stories, folded into one bar on the rule that grows with their count, with how many under it. */
 .seg.fold .fold-bar { position: absolute; top: 20px; left: 4px; height: 7px; border-radius: 3px; background: var(--c);
   width: calc(10px + var(--landed, 1) * 6px); max-width: calc(100% - 8px); }
-.seg.fold .fold-label, .seg.more { position: absolute; top: 40px; font: 450 11px/14px var(--mono); color: var(--soft); white-space: nowrap; }
-.seg.fold .fold-label { left: 4px; }
-.seg.more { top: 14px; color: var(--faint); }
+.seg.fold .fold-label, .seg.more { font: 450 11px/14px var(--mono); color: var(--soft); white-space: nowrap; }
+.seg.fold .fold-label { position: absolute; top: 40px; left: 4px; }
+/* A lane's "+N more" is a slot on the line like a stop's, after its last one, never laid over that stop's label. */
+.seg.more { padding-top: 14px; place-items: start center; color: var(--faint); }
 /* Lighting a lane, from its row, its stop or one of its ticks, dims every other lane's row, turn and ticks. */
 .lines-track [data-lane] { transition: opacity .15s; }
 .lines-track.lit [data-lane]:not(.on) { opacity: .22; }
