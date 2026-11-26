@@ -1,5 +1,6 @@
 {
   "description": [
+    "On a shared record the supervisor raises peerHeld, generationDiffers and seatSplit for the seat whose pass saw them, seatRequest for the delivery holder and scopeRequest for the requested scope's holder, none holding the close.",
     "On a shared record a seat with no lead-wait running says in \"Needs you\" that its lead can't hear only the lanes it holds and the queue's pieces on them; another seat's lanes are that seat's lead's to hear.",
     "On a shared record only the seat holding delivery, once it has taken it, lists a tracker lag in \"Needs you\"; another seat, which writes no tracker ledger, lists none.",
     "On a shared record the supervisor stamps each \"Needs you\" item with the scope whose call it is and the seat holding it, and words it for its own seat (said), for a reader with no seat (saidAll) and by role (saidRole), with summaryAll beside summary; an unshared record's list is unchanged.",

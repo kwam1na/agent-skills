@@ -522,11 +522,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
-          "sha256": "3f1b5991a2a9c75adc69ed29063cc6e6dd397b17e44cc04fae1f60b10a58cd99"
+          "sha256": "b0b5f1297e170786cf1b9cea601ea9d5071dceb4cafe06414954ff63c4312095"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "f7cd24b1798667b056da12cb6b462c780d04ec1dd00025a343695f0c5d8c40e7"
+          "sha256": "363540af5fa6238e9865ebb9743299870814688756d6611c12d0d0f98e415e57"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -538,7 +538,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
-          "sha256": "9b445448038488617e1c5b5fb1b38a70eb0f5da94bd8b9722a72e5ccb38391c2"
+          "sha256": "1f24955535389adf707b19a114c689e95a85e2979ad789ec78f9be426c37bd50"
         },
         {
           "path": "skills/orchestrate-work/scripts/collab.py",
@@ -1147,7 +1147,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "98c4eae588e1d77df150e42a2f4fe237b15d3f5ff88450eb8234ffde0c91cd2b"
+          "sha256": "87ef3fab0a009fd9bd70ccc5d8f9b923c66ac629b11595a2196cd8dfef6f91d6"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

@@ -196,7 +196,12 @@
           "stale": "The {name} is not answering",
           "compounding": "The compound-learning decision is not recorded",
           "sibling": "{subject:ticket} comes after {on:ticket}, which no sibling lists",
-          "feedback": "Feedback on {anchor} stops approval"
+          "feedback": "Feedback on {anchor} stops approval",
+          "peerHeld": "{peer}'s updates are held",
+          "generationDiffers": "{peer} writes with another release",
+          "seatSplit": "This checkout's seat split",
+          "seatRequest": "{peer} asks to join",
+          "scopeRequest": "{peer} asks for {scope}"
         },
         "otherwise": "Something needs {whom}"
       },
@@ -229,7 +234,12 @@
           "stale": "[{reason}]",
           "compounding": "The close waits on it. The lead writes up the friction and records whether a learning is kept.",
           "sibling": "Add the sibling delivery that holds {on:ticket}, or fix the key.",
-          "feedback": "[{detail}]"
+          "feedback": "[{detail}]",
+          "peerHeld": "They don't fit this record, so this machine doesn't read them.",
+          "generationDiffers": "Its updates are held until the machine behind upgrades its writer; no machine upgrades another.",
+          "seatSplit": "Another clone wrote as this seat, so this checkout writes and reads nothing more. It needs a fresh seat, admitted like any other.",
+          "seatRequest": "The delivery's holder admits it.",
+          "scopeRequest": "[{reason}]"
         },
         "otherwise": ""
       },
@@ -262,7 +272,12 @@
           "stale": "Clears when the {name} answers again.",
           "compounding": "Clears when the lead records the decision.",
           "sibling": "Clears when a sibling's read lists it, or the after key changes.",
-          "feedback": "Clears when the holder of {anchor} settles feedback {entry}."
+          "feedback": "Clears when the holder of {anchor} settles feedback {entry}.",
+          "peerHeld": "Clears when {peer}'s updates fit this record again.",
+          "generationDiffers": "Clears when both machines write with the same release.",
+          "seatSplit": "Clears with a fresh seat for this checkout.",
+          "seatRequest": "Clears when {peer} is admitted.",
+          "scopeRequest": "Clears when the holder of {scope} passes it on or keeps it."
         },
         "otherwise": ""
       },

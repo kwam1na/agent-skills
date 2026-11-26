@@ -1168,6 +1168,78 @@ class ListenerAcrossSeatsTests(AcrossSeatsFixture):
         self.assertEqual([len(self.listening(m, {}, [{**piece, "lane": None}])) for m in (self.a, self.b)], [1, 0])
 
 
+class SeatNeedsTests(AcrossSeatsFixture):
+    """What only a shared record can need: a peer's updates held, a peer on another release, this checkout's seat split,
+    a seat asking to join, and a scope asked for. Each is a "Needs you" item whose call is the seat that can act."""
+
+    def needs(self, machine, **collab) -> dict[str, dict]:
+        """``machine``'s pass's items of the shared kinds, by kind, its record's local collab member changed by
+        ``collab`` as ingest would leave it, with nothing outside the record answering."""
+        state = machine.state()
+        state["meta"]["collab"] = {**state["meta"]["collab"], **collab}
+        with self.on(machine), mock.patch.multiple(
+                rd, tracker_conf=lambda c: {}, base_head=lambda c: None, full_health_running=lambda c: None,
+                lead_listener=lambda *a, **k: {"pid": 1}, decision_owed=lambda c, doc: False, read_log=lambda *a, **k: [],
+                lane_change_needs=lambda c, state: []), mock.patch.object(tp, "needs_you", lambda *a, **k: []):
+            listed = rd.needs_you(self.config(machine, forge={}), {"state": state, "journal": machine.journal()})
+        shared = [item for item in listed
+                  if item["kind"] in ("peerHeld", "generationDiffers", "seatSplit", "seatRequest", "scopeRequest")]
+        # Each is listed once, and none holds the close: each is the record's word, not a finish line.
+        self.assertEqual(len({item["kind"] for item in shared}), len(shared), [item["kind"] for item in shared])
+        self.assertEqual([item["kind"] for item in shared if item["holding"]], [])
+        return {item["kind"]: item for item in shared}
+
+    def test_a_peer_held_for_its_updates_or_its_release_is_named_on_the_machine_that_reads_it(self) -> None:
+        label_a, label_b = self.labels()
+        self.assertEqual(self.needs(self.a), {})
+        peer = lambda reason: {self.second: {"through": 3, "fetchedAt": "2026-11-26T00:00:00Z", "heldReason": reason}}
+        held = self.needs(self.a, peers=peer("slice_invalid"))
+        self.assertEqual(list(held), ["peerHeld"])
+        self.assertEqual((held["peerHeld"]["said"]["headline"], held["peerHeld"]["scope"], held["peerHeld"]["seat"]),
+                         (f"{label_b}'s updates are held", f"seat:{self.first}", self.first))
+        self.assertFalse(held["peerHeld"]["holding"])
+        older = self.needs(self.a, peers=peer("generation_differs"))
+        self.assertEqual(list(older), ["generationDiffers"])
+        self.assertEqual((older["generationDiffers"]["said"]["headline"], older["generationDiffers"]["scope"]),
+                         (f"{label_b} writes with another release", f"seat:{self.first}"))
+        self.assertIn("lead-upgrade-writer", older["generationDiffers"]["text"])
+        # A peer read again is held no more.
+        self.assertEqual(self.needs(self.a, peers=peer(None)), {})
+
+    def test_a_split_seat_is_named_on_its_own_machine(self) -> None:
+        split = self.needs(self.b, heldReason="seat_split")
+        self.assertEqual(list(split), ["seatSplit"])
+        self.assertEqual((split["seatSplit"]["said"]["headline"], split["seatSplit"]["scope"], split["seatSplit"]["seat"]),
+                         ("This checkout's seat split", f"seat:{self.second}", self.second))
+
+    def test_a_seat_asking_to_join_is_the_delivery_holders_call_until_it_is_admitted(self) -> None:
+        label_a = self.labels()[0]
+        third = self.join(self.c, admit=False)
+        label_c = state_tool.derived_seats(self.a.journal())[third]["label"]
+        asked = self.needs(self.a)
+        self.assertEqual(list(asked), ["seatRequest"])
+        self.assertEqual((asked["seatRequest"]["said"]["headline"], asked["seatRequest"]["scope"],
+                          asked["seatRequest"]["seat"], asked["seatRequest"]["said"]["who"]),
+                         (f"{label_c} asks to join", "delivery", self.first, "The lead"))
+        self.exchange(self.a, self.b)
+        self.assertEqual(self.needs(self.b)["seatRequest"]["said"]["who"], f"{label_a}'s lead")
+        collab.admit_seat(self.a.directory, third)
+        self.assertEqual(self.needs(self.a), {})
+
+    def test_a_scope_asked_for_is_its_holders_call_until_it_is_given_or_kept(self) -> None:
+        label_a, label_b = self.labels()
+        collab.request_scope(self.b.directory, "queue", "I'll run the queue tonight.")
+        self.exchange(self.b, self.a)
+        for machine, who in ((self.a, "The lead"), (self.b, f"{label_a}'s lead")):
+            asked = self.needs(machine)["scopeRequest"]
+            self.assertEqual((asked["said"]["headline"], asked["said"]["why"], asked["scope"], asked["seat"],
+                              asked["said"]["who"]),
+                             (f"{label_b} asks for queue", "I'll run the queue tonight.", "queue", self.first, who))
+        request = next(entry for entry in self.a.journal() if entry["kind"] == "scope.requested")
+        collab.decline_request(self.a.directory, request["id"])
+        self.assertEqual(self.needs(self.a), {})
+
+
 class EvidenceAcrossSeatsTests(AcrossSeatsFixture):
     """D22: only the delivery holder records and publishes evidence, from the carried app-checks log in lane-tenure
     order, on the merged base; lane clips never count; taking delivery sets the earlier page aside."""

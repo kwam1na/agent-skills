@@ -3198,7 +3198,7 @@
       },
       "explain": "A checkout asked to write this shared record, as a new seat the delivery holder admits.",
       "tracker": null,
-      "instruction": "None: a checkout joined a shared record's catch-up as a new seat, and the entry shows in the record and the views."
+      "instruction": "None: a checkout joined a shared record's catch-up as a new seat; Needs you names it to the delivery holder, who admits it, and the entry shows in the record and the views."
     },
     "seat.admitted": {
       "altitude": "bookkeeping",
@@ -3367,7 +3367,7 @@
       },
       "explain": "A seat asked the holder of a scope to pass it on.",
       "tracker": null,
-      "instruction": "None: a request for a scope goes to its holder's session, and the entry shows in the record and the views."
+      "instruction": "None: a request for a scope goes to its holder's session, and Needs you names it to that holder, who gives the scope or keeps it; the entry shows in the record and the views."
     },
     "scope.declined": {
       "altitude": "story",
