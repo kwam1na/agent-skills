@@ -1,0 +1,132 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-26-live-view-page-controller.md",
+  "planSha256": "f0aa6bf14531e9a6781877c2b92e3875635cfaf1956b7758cc24367aa5a30bf7",
+  "planCommit": "e93b23d7eed2bde88bee7a68642adb4938241bfe",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "c65665e446d93cd702153c108eb4c3cde65b59dd",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-26T21:03:24.057597Z",
+      "finishedAt": "2026-11-26T23:01:21.080318Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "outcome-correctness-r1-5",
+        "outcome-correctness-r1-6",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6",
+        "adversarial-testing-r1-7"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "c6d106db125425f5b01b5ec175522e91dc2c9fcf",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-26T23:06:01.736079Z",
+      "finishedAt": "2026-11-26T23:09:39.095853Z",
+      "open": [
+        "outcome-correctness-r2-1",
+        "outcome-correctness-r2-2",
+        "outcome-correctness-r2-3",
+        "outcome-correctness-r2-4",
+        "adversarial-testing-r2-1",
+        "adversarial-testing-r2-2",
+        "adversarial-testing-r2-3"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "c4ad14c456227a9eb5c1b13b6de754c51591502e",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-26T23:10:24.374145Z",
+      "finishedAt": "2026-11-26T23:11:48.091921Z",
+      "open": [
+        "outcome-correctness-r3-1"
+      ]
+    },
+    {
+      "round": 4,
+      "candidate": "e93b23d7eed2bde88bee7a68642adb4938241bfe",
+      "outcome": "aligned",
+      "startedAt": "2026-11-26T23:11:57.963047Z",
+      "finishedAt": "2026-11-26T23:12:31.062718Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "live-view-page-controller.plan",
+        "candidateRef": "e93b23d7eed2bde88bee7a68642adb4938241bfe",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "evidence": [
+          "Reviewed tree 13d845b3a64e60e57fd44ff43c78ecbea11dd2b2 at HEAD e93b23d7eed2bde88bee7a68642adb4938241bfe in the private checkout. Start identity check passed (`git rev-parse HEAD^{tree}` matched, `git status --porcelain` empty), and the end check repeated both and passed. No probe or mutant was made. The delta was derived with `git diff c4ad14c456227a9eb5c1b13b6de754c51591502e..e93b23d7eed2bde88bee7a68642adb4938241bfe`: the plan only, in four hunks (the `page.fold` contract, the skip-link test wording, SLICE-6's history bullet and its deep-link test).",
+          "Model class: Claude Opus 5.5 (claude-opus-5-5). Realization basis: host-convention. Host: a native subagent, with no progress or permission signals exposed to the lens. No run ID; activityId review-live-view-page-controller.plan, attemptId 1, roundId live-view-page-controller.plan-r4.",
+          "Checks: none were run, as the brief directs for a plan review. Evidence is from reading the delta against skills/delivery-views/assets/history.js and the earlier rounds' reading of the assets.",
+          "Re-check outcome-correctness-r3-1: fixed, adopted as proposed. `page.fold` gains `onOpen`, which runs whenever the fold opens, by a click, by the store on a redraw or by a deep link, and `runFold`'s `onChange` stays as the click's own hook (plan:265-271). SLICE-6 fills the history row from `onOpen` (plan:629-632). The History-deep-link test now asserts the opened detail holds the run's summary, with the mutant the fill left on a click handler (plan:644-646).",
+          "The delta also adopted the round-3 notes. History rows gain `id` = their row key, so the deep link has a target (plan:631-632). The skip-link case plants a `#app` link from a `run` step, since the page lane renders local pages (plan:435-436).",
+          "Delta reviewed for new defects: none found. `onOpen` running on every open, redraws included, matches today's fill guard: `history.js` fills only when the detail has no child yet (skills/delivery-views/assets/history.js:87-88), so a repeated `onOpen` adds nothing twice so long as that guard is kept, as \"on its first open\" says. No finding was declined.",
+          "Approval conditions: no finding raised this round; nothing is left to resolve."
+        ],
+        "resolvedFindings": [
+          {
+            "id": "outcome-correctness-r3-1",
+            "state": "fixed",
+            "resolution": "`page.fold` takes `onOpen`, run on every open by click, store or deep link. SLICE-6 fills history rows there, and its deep-link test asserts the filled summary with the click-handler mutant (docs/plans/2026-11-26-live-view-page-controller.md:265-271, 629-632, 644-646)."
+          }
+        ]
+      },
+      "resultSha256": "deb9cfaff20ae385fff02a0de8b8287b8b6814f59d005bf7fe88f6fa118a8288"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "live-view-page-controller.plan",
+        "candidateRef": "e93b23d7eed2bde88bee7a68642adb4938241bfe",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "evidence": [
+          "Reviewed tree SHA 13d845b3a64e60e57fd44ff43c78ecbea11dd2b2. Start check: `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty. End check: both again matched and empty. The delta was derived with `git diff c4ad14c456227a9eb5c1b13b6de754c51591502e..e93b23d7eed2bde88bee7a68642adb4938241bfe` and touches only the plan.",
+          "Model class: Claude Opus (claude-opus-5-5), running as a native subagent with no progress or permission signals exposed. Realization basis: host-convention. Run ID: none; activityId `review-live-view-page-controller.plan`, attemptId 1, roundId `live-view-page-controller.plan-r4`.",
+          "Checks: a plan review runs no sensors, and the brief names no test files in scope. No tests or mutants were run; each mutant is reasoned against the plan's changed rows. The checkout was not modified.",
+          "Carried findings: none open; all ten earlier findings were closed in earlier rounds and are not relisted.",
+          "Delta review: `page.fold`'s new `onOpen` hook (docs/plans/2026-11-26-live-view-page-controller.md:265-271) is pinned on its deep-link path by \"History deep link\" (docs/plans/2026-11-26-live-view-page-controller.md:643-645), which asserts that the opened detail holds the run's summary under the mutant of the fill left on a click handler. A click handler alone would leave a deep-linked row empty, so that mutant is killed. The click path stays covered by the history page's existing open-to-fill behaviour. Each history row gaining `id` = its row key is what the same row's first-load assertion depends on, so a missing `id` fails it.",
+          "Delta review: replacing the hosted shell's skip link with a `#app` link planted from a `run` step (docs/plans/2026-11-26-live-view-page-controller.md:435-436) moves the deny-side case into the page lane's own fixture, which observes the real delegated handler. The mutant of the handler taking every `#id` stays killed.",
+          "P3 note (not a finding): `onOpen` on the store-on-redraw path has no row of its own. Only the history rows fill from it, and the history page does not redraw, so no product path depends on it yet.",
+          "Approval conditions: no findings raised this round; none outstanding."
+        ],
+        "resolvedFindings": []
+      },
+      "resultSha256": "021ea5670204d561529f2c8301123b32746982c211685fe29d0c3f09cf58de63"
+    }
+  ],
+  "residualRisks": [
+    "4 review rounds; findings open after each round: 13, 7, 1, 0."
+  ]
+}
