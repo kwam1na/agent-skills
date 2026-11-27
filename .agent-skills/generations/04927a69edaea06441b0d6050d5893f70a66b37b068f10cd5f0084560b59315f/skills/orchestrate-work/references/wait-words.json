@@ -1,0 +1,352 @@
+{
+  "schemaVersion": "wait-words/1",
+  "description": "Every sentence a wait is said in. delivery_state.waits fills each from the fields it derives, in journal_words' template forms; no view words a wait itself. A template may instead be {\"by\": field, \"cases\": {value: template}, \"otherwise\": template}.",
+  "stages": {
+    "description": "Where the story a wait names stands, by its stage in the record; phase is that stage in one word, for a lane card's Waiting on row.",
+    "templates": {
+      "where": {
+        "by": "stage",
+        "cases": {
+          "planned": "It hasn't started.",
+          "building": "It is being built.",
+          "review": "It is in review[, round {round}].",
+          "handed": "It waits for the lead to accept it.",
+          "queued": "It is in the queue.",
+          "syncing": "It is being checked.",
+          "synced": "It is being checked.",
+          "checking": "It is being checked.",
+          "checked": "It is checked and about to merge.",
+          "merging": "It is merging.",
+          "stopped": "It was stopped."
+        },
+        "otherwise": "It is {stage}."
+      },
+      "sibling": {
+        "by": "stage",
+        "cases": {
+          "planned": "Not started.",
+          "building": "Building.",
+          "review": "In review.",
+          "queued": "Queued.",
+          "syncing": "Being checked.",
+          "synced": "Being checked.",
+          "checking": "Being checked.",
+          "checked": "About to merge.",
+          "merging": "Merging.",
+          "stopped": "Stopped."
+        },
+        "otherwise": "{stage}."
+      },
+      "phase": {
+        "by": "stage",
+        "cases": {
+          "planned": "planned",
+          "building": "building",
+          "review": "reviewing",
+          "handed": "handed",
+          "queued": "queued",
+          "syncing": "syncing",
+          "synced": "syncing",
+          "checking": "checking",
+          "checked": "checked",
+          "merging": "merging",
+          "stopped": "stopped"
+        },
+        "otherwise": "{stage}"
+      },
+      "siblingSince": {
+        "by": "outcome",
+        "cases": {
+          "stale": "Stale since {at}.",
+          "unavailable": "Couldn't be read since {at}.",
+          "incompatible": "Needs a compatible snapshot since {at}."
+        },
+        "otherwise": "Not read fresh since {at}."
+      }
+    }
+  },
+  "waits": {
+    "description": "A story's wait, by its cause.",
+    "templates": {
+      "order": "Waits for {on:ticket} to land. {where}",
+      "files": "Waits for {on:ticket} to land. {onLane:lane} holds {files:list} for it.",
+      "review": "In review: round {round} under way at {head:commit}, {back} of {lenses:count:lens|lenses} back.",
+      "claim": {
+        "by": "named",
+        "cases": {
+          "true": "Waits for delivery {peer}, whose {story:ticket} claims {files:list}."
+        },
+        "otherwise": "Waits for delivery {peer}, which claims {files:list}."
+      },
+      "slot": {
+        "by": "waiter",
+        "cases": {
+          "lead": "The lead's {work} waits for delivery {holder}, which is {doing}[, since {at}]."
+        },
+        "otherwise": "{waiter:ticket} waits for delivery {holder}, which is {doing}[, since {at}]."
+      },
+      "held": "Held by the lead: {text}",
+      "sibling": {
+        "by": "case",
+        "cases": {
+          "held": "Waits for {on:ticket} to land in {sibling}. {where}",
+          "unread": "Waits for {on:ticket}, which no story here holds; {sibling} hasn't been read yet."
+        },
+        "otherwise": "Waits for {on:ticket}, which no story here or sibling lists: add the sibling, or fix the key."
+      }
+    }
+  },
+  "lanes": {
+    "description": "A lane's own sentences: an idle lane whose next story waits, by that story's cause, and a lane waiting on another story to land.",
+    "templates": {
+      "order": "{subject:lane} is next on {next:ticket}, which waits for {on:ticket} to land.",
+      "claim": {
+        "by": "named",
+        "cases": {
+          "true": "{subject:lane} is next on {next:ticket}, which waits for delivery {peer}, whose {story:ticket} claims {files:list}."
+        },
+        "otherwise": "{subject:lane} is next on {next:ticket}, which waits for delivery {peer}, which claims {files:list}."
+      },
+      "files": "{subject:lane} is next on {next:ticket}, which waits for {on:ticket} to land. {onLane:lane} holds {files:list} for it.",
+      "held": "{subject:lane} is next on {next:ticket}, which the lead holds: {text}",
+      "waiting": "{subject:lane} waits for {on:ticket} to land[ before it finishes {own:ticket}].",
+      "sibling": {
+        "by": "case",
+        "cases": {
+          "held": "{subject:lane} is next on {next:ticket}, which waits for {on:ticket} to land in {sibling}.",
+          "unread": "{subject:lane} is next on {next:ticket}, which waits for {on:ticket}; {sibling} hasn't been read yet."
+        },
+        "otherwise": "{subject:lane} is next on {next:ticket}, which waits for {on:ticket}, which no story here or sibling lists."
+      }
+    }
+  },
+  "holding": {
+    "description": "Under the story others wait on.",
+    "templates": {
+      "story": "Waited on by {by:list:ticket}.",
+      "claim": "Delivery {peer}'s {story:ticket} waits on this delivery's claim on {files:list}.",
+      "slot": "Delivery {peer} waits to start {doing}."
+    }
+  },
+  "doing": {
+    "description": "What a command holds or waits for a merge slot to do, as its holder and waiter files say: a holder's as it goes on, a lead's waiter's as its work. A file without it is using the main line.",
+    "templates": {
+      "slot": {
+        "by": "what",
+        "cases": {
+          "push": "pushing",
+          "sync": "syncing",
+          "upgrade": "upgrading its writer",
+          "check": "checking[ {subject:ticket}]",
+          "merge": "merging[ {subject:ticket}]",
+          "release": "releasing"
+        },
+        "otherwise": "using the main line"
+      },
+      "work": {
+        "by": "what",
+        "cases": {
+          "push": "push",
+          "sync": "sync",
+          "upgrade": "writer upgrade",
+          "release": "release"
+        },
+        "otherwise": "use of the main line"
+      }
+    }
+  },
+  "needsYou": {
+    "description": "What \"Needs you\" says: the two forms a wait reaches it in, the item for a stopped story no other item names, and each row's headline, why, what clears it and who acts, by the item's kind, with the list's heading, opening sentence, holding mark and age, and the heading of what a closed delivery left open. On a shared record who acts is worded for its reader: you or the lead for the seat that holds the call, the holder's label for anyone else, and someone or the lead when no seat can be named; the opening sentence puts the reader's own calls first and counts each other owner's as more.",
+    "templates": {
+      "count": {
+        "by": "count",
+        "cases": {
+          "1": "1 piece waits on it."
+        },
+        "otherwise": "{count} pieces wait on it."
+      },
+      "free": "{subject:ticket} is free to start. {lane:lane} is idle.",
+      "stopped": "{subject:ticket} was stopped.",
+      "headline": {
+        "by": "kind",
+        "cases": {
+          "trackerLag": "The tracker is behind the record",
+          "trackerLedger": "A tracker update needs a hand",
+          "healthRunning": "The full health run is under way[ at {head:commit}]",
+          "healthFailed": "The full health run failed at {head:commit}",
+          "healthFlaky": "Flaky tests failed the full health run at {head:commit}",
+          "baseBroken": "The main line is broken",
+          "baseHealth": "The main line is broken",
+          "baseFocused": "The main line is broken, under the focused posture",
+          "unaccepted": "{subject:ticket} merged before it was accepted",
+          "runnerHold": "The queue holds serving[ for {subject:ticket}]",
+          "blocker": "Blocker {entry}[ on {subject:ticket}]",
+          "listener": "The lead isn't listening",
+          "flapping": "Updates keep stopping",
+          "drafts": "{subjects:list:ticket} wait to be marked ready",
+          "laneBlocked": "{lane:lane} is blocked[ on {subject:ticket}]",
+          "laneAsks": "{lane:lane} waits on {whom}[ about {subject:ticket}]",
+          "regrant": "{lane:lane}'s lines in {path} need a regrant",
+          "laneOutside": "{lane:lane} changed {path} outside what it holds",
+          "laneUnreadable": "{lane:lane}'s branch {branch} can't be read",
+          "stopped": "{subject:ticket} was stopped",
+          "free": "{subject:ticket} is free to start",
+          "paused": "Serving is paused",
+          "report": "A report for the lead[ on {about}]",
+          "stale": "The {name} is not answering",
+          "compounding": "The compound-learning decision is not recorded",
+          "sibling": "{subject:ticket} comes after {on:ticket}, which no sibling lists",
+          "feedback": "Feedback on {anchor} stops approval",
+          "peerHeld": "{peer}'s updates are held",
+          "generationDiffers": "{peer} writes with another release",
+          "seatSplit": "This checkout's seat split",
+          "seatRequest": "{peer} asks to join",
+          "scopeRequest": "{peer} asks for {scope}"
+        },
+        "otherwise": "Something needs {whom}"
+      },
+      "why": {
+        "by": "kind",
+        "cases": {
+          "trackerLag": "{detail}.",
+          "trackerLedger": "{detail}.",
+          "healthRunning": "The close waits for its result.",
+          "healthFailed": "[{detail}]",
+          "healthFlaky": "[{tests:list} failed, then passed alone, so ]the main line isn't broken.",
+          "baseBroken": "[{detail}]",
+          "baseHealth": "[{detail}]",
+          "baseFocused": "It holds nothing under the focused posture on {source}, and serve still waits for base.repaired.",
+          "unaccepted": "Its checkout is kept until the lead decides.",
+          "runnerHold": "[{detail}]",
+          "blocker": "[{detail}]",
+          "listener": "{detail}",
+          "flapping": "The {name} process won't stay up.",
+          "drafts": "The merge step refuses drafts, and the lead may not mark them ready.",
+          "laneBlocked": "[{focus}]",
+          "laneAsks": "[{focus}]",
+          "regrant": "[{detail}]",
+          "laneOutside": "{detail}",
+          "laneUnreadable": "[{detail}]",
+          "stopped": "[{detail}]",
+          "free": "{lane:lane} is idle.",
+          "paused": "[{reason}]",
+          "report": "[{detail}]",
+          "stale": "[{reason}]",
+          "compounding": "The close waits on it. The lead writes up the friction and records whether a learning is kept.",
+          "sibling": "Add the sibling delivery that holds {on:ticket}, or fix the key.",
+          "feedback": "[{detail}]",
+          "peerHeld": "They don't fit this record, so this machine doesn't read them.",
+          "generationDiffers": "Its updates are held until the machine behind upgrades its writer; no machine upgrades another.",
+          "seatSplit": "Another clone wrote as this seat, so this checkout writes and reads nothing more. It needs a fresh seat, admitted like any other.",
+          "seatRequest": "The delivery's holder admits it.",
+          "scopeRequest": "[{reason}]"
+        },
+        "otherwise": ""
+      },
+      "clears": {
+        "by": "kind",
+        "cases": {
+          "trackerLag": "Clears when the publisher posts them on a later pass.",
+          "trackerLedger": "Stays listed for the friction note.",
+          "healthRunning": "Clears when the run ends, or when the lead stops it.",
+          "healthFailed": "Clears with a passing run at a later base head, or when the lead resolves it.",
+          "healthFlaky": "Clears with a full health pass at a later base head.",
+          "baseBroken": "Clears with base.repaired in the journal.",
+          "baseHealth": "Clears with a full health pass at a later base head, or base.repaired in the journal.",
+          "baseFocused": "Clears with base.repaired in the journal, or a full health pass once the base returns to gate.",
+          "unaccepted": "Clears when the lead accepts {subject:ticket}, or decides what to do with it.",
+          "runnerHold": "Clears when the queue's hold clears, the base is repaired, or the lead resolves it.",
+          "blocker": "Clears when the lead resolves it.",
+          "listener": "Clears when the lead is watching again.",
+          "flapping": "Clears when it stays up.",
+          "drafts": "Clears when each is marked ready; the lead puts back any that stopped.",
+          "laneBlocked": "Clears when {lane:lane}'s state changes.",
+          "laneAsks": "Clears when {lane:lane} no longer waits on {whom}.",
+          "regrant": "Clears when the lead regrants the lines or revokes the claim.",
+          "laneOutside": "Clears when the branch no longer changes it, or the lead grants it.",
+          "laneUnreadable": "Clears with a pass that reads the branch.",
+          "stopped": "Clears when {subject:ticket} is put back, lands or settles.",
+          "free": "Clears when {subject:ticket} is assigned, held, or waits again.",
+          "paused": "Clears when the lead lifts the hold.",
+          "report": "Clears when the report leaves the record.",
+          "stale": "Clears when the {name} answers again.",
+          "compounding": "Clears when the lead records the decision.",
+          "sibling": "Clears when a sibling's read lists it, or the after key changes.",
+          "feedback": "Clears when the holder of {anchor} settles feedback {entry}.",
+          "peerHeld": "Clears when {peer}'s updates fit this record again.",
+          "generationDiffers": "Clears when both machines write with the same release.",
+          "seatSplit": "Clears with a fresh seat for this checkout.",
+          "seatRequest": "Clears when {peer} is admitted.",
+          "scopeRequest": "Clears when the holder of {scope} passes it on or keeps it."
+        },
+        "otherwise": ""
+      },
+      "who": {
+        "by": "who",
+        "cases": {
+          "operator": "You",
+          "lead": "The lead",
+          "otherSeat": "{label}",
+          "otherLead": "{label}'s lead",
+          "someone": "Someone"
+        },
+        "otherwise": "{who:lane}"
+      },
+      "whom": {
+        "by": "who",
+        "cases": {
+          "operator": "you",
+          "lead": "the lead",
+          "otherSeat": "{label}",
+          "otherLead": "{label}'s lead",
+          "someone": "someone"
+        },
+        "otherwise": "{who:lane}"
+      },
+      "part": {
+        "by": "count",
+        "cases": {
+          "1": "1 thing needs {whom}"
+        },
+        "otherwise": "{count} things need {whom}"
+      },
+      "more": {
+        "by": "count",
+        "cases": {
+          "1": "1 more needs {whom}"
+        },
+        "otherwise": "{count} more need {whom}"
+      },
+      "shared": "{first}[; {more:list}]",
+      "summary": {
+        "by": "shape",
+        "cases": {
+          "empty": "Nothing needs anyone, and nothing is holding up the finish.",
+          "none": "{parts:list}. Nothing is holding up the finish.",
+          "it": "{parts:list}, and it's holding up the finish.",
+          "all": "{parts:list}, and all of them are holding up the finish.",
+          "one": "{parts:list}, and 1 of them is holding up the finish."
+        },
+        "otherwise": "{parts:list}, and {holding} of them are holding up the finish."
+      },
+      "heading": "Waiting on someone",
+      "holding": "Holding up the finish",
+      "age": "for {age}",
+      "leftOpen": "Left open at close"
+    }
+  },
+  "listening": {
+    "description": "The \"Needs you\" item while no lead-wait runs and something needs the lead to listen: the lanes still at work, by name, the first as a sentence starts it.",
+    "templates": {
+      "text": {
+        "by": "count",
+        "cases": {
+          "0": "A piece in the queue can't reach the lead. If it lands or stops, nothing will tell the lead until it is watching again.",
+          "1": "{lanes:list} can't reach the lead. A hand-off or question from it will wait unseen until the lead is watching again."
+        },
+        "otherwise": "{lanes:list} can't reach the lead. A hand-off or question from them will wait unseen until the lead is watching again."
+      },
+      "clears": "the lead is watching again"
+    }
+  }
+}

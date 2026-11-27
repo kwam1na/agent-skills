@@ -193,6 +193,7 @@ ATTESTED_ARCHIVES = {
     "linear-v4.2.0": "5fcd0f8c6e1f8956712f2ee7058a91d7dd65aec2febe3926ca21f1e75cbc68cb",
     "linear-v4.3.0": "fb9de676c2b2879fd9f614b0e96bdef59eebddb62584d9c6dc1aa847fc6ebcbb",
     "linear-v4.5.0": "0de0a56e05e792b7aa45abc17627dff400cccc69ea7bd07cfdfcd6860d124cc1",
+    "linear-v4.6.0": "04927a69edaea06441b0d6050d5893f70a66b37b068f10cd5f0084560b59315f",
 }
 HOOK_COMMAND = 'python3 -B "${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py" hook claude-code %s || exit 1'
 
