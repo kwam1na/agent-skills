@@ -1293,12 +1293,17 @@ test("draws again on a status only when the connection changes, so an open card 
   expect(card(dropped).hasAttribute("hidden")).toBe(true);
 });
 
-test("keeps a stop chosen by pointing at it through an update", async () => {
+// Re-derived for the page controller's rule that pointing names and lights but never picks (decision 6): a stop picked by
+// a click is kept through an update, and pointing at another stop on the way changes neither the pick nor the panel.
+test("keeps a stop chosen by a click through an update, whatever the pointer passes over", async () => {
   const later = fixtureDocument();
   later.state.meta.headline = "Later";
-  const [, pointed, pushed] = await open(fixtureDocument(), { store: { read: "pending" }, steps: [{ hover: ':is(.stop-btn, .mg-tick)[data-subject="PAY-2358"]' }, { push: later }] });
-  expect(pointed.focused).toBeNull();
-  expect(pushed.app.querySelector("#detail .d1")?.textContent).toBe("Hold the cart through a payment redirect");
+  const [, chosen, pointed, pushed] = await open(fixtureDocument(), { store: { read: "pending" }, steps: [
+    { click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-2358"]' }, { hover: '.stop-btn' }, { push: later }] });
+  for (const shot of [chosen, pointed, pushed]) {
+    expect(shot.app.querySelector("#detail .d1")?.textContent).toBe("Hold the cart through a payment redirect");
+    expect(shot.app.querySelector('.stop-btn').getAttribute("aria-pressed")).toBe("false");
+  }
 });
 
 test("links only the configured tracker's ids and the first forge's change requests, and opens them apart from the page", async () => {

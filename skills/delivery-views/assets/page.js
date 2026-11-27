@@ -245,6 +245,8 @@ var page = (function () {
     here.chapter = chapter;
     here.item = item;
     started.show(chapter);
+    // Every fold holding the target opens, kept open by the store, before the page moves to it.
+    if (node) { openHolding(node); }
     scrollFor(rule.scroll, node && node.id !== chapter ? node : null, document.getElementById(chapter), spot.fromReader);
   }
   /** Where the reader is: their chapter, the item the address names, and the layout. */
@@ -301,5 +303,143 @@ var page = (function () {
     return node;
   }
 
-  return { motion: motion, key: key, redraw: redraw, reasons: reasons, go: go, here: where, start: start, sideways: sideways };
+  // What is open, closed or picked: one store, by key, kept for the visit and, for a saved entry, in the browser's
+  // storage under its own key, a text as it is and anything else as JSON, the formats the page has always written.
+  var values = Object.create(null);
+  var savedAs = Object.create(null);
+  function readSaved(key) {
+    var raw = null;
+    try { raw = localStorage.getItem(key); } catch (error) { return undefined; }
+    if (raw === null) { return undefined; }
+    if (savedAs[key] !== "json") { return raw; }
+    try { return JSON.parse(raw); } catch (error) { return undefined; }
+  }
+  /**
+   * One entry in the store: `get()` and `set(value)`. `{saved: "text"}` (or `true`) keeps a text in the browser's
+   * storage under `key` itself; `{saved: "json"}` keeps any value there as JSON. Unsaved entries last for the visit.
+   */
+  function state(key, options) {
+    if (typeof key !== "string" || !key) { throw new TypeError("page.state needs a key"); }
+    var saved = options && options.saved;
+    if (saved) { savedAs[key] = saved === "json" ? "json" : "text"; }
+    return {
+      get: function () { return key in values ? values[key] : savedAs[key] ? readSaved(key) : undefined; },
+      set: function (value) {
+        values[key] = value;
+        if (savedAs[key]) {
+          try { localStorage.setItem(key, savedAs[key] === "json" ? JSON.stringify(value) : String(value)); } catch (error) { /* kept for the visit */ }
+        }
+        return value;
+      },
+    };
+  }
+
+  // The one fold: a details element, or a disclosure (a control with aria-expanded over a region it hides). Each is
+  // known by the element it opens, so a link to anything inside one opens it.
+  var folds = typeof WeakMap === "function" ? new WeakMap() : null;
+  // The reader's own folds move by the page's motion rules, the run summary's height ease, where the page has it.
+  function heldHeight(node) { return typeof runHeldHeight === "function" ? runHeldHeight(node) : 0; }
+  function easeHeight(node, from) { if (typeof runEaseHeight === "function") { runEaseHeight(node, from); } }
+  /**
+   * Makes `node` a fold: a `details` element, or a disclosure `{button, region}`, whose button carries aria-expanded and
+   * whose region, if it has one, is hidden while shut. Its open state is the store's entry `fold:<key>`: it is drawn
+   * open from it, recorded there at the click, and opened by a link to anything inside it, or to `of`. `onOpen()` runs
+   * whenever it opens, however; `onChange(open)` at the click; `onSettle()` when its height has changed; `can()`, when
+   * given, says whether a click may open or shut it. `oneLine` says its summary is a single line when shut. Returns
+   * `node`.
+   */
+  function fold(node, options) {
+    options = options || {};
+    if (typeof options.key !== "string" || !options.key) { throw new TypeError("page.fold needs a key"); }
+    var details = node && node.tagName === "DETAILS" ? node : null;
+    var button = details ? details.querySelector("summary") : node && node.button;
+    var region = details ? null : node && node.region || null;
+    if (!button) { return node; }
+    var record = state("fold:" + options.key);
+    var eased = details || (region ? region.parentNode : button);
+    var settled = function () { if (typeof options.onSettle === "function") { options.onSettle(); } };
+    function isOpen() { return details ? details.open : button.getAttribute("aria-expanded") === "true"; }
+    function show(open) {
+      if (details) { details.open = open; return; }
+      button.setAttribute("aria-expanded", String(open));
+      if (region) { region.hidden = !open; }
+    }
+    var entry = {
+      // Opened or shut without the reader's own motion: by the store on a draw, by a link, or by the page.
+      set: function (open) {
+        record.set(open);
+        if (isOpen() !== open) { show(open); }
+        if (open && typeof options.onOpen === "function") { options.onOpen(); }
+      },
+    };
+    [details, region, options.of].forEach(function (holder) { if (holder && folds) { folds.set(holder, entry); } });
+    var want = record.get();
+    if (want === true || want === false) { show(want); }
+    if (isOpen() && typeof options.onOpen === "function") { options.onOpen(); }
+    var closing = false;
+    if (details) {
+      // A fold the browser or the page opens itself (find in page, a toggle) is kept as it is left, as a click's is.
+      details.addEventListener("toggle", function () { if (details.isConnected && !closing) { record.set(details.open); } });
+    } else if (button.tagName !== "BUTTON") {
+      button.addEventListener("keydown", function (event) {
+        if (event.key !== "Enter" && event.key !== " ") { return; }
+        event.preventDefault();
+        button.click();
+      });
+    }
+    button.addEventListener("click", function (event) {
+      if (details) {
+        // A link or button inside the summary keeps its own click.
+        var inner = event.target && event.target.closest ? event.target.closest("a, button") : null;
+        if (inner && button.contains(inner)) { return; }
+        event.preventDefault();
+      } else {
+        event.stopPropagation();
+      }
+      if (typeof options.can === "function" && !options.can()) { return; }
+      var open = !isOpen();
+      // Recorded now, not on the toggle event, which fires later: a redraw in between would rebuild it as it was.
+      record.set(open);
+      if (typeof options.onChange === "function") { options.onChange(open); }
+      var from = heldHeight(eased);
+      var moving = typeof eased.animate === "function" && motion(true);
+      if (open) {
+        show(true);
+        if (typeof options.onOpen === "function") { options.onOpen(); }
+        easeHeight(eased, from);
+        var opening = typeof eased.getAnimations === "function" ? eased.getAnimations().filter(function (running) { return running.id === "run-height"; })[0] : null;
+        if (opening && opening.finished) { opening.finished.then(settled, function () {}); }
+      } else if (!details || !moving) {
+        show(false);
+        if (!details) { easeHeight(eased, from); }
+      } else {
+        // Shutting keeps the fold open until the slide ends, so nothing vanishes before it has moved.
+        var summaryHeight = button.offsetHeight;
+        var shut = options.oneLine ? parseFloat(getComputedStyle(button).lineHeight) || summaryHeight : summaryHeight;
+        details.style.overflow = "hidden";
+        closing = true;
+        var sliding = details.animate([{ height: from + "px" }, { height: shut + "px" }], { id: "run-height", duration: Math.round(240 + Math.min(Math.abs(shut - from), 600) / 600 * 60), easing: "cubic-bezier(.77, 0, .175, 1)" });
+        sliding.onfinish = function () { details.style.overflow = ""; show(false); closing = false; settled(); };
+        sliding.oncancel = function () { details.style.overflow = ""; closing = false; };
+      }
+      settled();
+    });
+    return node;
+  }
+  /** Opens or shuts the fold `node` is, opens or stands for, without the reader's motion; false when it is no fold. */
+  function open(node, wanted) {
+    var entry = node && folds ? folds.get(node) : null;
+    if (!entry) { return false; }
+    entry.set(wanted !== false);
+    return true;
+  }
+  /** Opens every fold holding `node`, and the one it stands for. */
+  function openHolding(node) {
+    for (var at = node; at && at.nodeType === 1; at = at.parentElement) {
+      if (!open(at, true) && at.tagName === "DETAILS" && !at.open) { at.open = true; }
+    }
+  }
+
+  return { motion: motion, key: key, redraw: redraw, reasons: reasons, go: go, here: where, start: start, sideways: sideways,
+    state: state, fold: fold, open: open };
 }());

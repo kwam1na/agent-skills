@@ -221,7 +221,8 @@
         "Without a git identity in its checkout the local line map's corner shows only the theme switch, and the hosted page never carries one; the files view stays hidden until a branch read lists a file or fails.",
         "Every view, local and hosted, loads the page controller (assets/page.js) first and asks its one motion check: reduced motion stills everything, and a keyboard reader's own actions do not ease, while a live update still lands for them.",
         "Every redraw of a delivery view, from a pushed record, the clock, a new width or a refresh, keeps the reader's place through the page controller's one redraw transaction; with the element they read gone, the scroll is kept as far as the page still reaches. The hosted page keeps no scroll of its own.",
-        "Every navigation on the line map goes through the page controller's one location: in paged layout each page turn adds one history entry, so Back and Forward step through the chapters each at its top, an outside address adds only the browser's own entry, and the one-page layout adds none; each navigation moves the page once, and the line keeps its sideways place from its right edge."
+        "Every navigation on the line map goes through the page controller's one location: in paged layout each page turn adds one history entry, so Back and Forward step through the chapters each at its top, an outside address adds only the browser's own entry, and the one-page layout adds none; each navigation moves the page once, and the line keeps its sideways place from its right edge.",
+        "Every fold, disclosure and pick on the line map is kept in the page controller's one store through every redraw, the reader's saved layout, story depth and plan folds keep their storage keys and formats, a link into a closed fold opens every fold holding its target, and hovering a stop or a tick names and lights it without picking it."
       ],
       "dependencies": [
         {

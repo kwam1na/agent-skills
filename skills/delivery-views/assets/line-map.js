@@ -59,10 +59,14 @@
   var app = document.getElementById("app");
   var connection = "saved";
   var shown = embedded;
-  var selected = null;
+  // The stop the reader picked, by its subject: a click, Enter, Space or keyboard focus picks; pointing never does.
+  var picked = page.state("line:selected");
+  function selected() { var key = picked.get(); return key === undefined ? null : key; }
+  // The lane the pointer or focus lights on the line, kept through a redraw.
+  var lit = page.state("line:lit");
+  // The page of a run's checks the reader turned to, with the run it belongs to.
+  var checksRead = page.state("line:checks-page");
   // What the reader picked to show of the story: a tone to filter by, and a depth this visit, until it is remembered.
-  var storyFilter = "all";
-  var storyDepthChosen = null;
   // What the page last showed, so a change can be animated rather than just swapped in.
   var prev = { figures: Object.create(null), runningCheck: null, stages: null, story: null, progress: null, lanes: null, byLane: null, parked: null, dots: null, selected: null,
     checkingHeight: null, checkPage: null };
@@ -490,8 +494,8 @@
   // scrolling on past a page's end and the Left and Right arrow keys step between pages. With no hash the page opens on Now.
   // The reader picks the layout in the chapter tab: one chapter per page (the default) or every chapter on one page.
   var LAYOUT_KEY = (typeof VIEW.themeKey === "string" && VIEW.themeKey ? VIEW.themeKey.replace(/:theme$/, "") : "delivery-views") + ":layout";
-  var PAGED = true;
-  try { PAGED = localStorage.getItem(LAYOUT_KEY) !== "scroll"; } catch (error) { /* paged */ }
+  var layoutPick = page.state(LAYOUT_KEY, { saved: true });
+  var PAGED = layoutPick.get() !== "scroll";
   var currentPage = null;
   var corner = document.querySelector(".corner");
   var themeSwitch = document.querySelector(".theme-switch");
@@ -614,7 +618,7 @@
   fillTab();
   layoutButton.addEventListener("click", function () {
     PAGED = !PAGED;
-    try { localStorage.setItem(LAYOUT_KEY, PAGED ? "paged" : "scroll"); } catch (error) { /* lasts until reload */ }
+    layoutPick.set(PAGED ? "paged" : "scroll");
     page.go({ chapter: currentPage }, "layout");
     openTab(false);
     tabButton.focus();
@@ -2187,10 +2191,11 @@
       var PAGE_SIZE = 10;
       var pageCount = Math.ceil(listed.length / PAGE_SIZE);
       var pageKey = text(current.startedAt) + "|" + text(current.subject);
-      var checksPage = prev.checkPage && prev.checkPage.run === pageKey ? Math.min(prev.checkPage.page, Math.max(0, pageCount - 1)) : 0;
+      var pageRead = checksRead.get();
+      var checksPage = isObject(pageRead) && pageRead.run === pageKey ? Math.min(pageRead.page, Math.max(0, pageCount - 1)) : 0;
       var pager = pageCount > 1 ? el("div", "ck-pager") : null;
       var showChecks = function () {
-        prev.checkPage = { run: pageKey, page: checksPage };
+        checksRead.set({ run: pageKey, page: checksPage });
         checkList.replaceChildren.apply(checkList, listed.slice(checksPage * PAGE_SIZE, (checksPage + 1) * PAGE_SIZE).map(checkRow));
         checkList.setAttribute("start", String(checksPage * PAGE_SIZE + 1));
         if (!pager) { return; }
@@ -3235,7 +3240,9 @@
     var tip = el("div", "mg-tip");
     tip.hidden = true;
     tip.setAttribute("aria-hidden", "true");
+    // The lit lane is kept in the store, so a redraw under the pointer leaves it lit.
     function light(lane) {
+      lit.set(lane);
       track.classList.toggle("lit", lane !== null);
       [].forEach.call(track.querySelectorAll("[data-lane]"), function (node) {
         node.classList.toggle("on", lane !== null && node.getAttribute("data-lane") === String(lane));
@@ -3254,18 +3261,19 @@
     var look = {
       colours: colours, nowSubject: nowSubject,
       laneOf: function (piece) { return lanes.indexOf(piece.item.lane || ""); },
-      selected: function () { return selected; },
-      // A tick, a step or a square names itself on hover and focus, and lights its lane where it has one; a tick also
-      // opens its piece's panel, as a stop does, so a story folded out of its row is still one step away.
+      selected: selected,
+      // A tick, a step or a square names itself on hover and focus, and lights its lane where it has one. Focus, a click,
+      // Enter or Space on a tick also opens its piece's panel, as a stop does, so a story folded out of its row is still
+      // one step away; pointing only names and lights.
       wire: function (node, piece, head, body) {
         var lane = node.getAttribute("data-lane");
+        var point = function () { name(node, head, body); light(lane === null ? null : Number(lane)); };
         var on = function () {
-          name(node, head, body);
-          light(lane === null ? null : Number(lane));
-          if (piece) { selected = subjectOf(piece.item); showDetail(doc, piece, colours, nowSubject); }
+          point();
+          if (piece) { picked.set(subjectOf(piece.item)); showDetail(doc, piece, colours, nowSubject); }
         };
         var off = function () { name(node, null); light(null); };
-        node.addEventListener("mouseenter", on);
+        node.addEventListener("mouseenter", point);
         node.addEventListener("focus", on);
         node.addEventListener("click", on);
         node.addEventListener("mouseleave", off);
@@ -3313,10 +3321,12 @@
         var waiting = kind === "unlanded" ? [] : waitWords(doc, key);
         button.setAttribute("aria-label", titleOf(doc, piece.item) + ", " + (kind === "unlanded" ? "Not landed" : pieceWords(doc, piece.item)) +
           (waiting.length ? ". " + waiting.join(" ") : ""));
-        button.setAttribute("aria-pressed", String(selected === key));
-        var show = function () { selected = key; showDetail(doc, piece, colours, nowSubject); };
+        button.setAttribute("aria-pressed", String(selected() === key));
+        var show = function () { picked.set(key); showDetail(doc, piece, colours, nowSubject); };
         button.addEventListener("click", show);
-        button.addEventListener("mouseenter", show);
+        // Pointing at a stop lights its lane; only a click or keyboard focus picks it.
+        button.addEventListener("mouseenter", function () { light(laneIndex); });
+        button.addEventListener("mouseleave", function () { light(null); });
         button.addEventListener("focus", show);
         button.addEventListener("focus", function () { light(laneIndex); });
         button.addEventListener("blur", function () { light(null); });
@@ -3370,6 +3380,8 @@
     // Where the line scrolls sideways, as on a phone, it opens at its end, where the lanes merge and the newest work is,
     // and keeps the reader's own place on later redraws.
     // Kept as the distance from the right edge, where the newest work is, so a change of width still shows it.
+    var stillLit = lit.get();
+    if (typeof stillLit === "number") { light(stillLit); }
     page.sideways("line", box);
     prev.stages = stages;
     prev.folds = folds;
@@ -3384,7 +3396,7 @@
       layFlow();
       if (typeof ResizeObserver === "function") { prev.flowWatch = new ResizeObserver(layFlow); prev.flowWatch.observe(track); }
     }
-    var pick = all.filter(function (piece) { return subjectOf(piece.item) === selected; })[0] ||
+    var pick = all.filter(function (piece) { return subjectOf(piece.item) === selected(); })[0] ||
       all.filter(function (piece) { return stopKind(piece, nowSubject) === "now"; })[0] ||
       all.filter(function (piece) { return stopKind(piece, nowSubject) === "held"; })[0] ||
       all.filter(function (piece) { return stopKind(piece, nowSubject) !== "merged"; })[0] || all[0];
@@ -4254,16 +4266,19 @@
   /* The plan: is the work still what was agreed, and what proves it? */
   // Proofs are derived from each record the page draws, by the same lookups The line uses; the plan itself comes from the
   // renderer, at load and from each page it renders after. Every unit, row and fold is found through these maps, never through a selector built from plan text.
-  var planFolds = Object.create(null);
   var planAsApproved = false;
   var planRows = Object.create(null);
+  // The plan's folds the reader keeps open, saved as one list of their names; each fold's own state is the page's store.
   var FOLD_KEY = (typeof VIEW.themeKey === "string" && VIEW.themeKey ? VIEW.themeKey.replace(/:theme$/, "") : "delivery-views") + ":plan-folds";
-  try {
-    list(JSON.parse(localStorage.getItem(FOLD_KEY) || "[]")).forEach(function (name) { if (typeof name === "string") { planFolds[name] = true; } });
-  } catch (error) { /* folds start closed and are remembered until the page reloads */ }
+  var planFoldsSaved = page.state(FOLD_KEY, { saved: "json" });
+  var planFoldNames = [];
+  list(planFoldsSaved.get()).forEach(function (name) {
+    if (typeof name !== "string") { return; }
+    planFoldNames.push(name);
+    page.state("fold:plan:" + name).set(true);
+  });
   function rememberFolds() {
-    try { localStorage.setItem(FOLD_KEY, JSON.stringify(Object.keys(planFolds).filter(function (name) { return planFolds[name]; }))); }
-    catch (error) { /* remembered until the page reloads */ }
+    planFoldsSaved.set(planFoldNames.filter(function (name) { return page.state("fold:plan:" + name).get() === true; }));
   }
   function own(holder, key) { return isObject(holder) && Object.prototype.hasOwnProperty.call(holder, key) ? holder[key] : undefined; }
   function planUnits(units) { return list(units).filter(isObject); }
@@ -4601,7 +4616,6 @@
     entries.forEach(function (entry) {
       var parts = approvalParts(entry);
       var row = el("details", "ap-row");
-      row.addEventListener("toggle", function () { if (row.classList.contains("is-whole") && row.open) { row.open = false; } });
       var summary = el("summary");
       var id = text(entry.id);
       // An id that only numbers its row (handoff-3) says nothing a reader needs; a named one (PD1, O25) does.
@@ -4610,7 +4624,13 @@
       add(summary, el("span", "ap-id", shownId), el("span", "ap-title", parts.title), el("span", "ap-who", who === parts.title ? "" : who),
         el("span", "ap-caret"));
       add(row, summary, parts.rest ? el("p", "ap-rest", parts.rest) : null);
-      if (!parts.rest) { row.classList.add("is-whole"); }
+      if (!parts.rest) {
+        // A row with nothing more to say never opens.
+        row.classList.add("is-whole");
+        summary.addEventListener("click", function (event) { event.preventDefault(); });
+      } else {
+        page.fold(row, { key: "approval:" + (id || parts.title) });
+      }
       listing.appendChild(add(el("li"), row));
     });
     // What clears the flag. The operator doesn't run anything: they tell the agent leading the work, which records it.
@@ -4704,8 +4724,6 @@
     }).filter(Boolean);
     return { head: text(entry.head), body: body };
   }
-  // The headed decisions the reader opened, by number, kept across the plan's redraws until the page reloads.
-  var decisionsOpen = Object.create(null);
   /** A decision's words through the page's one formatter, with "decision N", for a number the list holds, a link to it. */
   function decisionWords(words, count) {
     var nodes = [], last = 0, match, pattern = /\bdecision (\d+)\b/gi;
@@ -4726,9 +4744,8 @@
   /** Opens a decision a reference names, and brings it to the reader. */
   function openDecision(n) {
     var row = document.getElementById("plan-decision-" + n);
-    var box = row ? row.querySelector("details") : null;
     if (!row) { return; }
-    if (box) { box.open = true; decisionsOpen[n] = true; }
+    // The decision's own fold stands for its row, so going to the row opens it and every fold holding it.
     page.go({ item: row.id }, "link");
     var summary = row.querySelector("summary");
     if (summary) { summary.focus({ preventScroll: true }); }
@@ -4743,7 +4760,9 @@
     var boxes = [];
     var all = el("button", "pd-all");
     all.type = "button";
-    function sayAll() { all.textContent = boxes.every(function (entry) { return entry.open; }) ? "Close all" : "Open all"; }
+    // Whether every decision is open, by the page's store, which a click has set before the fold has finished moving.
+    function allOpen() { return boxes.every(function (entry) { return page.state("fold:decision:" + entry.getAttribute("data-n")).get() === true; }); }
+    function sayAll() { all.textContent = allOpen() ? "Close all" : "Open all"; }
     decisions.forEach(function (decision, i) {
       var n = i + 1;
       var row = el("li", "pd");
@@ -4763,15 +4782,14 @@
       });
       var fold = el("details", "pd-fold");
       fold.setAttribute("data-n", String(n));
-      if (decisionsOpen[n]) { fold.open = true; }
-      fold.addEventListener("toggle", function () { decisionsOpen[n] = fold.open; sayAll(); });
       boxes.push(fold);
       rows.appendChild(add(row, add(fold, add.apply(null, [el("summary", "pd-line")].concat(line)), body)));
+      page.fold(fold, { key: "decision:" + n, of: row, onChange: sayAll, onOpen: sayAll });
     });
     if (boxes.length) {
       all.addEventListener("click", function () {
-        var open = !boxes.every(function (entry) { return entry.open; });
-        boxes.forEach(function (entry) { entry.open = open; decisionsOpen[entry.getAttribute("data-n")] = open; });
+        var open = !allOpen();
+        boxes.forEach(function (entry) { page.open(entry, open); });
         sayAll();
       });
       sayAll();
@@ -4783,11 +4801,14 @@
   function fold(name, label, count, body) {
     var box = el("details", "plan-fold");
     box.setAttribute("data-fold", name);
-    if (planFolds[name]) { box.open = true; }
+    if (planFoldNames.indexOf(name) < 0) { planFoldNames.push(name); }
     var summary = el("summary", null, label);
     if (count !== null) { summary.appendChild(el("span", "pf-count", String(count))); }
     add(box, summary, body);
-    return runFold(box, { onChange: function (open) { planFolds[name] = open; rememberFolds(); } });
+    return page.fold(box, { key: "plan:" + name, onChange: rememberFolds, onOpen: function () {
+      // Opened by a link or by the page as well as by a click, it is saved as the reader will find it.
+      if (list(planFoldsSaved.get()).indexOf(name) < 0) { rememberFolds(); }
+    } });
   }
   /** Before and after as one text, with what was dropped struck and what was added marked, word by word. */
   function redline(before, after) {
@@ -5281,8 +5302,7 @@
       event.stopPropagation();
       var row = !proof.proven && unit.removed !== true ? planRows[subject] : null;
       if (!row) {
-        planFolds.units = true;
-        rememberFolds();
+        // The row is in the units fold, which page.go opens, saved, on the way to it.
         planAsApproved = false;
         drawPlan(shown);
         row = planRows["all:" + subject];
@@ -5307,16 +5327,19 @@
   /** A tone's mark, as a beat and the legend both draw it; a tone the page doesn't know draws as a note. */
   function toneMark(tone) { return glyph(MARK_OF[tone] || "note"); }
   var DEPTH_KEY = (typeof VIEW.themeKey === "string" && VIEW.themeKey ? VIEW.themeKey.replace(/:theme$/, "") : "delivery-views") + ":story-depth";
+  // The reader's depth, saved under its own key, and the filter, kept for the visit.
+  var depthPick = page.state(DEPTH_KEY, { saved: true });
+  var filterPick = page.state("story:filter");
+  function storyFilterNow() { var picked = filterPick.get(); return typeof picked === "string" ? picked : "all"; }
   function storyOf(doc) {
     var story = isObject(doc.story) ? doc.story : null;
     return story && Array.isArray(story.chapters) && Array.isArray(story.beats) && Array.isArray(story.threads) && isObject(story.digest) ? story : null;
   }
   // The reader's depth: theirs once chosen, else Story while the delivery runs and Headlines once it has closed.
   function storyDepth(story) {
-    var chosen = null;
-    try { chosen = localStorage.getItem(DEPTH_KEY); } catch (error) { chosen = null; }
+    var chosen = depthPick.get();
     if (DEPTHS.some(function (depth) { return depth[0] === chosen; })) { return chosen; }
-    return storyDepthChosen || (story.state === "closed" ? "headline" : "story");
+    return story.state === "closed" ? "headline" : "story";
   }
   // The beat that tells one entry in full, by the entry's id, or null when the story holds none for it.
   var toldBy = typeof WeakMap === "function" ? new WeakMap() : null;
@@ -5476,7 +5499,7 @@
   /** What each mark on the page means: one entry for each tone among the beats in view, in the story's words. */
   function storyLegend(story, depth) {
     var present = Object.create(null);
-    story.beats.forEach(function (beat) { if (beatShown(beat, depth, storyFilter)) { present[text(beat.tone)] = true; } });
+    story.beats.forEach(function (beat) { if (beatShown(beat, depth, storyFilterNow())) { present[text(beat.tone)] = true; } });
     var legend = el("div", "story-legend");
     list(story.tones).filter(function (tone) { return isObject(tone) && present[text(tone.tone)]; }).forEach(function (tone) {
       legend.appendChild(add(el("span"), toneMark(text(tone.tone)), text(tone.word)));
@@ -5495,10 +5518,9 @@
     var depth = storyDepth(story);
     var seen = Object.create(null);
     story.beats.forEach(function (beat) { if (isObject(beat)) { seen[beatKey(beat)] = true; } });
-    var switches = add(el("div", "story-bar"), choice("Depth", DEPTHS, depth, function (picked) {
-      storyDepthChosen = picked;
-      try { localStorage.setItem(DEPTH_KEY, picked); } catch (error) { /* chosen until the page reloads */ }
-    }, "depth"), choice("Show", FILTERS, storyFilter, function (picked) { storyFilter = picked; }, "tab"));
+    var storyFilter = storyFilterNow();
+    var switches = add(el("div", "story-bar"), choice("Depth", DEPTHS, depth, function (picked) { depthPick.set(picked); }, "depth"),
+      choice("Show", FILTERS, storyFilter, function (picked) { filterPick.set(picked); }, "tab"));
     var beats = Object.create(null);
     story.beats.forEach(function (beat) { if (isObject(beat)) { beats[text(beat.id)] = beat; } });
     // The setbacks, each told once in the ledger above the chapters, by row id.
@@ -5724,8 +5746,7 @@
         add(fold, add(el("div", "across-group"), headOf(group), ul.firstChild ? ul : null));
       });
       // Shut by default, as Elsewhere is; a reader who opened it keeps it open through a redraw.
-      if (prev.acrossOpen) { fold.setAttribute("open", ""); }
-      fold.addEventListener("toggle", function () { prev.acrossOpen = fold.hasAttribute("open"); });
+      page.fold(fold, { key: "across" });
       nodes.push(fold);
     }
     if (others.length) {
@@ -5978,8 +5999,6 @@
   }
 
   /* 6. Parked */
-  // Set-aside rows the reader opened, kept across live redraws.
-  var asideOpen = {};
   function asideChevron() {
     var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 24 24");
@@ -5988,30 +6007,22 @@
     svg.innerHTML = '<path d="M6 9l6 6l6 -6"/>';
     return svg;
   }
-  function toggleAside(row, words) {
-    if (!row.classList.contains("clamps")) return;
-    var open = row.classList.toggle("open");
-    asideOpen[words] = open;
-    row.setAttribute("aria-expanded", open ? "true" : "false");
-  }
-  // Only rows whose text runs past two lines become openable.
+  // Only rows whose text runs past two lines become openable: each is measured clamped, whether or not it is open.
   function markClamped(listNode) {
     Array.prototype.forEach.call(listNode.children, function (row) {
       var head = row.firstChild;
-      var wasOpen = row.classList.contains("open");
-      if (wasOpen) row.classList.remove("open");
+      row.classList.add("measuring");
       var clamps = head.scrollHeight > head.clientHeight + 1;
-      if (wasOpen) row.classList.add("open");
+      row.classList.remove("measuring");
       row.classList.toggle("clamps", clamps);
       if (clamps) {
         row.tabIndex = 0;
         row.setAttribute("role", "button");
-        row.setAttribute("aria-expanded", wasOpen ? "true" : "false");
+        if (!row.hasAttribute("aria-expanded")) { row.setAttribute("aria-expanded", "false"); }
       } else {
         row.removeAttribute("tabindex");
         row.removeAttribute("role");
         row.removeAttribute("aria-expanded");
-        row.classList.remove("open");
       }
     });
   }
@@ -6045,14 +6056,9 @@
         var asideList = el("ol", "aside");
         aside.forEach(function (words) {
           // The full text, clamped to two lines; a row that overflows opens in place to show all of it.
+          // A row is a disclosure on the page's one fold, keyed by its words, which are what the plan names it by.
           var row = add(el("li"), el("span", "aside-head", words), asideChevron());
-          if (asideOpen[words]) row.classList.add("open");
-          row.addEventListener("click", function () { toggleAside(row, words); });
-          row.addEventListener("keydown", function (event) {
-            if (event.key !== "Enter" && event.key !== " ") return;
-            event.preventDefault();
-            toggleAside(row, words);
-          });
+          page.fold({ button: row }, { key: "aside:" + words, can: function () { return row.classList.contains("clamps"); } });
           asideList.appendChild(row);
         });
         requestAnimationFrame(function () { markClamped(asideList); });
@@ -6090,9 +6096,7 @@
     });
     var fold = add(el("details", "elsewhere-fold"), el("summary", null, words), ul);
     // Shut by default; a reader who opened it keeps it open through a redraw.
-    if (prev.elsewhereOpen) { fold.setAttribute("open", ""); }
-    fold.addEventListener("toggle", function () { prev.elsewhereOpen = fold.hasAttribute("open"); });
-    return fold;
+    return page.fold(fold, { key: "elsewhere" });
   }
 
   function usable(doc) { return isObject(doc) && isObject(doc.state); }

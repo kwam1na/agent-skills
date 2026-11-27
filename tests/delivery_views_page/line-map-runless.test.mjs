@@ -34,7 +34,8 @@ test('closure explanations start collapsed and expand without hiding the settlem
   expect(opened.app.querySelector('.run-closure')).toBeNull();
   expect(opened.app.querySelector('.run-closure-resolution').textContent).toBe('Original reviewer confirmed <b>the fix</b>.');
   expect(first.app.querySelector('.run-closures')).toBeNull();
-  expect(last.app.querySelector('.run-closures').hasAttribute('open')).toBe(false);
+  // Back on the round, the closures the reader opened are still open: every fold is kept as it was left (page.fold).
+  expect(last.app.querySelector('.run-closures').hasAttribute('open')).toBe(true);
 });
 test('runless actual rounds share cards, escaped findings and originating closure text', async()=>{
   const page=pageWithRuns(document(),{}, {config});
