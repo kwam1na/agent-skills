@@ -125,13 +125,19 @@ test("page.motion refuses reduced motion always and a key press only for the rea
 /** page.js alone in a window whose frames are held until `frame()` runs them, and whose scroll the test moves. */
 function controlled() {
   const frames = [];
-  const view = { at: 0, height: 0 };
+  const view = { at: 0, height: 0, moves: [] };
   const dom = new JSDOM('<!doctype html><body><main id="app"></main></body>', { runScripts: "outside-only", beforeParse(window) {
     window.requestAnimationFrame = (callback) => { frames.push(callback); return frames.length; };
     Object.defineProperty(window, "scrollY", { configurable: true, get() { return view.at; } });
     Object.defineProperty(window, "innerHeight", { configurable: true, get() { return 300; } });
     Object.defineProperty(window.HTMLElement.prototype, "scrollHeight", { configurable: true, get() { return view.height; } });
-    window.scrollTo = ({ top }) => { view.at = top; };
+    window.scrollTo = ({ top, behavior }) => { view.at = top; view.moves.push(behavior); };
+    // Each element in the page's main is a 10-pixel row, in order.
+    window.Element.prototype.getBoundingClientRect = function () {
+      const rows = [...window.document.querySelectorAll("#app > *")];
+      const row = rows.indexOf(this);
+      return row < 0 ? { top: 0, bottom: 0 } : { top: row * 10 - view.at, bottom: row * 10 + 10 - view.at };
+    };
   } });
   dom.window.eval(asset("page.js"));
   const frame = () => frames.splice(0).forEach((callback) => callback(0));
@@ -172,6 +178,8 @@ test("with nothing keyed in view, a redraw puts the scroll back as far as the pa
     // The draw stands in for a browser that laid the page out short mid-draw, and the page's new height.
     window.page.redraw(() => { view.at = 0; view.height = height; }, "tick");
     expect(view.at).toBe(kept);
+    // Put back at once: the page's stylesheet asks for smooth scrolling, which a kept place must not glide through.
+    expect(view.moves).toEqual(["instant"]);
     window.close();
   }
   // The page's first draw opens its address, and keeps no place.
@@ -181,4 +189,81 @@ test("with nothing keyed in view, a redraw puts the scroll back as far as the pa
   window.page.redraw(() => { view.at = 0; }, "first");
   expect(view.at).toBe(0);
   window.close();
+});
+
+test("a mark the page carries twice never anchors: the reader keeps their place by the next element only one carries", () => {
+  const { window, view } = controlled();
+  const app = window.document.getElementById("app");
+  const row = (attributes, words) => {
+    const node = window.document.createElement("span");
+    for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+    node.textContent = words;
+    return node;
+  };
+  // A header, a ticket named twice, and a stop below: the reader is 2px into the second mention.
+  app.append(row({}, "header"), row({ "data-ticket": "PAY-1", class: "issue-link" }, "first"), row({}, "words"),
+    row({ "data-ticket": "PAY-1", class: "issue-link", "data-read": "" }, "second"), row({ "data-subject": "PAY-9", class: "stop" }, "stop"));
+  view.height = 1000;
+  view.at = 32;
+  const read = () => window.document.querySelector("[data-read]").getBoundingClientRect().top;
+  expect(read()).toBe(-2);
+  // The redraw names the ticket once more, above the reader, and grows the header: what they read stays where it was.
+  window.page.redraw(() => { app.prepend(row({ "data-ticket": "PAY-1", class: "issue-link" }, "new"), row({}, "more header")); }, "tick");
+  expect(read()).toBe(-2);
+  expect(view.at).toBe(52);
+  window.close();
+});
+
+test("each stable key anchors the reader: an id, a stop's subject, a ticket and a fold", () => {
+  for (const key of ["id", "data-subject", "data-ticket", "data-fold"]) {
+    const { window, view } = controlled();
+    const app = window.document.getElementById("app");
+    const row = (words) => { const node = window.document.createElement("p"); node.textContent = words; return node; };
+    const read = window.document.createElement("p");
+    read.setAttribute(key, "PAY-7");
+    app.append(row("one"), row("two"), read, row("after"));
+    view.height = 1000;
+    view.at = 22;
+    // Something grows above the element the reader is 2px into.
+    window.page.redraw(() => { app.prepend(row("grew")); }, "tick");
+    expect([key, read.getBoundingClientRect().top, view.at]).toEqual([key, -2, 32]);
+    window.close();
+  }
+});
+
+test("a mark carried twice before the redraw, or after it, is passed over for the next one only one element carries", () => {
+  const setUp = (mentions) => {
+    const { window, view } = controlled();
+    const app = window.document.getElementById("app");
+    const row = (attributes, words) => {
+      const node = window.document.createElement("span");
+      for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+      node.textContent = words;
+      return node;
+    };
+    const mention = (extra = {}) => row({ "data-ticket": "PAY-2", class: "issue-link", ...extra }, "PAY-2");
+    app.append(row({}, "header"), ...mentions(mention, row), row({ "data-subject": "PAY-9", class: "stop" }, "stop"));
+    view.height = 1000;
+    return { window, view, app, row, mention, stop: () => window.document.querySelector("[data-subject]").getBoundingClientRect().top };
+  };
+  // Twice before: the reader is on the second mention, which the redraw drops. The stop below keeps its place, where the
+  // first mention, left alone, would have been put where the reader's stood.
+  {
+    const { window, view, stop } = setUp((mention, row) => [mention(), row({}, "words"), mention({ "data-read": "" })]);
+    view.at = 31;
+    const before = stop();
+    window.page.redraw(() => { window.document.querySelector("[data-read]").remove(); }, "tick");
+    expect(stop()).toBe(before);
+    window.close();
+  }
+  // Once before, twice after: a new mention above is not the one the reader was on.
+  {
+    const { window, view, app, mention } = setUp((mention) => [mention({ "data-read": "" })]);
+    view.at = 11;
+    const read = () => window.document.querySelector("[data-read]").getBoundingClientRect().top;
+    const before = read();
+    window.page.redraw(() => { app.prepend(mention()); }, "tick");
+    expect(read()).toBe(before);
+    window.close();
+  }
 });

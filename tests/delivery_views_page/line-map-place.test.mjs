@@ -96,3 +96,33 @@ test("paged: turning to another chapter still lands at its top, and turning back
   expect(left).toBe(0);
   expect([back, tick]).toEqual([backMost, backMost]);
 });
+
+/** One-page, the reader 5px into the element `selector` finds, then a push that plans six stories above it in the line. */
+async function intoThenGrown(selector) {
+  const seen = [];
+  const top = (window) => window.document.querySelector(selector).getBoundingClientRect().top;
+  await openPage(PAGE, { now: NOW, store: {}, layout: {}, rendered: PAGE, stored: { "delivery-views:test:layout": "scroll" }, steps: [
+    { run(window) { window.scrollTo({ top: window.scrollY + top(window) + 5, behavior: "instant" }); } },
+    { run(window) { seen.push([top(window), window.scrollY]); } },
+    { push: grown(6) },
+    { run(window) { seen.push([top(window), window.scrollY]); } },
+  ] });
+  return seen;
+}
+
+test("one-page: a reader inside the line keeps the very element they read when stories are planned above it", async () => {
+  // A tick on the main line, whose story also has a stop: the tick is the element read, not the chapter or the stop.
+  const [[before, y], [after, moved]] = await intoThenGrown('#line g.mg-tick[data-subject="PAY-2366"]');
+  expect([before, after]).toEqual([-5, -5]);
+  expect(moved > y).toBe(true);
+});
+
+test("a new connection status and a record read draw at once, even within a frame another redraw took", async () => {
+  const headline = (text) => { const next = record(); next.state.meta = { ...next.state.meta, headline: text }; return next; };
+  const words = (shot) => shot.app.querySelector(".fact.since").textContent;
+  const [, down, live] = await openPage(PAGE, { now: NOW, frames: true, store: { read: "pending" }, steps: [{ status: false }, { status: true }] });
+  expect(words(down)).toContain("Reconnecting");
+  expect(words(live)).toContain("Live");
+  const [, read] = await openPage(PAGE, { now: NOW, frames: true, store: { read: headline("Read in the same frame") }, steps: [{ wait: 20 }] });
+  expect(read.text).toContain("Read in the same frame");
+});

@@ -101,8 +101,9 @@ three seconds after each pushed record, every 30 seconds, and at once on each
 `event: runs`, which the server sends only after the views are written. Every
 redraw, whether a pushed record, the clock, a new width or a refresh, keeps the
 reader's place: the element at the top of the window stays where it stood, or,
-with it gone, the scroll stays as far as the page still reaches. Redraws of the
-record in use asked for within one frame are drawn once.
+with it gone, the scroll stays as far as the page still reaches. A new record
+or connection status draws at once; of the other redraws asked for in one
+frame, the first draws at once and the rest merge into one at the next frame.
 
 Now's headline is the delivery's name, under its kicker. Beneath it a status row
 says where the delivery stands: up to four marks, with one sentence beside them

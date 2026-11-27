@@ -43,49 +43,63 @@ var page = (function () {
   var AT_ONCE = { first: true, read: true, push: true, status: true };
 
   function root() { return document.getElementById("app") || document.body; }
-  function keyOf(node) {
+  // An element's mark: its first stable key, with its tag and first class, so a stop and the tick for the same story,
+  // which share a key, are told apart. A mark that more than one element carries (a ticket named twice in the feed) can't
+  // say which one the reader was on, so it never anchors.
+  function markOf(node) {
     for (var i = 0; i < ANCHOR_KEYS.length; i += 1) {
       var value = node.getAttribute(ANCHOR_KEYS[i]);
-      if (value) { return { name: ANCHOR_KEYS[i], value: value }; }
+      if (value) { return { name: ANCHOR_KEYS[i], value: value, tag: node.tagName, kind: firstClass(node) }; }
     }
     return null;
   }
+  function firstClass(node) {
+    var names = node.getAttribute("class");
+    return names ? names.trim().split(/\s+/)[0] : "";
+  }
   // Matched by attribute value, never by a selector built from record text.
-  function sameKey(within, mark) {
-    return Array.prototype.filter.call(within.querySelectorAll("[" + mark.name + "]"), function (node) { return node.getAttribute(mark.name) === mark.value; });
+  function marked(within, mark) {
+    return Array.prototype.filter.call(within.querySelectorAll("[" + mark.name + "]"), function (node) {
+      return node.getAttribute(mark.name) === mark.value && node.tagName === mark.tag && firstClass(node) === mark.kind;
+    });
   }
   function shown(box) { return box.bottom > box.top; }
   /**
-   * The reader's place: the keyed element at the top of the window (the deepest one across its top edge, or else the
-   * first below it) and how far from that edge it sits, with the scroll it was at.
+   * The reader's place: the elements at the top of the window that only one element on the page is marked as, the
+   * deepest across its top edge first, then the shallower ones holding it, then the first below the edge, each with how
+   * far from that edge it sits; and the scroll it was at.
    */
   function place() {
     if (typeof scrollY !== "number") { return null; }
     var within = root();
-    var across = null, below = null;
+    var across = [], below = null;
     var nodes = within.querySelectorAll("[" + ANCHOR_KEYS.join("], [") + "]");
-    for (var i = 0; i < nodes.length; i += 1) {
+    for (var i = 0; i < nodes.length && !below; i += 1) {
       var box = nodes[i].getBoundingClientRect();
       if (!shown(box)) { continue; }
-      if (box.top <= 0 && box.bottom > 0) { across = { node: nodes[i], top: box.top }; } else if (box.top > 0 && !below) { below = { node: nodes[i], top: box.top }; }
-      if (box.top > 0 && below) { break; }
+      if (box.top <= 0 && box.bottom > 0) { across.push({ node: nodes[i], top: box.top }); } else if (box.top > 0) { below = { node: nodes[i], top: box.top }; }
     }
-    var anchor = across || below;
-    var mark = anchor ? keyOf(anchor.node) : null;
-    if (mark) { mark.nth = sameKey(within, mark).indexOf(anchor.node); mark.top = anchor.top; }
-    return { y: scrollY, mark: mark };
+    var marks = [];
+    across.reverse().concat(below ? [below] : []).forEach(function (candidate) {
+      var mark = markOf(candidate.node);
+      if (mark && marked(within, mark).length === 1) { mark.top = candidate.top; marks.push(mark); }
+    });
+    return { y: scrollY, marks: marks };
   }
   function moveTo(y) {
     if (typeof scrollTo === "function" && y !== scrollY) { scrollTo({ top: y, behavior: "instant" }); }
   }
-  /** Puts the reader back: the anchor where it stood, or, with it gone, the same scroll as far as the page now holds. */
+  /**
+   * Puts the reader back: the first of their marks still on the page once, and shown, where it stood; with none, the same
+   * scroll as far as the page now holds.
+   */
   function keep(at) {
     if (!at) { return; }
-    if (at.mark) {
-      var same = sameKey(root(), at.mark);
-      var again = same[at.mark.nth] || same[0];
-      var box = again ? again.getBoundingClientRect() : null;
-      if (box && shown(box)) { moveTo(scrollY + box.top - at.mark.top); return; }
+    var within = root();
+    for (var i = 0; i < at.marks.length; i += 1) {
+      var again = marked(within, at.marks[i]);
+      var box = again.length === 1 ? again[0].getBoundingClientRect() : null;
+      if (box && shown(box)) { moveTo(scrollY + box.top - at.marks[i].top); return; }
     }
     if (scrollY === at.y) { return; }
     var most = document.documentElement.scrollHeight - innerHeight;
