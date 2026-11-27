@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "4b1cb0305017fee87bd0dd19271b2032d5a88596ea8f8c23c6251b5e6a05817a"
+          "sha256": "b299a80364bc426cc72cf59e82b494af26168dd42375e0bef1fa87c4499d3122"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -206,7 +206,7 @@
         },
         {
           "path": "skills/delivery-views/assets/history.js",
-          "sha256": "1d200b23e4da88907afb94fc4c61e31aa05faccc3fd68cce0c712d67460b6b34"
+          "sha256": "e4e326a1fa5667008ab86367609b498858ddc74614355691dd1cf1c7b6aaec54"
         },
         {
           "path": "skills/delivery-views/assets/line-map.css",
@@ -218,7 +218,7 @@
         },
         {
           "path": "skills/delivery-views/assets/page.js",
-          "sha256": "52bd927aedfda4c918f2d830a2cb30c7793879b5add53a3a0bbdd41e12f2faca"
+          "sha256": "203fe695537be0b07f993d48b99bdcfa5f1b982b2d784b184a97c0f863eec68c"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
@@ -234,7 +234,7 @@
         },
         {
           "path": "skills/delivery-views/assets/runs.js",
-          "sha256": "933306621d3fd437d27563d32a104e7e23cd8b3019432f301d597fb3918b2626"
+          "sha256": "4f2c8013e5dc2206a10cd6f5b007e2c80e9f111ba897d23636113b57c261776d"
         },
         {
           "path": "skills/delivery-views/references/delivery-plan.schema.json",

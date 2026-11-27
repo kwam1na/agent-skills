@@ -1,9 +1,9 @@
 // The runs page, rendered by the shipped renderer from the runtime's captured output (tests/fixtures/run-events/runs) and opened as a browser would.
 import assert from "node:assert/strict";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { RUNS_CORPUS, block, openPage, readJson, renderRunsPage, served } from "./support.mjs";
+import { ROOT, RUNS_CORPUS, block, expect, openPage, readJson, renderRunsPage, served } from "./support.mjs";
 
 process.env.TZ = "UTC";
 // The goldens are drawn with no plan preview, whatever the shell running the lane holds.
@@ -221,4 +221,99 @@ test("a preview's title reads as the line map's prose: a quoted name is code", a
   assert.equal(title.querySelector("code.prose-code").textContent, "plan-view");
   assert.equal(title.querySelector("a[aria-label]"), null);
   assert.equal(shown.app.querySelector("#previews .preview-live").getAttribute("aria-label"), "Live view of Serve plan-view links");
+});
+
+// The runs page under the page controller (page.js): it draws through page.redraw, so a push or a runs event keeps the
+// reader's place, open rows and focus, and its rows open through page.fold, keyed by run.
+const listed = JSON.parse(COMMANDS["runs list --json"]);
+/** The page before INSIDE_PLAN was listed: the run a push then adds sits above every ended run. */
+const FEWER = renderRunsPage(ABSENT, { runsCommands: { ...COMMANDS,
+  "runs list --json": JSON.stringify({ ...listed, runs: listed.runs.filter((run) => run.runId !== INSIDE_PLAN) }) } });
+const live = (page, steps, scenario = {}) => openPage(served(page), { server: { document: {} }, rendered: served(PAGE),
+  address: "http://localhost/", fetchAt: "/view/runs.html", ...scenario, steps });
+const headOf = (window, runId) => window.document.querySelector(`[data-run="${runId}"] > .run-head`);
+/** Where the run's head stands in the window, and the window's scroll. */
+const standing = (window, runId) => ({ top: headOf(window, runId).getBoundingClientRect().top, y: window.scrollY });
+
+test("a push and a runs event leave the reader's place, and a run added above leaves the run they were at where it stood", async () => {
+  const seen = [];
+  const at = (label) => ({ run(window) { seen.push([label, standing(window, ENDED)]); } });
+  const scrolled = { run(window) { window.scrollTo({ top: window.scrollY + headOf(window, ENDED).getBoundingClientRect().top - 40, behavior: "instant" }); } };
+  await live(PAGE, [scrolled, at("scrolled"), { event: { state: {} }, wait: 50 }, at("pushed"), { runs: RUNS_EVENT, wait: 50 }, at("runs")],
+    { layout: { height: 120 } });
+  const [[, before]] = seen;
+  expect(seen).toEqual([["scrolled", before], ["pushed", before], ["runs", before]]);
+  const added = [];
+  await live(FEWER, [scrolled, { run(window) { added.push(standing(window, ENDED)); } }, { event: { state: {} }, wait: 50 },
+    { run(window) { added.push(standing(window, ENDED), window.document.querySelectorAll("#now [data-run]").length); } }],
+  { layout: { height: 120 } });
+  expect([added[1].top, added[2]]).toEqual([added[0].top, 4]);
+  expect(added[1].y > added[0].y).toBe(true);
+});
+
+test("focus on an ended run's head stays on that run when a push adds a run above it, and two open rows stay open", async () => {
+  const seen = [];
+  await live(FEWER, [{ click: `[data-run="${LEFT_OPEN}"] > .run-head` }, { click: `[data-run="${ENDED}"] > .run-head` },
+    { event: { state: {} }, wait: 50 },
+    { run(window) {
+      const active = window.document.activeElement;
+      seen.push(active.closest("[data-run]")?.getAttribute("data-run"), active.getAttribute("data-key"),
+        [LEFT_OPEN, ENDED].map((runId) => headOf(window, runId).getAttribute("aria-expanded")),
+        window.document.querySelectorAll("#now [data-run]").length);
+    } }]);
+  expect(seen).toEqual([ENDED, `fold:run:${ENDED}`, ["true", "true"], 4]);
+});
+
+test("a deep link to Ended or to a run opens there through the controller, and the run's panel opens", async () => {
+  for (const [name, opens] of [["ended", null], [ENDED, ENDED]]) {
+    const [shown] = await openPage(PAGE, { rendered: PAGE, address: `http://localhost/view/runs.html#${name}`, layout: { height: 120 },
+      steps: [{ run(window) {
+        const box = window.document.getElementById(name).getBoundingClientRect();
+        expect([name, window.scrollY > 0, box.top >= 0 && box.top < 120]).toEqual([name, true, true]);
+      } }] });
+    expect(shown.app.querySelectorAll('.run-head[aria-expanded="true"]').length).toBe(opens ? 1 : 0);
+    if (opens) expect(runNode(shown.app, opens).querySelector(".run-detail").hasAttribute("hidden")).toBe(false);
+  }
+});
+
+test("links away from the runs page are left to the browser", async () => {
+  const kept = [];
+  await openPage(renderWithPreviews(PREVIEWS), { steps: [{ run(window) {
+    for (const link of window.document.querySelectorAll(".kicker a, #previews a")) {
+      // The window hears the click last: what the page did with it is read there, then the leaving jsdom can't do is stopped.
+      window.addEventListener("click", (event) => { if (event.defaultPrevented) kept.push(link.textContent); event.preventDefault(); }, { once: true });
+      link.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    }
+    kept.push(window.document.querySelectorAll(".kicker a, #previews a").length);
+  } }] });
+  expect(kept).toEqual([5]);
+});
+
+const FOCUSABLE = "#app :is(a[href], button, summary, input, select, [tabindex])";
+test("every focusable control on the runs page, with previews and every run open, carries a key", async () => {
+  const missing = [];
+  await openPage(renderWithPreviews(PREVIEWS), { steps: [{ run(window) {
+    for (const head of window.document.querySelectorAll(".run-head")) head.click();
+    for (const node of window.document.querySelectorAll(FOCUSABLE)) {
+      if (!node.getAttribute("data-key")) missing.push(`${node.tagName.toLowerCase()}.${(node.getAttribute("class") || "").split(" ")[0]}`);
+    }
+  } }] });
+  expect(missing).toEqual([]);
+});
+
+/** Each line of `runs.js` and `history.js` that does what `pattern` finds, as "file:line". */
+function found(pattern, sources) {
+  return Object.entries(sources).flatMap(([name, source]) => source.split("\n").flatMap((line, index) =>
+    !/^\s*\/\//.test(line) && pattern.test(line) ? [`${name}:${index + 1}`] : []));
+}
+const PAGES = Object.fromEntries(["runs.js", "history.js"].map((name) => [name, readFileSync(path.join(ROOT, "skills", "delivery-views", "assets", name), "utf8")]));
+const DISCLOSES = /\.hidden\s*=[^=]|aria-expanded|["']hidden["']/;
+const STORES = /localStorage|sessionStorage/;
+
+test("the runs and history pages open and shut their rows only through page.fold, and read no storage", () => {
+  expect([found(DISCLOSES, PAGES), found(STORES, PAGES)]).toEqual([[], []]);
+  for (const planted of ["detail.hidden = true;", 'button.setAttribute("aria-expanded", "true");', 'detail.removeAttribute("hidden");']) {
+    expect([planted, found(DISCLOSES, { ...PAGES, "runs.js": `${PAGES["runs.js"]}\n${planted}` }).length]).toEqual([planted, 1]);
+  }
+  expect(found(STORES, { ...PAGES, "history.js": `${PAGES["history.js"]}\nlocalStorage.getItem("x");` }).length).toBe(1);
 });

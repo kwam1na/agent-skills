@@ -359,6 +359,13 @@ delivery each run belongs to. Its run commands share the render's deadline, and
 past the 4 MiB page budget the oldest rows give up their summaries first.
 `--now` fixes the history's as-of time, for tests.
 
+The history follows the same page rules as the line map, through `page.js`: it
+is a one-chapter page named `history`, each row is a `page.fold` disclosure
+keyed `history:<row key>` whose run summary is drawn the first time it opens,
+and each row's `id` is its key, so a link to `#<row key>` opens that row and
+brings it into view. Every control carries a key, and nothing is kept in the
+browser's storage: a row's open state lasts for the visit.
+
 ## The runs page
 
 `scripts/render.py runs` prints the runs page: every run of every workflow the
@@ -400,8 +407,18 @@ either can't be read for is shown unavailable, and the others render. Past the
 4 MiB budget, ended runs give up their details first, oldest first, then open
 ones. When the live server says, in `DELIVERY_LIVE_RUNS`, that the run store
 isn't watched, the page says so. Served live, the page reads itself again on
-each `event: runs` through the adapter's `onRuns`, keeping open panels open.
+each `event: runs` through the adapter's `onRuns`, and on each pushed record.
 `--now` fixes the page's as-of time, for tests.
+
+The runs page follows the same page rules as the line map, through `page.js`:
+it is a one-chapter page named `runs`, and every read draws through
+`page.redraw`, so a push or a runs event keeps the reader's place, the panels
+they opened and the control they focused, even when a run is added above. Each
+run is a `page.fold` disclosure keyed `run:<runId>`, and each run's `id` is its
+run id, so a link to `#now`, `#ended` or a run lands there, opening the run's
+panel. Links to the line map, the history and the previews leave the page as
+links do. Every control carries a key, and nothing is kept in the browser's
+storage: a panel's open state lasts for the visit.
 
 With no record, the live server gives every view `{"spec":
 "delivery-state-absent/1"}`. `runs` renders from it as from a record; `line-map`
