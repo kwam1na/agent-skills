@@ -5,7 +5,8 @@ date: 2026-11-26
 topic: live-view-page-controller
 reviewSlug: live-view-page-controller
 execution: code
-status: draft
+status: approved
+approved: 2026-11-26
 ---
 
 # One controlled layer for the delivery views' navigation and page mechanics - Plan
@@ -73,8 +74,8 @@ approving it.
    `build-assets.mjs` puts it first in the hosted renderer's input. It ships as
    a `delivery-views` output: the four profiles that list the delivery-views
    assets, `provenance.lock.json` and the release-integration pin of the core
-   payload gain it. A first story (SLICE-0) makes the asset and its wiring, so
-   V26-4003 builds its transaction there; V26-4003 is blocked by SLICE-0.
+   payload gain it. A first story (V26-4012) makes the asset and its wiring, so
+   V26-4003 builds its transaction there; V26-4003 is blocked by V26-4012.
 2. **Page turns push; everything else replaces.** A turn to another chapter in
    paged layout (rail, chapter tab, corner name, arrows, scroll-past, launcher,
    an in-page link to another chapter) adds one history entry. Following the
@@ -220,7 +221,7 @@ Seven anchored patches. Two are page mechanics this plan replaces: the `hostedY`
 scroll restore (removed by V26-4003) and the plan chapter `receiveHosted` builds
 by hand when a plan first arrives mid-visit, which skips `chapterOf`, so that
 chapter is not watched by the `watch` and `arrive` observers and starts already
-`arrived` (SLICE-5). A plan seeded before load already goes through `chapterOf`.
+`arrived` (V26-4020). A plan seeded before load already goes through `chapterOf`.
 The other five are host adapters and stay. Every remaining anchor must still
 match exactly once (`hosted.asset_hook_drift`).
 
@@ -244,13 +245,13 @@ five parts below, in order.
   rule from the table and branches on no reason by name; an unknown reason
   throws. In the one-page layout `push` and `push-if-chapter-changes` write as
   `replace` (decision 2), for every reason, declared or built in. It resolves
-  item, then chapter, then (from SLICE-3) each fold holding the item, opened;
+  item, then chapter, then (from V26-4016) each fold holding the item, opened;
   writes the address; then scrolls once.
 - **`page.start({chapters, show})`** is how a page puts itself under the
   controller: its chapter ids and the function that shows one. Until a page
   calls it, `page.js` binds no handler and routes nothing, so the runs and
-  history pages are untouched by it until SLICE-6. The line map calls it from
-  SLICE-2; the runs and history pages, as one-chapter pages, from SLICE-6.
+  history pages are untouched by it until V26-4021. The line map calls it from
+  V26-4015; the runs and history pages, as one-chapter pages, from V26-4021.
 - **Scroll by reason** is the only scroll write on a page outside the launcher
   panel. A turn lands instantly; an item lands centred in one move, smooth only
   when `page.motion(true)` allows; a redraw keeps the reader's place by anchor
@@ -258,7 +259,7 @@ five parts below, in order.
   distance from its right edge across redraws, as the line does today. A focus
   move that goes with a navigation uses `preventScroll`.
 - **`page.redraw(draw, why)`** is V26-4003's transaction, given the page's own
-  draw function. SLICE-3 makes it re-apply the UI-state store, SLICE-4 makes it
+  draw function. V26-4016 makes it re-apply the UI-state store, V26-4018 makes it
   restore focus by key.
 - **`page.state(key, {saved})`** is one entry in the UI-state store: `get()`,
   `set(value)`. Saved entries use today's storage keys and formats (decision 8).
@@ -293,7 +294,7 @@ adds its rows to an "Extending the page" section of
 | a focusable control | `page.key(kind, id)` as its `data-key` | focus returned to it after a redraw |
 | motion | `page.motion(fromReader)` | reduced motion and keyboard use respected |
 
-The source pins of SLICE-2 to SLICE-4 hold the other side, and each names the
+The source pins of V26-4015, V26-4016 and V26-4018 hold the other side, and each names the
 call to use in its failure message. Each slice ends with a case in
 `tests/delivery_views_page/page-controller-extension.test.mjs` that adds its
 part from a `run` step, using only `page`, and shows it behaves like the
@@ -351,7 +352,7 @@ Every slice runs in one lane, in order: each changes `page.js`, `SKILL.md` or th
 page lane's shared harness, and each builds on the one before. The delivery starts once V26-3993's V26-3996 has landed on
 `main`.
 
-### SLICE-0. Give every delivery view one shared page asset
+### V26-4012. Give every delivery view one shared page asset
 
 Lane 1, tier 1, not blocked. Test-first. Files:
 `skills/delivery-views/assets/page.js`,
@@ -388,7 +389,7 @@ Lane 1, tier 1, not blocked. Test-first. Files:
 
 ### V26-4003. Keep the reader's place when the live view redraws itself
 
-Lane 1, tier 2, after SLICE-0. Test-first. Files:
+Lane 1, tier 2, after V26-4012. Test-first. Files:
 `skills/delivery-views/assets/page.js`,
 `skills/delivery-views/assets/line-map.js`,
 `hosted/delivery-viewer/scripts/build-assets.mjs`,
@@ -400,10 +401,10 @@ Lane 1, tier 2, after SLICE-0. Test-first. Files:
   it.
 - The anchor's keys at this slice are the stable ids the page already carries
   (element ids, `data-subject`, `data-ticket`, `data-fold`, chapter ids);
-  SLICE-4 widens it to `data-key`.
-- `keepPlace` stays (its scope, item 3); SLICE-2 retires it.
+  V26-4018 widens it to `data-key`.
+- `keepPlace` stays (its scope, item 3); V26-4015 retires it.
 
-### SLICE-2. Route every navigation through one location and scroll each once
+### V26-4015. Route every navigation through one location and scroll each once
 
 Lane 1, tier 3, after V26-4003. Test-first. Files:
 `skills/delivery-views/assets/page.js`,
@@ -450,7 +451,7 @@ Lane 1, tier 3, after V26-4003. Test-first. Files:
   - **An outside address within the chapter still routes.** With the plan
     chapter shown, an outside `location.hash` change to `#plan-decision-3`
     makes exactly one move, to decision 3, and grows `history.length` by
-    exactly one (from SLICE-3 it also opens the decisions fold and decision
+    exactly one (from V26-4016 it also opens the decisions fold and decision
     3). Mutant: the routing guard
     comparing the chapter alone.
   - **Focus goes with the link.** A decision reference and a setback link leave
@@ -484,9 +485,9 @@ Lane 1, tier 3, after V26-4003. Test-first. Files:
   once the controller prevents same-page links. The layout test's hand-fired
   `hashchange` (`line-map-layout.test.mjs` 82) stays, as an outside address.
 
-### SLICE-3. Keep every open, closed and selected state in one store with one fold
+### V26-4016. Keep every open, closed and selected state in one store with one fold
 
-Lane 1, tier 4, after SLICE-2. Test-first. Files:
+Lane 1, tier 4, after V26-4015. Test-first. Files:
 `skills/delivery-views/assets/page.js`,
 `skills/delivery-views/assets/line-map.js`,
 `skills/delivery-views/assets/run-summary.js`,
@@ -531,9 +532,9 @@ Lane 1, tier 4, after SLICE-2. Test-first. Files:
 - `SKILL.md`: hovering names and lights, click and focus open the panel; the
   state and fold rows join "Extending the page".
 
-### SLICE-4. Return focus by key after every redraw
+### V26-4018. Return focus by key after every redraw
 
-Lane 1, tier 5, after SLICE-3. Test-first. Files:
+Lane 1, tier 5, after V26-4016. Test-first. Files:
 `skills/delivery-views/assets/page.js`,
 `skills/delivery-views/assets/line-map.js`,
 `skills/delivery-views/assets/run-summary.js`,
@@ -570,9 +571,9 @@ Lane 1, tier 5, after SLICE-3. Test-first. Files:
     restoring only kinds it knows.
 - `SKILL.md`: the focusable-control row joins "Extending the page".
 
-### SLICE-5. Drop the hosted page's own mechanics and the redraws that repeat
+### V26-4020. Drop the hosted page's own mechanics and the redraws that repeat
 
-Lane 1, tier 6, after SLICE-4. Test-first. Files:
+Lane 1, tier 6, after V26-4018. Test-first. Files:
 `skills/delivery-views/assets/page.js`,
 `skills/delivery-views/assets/line-map.js`,
 `hosted/delivery-viewer/scripts/build-assets.mjs`,
@@ -607,9 +608,9 @@ Lane 1, tier 6, after SLICE-4. Test-first. Files:
 - The hosted viewer's browser test that pushes a projection and reads `scrollY`
   and the line's `scrollLeft` (`hosted-viewer.spec.ts` 294) passes unchanged.
 
-### SLICE-6. Bring the runs and history pages onto the controller
+### V26-4021. Bring the runs and history pages onto the controller
 
-Lane 1, tier 7, after SLICE-5. Test-first. Files:
+Lane 1, tier 7, after V26-4020. Test-first. Files:
 `skills/delivery-views/assets/runs.js`,
 `skills/delivery-views/assets/history.js`,
 `skills/delivery-views/SKILL.md`,
@@ -645,7 +646,7 @@ Lane 1, tier 7, after SLICE-5. Test-first. Files:
     the row left shut; the fill left on a click handler.
   - **Links away still leave.** A click on the runs page's line map link is
     not prevented. Mutant: the handler taking a link to another document.
-  - **Every focusable element has a key.** SLICE-4's check, over the same
+  - **Every focusable element has a key.** V26-4018's check, over the same
     selector, on the runs page fixture (with previews, open and ended runs) and
     on every history golden case. Mutant: the runs page's links built without
     a key.
@@ -654,7 +655,7 @@ Lane 1, tier 7, after SLICE-5. Test-first. Files:
     own click handler.
   - **No storage.** A pin: neither `runs.js` nor `history.js` names
     `localStorage` or `sessionStorage`, shown red by planting one.
-  - **Same pins.** SLICE-2's and SLICE-4's source pins cover `runs.js` and
+  - **Same pins.** V26-4015's and V26-4018's source pins cover `runs.js` and
     `history.js`; shown red by planting a `scrollTo` in `runs.js`.
   - The runs and history goldens pass unchanged.
 
@@ -662,11 +663,11 @@ Lane 1, tier 7, after SLICE-5. Test-first. Files:
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | SLICE-0, V26-4003, SLICE-2, SLICE-3, SLICE-4, SLICE-5, SLICE-6 | `skills/delivery-views/assets/`, `skills/delivery-views/scripts/render.py`, `skills/delivery-views/SKILL.md`, `hosted/delivery-viewer/scripts/build-assets.mjs`, `hosted/delivery-viewer/src/viewer.ts`, `profiles/delivery-views.json`, `profiles/jira.json`, `profiles/linear.json`, `profiles/run-delivery.json`, `tests/delivery_views_page/`, `tests/test_release_integration.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_hosted.py`, `tests/test_delivery_views_hosted_projection.py`, `tests/test_delivery_views_history.py` |
+| 1 | 1 | V26-4012, V26-4003, V26-4015, V26-4016, V26-4018, V26-4020, V26-4021 | `skills/delivery-views/assets/`, `skills/delivery-views/scripts/render.py`, `skills/delivery-views/SKILL.md`, `hosted/delivery-viewer/scripts/build-assets.mjs`, `hosted/delivery-viewer/src/viewer.ts`, `profiles/delivery-views.json`, `profiles/jira.json`, `profiles/linear.json`, `profiles/run-delivery.json`, `tests/delivery_views_page/`, `tests/test_release_integration.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_hosted.py`, `tests/test_delivery_views_hosted_projection.py`, `tests/test_delivery_views_history.py` |
 
 One lane, because every slice changes `page.js` or the page lane's shared
-harness, and both lanes would otherwise write `SKILL.md`. SLICE-6 needs only the
-calls SLICE-4 completes; it comes after SLICE-5 so no two stories hold the same
+harness, and both lanes would otherwise write `SKILL.md`. V26-4021 needs only the
+calls V26-4018 completes; it comes after V26-4020 so no two stories hold the same
 files at once. Shared files: `provenance.lock.json` and the `delivery-views`
 catalog entry change in every story; a lock-only conflict is resolved by the
 provenance writer, as `AGENTS.md` says. No story uses a fixed port or browser
@@ -712,10 +713,10 @@ and a named mutant. Where a test pins today's behaviour that a decision changes
 - Every story: `tests/test_delivery_views_page.py` (the Node page lane,
   including the line-map, runs and history goldens),
   `scripts/validate-registry.py` and `scripts/update-provenance.py --check`.
-- SLICE-0: `tests/test_release_integration.py` and
+- V26-4012: `tests/test_release_integration.py` and
   `tests/test_delivery_views_render.py`.
-- SLICE-6: `tests/test_delivery_views_history.py`.
-- SLICE-0, V26-4003 and SLICE-5: `tests/test_delivery_views_hosted.py` and
+- V26-4021: `tests/test_delivery_views_history.py`.
+- V26-4012, V26-4003 and V26-4020: `tests/test_delivery_views_hosted.py` and
   `tests/test_delivery_views_hosted_projection.py`, plus the hosted viewer's
   own `npm run build` and `npm test` in `hosted/delivery-viewer/`, and
   `npm run test:browser` where Playwright's Chromium is installed (optional;
@@ -727,11 +728,12 @@ and a named mutant. Where a test pins today's behaviour that a decision changes
 
 ## Approval handoffs
 
-1. The operator approves this plan, including decisions 1 to 12.
-2. SLICE-0 and SLICE-2 to SLICE-6 are created under V26-4004 with
-   `$create-linear-ticket`, each blocked as the stories say; V26-4003 gains
-   "blocked by SLICE-0". The epic's description is updated for decision 1 and
-   the widened scope.
+1. The operator approved this plan, including decisions 1 to 12, on
+   2026-11-26.
+2. V26-4012, V26-4015, V26-4016, V26-4018, V26-4020 and V26-4021 were created
+   under V26-4004 with `$create-linear-ticket`, each blocked as the stories say;
+   V26-4003 gained "blocked by V26-4012". The epic's description was updated for
+   decision 1 and the widened scope.
 3. Delivery runs under `orchestrate-work` once V26-3996 has landed. No release is
    cut by this plan.
 
