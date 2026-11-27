@@ -202,9 +202,10 @@ the same shape at any delivery size:
 - **The finish post** carries its label and, beside it, one square per finish
   line, filled once met, with how many are met.
 - **Naming and lighting.** Hovering or focusing a tick names its story and state
-  and lights its lane; hovering a lane's row lights its ticks. A tick opens its
-  story's panel, as a stop does, so a story folded out of its row is still one
-  step away. Each step of the bar names its status, and each square its finish
+  and lights its lane; hovering a lane's row or a stop lights its lane. Hovering
+  only names and lights: a click, Enter, Space or keyboard focus on a tick opens
+  its story's panel, as on a stop, so a story folded out of its row is still one
+  step away, and the panel stays on what the reader picked. Each step of the bar names its status, and each square its finish
   line. Every tick, step and square is reached from the keyboard, and the
   drawing's accessible name states the landed, met and rejoin counts.
 
@@ -307,6 +308,15 @@ call to use.
 | a sideways-scrolling region | `page.sideways(key, node)` on every draw | its distance from its right edge kept through redraws |
 | a redraw trigger | `page.redraw(draw, why)` | the reader's place kept, and redraws within one frame merged |
 | motion | `page.motion(fromReader)` | reduced motion respected, and a keyboard reader's own actions kept still |
+| something open, closed or picked | `page.state(key, {saved})` | kept through redraws; with `saved`, through reloads, in the browser's storage under `key` |
+| a fold or disclosure | `page.fold(node, {key})`, and `page.open(node, open)` to open or shut it | the page's motion, its state kept, and opened by a link to anything inside it |
+
+Every open, shut or picked state on the page is a `page.state` entry: a fold's is
+`fold:<key>`. A saved entry keeps the page's own storage keys and formats: the
+layout as `paged` or `scroll`, the story's depth by its name, and the plan's open
+folds as a JSON list of their names. A link to anything inside a fold, followed
+in the page or loaded fresh, opens that fold and every fold holding it; `of`
+names an element a fold stands for, as a decision's fold stands for its row.
 
 A reason's `address` is `push`, `replace`, `push-if-chapter-changes` or `none`;
 its `scroll` is `top`, `end`, `item`, `item-or-top`, `keep` or `none`. The

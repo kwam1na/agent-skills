@@ -1425,8 +1425,10 @@ body.paged .chapter-now.is-fresh > .inner { margin-bottom: 0; }
 .aside li.clamps:hover, .aside li.clamps:focus-visible { color: var(--ink); }
 .aside li.clamps:hover .aside-chevron { color: var(--ink); }
 .aside li.clamps:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-.aside li.open .aside-head { display: block; -webkit-line-clamp: unset; overflow: visible; }
-.aside li.open .aside-chevron { transform: rotate(180deg); }
+.aside li.clamps[aria-expanded="true"] .aside-head { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.aside li.clamps[aria-expanded="true"] .aside-chevron { transform: rotate(180deg); }
+/* A row is measured as it reads shut, whether or not it is open. */
+.aside li.measuring .aside-head { display: -webkit-box; -webkit-line-clamp: 2; overflow: hidden; }
 @media (prefers-reduced-motion: reduce) { .aside-chevron { transition: none; } }
 
 /* What happened, before anything has: the three kinds of moment it will tell, each with its mark. */
