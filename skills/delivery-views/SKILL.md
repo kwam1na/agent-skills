@@ -79,7 +79,8 @@ happened, parked), and a seventh, the plan, when the delivery has one (see
 names sibling deliveries (see "What the views show of siblings" below), with a
 detail panel for each piece of work. Its style and
 program are the skill's `assets/line-map.css`, `assets/line-map.js`,
-`assets/run-summary.css` and `assets/run-summary.js`, inlined into the page, and
+`assets/run-summary.css` and `assets/run-summary.js`, with the page controller,
+`assets/page.js`, inlined into the page before them, and
 it loads only its three typefaces from Google Fonts. It
 opts in to the live stream, so `live` serves it at `/view/<output>` and the
 page follows every record write; opened as a file, it shows the record as it
@@ -287,7 +288,7 @@ or followed it.
 `scripts/render.py history` prints the delivery history: past deliveries and
 runs, newest first, each opening the line map's run summary in place. Its
 style and program are `assets/history.css` and `assets/history.js` with the
-run summary's two assets, inlined into the page. Declare it beside the line
+run summary's two assets and the page controller, inlined into the page. Declare it beside the line
 map; the line map links to it, and it links back to the binding's line map, as
 a file and, when served, at the line map's `/view/` address:
 
@@ -311,7 +312,7 @@ past the 4 MiB page budget the oldest rows give up their summaries first.
 `scripts/render.py runs` prints the runs page: every run of every workflow the
 `runs` command lists, in the line map's typefaces, colour tokens and run
 summary. Its style and program are `assets/runs.css` and `assets/runs.js` with
-the run summary's two assets, inlined into the page. Declare it beside the line
+the run summary's two assets and the page controller, inlined into the page. Declare it beside the line
 map, and name it in the binding's `state.liveRuns` so the live server watches
 the run store and serves it as the front page while there is no record:
 

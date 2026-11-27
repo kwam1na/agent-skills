@@ -368,7 +368,7 @@ class HistoryCommandTests(unittest.TestCase):
     def test_the_page_inlines_its_own_and_the_run_summarys_assets(self) -> None:
         result = self.render({}, {"spec": views_common.CONFIG_SPEC})
         page = result.stdout.decode("utf-8")
-        for asset in ("history.css", "history.js", "run-summary.css", "run-summary.js"):
+        for asset in ("page.js", "history.css", "history.js", "run-summary.css", "run-summary.js"):
             self.assertIn((render.ASSETS / asset).read_text(encoding="utf-8"), page, asset)
 
     def test_a_state_dir_holds_the_history_cache_and_the_bindings_directory_is_never_touched(self) -> None:

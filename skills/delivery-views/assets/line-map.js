@@ -99,7 +99,8 @@
   function text(value) { return typeof value === "string" ? value : ""; }
   function short(head) { return typeof head === "string" && head.length >= 7 ? head.slice(0, 7) : text(head); }
   function seconds(at) { var t = typeof at === "string" ? Date.parse(at) : NaN; return isNaN(t) ? null : t / 1000; }
-  function reduced() { return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches; }
+  // Live-update motion asks the page's one motion check (page.js) as not the reader's, so a keyboard reader sees it too.
+  function reduced() { return !page.motion(false); }
   function later(callback) {
     if (typeof requestAnimationFrame === "function") { requestAnimationFrame(function () { requestAnimationFrame(callback); }); } else { callback(); }
   }

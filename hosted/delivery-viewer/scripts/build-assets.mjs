@@ -66,7 +66,8 @@ patch(
 const renderer = (
   await build({
     stdin: {
-      contents: (await corpus("run-summary.js")) + "\n" + line,
+      // The page controller first, as every local page loads it, so the run summary and the line map find `page`.
+      contents: (await corpus("page.js")) + "\n" + (await corpus("run-summary.js")) + "\n" + line,
       resolveDir: new URL("../", import.meta.url).pathname,
     },
     bundle: true,

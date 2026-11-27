@@ -7,7 +7,8 @@ import { JSDOM } from "jsdom";
 
 import { ROOT, expect } from "./support.mjs";
 
-const SOURCE = readFileSync(path.join(ROOT, "skills", "delivery-views", "assets", "run-summary.js"), "utf8");
+// The page controller first, as every page loads it.
+const SOURCE = ["page.js", "run-summary.js"].map((name) => readFileSync(path.join(ROOT, "skills", "delivery-views", "assets", name), "utf8")).join("\n");
 
 function formatter() {
   const dom = new JSDOM("<!doctype html><body></body>", { runScripts: "outside-only" });
