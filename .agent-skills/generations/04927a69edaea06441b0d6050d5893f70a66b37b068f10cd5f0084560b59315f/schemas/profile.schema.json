@@ -1,0 +1,48 @@
+{
+  "$id": "https://agent-skills.dev/schemas/profile/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "description": {
+      "description": "What the profile delivers: a string, or a list of sentences, one per item, rendered joined with single spaces.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "minLength": 1,
+            "pattern": "^\\S(?:[^\\n\\r]*\\S)?$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      ]
+    },
+    "id": {
+      "type": "string"
+    },
+    "includes": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "members": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "schemaVersion": {
+      "const": "agent-skills-profile/1"
+    }
+  },
+  "required": [
+    "id",
+    "includes",
+    "members",
+    "schemaVersion"
+  ],
+  "type": "object"
+}

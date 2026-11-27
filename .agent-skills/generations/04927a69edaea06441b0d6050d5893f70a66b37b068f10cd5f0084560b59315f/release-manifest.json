@@ -1,0 +1,1048 @@
+{
+  "contentSha256": "15e6d77972a2105d967341d8d9df81ccaa7b016b72e121e9b7700adb7e03000f",
+  "entryPoint": "python -m agent_skills.validate --root .",
+  "files": [
+    {
+      "group": "linear",
+      "path": "__main__.py",
+      "sha256": "774a27f2d3735b41724bec116a482830f5a94e933eef0db7137152360193ef55"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/__init__.py",
+      "sha256": "d0e787364a615d06c795fcafa7a0c316d1b96d245719d2949035eacb0b69467c"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/adoption.py",
+      "sha256": "bad0d6490e99b083f0c48bca9ee1938282b9db8bed637f988770ffe170ab87fd"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/capabilities.py",
+      "sha256": "1ea49a804450163eb12e0324044c3c8fd757a1352e2715a5525d9a4ab25047fe"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/catalog.py",
+      "sha256": "8a972ba49915ebab6c81859928dce8d98771158d7a38691ae0e46079d01c8ab0"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/cli.py",
+      "sha256": "2d9adce874129c334d97de9aad6202f04dcb9ffd2e0ed277144196ddaa3a75f7"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/diagnosis.py",
+      "sha256": "2dc66428783815697096528620c2178ee58711bd437bd05dcf5667de9af9b2dd"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/errors.py",
+      "sha256": "e33e120e1cd4f34815e59db4f405e208646341bd4a0a1a4981f78a792fde0d51"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/fake_tracker.py",
+      "sha256": "e661f246caf5f5e0020d13f93a76808543f9340a04aa0c74a2b3bc2522b5f232"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/fs.py",
+      "sha256": "0962dc9e75e86e93af8f45363ab74cd3fd0b4d9f7b4845b93f00aa40ab87a499"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/generations.py",
+      "sha256": "8df768cb1ddffa11327651dee2edd5dfc3d9c728b85f2d4d785f9f437e7b0000"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/hooks.py",
+      "sha256": "a0ce2ccec6dba13f4972ae8273af35a4c11bf13231710d977714c610a88dc0fa"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/hosts/__init__.py",
+      "sha256": "052789398486518c98b19bf0bfd3ef43755be747e29b244744aee858963a938e"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/hosts/base.py",
+      "sha256": "7429586c0cbb115fdc0ab0a92df12bff45466232b303f17e48e3db9ac4773399"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/hosts/claude.py",
+      "sha256": "9e2b2bb7c40f3fd6cb4bc1396dc0c97bfaf2d416e75f2bd0bba548dde102d517"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/hosts/codex.py",
+      "sha256": "eed6d1ca2c87dae35969ab358148f82a5b277a69b1da248e6ede2e4a643d8884"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/hosts/exposure.py",
+      "sha256": "46f78a2fb4d66c1177f110b8b653d08035cb8f9be65d7f5d716e457f51c9f509"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/journal.py",
+      "sha256": "b95b5715e4d12d51ca5b136bc9369dedf9e739b44414e985a7fface14f90a021"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/lifecycle.py",
+      "sha256": "128a43e5b9656a2ecdd15f4b27fbd679f9e8884ca239a5fcf986142623c896ad"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/locking.py",
+      "sha256": "7bd592350c23e3a96335a0ab9c20b9a6a44a6f9036f2f250d6726443cd5eda7f"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/product.py",
+      "sha256": "b3761379790c2bd6e7b0fb920952994439a00693dc9b061cf5867422f2520d22"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/provider.py",
+      "sha256": "67b03a26fbf4e8d3ccc4003b839d3b79bf240f3ef9c2d67aab1d25b0fd044021"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/receipt.py",
+      "sha256": "58c2888af2b4e5a16fc355f7470fa1a31274a67847a8ccdd360052af13a9a7da"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/release.py",
+      "sha256": "74dd7446fcedc258c779390bcbbd2c6b39c66e22c79f6377ae98a7bb0cd5c543"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/review_orchestration.py",
+      "sha256": "b9c4ee9b547946bb8b92143f860047b62505e11160b5918dcc9dffccbb114db1"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/router.py",
+      "sha256": "0c608d0e66f5405c8047a6e5362c5cb7f0f6c35d66d230b13d5a55c8e62aa6ec"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/validate.py",
+      "sha256": "2ef1b6f1c67ef69a60b0845958c050cca6ffebc8f7c09293cf1d1589349a27d9"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/workflow_graph.py",
+      "sha256": "d5bcd4da3f5baf95edddb13bccea89a3732cf6818c6645b9bd32f7d8eeb689f3"
+    },
+    {
+      "group": "linear",
+      "path": "agent_skills/workflows.py",
+      "sha256": "ba1964e2372cebf91ae493ba6dd70525c2488c5d9d06af1005d9379b3a3d803e"
+    },
+    {
+      "group": "linear",
+      "path": "catalog.json",
+      "sha256": "90316d614d3a0db53e1def99038248272693c1003961652cb88de606f6811b66"
+    },
+    {
+      "group": "linear",
+      "path": "docs/agent-skills-provider.md",
+      "sha256": "386304181e40d66121adac6e544edbc73d8ad9450913918ec48bbf1809a3df70"
+    },
+    {
+      "group": "linear",
+      "path": "docs/delivery-provider-rails-v1.md",
+      "sha256": "ffeb3f5fe5baa4f288601e7550b06e1bff36f5160fc0ab48059ea403ed5b1c1e"
+    },
+    {
+      "group": "linear",
+      "path": "docs/workflow-graph-v1.md",
+      "sha256": "65daae68935c0127e1eac49f14b2051862e108faf1231fef81f6a9fcd4dc61b1"
+    },
+    {
+      "group": "linear",
+      "path": "personas/adversarial-document.md",
+      "sha256": "57f13fa7506e0906d900a96da56e52671d6aed37662492dd69bb8ddccf42db21"
+    },
+    {
+      "group": "linear",
+      "path": "personas/adversarial.md",
+      "sha256": "ae9969a9835d66a8fd0b4dca434915f23e2904b5f3865035f887583338571b0d"
+    },
+    {
+      "group": "linear",
+      "path": "personas/api-contract.md",
+      "sha256": "a04f0415e773b55526cfc9407dbd4f89a7553954930a12060c1625ab14498524"
+    },
+    {
+      "group": "linear",
+      "path": "personas/architecture.md",
+      "sha256": "c06bb9aa9103c9cefbf5973d963d253e71729267afa082e8c7d48c75a5e7383f"
+    },
+    {
+      "group": "linear",
+      "path": "personas/coherence.md",
+      "sha256": "4d95807647528c32157179ccf5dde11c669757e1849b7a602b838a91f62c3865"
+    },
+    {
+      "group": "linear",
+      "path": "personas/data-integrity.md",
+      "sha256": "61b75cb83fc65b8b6fa9a25502362280b4c2761d564166041e1b65e5b179d871"
+    },
+    {
+      "group": "linear",
+      "path": "personas/feasibility.md",
+      "sha256": "96d39502ab285500af7257aba122684042e0a7e28af6183f6d0336b65961f0df"
+    },
+    {
+      "group": "linear",
+      "path": "personas/maintainability.md",
+      "sha256": "1da8efccc419a012f5f9ed48c206dadab56efdb44b4488d6ad54ad076e56c691"
+    },
+    {
+      "group": "linear",
+      "path": "personas/manifest.json",
+      "sha256": "c982e2835063de1fe3986130093e33538f65605eb62124e461d957fbedca1e4e"
+    },
+    {
+      "group": "linear",
+      "path": "personas/outcome-correctness.md",
+      "sha256": "a5d96a825150e40b840cd91b55c2d7480f5ee7e481004464062afb8ef5430e2c"
+    },
+    {
+      "group": "linear",
+      "path": "personas/performance.md",
+      "sha256": "c2081d53c1170217f85c41e25058ebf21b1705d17428ccc881422dac3e10abd7"
+    },
+    {
+      "group": "linear",
+      "path": "personas/product.md",
+      "sha256": "05bdfbf83f85b101c407fdb9ed809dbe33af3ed2314cf4cd130bf6df03240970"
+    },
+    {
+      "group": "linear",
+      "path": "personas/project-standards.md",
+      "sha256": "72b547422e66609403b3e3382d22f18f242f1ff71b3d3c94ad8c2bc3dcb833d7"
+    },
+    {
+      "group": "linear",
+      "path": "personas/reliability.md",
+      "sha256": "427bd06015a4ef32d3423e3e56c4a0a113fb1a28a73bad6e7b6068b08e3bb6c3"
+    },
+    {
+      "group": "linear",
+      "path": "personas/scope.md",
+      "sha256": "117fe6a8ab8cdd125460b2b80ab2510000ca7ab1ac68b10643b27480bb428e6c"
+    },
+    {
+      "group": "linear",
+      "path": "personas/security.md",
+      "sha256": "f66e55bec2638faaf7ae981bdcba192c09cdc5170f8f2405ff6d890643a04a06"
+    },
+    {
+      "group": "linear",
+      "path": "personas/simplicity.md",
+      "sha256": "c2e88a11be816b1a8aace86154f05f8fa9a0aba6634806ab0524c24a535b3aaa"
+    },
+    {
+      "group": "linear",
+      "path": "personas/source-adjudication.json",
+      "sha256": "15a07326dcafbc2cdfc96152014aa5c64e117111dff12087c826a8d9dbf6640f"
+    },
+    {
+      "group": "linear",
+      "path": "personas/testing-policy.md",
+      "sha256": "47aa12bd7fce80026be46a84eca73816ea707f50c2947f1fa4c9d0138587ed38"
+    },
+    {
+      "group": "linear",
+      "path": "profiles/core.json",
+      "sha256": "3fc1a276d8bee12ed458cdb7f5dac3092cf60f7706ee2eafe8b4de7b9bc6ae4a"
+    },
+    {
+      "group": "linear",
+      "path": "profiles/delivery-views.json",
+      "sha256": "2661be9dc7c6bc7ec361121a8f0bd12f89f5e1da48d5f5a947be2f2c6338637f"
+    },
+    {
+      "group": "linear",
+      "path": "profiles/linear.json",
+      "sha256": "75f512b3e8f14381b6ca562db3966faa08b4aa91a6788639940d0380c2ee9b90"
+    },
+    {
+      "group": "linear",
+      "path": "profiles/run-delivery.json",
+      "sha256": "8fa8a6950f0aaa28636f441dd2ac047554460bcd512703ecba761bf2a4759c17"
+    },
+    {
+      "group": "linear",
+      "path": "provenance.lock.json",
+      "sha256": "0f27fa9a14e54b2744d9b6787b3315b7147ae5e2374b8c5d5d426274f1ae5a1a"
+    },
+    {
+      "group": "linear",
+      "path": "runtime/LICENSE",
+      "sha256": "02ed546806a3298b12c633742eb2fd354821d5dc9a5ee4384d4ae8196737a83f"
+    },
+    {
+      "group": "linear",
+      "path": "runtime/NOTICE",
+      "sha256": "547c61e2d762d0cadff8c1560ac7b9c072d4d71315797e11629654079ce0882d"
+    },
+    {
+      "group": "linear",
+      "path": "runtime/bootstrap.mjs",
+      "sha256": "5df698a9e5d7bae942ec5a40819ba52b0688cab87c653ee8b42e30160ad1225a"
+    },
+    {
+      "group": "linear",
+      "path": "runtime/cli-api.d.mts",
+      "sha256": "b5c75d1965ab923f970c0680f2fb66d35039b09d6f420366576b2d4db1cf9e50"
+    },
+    {
+      "group": "linear",
+      "path": "runtime/cli-api.mjs",
+      "sha256": "f9f2919ca2b5e8bc4784fec2b327e429665c3519d55c7c73fbf3f50930b548d2"
+    },
+    {
+      "group": "linear",
+      "path": "runtime/cli.mjs",
+      "sha256": "940d41d950e5472ef11bb9afe3055d239660f2a2abe898a073b243b61c0c58af"
+    },
+    {
+      "group": "linear",
+      "path": "runtime/kernel.d.mts",
+      "sha256": "2d6ca8b1f1df5d661c59c94f95ee3b29c4b5c4f2ea4e6515549d35c8310e8fba"
+    },
+    {
+      "group": "linear",
+      "path": "runtime/kernel.mjs",
+      "sha256": "afd166c9bd64fd74efd644c92a59f426299e16ca32d0078410e0e221ef5e0a88"
+    },
+    {
+      "group": "linear",
+      "path": "runtime/loader.mjs",
+      "sha256": "d00b40605a54f7defd9b8cab05825009af57baf2d5884d736eddc391ba35a1e8"
+    },
+    {
+      "group": "linear",
+      "path": "runtime/policy.mjs",
+      "sha256": "320aa341d55833061c08b4c9e47f998c341229e964e84bebbf9db8da875a0d24"
+    },
+    {
+      "group": "linear",
+      "path": "runtime/runtime.json",
+      "sha256": "3b1308fb793d4c76c8cab8826af7d47383b71f9f1a54a5c27a68f96656410c8b"
+    },
+    {
+      "group": "linear",
+      "path": "schemas/catalog.schema.json",
+      "sha256": "f723d895c9615f5a59393fa8c5b2ccbdad8d69ade0904a77b82ceba9d3c9a2b1"
+    },
+    {
+      "group": "linear",
+      "path": "schemas/delivery-provider-rails.schema.json",
+      "sha256": "7242d88fadc5087b1d63e0065565cd6e272225b2a2240c14de2fe4db305ea0e6"
+    },
+    {
+      "group": "linear",
+      "path": "schemas/profile.schema.json",
+      "sha256": "636fec3faa808e5135ba7028c920db8a64f111f9f85cf7d4e5c8e7c508c00a14"
+    },
+    {
+      "group": "linear",
+      "path": "schemas/provenance.schema.json",
+      "sha256": "58f966df8819e8e84c8c972a760c6cf26c7c5a935476b69b73ca7d41588472f7"
+    },
+    {
+      "group": "linear",
+      "path": "schemas/receipt.schema.json",
+      "sha256": "91952748ef7fb36b98e81a3efa9244a30480b97874ef14074b9618f92782b3a5"
+    },
+    {
+      "group": "linear",
+      "path": "schemas/release-manifest.schema.json",
+      "sha256": "72f6b98fa1991f5a5ac2abcc1a38329fc22535c6c092309d093bc65328a3569f"
+    },
+    {
+      "group": "linear",
+      "path": "schemas/skill-hooks.schema.json",
+      "sha256": "c73df7799cceb546cec7c3f9d1c5102bdea2ebc65517ad0c5262a4a54727ee64"
+    },
+    {
+      "group": "linear",
+      "path": "schemas/workflow-graph.schema.json",
+      "sha256": "0e1c284307c35bb8fa181ae76ecd2abc7528d811a2be31d9a9bd85f78e2ad2c3"
+    },
+    {
+      "group": "linear",
+      "path": "schemas/workflow-stage-result.schema.json",
+      "sha256": "a1fe3d0bc131878c6620c15c359dafb115f31f027025a31fa3730bf3ce1fc91d"
+    },
+    {
+      "group": "linear",
+      "path": "skills/compound-delivery-kernel/SKILL.md",
+      "sha256": "7adc4684034580a9379aaa8f6d1769eed885bcdfbfab030f0194a6f3363486c7"
+    },
+    {
+      "group": "linear",
+      "path": "skills/compound-learning/SKILL.md",
+      "sha256": "0848c45ff0f9fd6b08d5601cfde5f60565b97a3f657e79c71270bea6ad51d01a"
+    },
+    {
+      "group": "linear",
+      "path": "skills/create-linear-ticket/SKILL.md",
+      "sha256": "894ef53b9a3bd192409facf64eb4d2d3af99d55e38f25ca87ad204d30a21010b"
+    },
+    {
+      "group": "linear",
+      "path": "skills/create-linear-ticket/agents/openai.yaml",
+      "sha256": "a3f6f571700d3036747f461efb3540fafee79de345866374048bb6c679c19084"
+    },
+    {
+      "group": "linear",
+      "path": "skills/create-linear-ticket/references/atomic-plan-template.md",
+      "sha256": "f2f8dbc01c4cb7790a460e220249ea44e25a3d0959b4185e9af0448f0175f950"
+    },
+    {
+      "group": "linear",
+      "path": "skills/create-linear-ticket/references/atomic-ticket-template.md",
+      "sha256": "ba18fac7ca2ada7b2ba3e20b62a328f89b0f57a4cdfb8a5cc901ed536f5a311b"
+    },
+    {
+      "group": "linear",
+      "path": "skills/deliver-work/SKILL.md",
+      "sha256": "e8bb11706524185c444a0f1cb088bfca3ab4eb8e6b8ecbdf79b54538b63ef132"
+    },
+    {
+      "group": "linear",
+      "path": "skills/deliver-work/agents/openai.yaml",
+      "sha256": "335c1f6f152230f5c7dfac0bce52bd2295d4f44349226eac3fc59de1715d2c04"
+    },
+    {
+      "group": "linear",
+      "path": "skills/deliver-work/references/capability-contract.md",
+      "sha256": "2567903f6cddef01032245220e4250c6bfe3699845aaa21977fbe49842554688"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/SKILL.md",
+      "sha256": "b299a80364bc426cc72cf59e82b494af26168dd42375e0bef1fa87c4499d3122"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/assets/history.css",
+      "sha256": "a19fc27c52a1a70dacac6c9aa738b2bc61b60cea637917de42c5c10f26a2c4d3"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/assets/history.js",
+      "sha256": "e4e326a1fa5667008ab86367609b498858ddc74614355691dd1cf1c7b6aaec54"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/assets/line-map.css",
+      "sha256": "620bba1402fb8c614f667208c4c6e8788452aa30c6dd8c2edfced92c9e8dafad"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/assets/line-map.js",
+      "sha256": "657df146929a5db1a9a3e500134198fbe4f4419981a3946057f14af9b972e8a1"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/assets/page.js",
+      "sha256": "203fe695537be0b07f993d48b99bdcfa5f1b982b2d784b184a97c0f863eec68c"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/assets/run-summary.css",
+      "sha256": "4d8be32039fa145a2479a6b34bc77c55c848408615b20ee64e7d4e36e4c4748c"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/assets/run-summary.js",
+      "sha256": "f4cb34906d2058ab1558d9d8ca203db7320d722f510bdcb695e9711ee0694e74"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/assets/runs.css",
+      "sha256": "e39075e8ba2a872a266201683664caefb94b66c74cb9e63553bbd30cf25f7f9d"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/assets/runs.js",
+      "sha256": "4f2c8013e5dc2206a10cd6f5b007e2c80e9f111ba897d23636113b57c261776d"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/references/delivery-plan.schema.json",
+      "sha256": "7bc3418b794cde8dbfa69050dfc6bae2fcbadae482f2faeae256aca190342831"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/references/hosted-snapshot.schema.json",
+      "sha256": "c763430b7f5d794fc334d54dcb03bd14db41e98e2065b1824cf70c0c4087619c"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/scripts/hosted.py",
+      "sha256": "edd810e9eb885fd1fac16fc69c69aa1d78599010e0e73c66908ee447adf4e3ae"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/scripts/public_projection.py",
+      "sha256": "ba197f62134e7e9c434942014dc7adad562d00ee9165fa4beabeed5242e6198e"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/scripts/render.py",
+      "sha256": "dc83c4b076760251689946c2486d8d728bcb0d8890dc4e61be4f693b7c86823c"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/scripts/review_projection.py",
+      "sha256": "97b21ab606ccffbb0f3ecaedc9b77f62a1f8ac465c92fd9fa490169b8bd68b70"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/scripts/snapshot.py",
+      "sha256": "a2705d9def3a4d747e73b4b86f7508a943ff9207a683dc3b8cbd27e13eb92839"
+    },
+    {
+      "group": "linear",
+      "path": "skills/delivery-views/scripts/views_common.py",
+      "sha256": "1b40d94145dd67eebff3c791b3836e4ccf36dcc1f3ca123271a711c4d6b74728"
+    },
+    {
+      "group": "linear",
+      "path": "skills/diagnose-work/SKILL.md",
+      "sha256": "50c522d3ea60a9949eaf4320b75344c346f710e205743d4da9c73a83457adc1d"
+    },
+    {
+      "group": "linear",
+      "path": "skills/execute-linear-ticket/SKILL.md",
+      "sha256": "018351bb475fe01d65ff62c4a89fbd9e27b645d1835cd07c1c771a9055d23bf9"
+    },
+    {
+      "group": "linear",
+      "path": "skills/execute-linear-ticket/agents/openai.yaml",
+      "sha256": "b6d90a3ba0dfede39e1721c789a1468aaf64563cb84d3abb940f37bce2238f18"
+    },
+    {
+      "group": "linear",
+      "path": "skills/execute-work/SKILL.md",
+      "sha256": "11b98475565967daafde3b972dad606fda6f8e3970da4f4c5ad602edb74f46df"
+    },
+    {
+      "group": "linear",
+      "path": "skills/execute-work/references/run-observation-contract.md",
+      "sha256": "9bd80e76c91e31b5c133016e6afe374cba28aff46b285ab741d241dba160ea3e"
+    },
+    {
+      "group": "linear",
+      "path": "skills/execute-work/scripts/report_observation.py",
+      "sha256": "d04b3ada9e06268c901f82a28f569194cf30f6f5c71a180fa1481d9f3d023f29"
+    },
+    {
+      "group": "linear",
+      "path": "skills/hive-knowledge-adapter/SKILL.md",
+      "sha256": "4455e746df4af3986c07ec82cb5c704bbf31863b538e0cc860946f2aa05831e9"
+    },
+    {
+      "group": "linear",
+      "path": "skills/hive-knowledge-adapter/references/adapter-contract.json",
+      "sha256": "f169dadd699be21c3a467832b3335a35d017a54520660edb350a0de02089707d"
+    },
+    {
+      "group": "linear",
+      "path": "skills/linear-tracker-adapter/SKILL.md",
+      "sha256": "f64e907b59abe4782cce65b1b941d278b10a2b5d2d190362056c8bf28386a511"
+    },
+    {
+      "group": "linear",
+      "path": "skills/linear-tracker-adapter/references/adapter-contract.json",
+      "sha256": "82b9bd2de7a3a38b866dbdccca66cc0b37fd253b58a816412984f67484b94f45"
+    },
+    {
+      "group": "linear",
+      "path": "skills/obtain-review/SKILL.md",
+      "sha256": "600fe98efac4c09cc4c824ea9756b027f4f4b3c5c9799f7fd1254da73ec4b4d8"
+    },
+    {
+      "group": "linear",
+      "path": "skills/obtain-review/references/round-brief-template.md",
+      "sha256": "07af831cc8d96a281de7aaaa5fec97e28823973f25060324d760fed5b6f70505"
+    },
+    {
+      "group": "linear",
+      "path": "skills/orchestrate-work/SKILL.md",
+      "sha256": "cbd95ca9a1dfab8f711d03fec21cf73394e120042b75315abf740cf16dcf3fa6"
+    },
+    {
+      "group": "linear",
+      "path": "skills/orchestrate-work/references/journal-kinds.json",
+      "sha256": "b0b5f1297e170786cf1b9cea601ea9d5071dceb4cafe06414954ff63c4312095"
+    },
+    {
+      "group": "linear",
+      "path": "skills/orchestrate-work/references/orchestration-guide.md",
+      "sha256": "363540af5fa6238e9865ebb9743299870814688756d6611c12d0d0f98e415e57"
+    },
+    {
+      "group": "linear",
+      "path": "skills/orchestrate-work/references/schemas.json",
+      "sha256": "d2f02baf94a3b8fe26a97b84be1fb02cb1db2062433896340111552114b96931"
+    },
+    {
+      "group": "linear",
+      "path": "skills/orchestrate-work/references/story.schema.json",
+      "sha256": "182f55034a5d8b8a4766a7e05e2a78715e81ac160a4d4e2404f6ab1339ba5fcd"
+    },
+    {
+      "group": "linear",
+      "path": "skills/orchestrate-work/references/wait-words.json",
+      "sha256": "1f24955535389adf707b19a114c689e95a85e2979ad789ec78f9be426c37bd50"
+    },
+    {
+      "group": "linear",
+      "path": "skills/orchestrate-work/scripts/collab.py",
+      "sha256": "b3de36f78869f1267b772f585ccb915c16c741d63e964f0a42c25244c1c41dc5"
+    },
+    {
+      "group": "linear",
+      "path": "skills/orchestrate-work/scripts/delivery_state.py",
+      "sha256": "55150d0d43fa9fa16a243dc0eddf769de152d0cba092e7c64f26de82a40b29dc"
+    },
+    {
+      "group": "linear",
+      "path": "skills/orchestrate-work/scripts/journal_words.py",
+      "sha256": "4690ddaafc8a62bcadbc8bf6b10d5f546fe6b5d943b5f4cf26049b4278fe229b"
+    },
+    {
+      "group": "linear",
+      "path": "skills/orchestrate-work/scripts/machine.py",
+      "sha256": "fbd335736bd98ef7172ab50e0875a6b0b2a39503da9129c50d7e279a3f703b2b"
+    },
+    {
+      "group": "linear",
+      "path": "skills/orchestrate-work/scripts/merge_queue.py",
+      "sha256": "d74311de7f9a249de13cd423d9961ade4a8fad660755e5ccc4d18f3ed5936ee5"
+    },
+    {
+      "group": "linear",
+      "path": "skills/orchestrate-work/scripts/narrator.py",
+      "sha256": "d870cf9ddf8698ffe80a4a5fc7ed4103c9cff4288e64d54db39e3d2fedbd8d24"
+    },
+    {
+      "group": "linear",
+      "path": "skills/orchestrate-work/scripts/region_ownership.py",
+      "sha256": "a5c92ae0ebf4bd4bfe9264a8dc5bf29fbfb944f721c8b60ded9c7167d5d8306b"
+    },
+    {
+      "group": "linear",
+      "path": "skills/orchestrate-work/scripts/render_state.py",
+      "sha256": "c4a88206a8d204fd3efadf85877a3a52b68d4d3e0371f01ee11d73de536f7a71"
+    },
+    {
+      "group": "linear",
+      "path": "skills/plan-work/SKILL.md",
+      "sha256": "15b9d07cb22ed294a736f81ecb72e85fc557775441dc5f0708119d07b4d79b10"
+    },
+    {
+      "group": "linear",
+      "path": "skills/review-work/SKILL.md",
+      "sha256": "a54da94befcab3056a7d15bd6dd6d79a9a6721edc294fff858a70d15942f7493"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/SKILL.md",
+      "sha256": "c15166133c51f99356048992bd2584f947399bfe827fa4be7f3198a08c3ee457"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/adapters/forge_bitbucket.py",
+      "sha256": "d766bc69e89a9ef6696dc2dc428f1beb6f7c46544ee45dc76a56e579ce8818a9"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/adapters/forge_github.py",
+      "sha256": "7b441555cc03ced5883149f208d0a6a8aa01157d960d969d008b9e335d12cdf5"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/adapters/tracker_jira.py",
+      "sha256": "f0fc5c61a510d07adb3b7b597a27ae3d156e120221e0dcc0f8d32a3f7cbf91e0"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/adapters/tracker_linear.py",
+      "sha256": "acba7193d03cf9a0f00324d236ca3a73caf6c75276fc1c9c5425e4784c4e848a"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/assets/adapter-fixture/index.html",
+      "sha256": "31257fd55d83ebc6aa602b7a508248d6f44776991f54e1127ce1629b0bf59a81"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/hooks.json",
+      "sha256": "d00b0ccafb3735f16018857157134d29b197e74eb909e89e9dd587a883ba1b23"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/references/adopting.md",
+      "sha256": "a5dd7cf944a2b5107329535b688aeeca0a7caf8580bb6eda1bc88574e1fb21dc"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/references/config.md",
+      "sha256": "674f0e5c50a5c60e7c95e608336380f8a919a4098a66d7db338b47f3a746fe76"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/scripts/gaps.py",
+      "sha256": "5737a6a012a99c7c7d4b74fe92bd0ac1c7ecb02cc630a1c2e0972153b4c42ee8"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/scripts/plan_sync.py",
+      "sha256": "d0dd2299c57d7c7b12fbc484e18bbe9a3a9f2c63d1440be54fbf0c2b9459aa68"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/scripts/pr_review_gates.py",
+      "sha256": "aa5b0cd1c6fb9cb52d89aabce8d9882ae431e5ba349fa27e0f6a5a8051739d7b"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/scripts/run_delivery.py",
+      "sha256": "87ef3fab0a009fd9bd70ccc5d8f9b923c66ac629b11595a2196cd8dfef6f91d6"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/scripts/tracker_publisher.py",
+      "sha256": "3c6dcbaff9b9a7676662ad560490e3bc2be79c0161a5bb65732c95b85eb46f90"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/templates/evidence.html",
+      "sha256": "e9b9f603c2c325e156f6162dedc0670374b911b4c79226743a82ad99c57f3228"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/templates/lane-brief.in-app.md",
+      "sha256": "682fee2df7892a26eabce9511e1653ac9a93d7b865d49d6fe844537d3195cd1f"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/templates/lane-brief.md",
+      "sha256": "ebd98f06eecd57f103842ac2521ed12e18193af875ec176a22caba3159707af8"
+    },
+    {
+      "group": "linear",
+      "path": "skills/run-delivery/templates/round-brief.md",
+      "sha256": "fbf3fe59405664045ff0e285ba57f05cfa1647bfdbdb2d1f9f3df5d5787c3e0e"
+    },
+    {
+      "group": "linear",
+      "path": "tests/consumers/workflow_consumer.py",
+      "sha256": "16cffe5bfd6fe3eb9595a7cbdd934cd688e487dcc2a89e161a1c3ab22f62b6b7"
+    },
+    {
+      "group": "linear",
+      "path": "tests/fixtures/delivery-provider-rails-v1.json",
+      "sha256": "1ceb7d7e2043d71f7dea0d95ba2dcb97d2977c56d0045a7001c44eb777dbb2bf"
+    },
+    {
+      "group": "linear",
+      "path": "tests/fixtures/invalid-corpora/coverage.json",
+      "sha256": "992ab811e57d5f1b8efb25adf20cd839e436215cd6c23e7b60d485c87b30f353"
+    },
+    {
+      "group": "linear",
+      "path": "tests/fixtures/valid-corpus/coverage.json",
+      "sha256": "1f05a4259219ddec7f28d8eec825bd10a7203a8283922664c4f732c159180a99"
+    },
+    {
+      "group": "linear",
+      "path": "tests/fixtures/workflow-graph/result-templates.json",
+      "sha256": "b4ad8b069b1edaef7f47bef547b498b438980073b37bd3aacc39a5ec89bc00ae"
+    },
+    {
+      "group": "linear",
+      "path": "tests/scenarios/core/compound.json",
+      "sha256": "713f19c9799e0edb5a082f9fb7c33319ff8971351abd6d849d8d0cf6dc597120"
+    },
+    {
+      "group": "linear",
+      "path": "tests/scenarios/core/diagnose.json",
+      "sha256": "40c2fef0912979063affa67807a9fb5a90cf2e0eb853020fa06db2eca4b668bd"
+    },
+    {
+      "group": "linear",
+      "path": "tests/scenarios/core/execute.json",
+      "sha256": "e6a9ad393b5b96c1e30f60609f14d7b32c51dd973a9504b1914548f63a0914d6"
+    },
+    {
+      "group": "linear",
+      "path": "tests/scenarios/core/obtain-review.json",
+      "sha256": "db680ec6e03cc309ff841bd98f966a02af0dd83561f3bb11bd57b27377e9ede4"
+    },
+    {
+      "group": "linear",
+      "path": "tests/scenarios/core/plan.json",
+      "sha256": "1b0079b6a3bd550e13810e8c501276f9e80792ac9f73a7986e1f9950deca5ead"
+    },
+    {
+      "group": "linear",
+      "path": "tests/scenarios/core/repository-discovery.json",
+      "sha256": "15d68927bc4533d9f8b5c3abc84f7c4737488465687e58af6f695efba944415b"
+    },
+    {
+      "group": "linear",
+      "path": "tests/scenarios/core/review.json",
+      "sha256": "e8ffc68616e660bbcb9ad50a78158a453174c81235aa1d0f3bd3bbad360e0adf"
+    },
+    {
+      "group": "linear",
+      "path": "tests/scenarios/core/routing.json",
+      "sha256": "bb7e647414d24a739bb9929f14073fb18473621957426046e6efeb205c6be743"
+    },
+    {
+      "group": "linear",
+      "path": "tests/scenarios/core/tracker-capability.json",
+      "sha256": "8308fd2eba19c6b363e03e727b04c8082ab39c3645ade70ebc2f1339c86bd687"
+    },
+    {
+      "group": "linear",
+      "path": "tests/test_delivery_provider_rails_contract.py",
+      "sha256": "640c21e8c35d7944d7638e64fe16bae35157c01d677bb465947048950a83142c"
+    },
+    {
+      "group": "linear",
+      "path": "tests/test_diagnosis.py",
+      "sha256": "653c02c5725a21ada2fa97b61b0f2cea2f65d77ffdad57542231d4cccc89a3e1"
+    },
+    {
+      "group": "linear",
+      "path": "tests/test_review_and_compounding.py",
+      "sha256": "542c784d04204d76d9334abd9980ec00a318a54d6bdf4fb3099ab7e1491b9416"
+    },
+    {
+      "group": "linear",
+      "path": "tests/test_review_base_reopening.py",
+      "sha256": "abce97435cf186117e8ff1ca4a772f8ec4933175529130a9955759425c73231c"
+    },
+    {
+      "group": "linear",
+      "path": "tests/test_review_orchestration.py",
+      "sha256": "71a13b038bd4e42caf51d296d28b5c00a59e8ca2471076eec25c81ebdf6e010c"
+    },
+    {
+      "group": "linear",
+      "path": "tests/test_workflow_graph_contract.py",
+      "sha256": "f9c0bba32e81c4deaad3cc24d72b8590116c2d16af096366d3ca0b208f5b9233"
+    },
+    {
+      "group": "linear",
+      "path": "validation-inventory.json",
+      "sha256": "1e94307de696006179568eb348df228ecb78e81a2f5ebf94bc9ac0af9bcc7b80"
+    },
+    {
+      "group": "linear",
+      "path": "workflows/delivery-v1.json",
+      "sha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7"
+    }
+  ],
+  "groups": {
+    "linear": {
+      "paths": [
+        "__main__.py",
+        "agent_skills/__init__.py",
+        "agent_skills/adoption.py",
+        "agent_skills/capabilities.py",
+        "agent_skills/catalog.py",
+        "agent_skills/cli.py",
+        "agent_skills/diagnosis.py",
+        "agent_skills/errors.py",
+        "agent_skills/fake_tracker.py",
+        "agent_skills/fs.py",
+        "agent_skills/generations.py",
+        "agent_skills/hooks.py",
+        "agent_skills/hosts/__init__.py",
+        "agent_skills/hosts/base.py",
+        "agent_skills/hosts/claude.py",
+        "agent_skills/hosts/codex.py",
+        "agent_skills/hosts/exposure.py",
+        "agent_skills/journal.py",
+        "agent_skills/lifecycle.py",
+        "agent_skills/locking.py",
+        "agent_skills/product.py",
+        "agent_skills/provider.py",
+        "agent_skills/receipt.py",
+        "agent_skills/release.py",
+        "agent_skills/review_orchestration.py",
+        "agent_skills/router.py",
+        "agent_skills/validate.py",
+        "agent_skills/workflow_graph.py",
+        "agent_skills/workflows.py",
+        "catalog.json",
+        "docs/agent-skills-provider.md",
+        "docs/delivery-provider-rails-v1.md",
+        "docs/workflow-graph-v1.md",
+        "personas/adversarial-document.md",
+        "personas/adversarial.md",
+        "personas/api-contract.md",
+        "personas/architecture.md",
+        "personas/coherence.md",
+        "personas/data-integrity.md",
+        "personas/feasibility.md",
+        "personas/maintainability.md",
+        "personas/manifest.json",
+        "personas/outcome-correctness.md",
+        "personas/performance.md",
+        "personas/product.md",
+        "personas/project-standards.md",
+        "personas/reliability.md",
+        "personas/scope.md",
+        "personas/security.md",
+        "personas/simplicity.md",
+        "personas/source-adjudication.json",
+        "personas/testing-policy.md",
+        "profiles/core.json",
+        "profiles/delivery-views.json",
+        "profiles/linear.json",
+        "profiles/run-delivery.json",
+        "provenance.lock.json",
+        "runtime/LICENSE",
+        "runtime/NOTICE",
+        "runtime/bootstrap.mjs",
+        "runtime/cli-api.d.mts",
+        "runtime/cli-api.mjs",
+        "runtime/cli.mjs",
+        "runtime/kernel.d.mts",
+        "runtime/kernel.mjs",
+        "runtime/loader.mjs",
+        "runtime/policy.mjs",
+        "runtime/runtime.json",
+        "schemas/catalog.schema.json",
+        "schemas/delivery-provider-rails.schema.json",
+        "schemas/profile.schema.json",
+        "schemas/provenance.schema.json",
+        "schemas/receipt.schema.json",
+        "schemas/release-manifest.schema.json",
+        "schemas/skill-hooks.schema.json",
+        "schemas/workflow-graph.schema.json",
+        "schemas/workflow-stage-result.schema.json",
+        "skills/compound-delivery-kernel/SKILL.md",
+        "skills/compound-learning/SKILL.md",
+        "skills/create-linear-ticket/SKILL.md",
+        "skills/create-linear-ticket/agents/openai.yaml",
+        "skills/create-linear-ticket/references/atomic-plan-template.md",
+        "skills/create-linear-ticket/references/atomic-ticket-template.md",
+        "skills/deliver-work/SKILL.md",
+        "skills/deliver-work/agents/openai.yaml",
+        "skills/deliver-work/references/capability-contract.md",
+        "skills/delivery-views/SKILL.md",
+        "skills/delivery-views/assets/history.css",
+        "skills/delivery-views/assets/history.js",
+        "skills/delivery-views/assets/line-map.css",
+        "skills/delivery-views/assets/line-map.js",
+        "skills/delivery-views/assets/page.js",
+        "skills/delivery-views/assets/run-summary.css",
+        "skills/delivery-views/assets/run-summary.js",
+        "skills/delivery-views/assets/runs.css",
+        "skills/delivery-views/assets/runs.js",
+        "skills/delivery-views/references/delivery-plan.schema.json",
+        "skills/delivery-views/references/hosted-snapshot.schema.json",
+        "skills/delivery-views/scripts/hosted.py",
+        "skills/delivery-views/scripts/public_projection.py",
+        "skills/delivery-views/scripts/render.py",
+        "skills/delivery-views/scripts/review_projection.py",
+        "skills/delivery-views/scripts/snapshot.py",
+        "skills/delivery-views/scripts/views_common.py",
+        "skills/diagnose-work/SKILL.md",
+        "skills/execute-linear-ticket/SKILL.md",
+        "skills/execute-linear-ticket/agents/openai.yaml",
+        "skills/execute-work/SKILL.md",
+        "skills/execute-work/references/run-observation-contract.md",
+        "skills/execute-work/scripts/report_observation.py",
+        "skills/hive-knowledge-adapter/SKILL.md",
+        "skills/hive-knowledge-adapter/references/adapter-contract.json",
+        "skills/linear-tracker-adapter/SKILL.md",
+        "skills/linear-tracker-adapter/references/adapter-contract.json",
+        "skills/obtain-review/SKILL.md",
+        "skills/obtain-review/references/round-brief-template.md",
+        "skills/orchestrate-work/SKILL.md",
+        "skills/orchestrate-work/references/journal-kinds.json",
+        "skills/orchestrate-work/references/orchestration-guide.md",
+        "skills/orchestrate-work/references/schemas.json",
+        "skills/orchestrate-work/references/story.schema.json",
+        "skills/orchestrate-work/references/wait-words.json",
+        "skills/orchestrate-work/scripts/collab.py",
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "skills/orchestrate-work/scripts/journal_words.py",
+        "skills/orchestrate-work/scripts/machine.py",
+        "skills/orchestrate-work/scripts/merge_queue.py",
+        "skills/orchestrate-work/scripts/narrator.py",
+        "skills/orchestrate-work/scripts/region_ownership.py",
+        "skills/orchestrate-work/scripts/render_state.py",
+        "skills/plan-work/SKILL.md",
+        "skills/review-work/SKILL.md",
+        "skills/run-delivery/SKILL.md",
+        "skills/run-delivery/adapters/forge_bitbucket.py",
+        "skills/run-delivery/adapters/forge_github.py",
+        "skills/run-delivery/adapters/tracker_jira.py",
+        "skills/run-delivery/adapters/tracker_linear.py",
+        "skills/run-delivery/assets/adapter-fixture/index.html",
+        "skills/run-delivery/hooks.json",
+        "skills/run-delivery/references/adopting.md",
+        "skills/run-delivery/references/config.md",
+        "skills/run-delivery/scripts/gaps.py",
+        "skills/run-delivery/scripts/plan_sync.py",
+        "skills/run-delivery/scripts/pr_review_gates.py",
+        "skills/run-delivery/scripts/run_delivery.py",
+        "skills/run-delivery/scripts/tracker_publisher.py",
+        "skills/run-delivery/templates/evidence.html",
+        "skills/run-delivery/templates/lane-brief.in-app.md",
+        "skills/run-delivery/templates/lane-brief.md",
+        "skills/run-delivery/templates/round-brief.md",
+        "tests/consumers/workflow_consumer.py",
+        "tests/fixtures/delivery-provider-rails-v1.json",
+        "tests/fixtures/invalid-corpora/coverage.json",
+        "tests/fixtures/valid-corpus/coverage.json",
+        "tests/fixtures/workflow-graph/result-templates.json",
+        "tests/scenarios/core/compound.json",
+        "tests/scenarios/core/diagnose.json",
+        "tests/scenarios/core/execute.json",
+        "tests/scenarios/core/obtain-review.json",
+        "tests/scenarios/core/plan.json",
+        "tests/scenarios/core/repository-discovery.json",
+        "tests/scenarios/core/review.json",
+        "tests/scenarios/core/routing.json",
+        "tests/scenarios/core/tracker-capability.json",
+        "tests/test_delivery_provider_rails_contract.py",
+        "tests/test_diagnosis.py",
+        "tests/test_review_and_compounding.py",
+        "tests/test_review_base_reopening.py",
+        "tests/test_review_orchestration.py",
+        "tests/test_workflow_graph_contract.py",
+        "validation-inventory.json",
+        "workflows/delivery-v1.json"
+      ],
+      "sha256": "15e6d77972a2105d967341d8d9df81ccaa7b016b72e121e9b7700adb7e03000f"
+    }
+  },
+  "profile": "linear",
+  "releaseId": "linear-v4.6.0",
+  "schemaVersion": "agent-skills-release/1"
+}
