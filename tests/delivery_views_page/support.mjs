@@ -259,7 +259,8 @@ export async function openPage(page, scenario = {}) {
         const sized = window.Element.prototype.getBoundingClientRect;
         window.Element.prototype.getBoundingClientRect = function () {
           if (!this.closest("#plan")) return sized.call(this);
-          return { bottom: planEnd(window.document.getElementById("app")) - at, top: 0, left: 0, right: 0, width: 0, height: 0 };
+          // The plan's parts span from the page's top to the chapter's end: wholly above the window once it is past them.
+          return { bottom: planEnd(window.document.getElementById("app")) - at, top: -at, left: 0, right: 0, width: 0, height: 0 };
         };
       }
       if (scenario.layout) {
