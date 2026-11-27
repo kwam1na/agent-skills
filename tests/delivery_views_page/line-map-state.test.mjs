@@ -287,3 +287,36 @@ test("a set-aside row opens by Enter or Space when its words run past two lines,
   ], { frames: true });
   expect(seen).toEqual({ enter: "true", space: "false", short: "false", whole: false });
 });
+
+test("a decision the browser shuts after all were open turns the control back to Open all", async () => {
+  const label = await open(PLANNED, [
+    { click: '#plan .plan-fold[data-fold="decisions"] > summary' },
+    { toggle: "#plan-decision-1 details" }, { toggle: "#plan-decision-2 details" }, { toggle: "#plan-decision-3 details" },
+    { toggle: "#plan-decision-2 details" },
+  ]);
+  expect([label[label.length - 2].app.querySelector("#plan .pd-all").textContent, shot(label).querySelector("#plan .pd-all").textContent])
+    .toEqual(["Close all", "Open all"]);
+});
+
+test("a deferral row's click stays inside its card", async () => {
+  const head = "b".repeat(40);
+  const lens = "lens.adversarial-testing";
+  const outcome = { round: 1, outcome: "aligned", entries: [{ lens, state: "obtained", binding: { subjectRef: "WORK-1", candidateRef: head, round: 1 },
+    result: { schemaVersion: "review-lens-result/1", lensId: lens, subjectRef: "WORK-1", candidateRef: head, round: 1, evidence: { observed: true },
+      outcome: "aligned", findings: [{ id: "at-1", severity: "P3", summary: "A note for later.", state: "deferred", deferredIssue: "Follow up on at-1." }],
+      resolvedFindings: [] } }] };
+  const document = { state: { lanes: [], queue: [{ subject: "WORK-1", title: "Work", stage: "merged", head, runId: null }], planned: [] },
+    journal: [], reviewEvidence: { "WORK-1": { candidateRef: head, digest: "d".repeat(64), outcomes: [outcome] } } };
+  const seen = {};
+  await open(pageWithRuns(document, {}, { config: CONFIG }), [
+    { click: '[data-subject="WORK-1"]' },
+    { run(window) {
+      let reached = 0;
+      window.document.addEventListener("click", () => { reached += 1; });
+      const toggle = window.document.querySelector("#detail li.is-deferral .run-deferral");
+      toggle.click();
+      seen.deferral = [reached, toggle.getAttribute("aria-expanded")];
+    } },
+  ], { store: false });
+  expect(seen.deferral).toEqual([0, "true"]);
+});
