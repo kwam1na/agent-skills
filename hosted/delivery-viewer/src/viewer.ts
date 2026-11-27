@@ -45,8 +45,10 @@ if (match && statusNode && app && entry) {
     label.querySelector(".hosted-words")?.remove();
     fact.setAttribute("data-hosting", kind);
     if (times) {
-      // data-tab is the renderer's own focus mark: a redraw puts keyboard focus back on the new label.
+      // data-key is the renderer's focus mark (page.js): a redraw puts keyboard focus back on the new label. data-tab
+      // names the label for the host's own tests.
       handle.setAttribute("tabindex", "0");
+      handle.setAttribute("data-key", "hosting:times");
       handle.setAttribute("data-tab", "hosting");
       handle.setAttribute("aria-describedby", "hosting-times");
       const tip = document.createElement("span");
@@ -57,6 +59,7 @@ if (match && statusNode && app && entry) {
       label.appendChild(tip);
     } else {
       handle.removeAttribute("tabindex");
+      handle.removeAttribute("data-key");
       handle.removeAttribute("data-tab");
       handle.removeAttribute("aria-describedby");
     }

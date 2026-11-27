@@ -310,6 +310,7 @@ call to use.
 | motion | `page.motion(fromReader)` | reduced motion respected, and a keyboard reader's own actions kept still |
 | something open, closed or picked | `page.state(key, {saved})` | kept through redraws; with `saved`, through reloads, in the browser's storage under `key` |
 | a fold or disclosure | `page.fold(node, {key})`, and `page.open(node, open)` to open or shut it | the page's motion, its state kept, and opened by a link to anything inside it |
+| a focusable control | `page.key(kind, id)` as its `data-key` | focus returned to it after a redraw, in the same region, whatever was drawn above it |
 
 Every open, shut or picked state on the page is a `page.state` entry: a fold's is
 `fold:<key>`. A saved entry keeps the page's own storage keys and formats: the
@@ -317,6 +318,14 @@ layout as `paged` or `scroll`, the story's depth by its name, and the plan's ope
 folds as a JSON list of their names. A link to anything inside a fold, followed
 in the page or loaded fresh, opens that fold and every fold holding it; `of`
 names an element a fold stands for, as a decision's fold stands for its row.
+
+Every control the views draw carries a `data-key` from `page.key(kind, id)`: a
+kind of control and the record's own id for it (`stop:PAY-2358`,
+`fold:plan:units`, `round:<run>:2`), never its place on the page. A redraw puts
+focus back on the same key, in the same region (the nearest holder with an id,
+so a ticket in the detail panel and the same ticket under its stop are told
+apart), and Escape in the detail panel returns focus to the stop or tick that
+opened it.
 
 A reason's `address` is `push`, `replace`, `push-if-chapter-changes` or `none`;
 its `scroll` is `top`, `end`, `item`, `item-or-top`, `keep` or `none`. The

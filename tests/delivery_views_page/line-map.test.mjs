@@ -265,6 +265,16 @@ test("the lead's note opens to the sheet's own check list when the sheet only co
   expect(leadNote(paged.app).querySelector(".ck-pager .ck-page-where")?.textContent).toBe("11–16 of 16");
 });
 
+test("the pager's button keeps keyboard focus as it turns the page, and through a redraw", async () => {
+  // Twenty-five checks, three pages, so "next" is still there to hold focus on the second.
+  const many = Array.from({ length: 25 }, (_, index) => ({ label: `shop.check.${index}`, state: "pending" }));
+  const document = chosenByLead("only the retry path changed", many);
+  const summary = ".checking > details.ck-chosen > summary";
+  const next = ".checking > details.ck-chosen .ck-page-step:last-child";
+  const snaps = await open(document, { steps: [{ click: summary }, { click: next }, { tick: true }] });
+  expect([snaps[2].focused, snaps[3].focused]).toEqual(["pager:next", "pager:next"]);
+});
+
 test("the page of checks a reader turned to is the one shown after the page redraws itself", async () => {
   const document = chosenByLead("only the retry path changed", SEVENTEEN);
   const summary = ".checking > details.ck-chosen > summary";
@@ -971,7 +981,7 @@ test("keeps keyboard focus on the round picked, by updating the beads in place",
   const view = readJson(path.join(SOURCE, "run-view.json"));
   const summary = summarize(view, { runId: "run-7", status: "incomplete", open: true, durationSeconds: 3000, bytes: 4000 });
   const [, picked] = await open(fixtureDocument(), { steps: [{ click: "#detail .run-pick" }] }, render(fixtureDocument(), { "run-7": summary }));
-  expect(picked.focused).toBe("button");
+  expect(picked.focused).toBe("round:run-7:1");
   expect([...picked.app.querySelectorAll("#detail .run-pick")].map((pick) => pick.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
   expect(picked.app.querySelector("#detail .run-card .run-card-head b")?.textContent).toBe("Round 1");
 });

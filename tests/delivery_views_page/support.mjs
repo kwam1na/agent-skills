@@ -402,7 +402,8 @@ export async function openPage(page, scenario = {}) {
   const focused = () => {
     const node = document.activeElement;
     if (!node || node === document.body) return null;
-    return node.getAttribute("data-subject") || node.getAttribute("data-ticket") || node.getAttribute("data-tab") || node.tagName.toLowerCase();
+    // Today's three marks first, so existing assertions keep their values; then the page's key, for everything else.
+    return node.getAttribute("data-subject") || node.getAttribute("data-ticket") || node.getAttribute("data-tab") || node.getAttribute("data-key") || node.tagName.toLowerCase();
   };
   const snapshot = () => {
     const copy = new JSDOM(`<main>${app.innerHTML}</main>`).window.document.querySelector("main");

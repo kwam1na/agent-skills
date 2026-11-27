@@ -62,6 +62,26 @@
   // The stop the reader picked, by its subject: a click, Enter, Space or keyboard focus picks; pointing never does.
   var picked = page.state("line:selected");
   function selected() { var key = picked.get(); return key === undefined ? null : key; }
+  // Every control the page draws carries its key, page.key(kind, id): the record's own id for what it stands for, never
+  // its place on the page. A redraw puts focus back on the same key (page.js).
+  function withKey(node, kind, id) {
+    if (node && id !== undefined && id !== null && String(id) !== "") { node.setAttribute("data-key", page.key(kind, id)); }
+    return node;
+  }
+  // The control that opened the detail panel, by its key: Escape in the panel returns focus to it.
+  var opener = page.state("line:opener");
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("keydown", function (event) {
+      var active = document.activeElement;
+      if (event.key !== "Escape" || !active || !active.closest || !active.closest("#detail")) { return; }
+      var key = opener.get();
+      // Matched by attribute value, never by a selector built from record text; the opener on the line, not in the panel.
+      var back = Array.prototype.filter.call(app.querySelectorAll("[data-key]"), function (node) {
+        return node.getAttribute("data-key") === key && !node.closest("#detail");
+      })[0];
+      if (back) { event.preventDefault(); back.focus({ preventScroll: true }); }
+    });
+  }
   // The lane the pointer or focus lights on the line, kept through a redraw.
   var lit = page.state("line:lit");
   // The page of a run's checks the reader turned to, with the run it belongs to.
@@ -282,7 +302,7 @@
   function changeLink(changeRequest) {
     var target = changeTarget(changeRequest);
     if (!target) { return el("span", "pr-num", text(changeRequest)); }
-    var link = el("a", "issue-link pr-num", target.label);
+    var link = withKey(el("a", "issue-link pr-num", target.label), "request", target.label);
     link.setAttribute("href", target.href);
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noopener noreferrer");
@@ -445,7 +465,7 @@
     var inner = el("div", "inner");
     section.appendChild(inner);
     parts[chapter[0]] = inner;
-    var link = el("a");
+    var link = withKey(el("a"), "chapter", chapter[0]);
     link.setAttribute("href", "#" + chapter[0]);
     link.setAttribute("aria-label", chapter[1]);
     add(link, el("span", null, chapter[1]), el("i"));
@@ -991,7 +1011,7 @@
   /** A ticket id that shows its card when hovered or focused, and opens the issue when the renderer linked it. */
   function issue(id, label) {
     var href = issueHref(text(id));
-    var node = el(href ? "a" : "span", "issue-link", label === undefined ? id : label);
+    var node = withKey(el(href ? "a" : "span", "issue-link", label === undefined ? id : label), "ticket", text(id));
     if (href) {
       node.setAttribute("href", href);
       node.setAttribute("target", "_blank");
@@ -1320,7 +1340,7 @@
       var kind = stopKind(piece, nowSubject);
       if (kind !== "later") { started = true; }
       var words = piece.planned && piece.item.stage === "planned" ? STAGE_WORDS.planned : pieceWords(doc, piece.item);
-      var stop = el("a", "starting-stop " + kind.split(" ").map(function (part) { return "is-" + part; }).join(" "));
+      var stop = withKey(el("a", "starting-stop " + kind.split(" ").map(function (part) { return "is-" + part; }).join(" ")), "starting", key);
       stop.setAttribute("href", "#line");
       stop.style.setProperty("--c", laneColour(text(piece.item.lane)));
       stop.style.setProperty("--i", String(index));
@@ -1752,6 +1772,7 @@
       var time = figures(el("time", "kicker-time"), "kicker", closed ? "Closed after " + lasted : "Started " + lasted + " ago");
       time.setAttribute("datetime", text(first.at));
       time.setAttribute("tabindex", "0");
+      withKey(time, "time", "kicker");
       // The page's own card says the ends, as a ticket's does, since nothing on the page carries a native tooltip: a
       // small line from the start to the close, each end as a person says it, and the run between.
       var showEnds = function () {
@@ -1873,7 +1894,7 @@
   function pullRef(changeRequest) {
     var target = changeTarget(changeRequest);
     if (!target) { return el("span", "fact-ref", text(changeRequest)); }
-    var link = el("a", "fact-ref", target.label);
+    var link = withKey(el("a", "fact-ref", target.label), "request", text(changeRequest));
     link.setAttribute("href", target.href);
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noopener noreferrer");
@@ -2201,11 +2222,11 @@
         if (!pager) { return; }
         var from = checksPage * PAGE_SIZE + 1, to = Math.min(listed.length, (checksPage + 1) * PAGE_SIZE);
         var step = function (by, words, mark) {
-          var button = add(el("button", "ck-page-step"), mark);
+          var button = withKey(add(el("button", "ck-page-step"), mark), "pager", by < 0 ? "previous" : "next");
           button.type = "button";
           button.setAttribute("aria-label", words);
           button.disabled = checksPage + by < 0 || checksPage + by >= pageCount;
-          button.addEventListener("click", function () { checksPage += by; showChecks(); });
+          button.addEventListener("click", function () { checksPage += by; page.redraw(showChecks, "reader"); });
           return button;
         };
         var where = el("span", "ck-page-where", from + "–" + to + " of " + listed.length);
@@ -2695,7 +2716,7 @@
       if (meta.baseHead) {
         // Where the work ended up: the main line's last commit, opened on the forge when the renderer gave its address.
         var href = commitHref(meta.baseHead);
-        var sha = el(href ? "a" : "span", href ? "issue-link head" : "head", short(meta.baseHead));
+        var sha = withKey(el(href ? "a" : "span", href ? "issue-link head" : "head", short(meta.baseHead)), "commit", meta.baseHead);
         if (href) {
           sha.setAttribute("href", href);
           sha.setAttribute("target", "_blank");
@@ -2930,7 +2951,7 @@
       var colour = look.colours[one.piece.item.lane || ""];
       // A story that landed since the last draw lands on the line, as its stop once did.
       var landing = tick.state === "landed" && prev.stages && prev.stages[key] && prev.stages[key] !== "merged" && !reduced();
-      var g = shape(svg, "g", { class: "mg-tick " + tick.state + (landing ? " landing" : ""), "data-subject": key, "data-lane": one.lane, "data-state": tick.state,
+      var g = shape(svg, "g", { class: "mg-tick " + tick.state + (landing ? " landing" : ""), "data-subject": key, "data-key": page.key("tick", key), "data-lane": one.lane, "data-state": tick.state,
         tabindex: 0, role: "button", "aria-pressed": String(look.selected() === key),
         // Named in the stop's own words, so a story folded out of its row says no less than its stop did.
         "aria-label": titleOf(doc, one.piece.item) + ", " + key + ", " + (tick.state === "unlanded" ? "Not landed" : pieceWords(doc, one.piece.item)) });
@@ -2972,7 +2993,7 @@
         // A step says what its latest fact shows; once rejoined the ledger has no words left, and every step is done.
         var words = said[i] || (state === "filled" ? "Done." : "Not yet.");
         var r = shape(svg, "rect", { class: "mg-step " + state, x: lefts[i], y: trunkY - 5, width: widths[i], height: 10, rx: 2,
-          tabindex: 0, role: "img", "data-step": INTEGRATION_STOPS[i], "data-state": state, "aria-label": STEP_TITLES[i] + ": " + words });
+          tabindex: 0, role: "img", "data-step": INTEGRATION_STOPS[i], "data-key": page.key("step", INTEGRATION_STOPS[i]), "data-state": state, "aria-label": STEP_TITLES[i] + ": " + words });
         if (timed && INTEGRATION_STOPS[i] === "suite") { timedSuite(svg, step, state, lefts[i], trunkY, widths[i]); }
         // Only the step the bar is on reads "now".
         look.wire(r, null, STEP_TITLES[i] + " · " + (i === current ? "now" : state === "filled" ? "done" : "later"), words);
@@ -3012,7 +3033,7 @@
       finish.forEach(function (line, k) {
         var name = text(line.text) || text(line.id) || "Finish line " + (k + 1);
         var square = shape(svg, "rect", { class: "mg-square " + (line.met === true ? "met" : "unmet"), x: squaresX + k * 11, y: postY - 44,
-          width: 8, height: 8, rx: 1.5, tabindex: 0, role: "img", "aria-label": name + (line.met === true ? ", met" : ", not met") });
+          width: 8, height: 8, rx: 1.5, tabindex: 0, role: "img", "data-key": page.key("finish", text(line.id) || name), "aria-label": name + (line.met === true ? ", met" : ", not met") });
         look.wire(square, null, "Finish line · " + (line.met === true ? "met" : "not met"), name);
       });
       figureText(svg, "merge-met", { class: "mg-count", x: squaresX + finish.length * 11 + 3, y: postY - 37 }, met + "/" + finish.length);
@@ -3270,7 +3291,7 @@
         var point = function () { name(node, head, body); light(lane === null ? null : Number(lane)); };
         var on = function () {
           point();
-          if (piece) { picked.set(subjectOf(piece.item)); showDetail(doc, piece, colours, nowSubject); }
+          if (piece) { picked.set(subjectOf(piece.item)); opener.set(node.getAttribute("data-key")); showDetail(doc, piece, colours, nowSubject); }
         };
         var off = function () { name(node, null); light(null); };
         node.addEventListener("mouseenter", point);
@@ -3315,14 +3336,14 @@
         var kind = stages[subjectOf(piece.item)];
         var key = subjectOf(piece.item);
         var seg = el("div", "seg" + (kind === "active" && !(i === 0 && landedHere) ? " incoming" : ""));
-        var button = el("button", "stop-btn " + kind);
+        var button = withKey(el("button", "stop-btn " + kind), "stop", key);
         button.type = "button";
         button.setAttribute("data-subject", key);
         var waiting = kind === "unlanded" ? [] : waitWords(doc, key);
         button.setAttribute("aria-label", titleOf(doc, piece.item) + ", " + (kind === "unlanded" ? "Not landed" : pieceWords(doc, piece.item)) +
           (waiting.length ? ". " + waiting.join(" ") : ""));
         button.setAttribute("aria-pressed", String(selected() === key));
-        var show = function () { picked.set(key); showDetail(doc, piece, colours, nowSubject); };
+        var show = function () { picked.set(key); opener.set(button.getAttribute("data-key")); showDetail(doc, piece, colours, nowSubject); };
         button.addEventListener("click", show);
         // Pointing at a stop lights its lane; only a click or keyboard focus picks it.
         button.addEventListener("mouseenter", function () { light(laneIndex); });
@@ -3892,7 +3913,7 @@
         var base = file.path.slice(area ? area.length + 1 : 0);
         if (Array.isArray(file.spans)) {
           var lines = Math.max(1, file.lines || 0);
-          var button = el("button", "file shared" + (fileReading === file.path ? " open" : ""));
+          var button = withKey(el("button", "file shared" + (fileReading === file.path ? " open" : "")), "file", file.path);
           button.setAttribute("type", "button");
           button.setAttribute("data-path", file.path);
           button.setAttribute("aria-expanded", fileReading === file.path ? "true" : "false");
@@ -4220,7 +4241,7 @@
         var key = subjectOf(piece.item);
         // The row goes to the line with its stop picked; the title is the button a keyboard reaches, and the ticket
         // keeps its own link.
-        var title = el("button", "left-title", titleOf(doc, piece.item));
+        var title = withKey(el("button", "left-title", titleOf(doc, piece.item)), "left", key);
         title.type = "button";
         title.setAttribute("aria-label", "Show " + titleOf(doc, piece.item) + " on the line");
         var row = add(el("li"), ring, key ? issue(key) : null, title, el("span", "left-state", pieceWords(doc, piece.item)));
@@ -4426,7 +4447,7 @@
   function planNow(doc) {
     if (!plan) { return null; }
     var counts = planCounts(doc);
-    var link = figures(el("a", "plan-now-link"), "plan-now", counts.proven + " of " + counts.total + " criteria proven");
+    var link = withKey(figures(el("a", "plan-now-link"), "plan-now", counts.proven + " of " + counts.total + " criteria proven"), "plan-now", "criteria");
     link.setAttribute("href", "#plan");
     return add(el("span", "plan-now-plan"), link, figures(el("span"), "plan-changes", " · " + timesChanged(list(plan.changes).length)));
   }
@@ -4627,6 +4648,7 @@
       if (!parts.rest) {
         // A row with nothing more to say never opens.
         row.classList.add("is-whole");
+        withKey(summary, "approval", id || parts.title);
         summary.addEventListener("click", function (event) { event.preventDefault(); });
       } else {
         page.fold(row, { key: "approval:" + (id || parts.title) });
@@ -4758,7 +4780,7 @@
     var box = el("div", "plan-decided");
     var rows = el("ol", "plan-decisions");
     var boxes = [];
-    var all = el("button", "pd-all");
+    var all = withKey(el("button", "pd-all"), "decisions", "all");
     all.type = "button";
     // Whether every decision is open, by the page's store, which a click has set before the fold has finished moving.
     function allOpen() { return boxes.every(function (entry) { return page.state("fold:decision:" + entry.getAttribute("data-n")).get() === true; }); }
@@ -5163,7 +5185,7 @@
     var behind = null;
     if (live ? planBehind : named && named !== plan.updated) {
       // Said under the headline, not in it: what is wrong, and the one thing the reader can do about it.
-      var again = el("button", null, "Reload the page");
+      var again = withKey(el("button", null, "Reload the page"), "plan", "reload");
       again.type = "button";
       again.addEventListener("click", function () { if (typeof location === "object" && typeof location.reload === "function") { location.reload(); } });
       behind = add(el("p", "plan-reload"), el("span", null, live ? "The plan has changed, and this page couldn't load the new one." : "The plan has changed since this page was made."), again);
@@ -5198,6 +5220,7 @@
         var li = add(el("li", proof.next && proofStuck(proof.next, proof) ? "stuck" : null), issue(text(unit.subject), unitName(unit)), el("span", "po-title", text(unit.title)),
           add(el("span", "po-next"), el("b", null, unitStanding(proof)), said ? " · " + said : null));
         li.setAttribute("tabindex", "-1");
+        withKey(li, "plan-row", text(unit.subject));
         planRows[text(unit.subject)] = li;
         ul.appendChild(li);
       });
@@ -5216,10 +5239,10 @@
     switcher.setAttribute("role", "group");
     switcher.setAttribute("aria-label", "Show the plan");
     [[false, "As amended"], [true, "As approved"]].forEach(function (choice) {
-      var button = el("button", null, choice[1]);
+      var button = withKey(el("button", null, choice[1]), "plan-switch", choice[0] ? "approved" : "amended");
       button.type = "button";
       button.setAttribute("aria-pressed", String(planAsApproved === choice[0]));
-      button.addEventListener("click", function () { planAsApproved = choice[0]; drawPlan(shown); });
+      button.addEventListener("click", function () { planAsApproved = choice[0]; page.redraw(function () { drawPlan(shown); }, "reader"); });
       switcher.appendChild(button);
     });
     switcher.appendChild(el("span", "ps-when", "Approved " + (spoken(approved.at) || "at an unknown time") + (text(approved.review) ? " · " + text(approved.review) : "")));
@@ -5229,6 +5252,7 @@
     shownUnits.forEach(function (unit) {
       var row = unitRow(allProofs[text(unit.subject)], kinds, planAsApproved);
       row.setAttribute("tabindex", "-1");
+      withKey(row, "plan-unit-row", text(unit.subject));
       planRows["all:" + text(unit.subject)] = row;
       all.appendChild(row);
     });
@@ -5295,7 +5319,7 @@
       // A story whose card says where it stands leaves its proofs to the plan, behind the button.
       stated && !removed && !proof.proven ? null : el("span", "pu-standing", removed ? "Removed from the plan" : unitStanding(proof)));
     if (!removed && proof.next && !stated) { box.appendChild(el("span", "d-plan-next", proofSaid(proof.next, proof, Boolean(closedEntry(doc))))); }
-    var go = el("button", "d-plan", "See in the plan");
+    var go = withKey(el("button", "d-plan", "See in the plan"), "plan-unit", subject);
     go.type = "button";
     go.setAttribute("data-plan-unit", subject);
     go.addEventListener("click", function (event) {
@@ -5304,7 +5328,7 @@
       if (!row) {
         // The row is in the units fold, which page.go opens, saved, on the way to it.
         planAsApproved = false;
-        drawPlan(shown);
+        page.redraw(function () { drawPlan(shown); }, "reader");
         row = planRows["all:" + subject];
       }
       if (row) {
@@ -5375,7 +5399,7 @@
   /** A commit the words name, as a link to it on the forge when the page was given its address: cut short to read. */
   function commitRef(sha) {
     var href = commitHref(sha);
-    var commit = el(href ? "a" : "code", "fact-ref", short(sha));
+    var commit = withKey(el(href ? "a" : "code", "fact-ref", short(sha)), "commit", sha);
     if (href) {
       commit.setAttribute("href", href);
       commit.setAttribute("target", "_blank");
@@ -5630,6 +5654,7 @@
       li.id = "setback-" + text(row.id);
       li.setAttribute("data-row", text(row.id));
       li.setAttribute("tabindex", "0");
+      withKey(li, "setback", text(row.id));
       var words = isObject(row.words) ? row.words : {};
       var what = add(el("div", "ledger-what"), add.apply(null, [el("b")].concat(linked(words.head))), el("span", "ledger-line", text(words.line)));
       var when = open
@@ -5651,7 +5676,7 @@
     var here = text(chapter.id);
     var state = row.state === "open" ? "still stands" : chapters.ended === here && chapters.opened === here ? "over" :
       chapters.ended === here ? "ended here" : "opened here, ended later";
-    var link = el("a", "setback-link", text(words.head).replace(/\.$/, "") + " · " + state);
+    var link = withKey(el("a", "setback-link", text(words.head).replace(/\.$/, "") + " · " + state), "setback-link", text(row.id) + ":" + here);
     link.setAttribute("href", "#setback-" + text(row.id));
     link.addEventListener("click", function (event) {
       var target = document.getElementById("setback-" + text(row.id));
@@ -5668,11 +5693,12 @@
     group.setAttribute("role", "group");
     group.setAttribute("aria-label", label);
     options.forEach(function (option) {
-      var button = el("button", null, option[1]);
+      var button = withKey(el("button", null, option[1]), data, option[0]);
       button.type = "button";
       button.setAttribute("aria-pressed", String(current === option[0]));
       button.setAttribute("data-" + data, option[0]);
-      button.addEventListener("click", function () { var focus = focusMark(); pick(option[0]); drawHappened(shown); refocus(focus); });
+      // Drawn again through the page's one redraw transaction, which brings focus back to the button by its key.
+      button.addEventListener("click", function () { pick(option[0]); page.redraw(function () { drawHappened(shown); }, "reader"); });
       group.appendChild(button);
     });
     return group;
@@ -6058,6 +6084,9 @@
           // The full text, clamped to two lines; a row that overflows opens in place to show all of it.
           // A row is a disclosure on the page's one fold, keyed by its words, which are what the plan names it by.
           var row = add(el("li"), el("span", "aside-head", words), asideChevron());
+          // Focusable as it is drawn, so focus can come back to it through a redraw; a row that turns out not to clamp
+          // loses it once measured.
+          row.tabIndex = 0;
           page.fold({ button: row }, { key: "aside:" + words, can: function () { return row.classList.contains("clamps"); } });
           asideList.appendChild(row);
         });
@@ -6107,7 +6136,6 @@
       Object.keys(parts).filter(function (name) { return name !== "now"; }).forEach(function (name) { parts[name].replaceChildren(); });
       return;
     }
-    var focus = focusMark();
     // A redraw can remove the id under the pointer without a mouseleave, so its card goes too.
     hideCard();
     shown = doc;
@@ -6123,7 +6151,6 @@
     drawHappened(doc);
     drawParked(doc);
     dropTurned();
-    refocus(focus);
     keepPace();
   }
   /**
@@ -6148,28 +6175,6 @@
       if (node && typeof node.getAnimations === "function") { node.getAnimations({ subtree: true }).forEach(onPace); }
     }, true);
   }
-  // A redraw replaces the stops, links and tabs; keyboard focus stays on the one it was on.
-  function focusMark() {
-    var active = document.activeElement;
-    if (!active || !app.contains(active) || !active.getAttribute) { return null; }
-    var names = ["data-subject", "data-ticket", "data-tab"];
-    for (var i = 0; i < names.length; i += 1) {
-      if (active.hasAttribute(names[i])) {
-        // The same id can sit under its stop and in the detail; focus comes back to the same place.
-        return { node: active, name: names[i], value: active.getAttribute(names[i]), within: active.closest("#detail, .stop-label, .feed, .parked, .checking, .kicker, .chapter") };
-      }
-    }
-    return null;
-  }
-  function refocus(mark) {
-    if (!mark || app.contains(mark.node)) { return; }
-    // Matched by attribute value, never by a selector built from record text.
-    var same = Array.prototype.filter.call(app.querySelectorAll("[" + mark.name + "]"), function (node) { return node.getAttribute(mark.name) === mark.value; });
-    var place = mark.within ? (mark.within.id ? "#" + mark.within.id : "." + mark.within.className.split(" ")[0]) : null;
-    var again = same.filter(function (node) { return !place || node.closest(place); })[0] || same[0];
-    if (again) { again.focus({ preventScroll: true }); }
-  }
-
   // A record that fails to draw leaves the last good drawing in place and says so. Every redraw goes through the page's
   // one redraw transaction (page.js), which keeps the reader's place; `why` names what asked for it.
   function safely(doc, why) {
