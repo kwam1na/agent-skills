@@ -132,11 +132,13 @@ function controlled() {
     Object.defineProperty(window, "innerHeight", { configurable: true, get() { return 300; } });
     Object.defineProperty(window.HTMLElement.prototype, "scrollHeight", { configurable: true, get() { return view.height; } });
     window.scrollTo = ({ top, behavior }) => { view.at = top; view.moves.push(behavior); };
-    // Each element in the page's main is a 10-pixel row, in order.
+    // Each element in the page's main is a 10-pixel row, in document order, holding the rows of what it holds.
     window.Element.prototype.getBoundingClientRect = function () {
-      const rows = [...window.document.querySelectorAll("#app > *")];
+      const rows = [...window.document.querySelectorAll("#app *")];
       const row = rows.indexOf(this);
-      return row < 0 ? { top: 0, bottom: 0 } : { top: row * 10 - view.at, bottom: row * 10 + 10 - view.at };
+      if (row < 0) return { top: 0, bottom: 0 };
+      const held = this.querySelectorAll("*").length;
+      return { top: row * 10 - view.at, bottom: (row + 1 + held) * 10 - view.at };
     };
   } });
   dom.window.eval(asset("page.js"));
@@ -264,6 +266,68 @@ test("a mark carried twice before the redraw, or after it, is passed over for th
     const before = read();
     window.page.redraw(() => { app.prepend(mention()); }, "tick");
     expect(read()).toBe(before);
+    window.close();
+  }
+});
+
+test("the anchor is the first marked element below the top, each part of a mark tells elements apart, and an ambiguous one gives way to what holds it", () => {
+  const page = (build) => {
+    const { window, view } = controlled();
+    const app = window.document.getElementById("app");
+    const make = (tag, attributes = {}, ...children) => {
+      const node = window.document.createElement(tag);
+      for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+      node.append(...children);
+      return node;
+    };
+    view.height = 1000;
+    build(app, make);
+    const top = (selector) => window.document.querySelector(selector).getBoundingClientRect().top;
+    return { window, view, app, make, top };
+  };
+  // Nothing marked across the top: the first marked element below anchors, not the last, though the redraw grows what
+  // lies between them.
+  {
+    const { window, view, make, top } = page((app, make) => app.append(make("p"), make("p"), make("p", { "data-subject": "A" }),
+      make("p", { "data-gap": "" }), make("p", { "data-subject": "B" })));
+    view.at = 5;
+    const before = top('[data-subject="A"]');
+    window.page.redraw(() => { window.document.querySelector("[data-gap]").after(make("p"), make("p")); }, "tick");
+    expect(top('[data-subject="A"]')).toBe(before);
+    window.close();
+  }
+  // A ticket read in a span, and named elsewhere in a link (another tag) or a chip (another class): the span alone
+  // carries its mark, so it anchors, though the redraw grows what lies above it inside its holder.
+  for (const other of [["a", "issue-link"], ["span", "chip"]]) {
+    const { window, view, make, top } = page((app, make) => app.append(
+      make("section", { id: "holder" }, make("p", { "data-grow": "" }), make("span", { "data-ticket": "T", class: "issue-link", "data-read": "" })),
+      make(other[0], { "data-ticket": "T", class: other[1] })));
+    view.at = 22;
+    const before = top("[data-read]");
+    window.page.redraw(() => { window.document.querySelector("[data-grow]").after(make("p")); }, "tick");
+    expect([other.join("."), top("[data-read]")]).toEqual([other.join("."), before]);
+    window.close();
+  }
+  // A mention named twice across the top gives way to the marked element holding it, which keeps the reader's place
+  // through what grows above the holder.
+  {
+    const { window, view, app, make, top } = page((app, make) => app.append(make("p"),
+      make("div", { "data-fold": "F" }, make("p"), make("span", { "data-ticket": "T", class: "issue-link", "data-read": "" })),
+      make("span", { "data-ticket": "T", class: "issue-link" })));
+    view.at = 32;
+    const before = top("[data-read]");
+    window.page.redraw(() => { app.prepend(make("p")); }, "tick");
+    expect(top("[data-read]")).toBe(before);
+    window.close();
+  }
+  // A mark carried once before the redraw and twice after, the new one below the reader, does not anchor.
+  {
+    const { window, view, app, make, top } = page((app, make) => app.append(make("p"),
+      make("span", { "data-ticket": "T", class: "issue-link", "data-read": "" }), make("p", { "data-subject": "S" })));
+    view.at = 11;
+    const before = top("[data-read]");
+    window.page.redraw(() => { app.append(make("span", { "data-ticket": "T", class: "issue-link" })); }, "tick");
+    expect(top("[data-read]")).toBe(before);
     window.close();
   }
 });
