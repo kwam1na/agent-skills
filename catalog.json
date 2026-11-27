@@ -218,7 +218,8 @@
         "When the record has region claims, the line map's Who's doing what chapter offers a Who holds which files view, closed by default, read from the record and lane-changes.json: each claimed file solid where its lane has changed it and hollow where it hasn't, each shared file split by its lanes' line stretches, and a shared file's reading with each lane's stretches, changes and changed functions; a lane whose branch can't be read is shown so, and with no region claims the page has no such view.",
         "On a delivery with an integration target, the line map's count line under the delivery's name reads in two beats naming the target, its drift and the catch-ups, the line runs on past the integration base through the target merged in, the suite, the review and the change request into the target, and a Before it rejoins ledger pins each proof to the head it was taken at and strikes one a newer head supersedes; a delivery without one renders as before.",
         "While a delivery rejoins its target, the line draws that step in place of the epic's post.",
-        "Without a git identity in its checkout the local line map's corner shows only the theme switch, and the hosted page never carries one; the files view stays hidden until a branch read lists a file or fails."
+        "Without a git identity in its checkout the local line map's corner shows only the theme switch, and the hosted page never carries one; the files view stays hidden until a branch read lists a file or fails.",
+        "Every view, local and hosted, loads the page controller (assets/page.js) first and asks its one motion check: reduced motion stills everything, and a keyboard reader's own actions do not ease, while a live update still lands for them."
       ],
       "dependencies": [
         {

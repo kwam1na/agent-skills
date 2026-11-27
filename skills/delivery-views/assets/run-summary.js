@@ -9,14 +9,9 @@ var RUN_SETTLE_MS = 700;
 // reader repeats too often to wait on.
 var RUN_EASING = "cubic-bezier(.77, 0, .175, 1)";
 function runEaseDuration(from, to) { return Math.round(240 + Math.min(Math.abs(to - from), 600) / 600 * 60); }
-var runLastInput = "pointer";
-if (typeof document !== "undefined") {
-  document.addEventListener("keydown", function () { runLastInput = "keyboard"; }, true);
-  document.addEventListener("pointerdown", function () { runLastInput = "pointer"; }, true);
-}
+// A morph the reader's own action starts asks the page's one motion check as the reader's (page.js).
 function runMotionWanted(node) {
-  return typeof node.animate === "function" && runLastInput !== "keyboard"
-    && !(typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  return typeof node.animate === "function" && page.motion(true);
 }
 /** The node's height now, mid-animation included, with any running height animation stopped so the next starts from it. */
 function runHeldHeight(node) {

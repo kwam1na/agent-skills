@@ -135,6 +135,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
             "skills/delivery-views/assets/history.js",
             "skills/delivery-views/assets/line-map.css",
             "skills/delivery-views/assets/line-map.js",
+            "skills/delivery-views/assets/page.js",
             "skills/delivery-views/assets/run-summary.css",
             "skills/delivery-views/assets/run-summary.js",
             "skills/delivery-views/assets/runs.css",

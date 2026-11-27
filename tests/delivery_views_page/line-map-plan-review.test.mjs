@@ -382,6 +382,8 @@ test("every approving string the run summary draws has a preview wording, and a 
 test("the run summary takes the preview's wording only when asked, for a deferrable note's pill as for the rest", () => {
   const source = readFileSync(path.join(ROOT, "skills", "delivery-views", "assets", "run-summary.js"), "utf8");
   const dom = new JSDOM("<!doctype html><body></body>", { runScripts: "outside-only" });
+  // The page controller first, as every page loads it.
+  dom.window.eval(readFileSync(path.join(ROOT, "skills", "delivery-views", "assets", "page.js"), "utf8"));
   dom.window.eval(source);
   const [oc, at] = LENSES;
   const round = { round: 1, outcome: "approve", verdicts: { [oc]: "approve", [at]: "approve" }, findings: { P0: 0, P1: 0, P2: 1, P3: 0 },

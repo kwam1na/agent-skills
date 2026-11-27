@@ -186,6 +186,16 @@ describe("hosted view store", () => {
 });
 
 describe("trusted corpus DOM bridge (behavior only)", () => {
+  it("starts the renderer with the page controller, before the run summary, as every local page loads it", () => {
+    const { renderer } = JSON.parse(
+      readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8"),
+    ) as { renderer: string };
+    const controller = renderer.indexOf("var page = ");
+    expect(controller).toBeGreaterThan(-1);
+    // Nothing but the bundle's own wrapper and comments comes before it.
+    expect(renderer.slice(0, controller).replace(/\(\(\) => \{|\/\/[^\n]*|\s/g, "")).toBe("");
+    expect(controller).toBeLessThan(renderer.indexOf("var runRoundPicked"));
+  });
   it("preserves selection and folds while applying plan, review and document data together", async () => {
     const built = JSON.parse(
       readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8"),
