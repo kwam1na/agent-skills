@@ -345,8 +345,8 @@ var page = (function () {
    * whose region, if it has one, is hidden while shut. Its open state is the store's entry `fold:<key>`: it is drawn
    * open from it, recorded there at the click, and opened by a link to anything inside it, or to `of`. `onOpen()` runs
    * whenever it opens, however; `onChange(open)` at the click; `onSettle()` when its height has changed; `can()`, when
-   * given, says whether a click may open or shut it. `oneLine` says its summary is a single line when shut. Returns
-   * `node`.
+   * given, says whether a click may open or shut it; `contain` keeps a disclosure's click from reaching what holds it.
+   * `oneLine` says its summary is a single line when shut. Returns `node`.
    */
   function fold(node, options) {
     options = options || {};
@@ -379,7 +379,12 @@ var page = (function () {
     var closing = false;
     if (details) {
       // A fold the browser or the page opens itself (find in page, a toggle) is kept as it is left, as a click's is.
-      details.addEventListener("toggle", function () { if (details.isConnected && !closing) { record.set(details.open); } });
+      details.addEventListener("toggle", function () {
+        if (!details.isConnected || closing || record.get() === details.open) { return; }
+        record.set(details.open);
+        if (typeof options.onChange === "function") { options.onChange(details.open); }
+        if (details.open && typeof options.onOpen === "function") { options.onOpen(); }
+      });
     } else if (button.tagName !== "BUTTON") {
       button.addEventListener("keydown", function (event) {
         if (event.key !== "Enter" && event.key !== " ") { return; }
@@ -393,7 +398,7 @@ var page = (function () {
         var inner = event.target && event.target.closest ? event.target.closest("a, button") : null;
         if (inner && button.contains(inner)) { return; }
         event.preventDefault();
-      } else {
+      } else if (options.contain) {
         event.stopPropagation();
       }
       if (typeof options.can === "function" && !options.can()) { return; }

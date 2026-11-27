@@ -218,7 +218,7 @@
         },
         {
           "path": "skills/delivery-views/assets/page.js",
-          "sha256": "2d3c62d4067858584ad0b434c666b9b394d0da507761d93f2b2fdc8ae128270e"
+          "sha256": "ddf55a4146212f0863d630e40164b26053dcffde8503a31f10f863d4d7e9fab8"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
@@ -226,7 +226,7 @@
         },
         {
           "path": "skills/delivery-views/assets/run-summary.js",
-          "sha256": "cb5af60dd01ddbd861391194b4c385ca56f3b01e62382b6b9edc93725c12dbfd"
+          "sha256": "bea2085b925a06afddbb2e83d31e634f9eaabe51d904c1b67ed1e8bd78cd4e1e"
         },
         {
           "path": "skills/delivery-views/assets/runs.css",

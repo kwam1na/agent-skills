@@ -265,6 +265,14 @@ test("the lead's note opens to the sheet's own check list when the sheet only co
   expect(leadNote(paged.app).querySelector(".ck-pager .ck-page-where")?.textContent).toBe("11–16 of 16");
 });
 
+test("the page of checks a reader turned to is the one shown after the page redraws itself", async () => {
+  const document = chosenByLead("only the retry path changed", SEVENTEEN);
+  const summary = ".checking > details.ck-chosen > summary";
+  const snaps = await open(document, { steps: [{ click: summary }, { click: ".checking > details.ck-chosen .ck-page-step:last-child" }, { tick: true }] });
+  const ticked = leadNote(snaps[3].app);
+  expect([ticked.querySelector(".ck-pager .ck-page-where")?.textContent, ticked.querySelector("ol.ck-list").getAttribute("start")]).toEqual(["11–16 of 16", "11"]);
+});
+
 /** Fourteen checks that have not failed, ten passed, one running and three waiting; timed as the runner times them, from
  * the run's start, one after another, or with no times at all. */
 function fourteen(timed) {

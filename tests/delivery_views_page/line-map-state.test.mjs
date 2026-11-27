@@ -47,6 +47,13 @@ const STORIED = (() => {
     chapters: [chapter] };
   return pageWithRuns(document, {}, { config: CONFIG, plan: planReviewDelivery().plan });
 })();
+/** Set-aside rows' words run past their two lines: each row's head holds more than it shows. */
+const clamping = (window) => {
+  for (const [name, value] of [["scrollHeight", 60], ["clientHeight", 40]]) {
+    Object.defineProperty(window.HTMLElement.prototype, name, { configurable: true,
+      get() { return this.classList.contains("aside-head") ? value : 0; } });
+  }
+};
 const open = (page, steps, scenario = {}) => openPage(page, { now: NOW, store: {}, ...scenario, steps });
 const shot = (snaps) => snaps[snaps.length - 1].app;
 const isOpen = (app, selector) => app.querySelector(selector)?.hasAttribute("open");
@@ -58,16 +65,19 @@ test("every fold, row and pick a reader leaves is as they left it after a redraw
     { tick: true },
   ]);
   expect([isOpen(shot(decided), '#plan .plan-fold[data-fold="decisions"]'), isOpen(shot(decided), "#plan-decision-2 details")]).toEqual([true, true]);
-  // An approval's row, the units fold and a set-aside row; the page's frames are held, so a frame lets the tick draw.
+  // An approval's row, the units fold and a set-aside row whose words run past two lines; the page's frames are held, so
+  // a frame measures the rows and lets the tick draw, and another measures the redrawn rows.
   const reviewed = await open(REVIEWED, [
+    { run: clamping }, { frame: 16 },
     { click: "#plan .ap-row:not(.is-whole) > summary" },
     { click: '#plan .plan-fold[data-fold="units"] > summary' },
-    { run(window) { const row = window.document.querySelector("#parked ol.aside > li"); row.classList.add("clamps"); row.click(); } },
-    { tick: true }, { frame: 16 },
+    { click: "#parked ol.aside > li" },
+    { tick: true }, { frame: 16 }, { frame: 16 },
   ], { frames: true });
   const after = shot(reviewed);
+  const aside = after.querySelector("#parked ol.aside > li");
   expect([isOpen(after, "#plan .ap-row:not(.is-whole)"), isOpen(after, '#plan .plan-fold[data-fold="units"]'),
-    after.querySelector("#parked ol.aside > li").getAttribute("aria-expanded")]).toEqual([true, true, "true"]);
+    aside.classList.contains("clamps"), aside.getAttribute("aria-expanded")]).toEqual([true, true, true, "true"]);
   // The story's filter, through a tick.
   const filtered = await open(STORIED, [{ click: '#happened .story-bar button[data-tab="landed"]' }, { tick: true }]);
   expect(shot(filtered).querySelector('#happened .story-bar button[data-tab="landed"]').getAttribute("aria-pressed")).toBe("true");
@@ -120,8 +130,11 @@ test("a link into a closed fold opens every fold holding it, scrolls once, and t
     const was = window.scrollTo;
     window.scrollTo = (options) => { moves.push(options.behavior); was(options); };
   };
-  const fresh = await open(PLANNED, [{ run: record }, { tick: true }],
+  let saved = null;
+  const fresh = await open(PLANNED, [{ run: record }, { run(window) { saved = window.localStorage.getItem("delivery-views:test:plan-folds"); } }, { tick: true }],
     { layout: {}, rendered: PLANNED, address: "http://localhost/view/line-map.html#plan-decision-3" });
+  // The plan fold the link opened is saved at once, before any redraw, as the reader will find it on their next visit.
+  expect(JSON.parse(saved)).toContain("decisions");
   for (const app of [fresh[0].app, shot(fresh)]) {
     expect([isOpen(app, '#plan .plan-fold[data-fold="decisions"]'), isOpen(app, "#plan-decision-3 details")]).toEqual([true, true]);
   }
@@ -152,6 +165,18 @@ test("pointing at a stop or a tick names and lights it but never picks it, befor
   ]);
   const [picked, ...rest] = seen;
   for (const entry of rest) expect([entry[0], entry[1], entry[2]]).toEqual([entry[0], picked[1], picked[2]]);
+  // Pointing at a stop lights its lane, and leaving it lets the lane go.
+  const lit = [];
+  await open(MAIN, [{ run(window) {
+    const stop = window.document.querySelector('.stop-btn[data-subject="PAY-2362"]');
+    const lane = stop.closest(".line").getAttribute("data-lane");
+    const track = window.document.querySelector(".lines-track");
+    stop.dispatchEvent(new window.Event("mouseenter"));
+    lit.push([track.classList.contains("lit"), track.querySelector(`[data-lane="${lane}"]`).classList.contains("on")]);
+    stop.dispatchEvent(new window.Event("mouseleave"));
+    lit.push([track.classList.contains("lit"), track.querySelector(`[data-lane="${lane}"]`).classList.contains("on")]);
+  } }]);
+  expect(lit).toEqual([[true, true], [false, false]]);
   // A click on a tick, and keyboard focus on a stop, each pick.
   const picks = [];
   await open(MAIN, [
@@ -162,7 +187,8 @@ test("pointing at a stop or a tick names and lights it but never picks it, befor
 });
 
 /** Each fold outside page.js that opens or shuts itself, as "file: what". */
-const SELF_TOGGLES = [/addEventListener\(\s*["']toggle["']/, /\bontoggle\b/, /\.open\s*=[^=]/, /classList\.(add|remove|toggle)\(\s*["']open["']/];
+const SELF_TOGGLES = [/addEventListener\(\s*["']toggle["']/, /\bontoggle\b/, /\.open\s*=[^=]/, /classList\.(add|remove|toggle)\(\s*["']open["']/,
+  /(set|remove|toggle)Attribute\(\s*["']open["']/];
 function selfToggles(sources) {
   const found = [];
   for (const [name, source] of Object.entries(sources)) {
@@ -181,7 +207,8 @@ test("no fold outside page.js opens or shuts itself", () => {
   const sources = Object.fromEntries(readdirSync(assets).filter((name) => name.endsWith(".js")).map((name) => [name, readFileSync(path.join(assets, name), "utf8")]));
   const found = selfToggles(sources);
   expect(found.length === 0 ? "" : `${found.join(", ")}: make it a fold with page.fold(node, {key}), and open it with page.open(node, open)`).toBe("");
-  for (const planted of ['fold.addEventListener("toggle", remember);', "fold.ontoggle = remember;", "fold.open = true;", 'row.classList.add("open");']) {
+  for (const planted of ['fold.addEventListener("toggle", remember);', "fold.ontoggle = remember;", "fold.open = true;", 'row.classList.add("open");',
+    'fold.setAttribute("open", "");', 'fold.removeAttribute("open");', 'fold.toggleAttribute("open", true);']) {
     expect([planted, selfToggles({ ...sources, "line-map.js": `${sources["line-map.js"]}\n${planted}` }).length]).toEqual([planted, 1]);
   }
 });
@@ -203,10 +230,60 @@ test("a fold and a piece of state added from outside, through page alone, are op
       window.page.fold(box, { key: "feature:box" });
       window.page.state("feature:picked").set("x");
       window.__box = box;
+      // And a details element the page never made a fold: a link into it still opens it.
+      const plain = doc.createElement("details");
+      const said = doc.createElement("p");
+      said.id = "plain-inside";
+      plain.append(doc.createElement("summary"), said);
+      doc.getElementById("who").append(plain);
+      window.__plain = plain;
     } },
     { run(window) { window.page.go({ item: "feature-inside" }, "link"); seen.opened = window.__box.open; } },
+    { run(window) { window.page.go({ item: "plain-inside" }, "link"); seen.plain = window.__plain.open; } },
     { tick: true },
     { run(window) { seen.kept = [window.__box.open, window.page.state("feature:box").get(), window.page.state("fold:feature:box").get(), window.page.state("feature:picked").get()]; } },
   ]);
-  expect(seen).toEqual({ opened: true, kept: [true, undefined, true, "x"] });
+  expect(seen).toEqual({ opened: true, plain: true, kept: [true, undefined, true, "x"] });
+});
+
+test("a set-aside row's click still reaches the page, so it shuts an open menu; a decision the browser opens is counted", async () => {
+  const seen = {};
+  await open(REVIEWED, [
+    { click: ".chapter-tab-button" },
+    { run(window) {
+      seen.menu = window.document.querySelector(".chapter-tab-list").hidden;
+      const row = window.document.querySelector("#parked ol.aside > li");
+      row.classList.add("clamps");
+      row.click();
+      seen.after = [window.document.querySelector(".chapter-tab-list").hidden, row.getAttribute("aria-expanded")];
+    } },
+  ], { frames: true });
+  expect(seen).toEqual({ menu: false, after: [true, "true"] });
+  // Every decision opened by the browser itself, as find in page opens one: the control then offers to close them all.
+  const label = await open(PLANNED, [
+    { click: '#plan .plan-fold[data-fold="decisions"] > summary' },
+    { toggle: "#plan-decision-1 details" }, { toggle: "#plan-decision-2 details" }, { toggle: "#plan-decision-3 details" },
+  ]);
+  expect(shot(label).querySelector("#plan .pd-all").textContent).toBe("Close all");
+});
+
+test("a set-aside row opens by Enter or Space when its words run past two lines, and not at all when they don't; a whole approval stays shut", async () => {
+  const seen = {};
+  await open(REVIEWED, [
+    { run: clamping }, { frame: 16 },
+    { run(window) {
+      const [long, short] = window.document.querySelectorAll("#parked ol.aside > li");
+      long.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      seen.enter = long.getAttribute("aria-expanded");
+      long.dispatchEvent(new window.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+      seen.space = long.getAttribute("aria-expanded");
+      short.classList.remove("clamps");
+      short.click();
+      seen.short = short.getAttribute("aria-expanded");
+      const whole = window.document.querySelector("#plan .ap-row.is-whole");
+      whole.querySelector("summary").click();
+      seen.whole = whole.open;
+    } },
+  ], { frames: true });
+  expect(seen).toEqual({ enter: "true", space: "false", short: "false", whole: false });
 });

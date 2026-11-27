@@ -645,7 +645,7 @@ function runSummaryNode(summary, options) {
     field("How it ended", ended);
     item.appendChild(detail);
     // A disclosure on the page's one fold: its button and the detail it shows, the row easing to its new height.
-    page.fold({ button: toggle, region: detail }, { key: key });
+    page.fold({ button: toggle, region: detail }, { key: key, contain: true });
     return item;
   }
   // The finding an earlier round raised, by its id: the latest round before this one that raised it, or null when
