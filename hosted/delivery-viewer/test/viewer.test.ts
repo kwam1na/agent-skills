@@ -196,6 +196,65 @@ describe("trusted corpus DOM bridge (behavior only)", () => {
     expect(renderer.slice(0, controller).replace(/\(\(\) => \{|\/\/[^\n]*|\s/g, "")).toBe("");
     expect(controller).toBeLessThan(renderer.indexOf("var runRoundPicked"));
   });
+  it("gives a plan first published mid-visit a chapter the page watches and that arrives like the others", () => {
+    const built = JSON.parse(
+      readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8"),
+    ) as { renderer: string };
+    const initial = fixture();
+    let held = initial;
+    let listener: (doc: PublicProjection["document"]) => void = () => {};
+    const observers: Array<{ observed: Element[] }> = [];
+    const dom = new JSDOM('<!doctype html><body><main id="app"></main></body>', {
+      url: `https://service.test/d/${publicId}`,
+      runScripts: "outside-only",
+      pretendToBeVisual: true,
+    });
+    const { window } = dom;
+    Object.assign(window, {
+      matchMedia: () => ({ matches: true }),
+      scrollTo: () => {},
+      fetch: vi.fn(() => Promise.reject(Error("unexpected HTML refresh"))),
+      // Each observer the page makes records what it watches.
+      IntersectionObserver: function (this: { observe: (node: Element) => void; unobserve: () => void; disconnect: () => void }) {
+        const watching = { observed: [] as Element[] };
+        observers.push(watching);
+        this.observe = (node: Element) => { watching.observed.push(node); };
+        this.unobserve = () => {};
+        this.disconnect = () => {};
+      },
+      deliveryStateStore: {
+        projection: () => held,
+        read: () => held.document,
+        subscribe: (cb: typeof listener) => { listener = cb; },
+        onStatus: () => {},
+      },
+    });
+    for (const [key, value] of Object.entries({ state: initial.document, runs: initial.runs, reviews: initial.reviews,
+      links: initial.links, view: initial.view })) {
+      const node = window.document.createElement("script");
+      node.id = `delivery-${key}`;
+      node.type = "application/json";
+      node.textContent = JSON.stringify(value);
+      window.document.body.appendChild(node);
+    }
+    try {
+      window.eval(built.renderer);
+      expect(window.document.querySelector("#plan")).toBeNull();
+      const next = fixture();
+      next.plan = structuredClone(cases.find((row) => row.file === "valid-plan-review.json")!.body.plan);
+      held = next;
+      listener(next.document);
+      const plan = window.document.querySelector("#plan")!;
+      expect(plan).not.toBeNull();
+      // Watched by both of the page's observers, the one that follows the chapter read and the one that plays the
+      // entrance, and not already arrived: it fades in when first scrolled to, like every other chapter.
+      expect(observers.filter((watching) => watching.observed.includes(plan))).toHaveLength(2);
+      expect(plan.classList.contains("arrived")).toBe(false);
+      expect(window.document.querySelector('.rail a[href="#plan"]')).not.toBeNull();
+    } finally {
+      window.close();
+    }
+  });
   it("preserves selection and folds while applying plan, review and document data together", async () => {
     const built = JSON.parse(
       readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8"),

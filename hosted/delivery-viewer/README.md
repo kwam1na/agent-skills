@@ -187,8 +187,8 @@ does not start, or whose patch text has drifted, fails the check.
 
 `GET /d/{id}` serves a fixed shell only after a committed snapshot exists. The
 shell embeds no publisher data and loads content-addressed external JS/CSS. The
-build consumes `line-map.js`, `run-summary.js` and their styles directly from the
-corpus. Checked narrow store hooks replace the local HTML refresh mechanism with
+build consumes `page.js` (the page controller, first), `line-map.js`,
+`run-summary.js` and their styles directly from the corpus. Checked narrow store hooks replace the local HTML refresh mechanism with
 one coherent projection push; drift in those anchors refuses the build. Inert
 seed blocks are updated idempotently for every accepted cut, including optional
 block removal, so a delayed first renderer cannot combine revisions. No
