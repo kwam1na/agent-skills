@@ -1756,6 +1756,7 @@
     // The kicker is one line: the repository the work lands in, the tracker item it is listed under, linked when the
     // renderer linked it, then how long it has run.
     var kicker = el("div", "kicker");
+    kicker.setAttribute("data-region", "kicker");
     // The repository the work lands in leads, as the configuration names it, so a page among several reads as this one's
     // first; then the tracker item.
     if (text(VIEW.repository)) { add(kicker, el("span", "kicker-repo", text(VIEW.repository))); }
@@ -2080,6 +2081,7 @@
     all.forEach(function (piece) { byId[piece.item.subject] = piece.item; });
     var nextNames = upNext(doc, all, current).map(function (item) { return titleOf(doc, item); });
     var box = el("div", "checking");
+    box.setAttribute("data-region", "checking");
     box.setAttribute("aria-live", "polite");
     if (!current) {
       var waiting = all.filter(function (piece) { return !piece.planned && piece.item.stage === "queued" && piece.item.pending === true; }).length;
@@ -3359,7 +3361,9 @@
         // The change request sits under the ticket once one is open, and opens it.
         var ticket = issue(key, prefix ? key.slice(prefix.length) : key);
         if (prefix) { ticket.setAttribute("aria-label", key); }
-        add(seg, button, add(el("div", "stop-label"), ticket, piece.item.changeRequest ? changeLink(piece.item.changeRequest) : null));
+        var stopLabel = add(el("div", "stop-label"), ticket, piece.item.changeRequest ? changeLink(piece.item.changeRequest) : null);
+        stopLabel.setAttribute("data-region", "stop:" + key);
+        add(seg, button, stopLabel);
         stops.appendChild(seg);
       });
       if (open.length > OPEN_STOPS) {
@@ -6063,6 +6067,7 @@
       el("h2", "title", items.length ? items.length + (items.length === 1 ? " thing found and set aside." : " things found and set aside.") : "Nothing parked yet.")];
     if (items.length) {
       var ul = el("ul", "parked");
+      ul.setAttribute("data-region", "parked");
       var known = Object.create(null);
       items.forEach(function (item) {
         var key = text(item.reference) || text(item.id);

@@ -271,8 +271,11 @@ test("the pager's button keeps keyboard focus as it turns the page, and through 
   const document = chosenByLead("only the retry path changed", many);
   const summary = ".checking > details.ck-chosen > summary";
   const next = ".checking > details.ck-chosen .ck-page-step:last-child";
-  const snaps = await open(document, { steps: [{ click: summary }, { click: next }, { tick: true }] });
-  expect([snaps[2].focused, snaps[3].focused]).toEqual(["pager:next", "pager:next"]);
+  const named = [];
+  const say = { run(window) { named.push(window.document.activeElement?.getAttribute("aria-label")); } };
+  const snaps = await open(document, { steps: [{ click: summary }, { click: next }, say, { tick: true }, say] });
+  // On the second page "Previous checks" comes first and is enabled: focus is on "Next checks", by its key and its name.
+  expect([snaps[2].focused, snaps[4].focused, named]).toEqual(["pager:next", "pager:next", ["Next checks", "Next checks"]]);
 });
 
 test("the page of checks a reader turned to is the one shown after the page redraws itself", async () => {

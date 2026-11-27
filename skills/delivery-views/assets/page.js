@@ -114,12 +114,14 @@ var page = (function () {
     var most = document.documentElement.scrollHeight - innerHeight;
     moveTo(Math.max(0, Math.min(at.y, most)));
   }
-  // Focus by key: the control focused before a redraw is found again by its data-key, in the same region (the nearest
-  // holder with an id, as the detail panel and each chapter are), so a ticket in the panel and the same ticket under its
-  // stop are told apart.
+  // Focus by key: the control focused before a redraw is found again by its data-key, in the same region: the nearest
+  // holder a page names with data-region (the checking box, a stop's label), within the nearest holder with an id (the
+  // detail panel, a chapter). A ticket in the panel, under its stop and in the checking box are told apart.
   function regionOf(node) {
+    var named = node.parentElement ? node.parentElement.closest("[data-region]") : null;
     var holder = node.parentElement ? node.parentElement.closest("[id]") : null;
-    return holder ? holder.id : null;
+    if (named && holder && !holder.contains(named)) { named = null; }
+    return (named ? named.getAttribute("data-region") + "@" : "") + (holder ? holder.id : "");
   }
   function focusMark() {
     var active = document.activeElement;
@@ -163,7 +165,12 @@ var page = (function () {
   function redraw(draw, why) {
     if (typeof draw !== "function") { throw new TypeError("page.redraw needs the page's draw function"); }
     if (typeof why !== "string" || !why) { throw new TypeError("page.redraw needs a reason"); }
-    if (AT_ONCE[why] === true) { waiting = null; run(draw, why); return; }
+    if (AT_ONCE[why] === true) {
+      // The reader's own action draws only its part of the page, so a merged full redraw still waiting stays waiting.
+      if (why !== "reader") { waiting = null; }
+      run(draw, why);
+      return;
+    }
     if (!drawnThisFrame) { run(draw, why); return; }
     if (!waiting) {
       requestAnimationFrame(function () { var next = waiting; waiting = null; if (next) { run(next.draw, next.why); } });
