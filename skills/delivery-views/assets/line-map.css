@@ -87,14 +87,13 @@
   .operator-email, .operator::after { transition: none; }
 }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
 /* Keyboard focus is one ring everywhere; a row the page moves focus to is tinted instead, since nothing was typed. */
 a:focus-visible, button:focus-visible, summary:focus-visible, .issue-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 a:focus-visible, summary:focus-visible, .issue-link:focus-visible { border-radius: 4px; }
 [tabindex="-1"]:focus { outline: none; }
 .plan-unit:focus, .plan-open li:focus { position: relative; isolation: isolate; }
 .plan-unit:focus::before, .plan-open li:focus::before { content: ""; position: absolute; inset: 4px -12px; z-index: -1; border-radius: 4px; background: color-mix(in srgb, var(--ink) 6%, transparent); }
-@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .lines-track [data-lane] { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .lines-track [data-lane] { transition: none; } }
 body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--text); font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
 .chapter { padding: 64px max(64px, env(safe-area-inset-right, 0px)) 64px max(24px, env(safe-area-inset-left, 0px)); }
 .chapter + .chapter { border-top: 1px solid var(--hair); }

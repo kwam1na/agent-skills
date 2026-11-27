@@ -96,6 +96,11 @@ keys leave the page alone while the reader types in a field, holds a modifier,
 has the launcher open, or is in the chapters tab or a row that scrolls sideways.
 The Go to launcher, opened with Cmd-K or Ctrl-K, with `/` when not typing, or
 from the corner, reaches any page and anything else the page offers by name.
+Each page turn adds one entry to the browser's history, so Back and Forward step
+through the chapters the reader turned to, each at its top; a link within the
+chapter shown, a redraw or the layout switch adds none, and in the one-page
+layout nothing does, so Back leaves the page. Every navigation moves the page
+once.
 A live page reads its run summaries again from the view the server renders
 three seconds after each pushed record, every 30 seconds, and at once on each
 `event: runs`, which the server sends only after the views are written. Every
@@ -287,6 +292,26 @@ stops' runs becoming unavailable when they alone are over it, then brief and
 result texts from the newest round backwards. The record shows what was stored
 as each lens's brief and result, as stored; it does not prove the lens received
 or followed it.
+
+## Extending the page
+
+The views' page controller, `assets/page.js`, owns where the reader is, how the
+page scrolls and how it redraws. A feature reaches these only through its
+public calls, as the views' own code does, never beside them: no asset but
+`page.js` writes the scroll or the address, and the page tests' pins say which
+call to use.
+
+| To add | Call | It gets, with no other code |
+| --- | --- | --- |
+| a kind of navigation | `page.reasons.<name> = {address, scroll}`, then `page.go(location, name)` | its history entry or none (always none in the one-page layout), and one scroll by its rule |
+| a sideways-scrolling region | `page.sideways(key, node)` on every draw | its distance from its right edge kept through redraws |
+| a redraw trigger | `page.redraw(draw, why)` | the reader's place kept, and redraws within one frame merged |
+| motion | `page.motion(fromReader)` | reduced motion respected, and a keyboard reader's own actions kept still |
+
+A reason's `address` is `push`, `replace`, `push-if-chapter-changes` or `none`;
+its `scroll` is `top`, `end`, `item`, `item-or-top`, `keep` or `none`. The
+built-in reasons are `turn`, `back-turn`, `link`, `address`, `history`,
+`layout`, `first` and `follow`.
 
 ## The history
 

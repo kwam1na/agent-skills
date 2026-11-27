@@ -64,7 +64,7 @@
   var storyFilter = "all";
   var storyDepthChosen = null;
   // What the page last showed, so a change can be animated rather than just swapped in.
-  var prev = { figures: Object.create(null), runningCheck: null, stages: null, story: null, progress: null, lanes: null, byLane: null, parked: null, dots: null, selected: null, lineScroll: null,
+  var prev = { figures: Object.create(null), runningCheck: null, stages: null, story: null, progress: null, lanes: null, byLane: null, parked: null, dots: null, selected: null,
     checkingHeight: null, checkPage: null };
   var lastGood = null;
   var nativeReviews = {};
@@ -462,11 +462,10 @@
   if (typeof IntersectionObserver === "function") {
     var watch = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
-        if (!entry.isIntersecting || PAGED) { return; }
-        followScroll(entry.target.id);
-        Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
-          link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + entry.target.id));
-        });
+        // Only a new chapter is followed, so a deep link into the chapter being read keeps its item; following it shows
+        // the chapter, which marks it on the rail.
+        if (!entry.isIntersecting || PAGED || entry.target.id === page.here().chapter) { return; }
+        page.go({ chapter: entry.target.id }, "follow");
       });
     }, { rootMargin: "-45% 0px -45% 0px" });
     Array.prototype.forEach.call(app.querySelectorAll(".chapter"), function (section) { watch.observe(section); });
@@ -616,10 +615,7 @@
   layoutButton.addEventListener("click", function () {
     PAGED = !PAGED;
     try { localStorage.setItem(LAYOUT_KEY, PAGED ? "paged" : "scroll"); } catch (error) { /* lasts until reload */ }
-    var keep = currentPage;
-    showPage(keep);
-    var section = app.querySelector("#" + keep);
-    if (!PAGED && section && typeof section.scrollIntoView === "function") { section.scrollIntoView({ block: "start" }); }
+    page.go({ chapter: currentPage }, "layout");
     openTab(false);
     tabButton.focus();
   });
@@ -651,23 +647,23 @@
     if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && !arrowsOwned(event.target)) {
       var ids = chapterIds();
       var to = ids[ids.indexOf(currentPage) + (event.key === "ArrowRight" ? 1 : -1)];
-      if (to) { event.preventDefault(); location.hash = to; }
+      if (to) { event.preventDefault(); page.go({ chapter: to }, "turn"); }
     }
   });
 
-  /** Shows one chapter's page; with a target inside it, brings the target into view. */
-  function showPage(id, target) {
+  /**
+   * Shows one chapter's page, and never scrolls: the page controller (page.js) moves the page, by the navigation's
+   * reason, and calls this as it does.
+   */
+  function showPage(id) {
     var ids = chapterIds();
     if (ids.indexOf(id) < 0) { id = ids[0]; }
-    var changed = id !== currentPage;
     currentPage = id;
     document.body.classList.toggle("paged", PAGED);
     Array.prototype.forEach.call(app.querySelectorAll(".chapter"), function (section) {
       var on = section.id === id;
       section.hidden = section.classList.contains("is-absent") || (PAGED && !on);
     });
-    var landAtEnd = landNextAtEnd;
-    landNextAtEnd = false;
     Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
       link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + id));
     });
@@ -678,35 +674,7 @@
     where.hidden = id === ids[0];
     document.title = (heading ? heading.textContent : document.title.split(" · ").pop()).replace(/\s+/g, " ") +
       (id === ids[0] ? "" : " · " + chapterName(id));
-    if (target && target !== app.querySelector("#" + id) && typeof target.scrollIntoView === "function") {
-      target.scrollIntoView({ block: "center" });
-    } else if (changed && PAGED && landAtEnd) {
-      window.scrollTo(0, document.documentElement.scrollHeight);
-    } else if (changed && PAGED) {
-      window.scrollTo(0, 0);
-    } else if (!PAGED && target && typeof target.scrollIntoView === "function") {
-      target.scrollIntoView({ block: "start" });
-    }
   }
-  /** The page a node lives on, opened, so a caller can bring the node into view. */
-  function revealPage(node) {
-    var section = node && node.closest ? node.closest(".chapter") : null;
-    if (PAGED && section && section.id !== currentPage) {
-      // A page whose address can't be rewritten (an opaque or embedded one) still turns to the chapter.
-      try { if (history.replaceState) { history.replaceState(null, "", "#" + section.id); } } catch (error) { /* the address stays */ }
-      showPage(section.id);
-    }
-  }
-  function route() {
-    var raw = (location.hash || "").slice(1);
-    var hash;
-    // A malformed escape (a link cut short, a typed `#%`) is read as written, so an unknown id opens the first page.
-    try { hash = decodeURIComponent(raw); } catch (error) { hash = raw; }
-    var target = hash ? document.getElementById(hash) : null;
-    var section = target && target.closest ? target.closest(".chapter") : null;
-    showPage(section ? section.id : hash, target);
-  }
-  window.addEventListener("hashchange", route);
 
   // The launcher: one place to reach anything on the page by name. It is a registry of commands, each
   // { id, group, title, detail?, keywords?, current?(), run() }, read afresh each time it opens, so a feature adds what
@@ -870,11 +838,7 @@
       return { id: "page:" + id, group: "Pages", lead: String(index + 1).padStart(2, "0"), title: chapterName(id),
         keywords: [String(index + 1), id],
         current: function () { return id === currentPage; },
-        run: function () {
-          if (PAGED) { location.hash = id; return; }
-          var section = app.querySelector("#" + id);
-          if (section && typeof section.scrollIntoView === "function") { section.scrollIntoView({ block: "start" }); }
-        } };
+        run: function () { page.go({ chapter: id }, "turn"); } };
     });
   });
   if (historyHref) {
@@ -896,7 +860,6 @@
   // end, so the pages still read as one scroll. A pull has to build past a threshold, counting starts only once the
   // reader has rested at the edge (a fling that reaches the end doesn't turn the page), and a turn is followed by a
   // short pause. A ring at that edge fills toward the page it would open.
-  var landNextAtEnd = false;
   var PULL_WHEEL = 460, PULL_TOUCH = 170, REST_MS = 220, PAUSE_MS = 700;
   var pull = { dir: 0, amount: 0, idle: null, edgeSince: 0, pausedUntil: 0, touchY: null };
   var pullEl = el("div", "page-pull");
@@ -937,8 +900,8 @@
     pull.pausedUntil = Date.now() + PAUSE_MS;
     pull.edgeSince = 0;
     if (!to) { return; }
-    landNextAtEnd = dir < 0;
-    location.hash = to;
+    // Back up past a page's top lands at the previous page's end, so the pages still read as one scroll.
+    page.go({ chapter: to }, dir < 0 ? "back-turn" : "turn");
   }
   function addPull(dir, amount, threshold) {
     if (pull.dir !== dir) { pull.dir = dir; pull.amount = 0; }
@@ -980,13 +943,6 @@
     if (pull.touchY !== null && pull.dir && pull.amount >= 1) { turn(pull.dir); } else if (pull.dir) { resetPull(); }
     pull.touchY = null;
   }, { passive: true });
-  /** In the one-page layout the tab names the chapter being read. */
-  function followScroll(id) {
-    if (id !== currentPage && history.replaceState) { history.replaceState(null, "", "#" + id); }
-    currentPage = id;
-    nameTab(id);
-    tabButton.setAttribute("aria-label", "Chapters: " + chapterName(id));
-  }
 
   // One card for the whole page, kept outside the chapters so no redraw removes it.
   var card = el("div", "issue-card");
@@ -2231,27 +2187,27 @@
       var PAGE_SIZE = 10;
       var pageCount = Math.ceil(listed.length / PAGE_SIZE);
       var pageKey = text(current.startedAt) + "|" + text(current.subject);
-      var page = prev.checkPage && prev.checkPage.run === pageKey ? Math.min(prev.checkPage.page, Math.max(0, pageCount - 1)) : 0;
+      var checksPage = prev.checkPage && prev.checkPage.run === pageKey ? Math.min(prev.checkPage.page, Math.max(0, pageCount - 1)) : 0;
       var pager = pageCount > 1 ? el("div", "ck-pager") : null;
-      var showPage = function () {
-        prev.checkPage = { run: pageKey, page: page };
-        checkList.replaceChildren.apply(checkList, listed.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map(checkRow));
-        checkList.setAttribute("start", String(page * PAGE_SIZE + 1));
+      var showChecks = function () {
+        prev.checkPage = { run: pageKey, page: checksPage };
+        checkList.replaceChildren.apply(checkList, listed.slice(checksPage * PAGE_SIZE, (checksPage + 1) * PAGE_SIZE).map(checkRow));
+        checkList.setAttribute("start", String(checksPage * PAGE_SIZE + 1));
         if (!pager) { return; }
-        var from = page * PAGE_SIZE + 1, to = Math.min(listed.length, (page + 1) * PAGE_SIZE);
+        var from = checksPage * PAGE_SIZE + 1, to = Math.min(listed.length, (checksPage + 1) * PAGE_SIZE);
         var step = function (by, words, mark) {
           var button = add(el("button", "ck-page-step"), mark);
           button.type = "button";
           button.setAttribute("aria-label", words);
-          button.disabled = page + by < 0 || page + by >= pageCount;
-          button.addEventListener("click", function () { page += by; showPage(); });
+          button.disabled = checksPage + by < 0 || checksPage + by >= pageCount;
+          button.addEventListener("click", function () { checksPage += by; showChecks(); });
           return button;
         };
         var where = el("span", "ck-page-where", from + "–" + to + " of " + listed.length);
         where.setAttribute("aria-live", "polite");
         pager.replaceChildren(step(-1, "Previous checks", "‹"), where, step(1, "Next checks", "›"));
       };
-      showPage();
+      showChecks();
       return listed.length ? [checkList].concat(pager ? [pager] : []) : [];
     }
     var steps = list(current.steps).filter(function (step) { return isObject(step) && step.label !== "selecting checks"; });
@@ -3414,8 +3370,7 @@
     // Where the line scrolls sideways, as on a phone, it opens at its end, where the lanes merge and the newest work is,
     // and keeps the reader's own place on later redraws.
     // Kept as the distance from the right edge, where the newest work is, so a change of width still shows it.
-    if (box.scrollWidth > box.clientWidth) { box.scrollLeft = box.scrollWidth - box.clientWidth - (prev.lineScroll || 0); }
-    box.addEventListener("scroll", function () { prev.lineScroll = Math.max(0, box.scrollWidth - box.clientWidth - box.scrollLeft); });
+    page.sideways("line", box);
     prev.stages = stages;
     prev.folds = folds;
     // The motion is measured from the drawn rows, so it is laid once they are in the page, and again when their width changes.
@@ -4263,9 +4218,7 @@
           var stop = [].filter.call(parts.line.querySelectorAll(".stop-btn"), function (button) { return button.getAttribute("data-subject") === key; })[0];
           if (!stop) { return; }
           stop.click();
-          var section = parts.line.closest ? parts.line.closest(".chapter") || parts.line : parts.line;
-          revealPage(section);
-          if (typeof section.scrollIntoView === "function") { section.scrollIntoView({ behavior: reduced() ? "auto" : "smooth", block: "start" }); }
+          page.go({ chapter: "line", node: stop }, "link");
           // The stop is pointed out by its ticket's card, as if pointed at, once the page has stopped moving: a scroll
           // hides the card, so it is shown after the last one. It goes with the reader's next scroll.
           var point = function () { if (stop.isConnected) { showCard(stop, key); } };
@@ -4776,9 +4729,9 @@
     var box = row ? row.querySelector("details") : null;
     if (!row) { return; }
     if (box) { box.open = true; decisionsOpen[n] = true; }
-    if (typeof row.scrollIntoView === "function") { row.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    page.go({ item: row.id }, "link");
     var summary = row.querySelector("summary");
-    if (summary) { summary.focus(); }
+    if (summary) { summary.focus({ preventScroll: true }); }
   }
   /**
    * The plan's decisions, numbered as the plan numbers them: each headline always shows, so the calls read at a glance,
@@ -5142,39 +5095,28 @@
     // Only a change of note drew, so ask again from here too; a second ask is refused while one is waiting.
     followPlan(planNamed);
   }
-  // The new plan is only kept if the page can draw it: the plan in use goes back otherwise.
+  // The new plan is only kept if the page can draw it: the plan in use goes back otherwise. A new plan is a new read, so
+  // it draws at once, and the redraw transaction keeps the reader's place: past the chapter, a plan of another height
+  // moves the window with what they were reading.
   function takePlan(block) {
-    var was = { PLAN: PLAN, plan: plan, named: planNamed };
-    PLAN = block;
-    plan = block.plan;
-    planBehind = false;
-    var place = planPlace();
-    try {
-      draw(lastGood || shown);
-    } catch (error) {
-      PLAN = was.PLAN;
-      plan = was.plan;
-      planNamed = was.named;
-      planBehind = true;
-      // The failed draw may have asked at the quick pace; this answer says to ask at the slow one.
-      clearTimeout(planAsked);
-      planAsked = null;
-      safely(lastGood || shown, "plan");
-    }
-    keepPlace(place);
-  }
-  // Where the reader is. Past the chapter, a plan of another height moves what they are reading, along with anything the
-  // new plan changed above it, so the window moves with the chapter's end; anywhere else it stays.
-  function planPlace() {
-    if (typeof scrollY !== "number") { return null; }
-    var bottom = parts.plan.getBoundingClientRect().bottom;
-    return { y: scrollY, past: bottom <= 0, end: bottom + scrollY };
-  }
-  function keepPlace(place) {
-    if (!place) { return; }
-    var y = place.y + (place.past ? parts.plan.getBoundingClientRect().bottom + scrollY - place.end : 0);
-    // The page scrolls smoothly for its links; this is no movement the reader asked for.
-    if (scrollY !== y && typeof scrollTo === "function") { scrollTo({ top: y, behavior: "instant" }); }
+    page.redraw(function () {
+      var was = { PLAN: PLAN, plan: plan, named: planNamed };
+      PLAN = block;
+      plan = block.plan;
+      planBehind = false;
+      try {
+        draw(lastGood || shown);
+      } catch (error) {
+        PLAN = was.PLAN;
+        plan = was.plan;
+        planNamed = was.named;
+        planBehind = true;
+        // The failed draw may have asked at the quick pace; this answer says to ask at the slow one.
+        clearTimeout(planAsked);
+        planAsked = null;
+        safely(lastGood || shown, "plan");
+      }
+    }, "read");
   }
 
   function drawPlan(doc) {
@@ -5346,8 +5288,7 @@
         row = planRows["all:" + subject];
       }
       if (row) {
-        revealPage(row);
-        if (typeof row.scrollIntoView === "function") { row.scrollIntoView({ block: "center" }); }
+        page.go({ chapter: "plan", node: row }, "link");
         row.focus({ preventScroll: true });
       }
     });
@@ -5694,9 +5635,8 @@
       var target = document.getElementById("setback-" + text(row.id));
       if (!target) { return; }
       event.preventDefault();
-      target.focus();
-      revealPage(target);
-      if (typeof target.scrollIntoView === "function") { target.scrollIntoView({ block: "nearest" }); }
+      page.go({ item: target.id }, "link");
+      target.focus({ preventScroll: true });
     });
     return add(el("p", "chapter-setback" + (row.state === "open" ? " is-open" : "")), glyph("stop"), link);
   }
@@ -5741,7 +5681,7 @@
     if (!groups.length) {
       parts.across.replaceChildren();
       // A reader on the chapter as it empties turns to the first page rather than an empty one.
-      if (currentPage === "across") { showPage(chapterIds()[0]); }
+      if (currentPage === "across") { page.go({ chapter: chapterIds()[0] }, "address"); }
       return;
     }
     // A group of another epic delivers nothing of this one: it is named after the epic's own, under Also linked.
@@ -5952,7 +5892,7 @@
     if (link) { link.hidden = !shared; }
     if (!shared) {
       parts[id].replaceChildren();
-      if (currentPage === id) { showPage(chapterIds()[0]); }
+      if (currentPage === id) { page.go({ chapter: chapterIds()[0] }, "address"); }
       return null;
     }
     return parts[id];
@@ -6237,7 +6177,9 @@
         }
       }
       // Every draw keeps the reader on their page; the first one opens the page the address names.
-      if (currentPage === null) { route(); } else if (PAGED) { showPage(currentPage); }
+      if (currentPage === null) {
+        page.start({ chapters: chapterIds, show: showPage, layout: function () { return PAGED ? "paged" : "scroll"; } });
+      } else if (PAGED) { showPage(currentPage); }
     }, why);
   }
 

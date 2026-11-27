@@ -113,7 +113,7 @@ test("page.motion refuses reduced motion always and a key press only for the rea
   expect(asked()).toEqual([true, true]);
   reduced = true;
   expect(asked()).toEqual([false, false]);
-  expect(Object.keys(window.page).sort()).toEqual(["key", "motion", "redraw"]);
+  expect(Object.keys(window.page).sort()).toEqual(["go", "here", "key", "motion", "reasons", "redraw", "sideways", "start"]);
   expect(window.page.key("stop", "PAY-2358")).toBe("stop:PAY-2358");
   expect(window.page.key("decision", 3)).toBe("decision:3");
   for (const [kind, id] of [["", "x"], [5, "x"], [{}, "x"], ["stop", ""], ["stop", undefined], ["stop", null]]) {
