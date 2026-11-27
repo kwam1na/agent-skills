@@ -3798,7 +3798,7 @@
         LEFT_OPEN = opened ? readNeeds(opened[1]) : null;
         var drifted = /<script type="application\/json" id="delivery-integration">([^<]*)<\/script>/.exec(page);
         FORGE = drifted ? readForge(drifted[1]) : null;
-        if (isObject(next)) { runs = next; safely(lastGood || shown); }
+        if (isObject(next)) { runs = next; safely(lastGood || shown, "runs"); }
       }).catch(function () { /* the runs already shown stay */ });
     }, typeof wait === "number" ? wait : 3000);
   }
@@ -5129,7 +5129,7 @@
       planTries += 1;
       if (planBehind || planTries >= PLAN_PATIENCE) {
         planRested = planNamed;
-        safely(lastGood || shown);
+        safely(lastGood || shown, "plan");
       } else {
         followPlan(planNamed);
       }
@@ -5138,7 +5138,7 @@
     var older = isObject(block) && isObject(block.plan) && typeof block.plan.updated === "string" && seconds(block.plan.updated) !== null;
     planTries += 1;
     var behind = planBehind || !older || planTries >= PLAN_PATIENCE;
-    if (behind !== planBehind) { planBehind = behind; safely(lastGood || shown); }
+    if (behind !== planBehind) { planBehind = behind; safely(lastGood || shown, "plan"); }
     // Only a change of note drew, so ask again from here too; a second ask is refused while one is waiting.
     followPlan(planNamed);
   }
@@ -5159,7 +5159,7 @@
       // The failed draw may have asked at the quick pace; this answer says to ask at the slow one.
       clearTimeout(planAsked);
       planAsked = null;
-      safely(lastGood || shown);
+      safely(lastGood || shown, "plan");
     }
     keepPlace(place);
   }
@@ -6226,19 +6226,22 @@
     if (again) { again.focus({ preventScroll: true }); }
   }
 
-  // A record that fails to draw leaves the last good drawing in place and says so.
-  function safely(doc) {
-    try { draw(doc); lastGood = doc; } catch (error) {
-      if (lastGood && doc !== lastGood) {
-        if (connection === "live") { connection = "failed"; }
-        try { draw(lastGood); } catch (again) { /* the last drawing stays */ }
+  // A record that fails to draw leaves the last good drawing in place and says so. Every redraw goes through the page's
+  // one redraw transaction (page.js), which keeps the reader's place; `why` names what asked for it.
+  function safely(doc, why) {
+    page.redraw(function () {
+      try { draw(doc); lastGood = doc; } catch (error) {
+        if (lastGood && doc !== lastGood) {
+          if (connection === "live") { connection = "failed"; }
+          try { draw(lastGood); } catch (again) { /* the last drawing stays */ }
+        }
       }
-    }
-    // Every draw keeps the reader on their page; the first one opens the page the address names.
-    if (currentPage === null) { route(); } else if (PAGED) { showPage(currentPage); }
+      // Every draw keeps the reader on their page; the first one opens the page the address names.
+      if (currentPage === null) { route(); } else if (PAGED) { showPage(currentPage); }
+    }, why);
   }
 
-  safely(embedded);
+  safely(embedded, "first");
   var store = globalThis.deliveryStateStore;
   if (isObject(store)) {
     if (typeof store.onStatus === "function") {
@@ -6248,7 +6251,7 @@
           var next = live ? "live" : "down";
           if (next === connection) { return; }
           connection = next;
-          safely(lastGood || shown);
+          safely(lastGood || shown, "status");
         });
       } catch (error) { /* a store without a status line still serves its pushes and read below */ }
     }
@@ -6263,7 +6266,7 @@
           pushed = true;
           connection = "live";
           app.setAttribute("data-source", "live");
-          safely(doc);
+          safely(doc, "push");
           refreshRuns();
         });
       } catch (error) { /* a store that cannot subscribe still serves its read below */ }
@@ -6273,15 +6276,15 @@
         if (pushed || !usable(doc)) { return; }
         app.setAttribute("data-source", "live");
         if (connection === "saved") { connection = "connected"; }
-        safely(doc);
+        safely(doc, "read");
       }, function () {
-        if (!pushed) { connection = "unreadable"; safely(lastGood || shown); }
+        if (!pushed) { connection = "unreadable"; safely(lastGood || shown, "read"); }
       });
     }
   }
   // Relative times and running checks follow the page's own clock between writes.
   // Each tick also re-reads the served page: a supervisor's pass rewrites its Needs you list without a record push.
-  if (typeof setInterval === "function") { setInterval(function () { refreshRuns(); safely(lastGood || shown); }, 30000); }
+  if (typeof setInterval === "function") { setInterval(function () { refreshRuns(); safely(lastGood || shown, "tick"); }, 30000); }
   // The run line is drawn at the page's width, so a new width redraws it.
   var resizing = null;
   if (typeof addEventListener === "function") {
@@ -6291,7 +6294,7 @@
       if (innerWidth === drawnWidth) { return; }
       drawnWidth = innerWidth;
       clearTimeout(resizing);
-      resizing = setTimeout(function () { safely(lastGood || shown); }, 200);
+      resizing = setTimeout(function () { safely(lastGood || shown, "width"); }, 200);
     });
   }
 })();
