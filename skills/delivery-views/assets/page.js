@@ -34,13 +34,13 @@ var page = (function () {
   // a browser that lays the page out mid-draw, while a part stands short, clamps the window to what it then holds. The
   // place is kept here, in one transaction around the draw, never in each caller.
   // The stable keys a place is anchored by: what the record names, never a position on the page.
-  var ANCHOR_KEYS = ["id", "data-subject", "data-ticket", "data-fold"];
+  var ANCHOR_KEYS = ["data-key", "id", "data-subject", "data-ticket", "data-fold"];
   var drawnThisFrame = false;
   var waiting = null;
   // What a redraw is for, and whether it draws at once: something new to say (the page's first record, one read or one
   // pushed, or a new connection status) is shown at once and makes a merged redraw still waiting needless; a redraw of
   // what is already said (the clock, a new width, a refresh) merges with the others asked for in its frame.
-  var AT_ONCE = { first: true, read: true, push: true, status: true };
+  var AT_ONCE = { first: true, read: true, push: true, status: true, reader: true };
 
   function root() { return document.getElementById("app") || document.body; }
   // An element's mark: its first stable key, with its tag and first class, so a stop and the tick for the same story,
@@ -114,11 +114,40 @@ var page = (function () {
     var most = document.documentElement.scrollHeight - innerHeight;
     moveTo(Math.max(0, Math.min(at.y, most)));
   }
+  // Focus by key: the control focused before a redraw is found again by its data-key, in the same region: the nearest
+  // holder a page names with data-region (the line map's checking box), and the nearest holder with an id (the detail
+  // panel, a chapter). The same ticket in the panel, in the checking box and elsewhere in its chapter are told apart.
+  function regionOf(node) {
+    var named = node.parentElement ? node.parentElement.closest("[data-region]") : null;
+    var holder = node.parentElement ? node.parentElement.closest("[id]") : null;
+    return (named ? named.getAttribute("data-region") + "@" : "") + (holder ? holder.id : "");
+  }
+  function focusMark() {
+    var active = document.activeElement;
+    if (!active || active === document.body || !active.getAttribute) { return null; }
+    var mark = active.getAttribute("data-key");
+    return mark ? { node: active, key: mark, region: regionOf(active) } : null;
+  }
+  /** Focuses the element carrying `key`, in `region` when one there carries it; true when one was found. */
+  function focusKey(key, region) {
+    // Matched by attribute value, never by a selector built from record text.
+    var same = Array.prototype.filter.call(document.querySelectorAll("[data-key]"), function (node) { return node.getAttribute("data-key") === key; });
+    var again = same.filter(function (node) { return regionOf(node) === region; })[0] || same[0];
+    if (!again || typeof again.focus !== "function") { return false; }
+    again.focus({ preventScroll: true });
+    return true;
+  }
+  function refocus(mark) {
+    if (!mark || mark.node.isConnected) { return; }
+    focusKey(mark.key, mark.region);
+  }
   function run(draw, why) {
     // The first draw opens the address the reader came by; there is no place to keep yet.
     var at = why === "first" ? null : place();
+    var focused = focusMark();
     try { draw(); } finally {
       keep(at);
+      refocus(focused);
       if (typeof requestAnimationFrame === "function") {
         drawnThisFrame = true;
         requestAnimationFrame(function () { drawnThisFrame = false; });
@@ -127,7 +156,7 @@ var page = (function () {
   }
   /**
    * Redraws the page with `draw`, keeping the reader's place. `why` names what asked for it: "first" for the draw that
-   * opens the page, "read" or "push" for a new record, "status" for a new connection status, anything else ("tick",
+   * opens the page, "read" or "push" for a new record, "status" for a new connection status, "reader" for the reader's own action, anything else ("tick",
    * "width", "runs", "plan") for a redraw of what is already said. Something new draws at once, as does the first redraw
    * in a frame; any more asked for in that frame merge into one, the last asked, drawn at the next frame unless something
    * new has been drawn by then.
@@ -135,7 +164,12 @@ var page = (function () {
   function redraw(draw, why) {
     if (typeof draw !== "function") { throw new TypeError("page.redraw needs the page's draw function"); }
     if (typeof why !== "string" || !why) { throw new TypeError("page.redraw needs a reason"); }
-    if (AT_ONCE[why] === true) { waiting = null; run(draw, why); return; }
+    if (AT_ONCE[why] === true) {
+      // The reader's own action draws only its part of the page, so a merged full redraw still waiting stays waiting.
+      if (why !== "reader") { waiting = null; }
+      run(draw, why);
+      return;
+    }
     if (!drawnThisFrame) { run(draw, why); return; }
     if (!waiting) {
       requestAnimationFrame(function () { var next = waiting; waiting = null; if (next) { run(next.draw, next.why); } });
@@ -356,6 +390,8 @@ var page = (function () {
     var region = details ? null : node && node.region || null;
     if (!button) { return node; }
     var record = state("fold:" + options.key);
+    // Its control is keyed by the fold's own key, so focus comes back to it after a redraw.
+    if (!button.hasAttribute("data-key")) { button.setAttribute("data-key", key("fold", options.key)); }
     var eased = details || (region ? region.parentNode : button);
     var settled = function () { if (typeof options.onSettle === "function") { options.onSettle(); } };
     function isOpen() { return details ? details.open : button.getAttribute("aria-expanded") === "true"; }

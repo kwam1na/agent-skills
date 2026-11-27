@@ -297,6 +297,8 @@ function runSummaryNode(summary, options) {
     var total = counts.P0 + counts.P1 + counts.P2 + counts.P3;
     var item = node("li", "run-bead is-" + outcome);
     var button = node("button", "run-pick");
+    // Keyed by its run and round, the record's own names for it, so focus comes back to it after a redraw.
+    button.setAttribute("data-key", page.key("round", (summary.observationKey || summary.runId || "run") + ":" + number));
     button.type = "button";
     button.setAttribute("aria-pressed", String(picked));
     button.setAttribute("aria-label", nameOf(round, index) + ", " + outcomeWords(round) +
@@ -361,6 +363,7 @@ function runSummaryNode(summary, options) {
     var href = /^[0-9a-f]{40}$/.test(commit) && options && typeof options.commitHref === "function" ? options.commitHref(commit) : null;
     if (typeof href !== "string" || !/^https:\/\//.test(href)) { return node("code", "run-commit", short(commit)); }
     var link = node("a", "run-commit", short(commit));
+    link.setAttribute("data-key", page.key("commit", commit));
     link.setAttribute("href", href);
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noopener noreferrer");
@@ -816,6 +819,7 @@ function runSummaryNode(summary, options) {
   function runningBead(picked, choose) {
     var item = node("li", "run-bead is-running");
     var button = node("button", "run-pick");
+    button.setAttribute("data-key", page.key("round", (summary.observationKey || summary.runId || "run") + ":" + running.round));
     button.type = "button";
     button.setAttribute("aria-pressed", String(picked));
     button.setAttribute("aria-label", "Round " + running.round + ", under way, " + backCount() + " of " + runningLenses().length + " lenses back");

@@ -945,20 +945,21 @@ test("each stop on the line opens its unit in the chapter, in the open list or i
   expect(snaps[1].app.querySelector("#detail .d-state")).not.toBeNull();
   expect(snaps[1].app.querySelector("#detail .d-plan-row .pu-standing")).toBeNull();
   expect(snaps[1].app.querySelector("#detail .d-plan-next")).toBeNull();
-  expect(snaps[2].focused).toBe("li");
+  // Focus is on the unit's row, by its key.
+  expect(snaps[2].focused).toBe("plan-row:CART-105");
   expect(snaps[2].app.querySelector('.plan-fold[data-fold="units"]').open).toBe(false);
   snaps = await open(page, { rendered: page, steps: [{ click: ':is(.stop-btn, .mg-tick)[data-subject="CART-101"]' }, { click: "#detail .d-plan" }] });
   expect(snaps[1].app.querySelector("#detail .d-plan-row").className).toBe("d-plan-row proven");
   expect(snaps[1].app.querySelector("#detail .d-plan-row").textContent).toBe("ProvenSee in the plan");
   // Where the unit stands sits with the stop's title and links, above its run and steps.
   expect([...snaps[1].app.querySelector("#detail").children].findIndex((node) => node.classList.contains("d-plan-row"))).toBe(3);
-  expect(snaps[2].focused).toBe("div");
+  expect(snaps[2].focused).toBe("plan-unit-row:CART-101");
   expect(snaps[2].app.querySelector('.plan-fold[data-fold="units"]').open).toBe(true);
   // From the plan as approved, a unit added since is found once the switch is back on the plan as amended.
   snaps = await open(page, { rendered: page, steps: [{ toggle: '.plan-fold[data-fold="units"]' }, { click: ".plan-switch button", index: 1 },
     { click: ':is(.stop-btn, .mg-tick)[data-subject="CART-113"]' }, { click: "#detail .d-plan" }] });
   expect([...snaps[4].app.querySelectorAll(".plan-switch button")].map((button) => button.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
-  expect(snaps[4].focused).toBe("div");
+  expect(snaps[4].focused).toBe("plan-unit-row:CART-113");
   expect(snaps[4].app.querySelectorAll(".plan-all .plan-unit")).toHaveLength(20);
   // A stop the plan has no unit for has no link.
   const stray = structuredClone(document);
@@ -1267,7 +1268,7 @@ test("plan text never becomes markup, and a ref becomes a link only through the 
   expect(app.querySelectorAll("#plan a[href^='javascript'], #plan [onerror]")).toHaveLength(0);
   expect(app.querySelector(".plan-all .pu-criteria li").textContent).toBe(`${hostile} x.1`);
   // The unit is found by its subject through the page's own map, so the stop's link reaches it.
-  expect(snaps[3].focused).toBe("li");
+  expect(snaps[3].focused).toBe('plan-row:X"]</script><img src=x onerror=alert(2)>');
   // A ref the renderer linked, a change request on the record, opens as that link does on the line.
   const linked = record({ queue: [item("PAY-9", "queued", { changeRequest: "#77" })], journal: journal([[11, "candidate.handed", "PAY-9"]]) });
   const linkedPage = pageWithRuns(linked, {}, { config: { ...CONFIG, forges: [{ name: "Forge", repository: "acme/shop", pullUrl: "https://forge.example/{repository}/pull/{number}", commitUrl: "https://forge.example/{repository}/commit/{sha}" }] },

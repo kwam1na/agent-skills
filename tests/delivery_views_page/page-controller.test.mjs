@@ -331,3 +331,24 @@ test("the anchor is the first marked element below the top, each part of a mark 
     window.close();
   }
 });
+
+test("the reader's own redraw draws at once and leaves a merged redraw still waiting for the next frame", () => {
+  const { window, frame } = controlled();
+  const drawn = [];
+  window.page.redraw(() => drawn.push("tick"), "tick");
+  window.page.redraw(() => drawn.push("runs"), "runs");
+  window.page.redraw(() => drawn.push("depth"), "reader");
+  expect(drawn).toEqual(["tick", "depth"]);
+  frame();
+  expect(drawn).toEqual(["tick", "depth", "runs"]);
+  window.close();
+});
+
+test("two of the reader's own redraws in one frame both draw at once", () => {
+  const { window } = controlled();
+  const drawn = [];
+  window.page.redraw(() => drawn.push("first"), "reader");
+  window.page.redraw(() => drawn.push("second"), "reader");
+  expect(drawn).toEqual(["first", "second"]);
+  window.close();
+});
