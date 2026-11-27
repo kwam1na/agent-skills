@@ -1,0 +1,267 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-4004",
+  "headline": "V26-4004: one controller for the delivery views' navigation and page mechanics",
+  "baseBranch": "integrate/page-controller",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-26-live-view-page-controller.md",
+  "laneBrief": "docs/plans/2026-11-26-live-view-page-controller.lane-brief.md",
+  "brief": {
+    "notes": null
+  },
+  "context": {
+    "sections": []
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/delivery-views/assets/*",
+        "skills/delivery-views/scripts/render.py",
+        "skills/delivery-views/SKILL.md",
+        "hosted/delivery-viewer/scripts/build-assets.mjs",
+        "hosted/delivery-viewer/src/viewer.ts",
+        "profiles/delivery-views.json",
+        "profiles/jira.json",
+        "profiles/linear.json",
+        "profiles/run-delivery.json",
+        "tests/delivery_views_page/*",
+        "tests/test_release_integration.py",
+        "tests/test_delivery_views_render.py",
+        "tests/test_delivery_views_hosted.py",
+        "tests/test_delivery_views_hosted_projection.py",
+        "tests/test_delivery_views_history.py"
+      ]
+    }
+  },
+  "stories": {
+    "V26-4012": {
+      "title": "Give every delivery view one shared page asset",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-4012-1",
+          "text": "Each of the three rendered pages has page.js before run-summary.js, and the built hosted renderer starts with it."
+        },
+        {
+          "id": "v26-4012-2",
+          "text": "After a keydown, live updates still animate, except under reduced motion."
+        },
+        {
+          "id": "v26-4012-3",
+          "text": "After a keydown, folds open without the height ease, and after a pointer press they ease again."
+        },
+        {
+          "id": "v26-4012-4",
+          "text": "Among the .js assets, prefers-reduced-motion appears only in page.js."
+        }
+      ]
+    },
+    "V26-4003": {
+      "title": "Keep the reader's place when the live view redraws itself",
+      "lane": "lane-1",
+      "after": [
+        "V26-4012"
+      ],
+      "criteria": [
+        {
+          "id": "v26-4003-1",
+          "text": "Scrolled partway down any chapter, in paged or scrolling layout, a 30-second tick, a resize and a pushed update leave the scroll where it was, as long as the page is still tall enough to hold it."
+        },
+        {
+          "id": "v26-4003-2",
+          "text": "Turning to another page still lands at its top, or at its end when the reader came from the next page, as today."
+        },
+        {
+          "id": "v26-4003-3",
+          "text": "The plan chapter still keeps the reader's place past a plan of another height."
+        }
+      ]
+    },
+    "V26-4015": {
+      "title": "Route every navigation through one location and scroll each once",
+      "lane": "lane-1",
+      "after": [
+        "V26-4003"
+      ],
+      "criteria": [
+        {
+          "id": "v26-4015-1",
+          "text": "In paged layout, each page turn adds one history entry, and Back twice then Forward once steps through the chapters, each at its top. The controller adds no other entry, and none at all in the one-page layout. An outside address change adds only the browser's own entry."
+        },
+        {
+          "id": "v26-4015-2",
+          "text": "Every navigation makes exactly one move."
+        },
+        {
+          "id": "v26-4015-3",
+          "text": "A redraw keeps the line's sideways place measured from its right edge."
+        },
+        {
+          "id": "v26-4015-4",
+          "text": "Outside page.js, no asset writes the scroll or the address (the launcher list's scrollIntoView excepted), and no stylesheet has scroll-behavior: smooth. Source pins hold this, and each pin's message names the page call to use."
+        },
+        {
+          "id": "v26-4015-5",
+          "text": "Reasons are data: an unknown reason throws, and a reason declared from outside behaves like a built-in one."
+        }
+      ]
+    },
+    "V26-4016": {
+      "title": "Keep every open, closed and selected state in one store with one fold",
+      "lane": "lane-1",
+      "after": [
+        "V26-4015"
+      ],
+      "criteria": [
+        {
+          "id": "v26-4016-1",
+          "text": "Every open, closed or selected state in the inventory survives a full redraw."
+        },
+        {
+          "id": "v26-4016-2",
+          "text": "Saved state written by today's page is read by the new one, and the new one writes the same keys and formats."
+        },
+        {
+          "id": "v26-4016-3",
+          "text": "A link to # inside a closed fold, loaded fresh or followed in the page, opens the chapter and every fold holding the target, scrolls once, and the folds stay open through the next redraw."
+        },
+        {
+          "id": "v26-4016-4",
+          "text": "Hovering a stop or a tick changes neither selected nor the panel, before or after a push."
+        },
+        {
+          "id": "v26-4016-5",
+          "text": "Outside page.js, no fold toggles itself (the theme switch's holder excepted)."
+        }
+      ]
+    },
+    "V26-4018": {
+      "title": "Return focus by key after every redraw",
+      "lane": "lane-1",
+      "after": [
+        "V26-4016"
+      ],
+      "criteria": [
+        {
+          "id": "v26-4018-1",
+          "text": "After a redraw, focus is on the same data-key for every control kind in the inventory, even when a row was inserted above it."
+        },
+        {
+          "id": "v26-4018-2",
+          "text": "When one key appears in two regions, focus returns to the region it was in."
+        },
+        {
+          "id": "v26-4018-3",
+          "text": "Closing the detail with Escape returns focus to the stop that opened it."
+        },
+        {
+          "id": "v26-4018-4",
+          "text": "Every focusable element inside #app on every line-map fixture has a non-empty data-key."
+        },
+        {
+          "id": "v26-4018-5",
+          "text": "Keys are set only through page.key, and a pin holds that."
+        }
+      ]
+    },
+    "V26-4020": {
+      "title": "Drop the hosted page's own mechanics and the redraws that repeat",
+      "lane": "lane-1",
+      "after": [
+        "V26-4018"
+      ],
+      "criteria": [
+        {
+          "id": "v26-4020-1",
+          "text": "The hosted build has no scroll patch and no hand-built plan chapter. A plan that arrives mid-visit gets a chapter that the page watches and that arrives like the others."
+        },
+        {
+          "id": "v26-4020-2",
+          "text": "Each push or tick draws the line map once, plus a second draw only when a block changed."
+        },
+        {
+          "id": "v26-4020-3",
+          "text": "Two ticks with no change in the record replay no entrance animation, and a real change still marks its fresh beat."
+        },
+        {
+          "id": "v26-4020-4",
+          "text": "The hosted viewer's browser test that reads scrollY and the line's scrollLeft after a push (hosted-viewer.spec.ts 294) passes unchanged."
+        }
+      ]
+    },
+    "V26-4021": {
+      "title": "Bring the runs and history pages onto the controller",
+      "lane": "lane-1",
+      "after": [
+        "V26-4020"
+      ],
+      "criteria": [
+        {
+          "id": "v26-4021-1",
+          "text": "On the runs page, a push and a runs event leave the scroll, the open rows and focus where they were, even when a run is added above the focused one."
+        },
+        {
+          "id": "v26-4021-2",
+          "text": "A first load at a history row's id opens that row, scrolls it into view once, and shows the run's summary."
+        },
+        {
+          "id": "v26-4021-3",
+          "text": "Links that leave the page are not prevented."
+        },
+        {
+          "id": "v26-4021-4",
+          "text": "Every focusable element on the runs fixture and on every history golden case has a key."
+        },
+        {
+          "id": "v26-4021-5",
+          "text": "runs.js and history.js set no hidden or aria-expanded themselves and name no storage. The source pins from V26-4015 and V26-4018 cover both files."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "V26-4012, V26-4003, V26-4015, V26-4016, V26-4018, V26-4020 and V26-4021 land on integrate/page-controller through its merge queue, each with every criterion met, and every golden byte-identical",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration head, with --workers 4 --budget tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide's integration review says, merged into main, and CI's cut-release passes on the change request",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "kwamina",
+    "grantedOn": "2026-11-26"
+  },
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}

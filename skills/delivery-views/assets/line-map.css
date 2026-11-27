@@ -87,14 +87,13 @@
   .operator-email, .operator::after { transition: none; }
 }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
 /* Keyboard focus is one ring everywhere; a row the page moves focus to is tinted instead, since nothing was typed. */
 a:focus-visible, button:focus-visible, summary:focus-visible, .issue-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 a:focus-visible, summary:focus-visible, .issue-link:focus-visible { border-radius: 4px; }
 [tabindex="-1"]:focus { outline: none; }
 .plan-unit:focus, .plan-open li:focus { position: relative; isolation: isolate; }
 .plan-unit:focus::before, .plan-open li:focus::before { content: ""; position: absolute; inset: 4px -12px; z-index: -1; border-radius: 4px; background: color-mix(in srgb, var(--ink) 6%, transparent); }
-@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .lines-track [data-lane] { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .lines-track [data-lane] { transition: none; } }
 body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--text); font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
 .chapter { padding: 64px max(64px, env(safe-area-inset-right, 0px)) 64px max(24px, env(safe-area-inset-left, 0px)); }
 .chapter + .chapter { border-top: 1px solid var(--hair); }
@@ -1426,8 +1425,10 @@ body.paged .chapter-now.is-fresh > .inner { margin-bottom: 0; }
 .aside li.clamps:hover, .aside li.clamps:focus-visible { color: var(--ink); }
 .aside li.clamps:hover .aside-chevron { color: var(--ink); }
 .aside li.clamps:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-.aside li.open .aside-head { display: block; -webkit-line-clamp: unset; overflow: visible; }
-.aside li.open .aside-chevron { transform: rotate(180deg); }
+.aside li.clamps[aria-expanded="true"] .aside-head { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.aside li.clamps[aria-expanded="true"] .aside-chevron { transform: rotate(180deg); }
+/* A row is measured as it reads shut, whether or not it is open. */
+.aside li.measuring .aside-head { display: -webkit-box; -webkit-line-clamp: 2; overflow: hidden; }
 @media (prefers-reduced-motion: reduce) { .aside-chevron { transition: none; } }
 
 /* What happened, before anything has: the three kinds of moment it will tell, each with its mark. */

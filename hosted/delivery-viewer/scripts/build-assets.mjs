@@ -37,7 +37,7 @@ patch(
   '        store.subscribe(function (doc) {\n          if (typeof store.projection === "function") { receiveHosted(store.projection()); }',
 );
 patch(
-  "  safely(embedded);\n  var store = globalThis.deliveryStateStore;",
+  '  safely(embedded, "first");\n  var store = globalThis.deliveryStateStore;',
   `  function receiveHosted(payload) {
     if (!payload) { return; }
     VIEW = payload.view; runs = payload.runs; nativeReviews = payload.reviews; readLinks(payload.links);
@@ -45,28 +45,20 @@ patch(
     FILES = payload.files ? readNeeds(JSON.stringify(payload.files)) : null;
     LEFT_OPEN = payload.leftOpen ? readNeeds(JSON.stringify(payload.leftOpen)) : null;
     FORGE = payload.integration ? readForge(JSON.stringify(payload.integration)) : null;
-    if (PLAN && !parts.plan) {
-      var section = el("section", "chapter chapter-plan arrived"); section.id = "plan";
-      parts.plan = el("div", "inner"); section.appendChild(parts.plan);
-      app.insertBefore(section, parts.happened.parentElement);
-      var link = el("a"); link.setAttribute("href", "#plan"); link.setAttribute("aria-label", "The plan");
-      add(link, el("span", null, "The plan"), el("i")); rail.insertBefore(link, rail.querySelector('[href="#happened"]'));
-    }
+    // A plan first published mid-visit gets its chapter as every chapter is made: watched, and arriving like the others.
+    if (PLAN) { chapter("plan"); }
     if (parts.plan) { parts.plan.parentElement.hidden = !PLAN; rail.querySelector('[href="#plan"]').hidden = !PLAN; }
   }
-  safely(embedded);
+  safely(embedded, "first");
   var store = globalThis.deliveryStateStore;`,
 );
-// Preserve the viewport across a coherent pushed projection. Native code keeps
-// subject/fold/focus/line-scroll state; no UI state is rebuilt by the host.
-patch(
-  "          safely(doc);\n          refreshRuns();",
-  '          var hostedY = typeof scrollY === "number" ? scrollY : 0;\n          safely(doc);\n          if (typeof scrollTo === "function") { scrollTo({top: hostedY, behavior: "instant"}); }\n          refreshRuns();',
-);
+// A pushed projection keeps the reader's place through the page's own redraw transaction (page.redraw in page.js),
+// with its subject, folds, focus and line scroll: the host keeps no page state of its own.
 const renderer = (
   await build({
     stdin: {
-      contents: (await corpus("run-summary.js")) + "\n" + line,
+      // The page controller first, as every local page loads it, so the run summary and the line map find `page`.
+      contents: (await corpus("page.js")) + "\n" + (await corpus("run-summary.js")) + "\n" + line,
       resolveDir: new URL("../", import.meta.url).pathname,
     },
     bundle: true,

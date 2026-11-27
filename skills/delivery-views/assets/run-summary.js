@@ -9,14 +9,9 @@ var RUN_SETTLE_MS = 700;
 // reader repeats too often to wait on.
 var RUN_EASING = "cubic-bezier(.77, 0, .175, 1)";
 function runEaseDuration(from, to) { return Math.round(240 + Math.min(Math.abs(to - from), 600) / 600 * 60); }
-var runLastInput = "pointer";
-if (typeof document !== "undefined") {
-  document.addEventListener("keydown", function () { runLastInput = "keyboard"; }, true);
-  document.addEventListener("pointerdown", function () { runLastInput = "pointer"; }, true);
-}
+// A morph the reader's own action starts asks the page's one motion check as the reader's (page.js).
 function runMotionWanted(node) {
-  return typeof node.animate === "function" && runLastInput !== "keyboard"
-    && !(typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  return typeof node.animate === "function" && page.motion(true);
 }
 /** The node's height now, mid-animation included, with any running height animation stopped so the next starts from it. */
 function runHeldHeight(node) {
@@ -32,47 +27,13 @@ function runEaseHeight(node, from) {
   var easing = node.animate([{ height: from + "px" }, { height: to + "px" }], { id: "run-height", duration: runEaseDuration(from, to), easing: RUN_EASING });
   easing.onfinish = easing.oncancel = function () { node.style.overflow = ""; };
 }
-// Which folds the reader has open, by key, kept across live redraws.
-var runFoldOpen = {};
 /**
- * The page's one fold: a details element that slides open and closed by the motion rules above, and is rebuilt open
- * after a redraw when the reader left it open. Every fold on the page is made with it, so they all move alike.
- * Closing keeps the fold open until the slide ends, so nothing vanishes before it has moved. `options.key` names the
- * fold for its memory; `options.oneLine` says its summary is a single line when closed though it may wrap when open;
- * `options.onChange(open)` is told at the click, and `options.onSettle()` whenever the fold's height has changed.
+ * The page's one fold, for the run summary: page.fold (page.js), which slides open and closed by the page's motion rules,
+ * is rebuilt open after a redraw when the reader left it open, and opens for a link to anything inside it. `options` are
+ * page.fold's; `options.key` names the fold in the page's store.
  */
 function runFold(fold, options) {
-  options = options || {};
-  var summary = fold.querySelector("summary");
-  if (!summary) { return fold; }
-  if (options.key !== undefined && runFoldOpen[options.key] === true) { fold.open = true; }
-  var settled = function () { if (typeof options.onSettle === "function") { options.onSettle(); } };
-  summary.addEventListener("click", function (event) {
-    // A link or button inside the summary keeps its own click.
-    if (event.target && event.target.closest && event.target.closest("a, button") && summary.contains(event.target.closest("a, button"))) { return; }
-    event.preventDefault();
-    var open = !fold.open;
-    // Remembered now, not on the toggle event, which fires later: a redraw in between would rebuild it as it was.
-    if (options.key !== undefined) { runFoldOpen[options.key] = open; }
-    if (typeof options.onChange === "function") { options.onChange(open); }
-    var from = runHeldHeight(fold);
-    if (open) {
-      fold.open = true;
-      runEaseHeight(fold, from);
-      var opening = typeof fold.getAnimations === "function" ? fold.getAnimations().filter(function (running) { return running.id === "run-height"; })[0] : null;
-      if (opening && opening.finished) { opening.finished.then(settled, function () {}); }
-    } else if (!runMotionWanted(fold)) {
-      fold.open = false;
-    } else {
-      var closed = options.oneLine ? parseFloat(getComputedStyle(summary).lineHeight) || summary.offsetHeight : summary.offsetHeight;
-      fold.style.overflow = "hidden";
-      var closing = fold.animate([{ height: from + "px" }, { height: closed + "px" }], { id: "run-height", duration: runEaseDuration(from, closed), easing: RUN_EASING });
-      closing.onfinish = function () { fold.style.overflow = ""; fold.open = false; settled(); };
-      closing.oncancel = function () { fold.style.overflow = ""; };
-    }
-    settled();
-  });
-  return fold;
+  return page.fold(fold, options || {});
 }
 /**
  * Draws icon parts on the 24px persona grid into an svg: { c: [cx, cy, r] } is a circle, { d } a path, and core: true
@@ -336,6 +297,8 @@ function runSummaryNode(summary, options) {
     var total = counts.P0 + counts.P1 + counts.P2 + counts.P3;
     var item = node("li", "run-bead is-" + outcome);
     var button = node("button", "run-pick");
+    // Keyed by its run and round, the record's own names for it, so focus comes back to it after a redraw.
+    button.setAttribute("data-key", page.key("round", (summary.observationKey || summary.runId || "run") + ":" + number));
     button.type = "button";
     button.setAttribute("aria-pressed", String(picked));
     button.setAttribute("aria-label", nameOf(round, index) + ", " + outcomeWords(round) +
@@ -400,6 +363,7 @@ function runSummaryNode(summary, options) {
     var href = /^[0-9a-f]{40}$/.test(commit) && options && typeof options.commitHref === "function" ? options.commitHref(commit) : null;
     if (typeof href !== "string" || !/^https:\/\//.test(href)) { return node("code", "run-commit", short(commit)); }
     var link = node("a", "run-commit", short(commit));
+    link.setAttribute("data-key", page.key("commit", commit));
     link.setAttribute("href", href);
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noopener noreferrer");
@@ -636,10 +600,9 @@ function runSummaryNode(summary, options) {
     var fate = deferralFate(entry, index);
     var item = node("li", "run-finding is-" + severity.toLowerCase() + " is-deferral");
     var key = "deferral:" + (summary.observationKey || summary.runId || "") + ":" + numberOf(round, index) + ":" + entry.lens + ":" + entry.id;
-    var open = runFoldOpen[key] === true;
     var toggle = node("button", "run-deferral");
     toggle.type = "button";
-    toggle.setAttribute("aria-expanded", String(open));
+    toggle.setAttribute("aria-expanded", "false");
     var said = node("span", "run-finding-line");
     said.appendChild(prose("run-finding-text", sentenceOf(entry.summary), round.candidateRef));
     toggle.appendChild(said);
@@ -650,7 +613,7 @@ function runSummaryNode(summary, options) {
     meta.appendChild(fateNode(fate));
     item.appendChild(meta);
     var detail = node("dl", "run-deferral-detail");
-    detail.hidden = !open;
+    detail.hidden = true;
     var recorded = entry.detail && typeof entry.detail === "object" ? entry.detail : {};
     var field = function (label, value) {
       detail.appendChild(node("dt", null, label));
@@ -684,15 +647,8 @@ function runSummaryNode(summary, options) {
     }
     field("How it ended", ended);
     item.appendChild(detail);
-    toggle.addEventListener("click", function (event) {
-      event.stopPropagation();
-      var from = runHeldHeight(item);
-      open = !open;
-      runFoldOpen[key] = open;
-      toggle.setAttribute("aria-expanded", String(open));
-      detail.hidden = !open;
-      runEaseHeight(item, from);
-    });
+    // A disclosure on the page's one fold: its button and the detail it shows, the row easing to its new height.
+    page.fold({ button: toggle, region: detail }, { key: key, contain: true });
     return item;
   }
   // The finding an earlier round raised, by its id: the latest round before this one that raised it, or null when
@@ -863,6 +819,7 @@ function runSummaryNode(summary, options) {
   function runningBead(picked, choose) {
     var item = node("li", "run-bead is-running");
     var button = node("button", "run-pick");
+    button.setAttribute("data-key", page.key("round", (summary.observationKey || summary.runId || "run") + ":" + running.round));
     button.type = "button";
     button.setAttribute("aria-pressed", String(picked));
     button.setAttribute("aria-label", "Round " + running.round + ", under way, " + backCount() + " of " + runningLenses().length + " lenses back");

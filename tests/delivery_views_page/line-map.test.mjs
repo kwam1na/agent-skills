@@ -265,6 +265,27 @@ test("the lead's note opens to the sheet's own check list when the sheet only co
   expect(leadNote(paged.app).querySelector(".ck-pager .ck-page-where")?.textContent).toBe("11–16 of 16");
 });
 
+test("the pager's button keeps keyboard focus as it turns the page, and through a redraw", async () => {
+  // Twenty-five checks, three pages, so "next" is still there to hold focus on the second.
+  const many = Array.from({ length: 25 }, (_, index) => ({ label: `shop.check.${index}`, state: "pending" }));
+  const document = chosenByLead("only the retry path changed", many);
+  const summary = ".checking > details.ck-chosen > summary";
+  const next = ".checking > details.ck-chosen .ck-page-step:last-child";
+  const named = [];
+  const say = { run(window) { named.push(window.document.activeElement?.getAttribute("aria-label")); } };
+  const snaps = await open(document, { steps: [{ click: summary }, { click: next }, say, { tick: true }, say] });
+  // On the second page "Previous checks" comes first and is enabled: focus is on "Next checks", by its key and its name.
+  expect([snaps[2].focused, snaps[4].focused, named]).toEqual(["pager:next", "pager:next", ["Next checks", "Next checks"]]);
+});
+
+test("the page of checks a reader turned to is the one shown after the page redraws itself", async () => {
+  const document = chosenByLead("only the retry path changed", SEVENTEEN);
+  const summary = ".checking > details.ck-chosen > summary";
+  const snaps = await open(document, { steps: [{ click: summary }, { click: ".checking > details.ck-chosen .ck-page-step:last-child" }, { tick: true }] });
+  const ticked = leadNote(snaps[3].app);
+  expect([ticked.querySelector(".ck-pager .ck-page-where")?.textContent, ticked.querySelector("ol.ck-list").getAttribute("start")]).toEqual(["11–16 of 16", "11"]);
+});
+
 /** Fourteen checks that have not failed, ten passed, one running and three waiting; timed as the runner times them, from
  * the run's start, one after another, or with no times at all. */
 function fourteen(timed) {
@@ -963,7 +984,7 @@ test("keeps keyboard focus on the round picked, by updating the beads in place",
   const view = readJson(path.join(SOURCE, "run-view.json"));
   const summary = summarize(view, { runId: "run-7", status: "incomplete", open: true, durationSeconds: 3000, bytes: 4000 });
   const [, picked] = await open(fixtureDocument(), { steps: [{ click: "#detail .run-pick" }] }, render(fixtureDocument(), { "run-7": summary }));
-  expect(picked.focused).toBe("button");
+  expect(picked.focused).toBe("round:run-7:1");
   expect([...picked.app.querySelectorAll("#detail .run-pick")].map((pick) => pick.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
   expect(picked.app.querySelector("#detail .run-card .run-card-head b")?.textContent).toBe("Round 1");
 });
@@ -1293,12 +1314,17 @@ test("draws again on a status only when the connection changes, so an open card 
   expect(card(dropped).hasAttribute("hidden")).toBe(true);
 });
 
-test("keeps a stop chosen by pointing at it through an update", async () => {
+// Re-derived for the page controller's rule that pointing names and lights but never picks (decision 6): a stop picked by
+// a click is kept through an update, and pointing at another stop on the way changes neither the pick nor the panel.
+test("keeps a stop chosen by a click through an update, whatever the pointer passes over", async () => {
   const later = fixtureDocument();
   later.state.meta.headline = "Later";
-  const [, pointed, pushed] = await open(fixtureDocument(), { store: { read: "pending" }, steps: [{ hover: ':is(.stop-btn, .mg-tick)[data-subject="PAY-2358"]' }, { push: later }] });
-  expect(pointed.focused).toBeNull();
-  expect(pushed.app.querySelector("#detail .d1")?.textContent).toBe("Hold the cart through a payment redirect");
+  const [, chosen, pointed, pushed] = await open(fixtureDocument(), { store: { read: "pending" }, steps: [
+    { click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-2358"]' }, { hover: '.stop-btn' }, { push: later }] });
+  for (const shot of [chosen, pointed, pushed]) {
+    expect(shot.app.querySelector("#detail .d1")?.textContent).toBe("Hold the cart through a payment redirect");
+    expect(shot.app.querySelector('.stop-btn').getAttribute("aria-pressed")).toBe("false");
+  }
 });
 
 test("links only the configured tracker's ids and the first forge's change requests, and opens them apart from the page", async () => {

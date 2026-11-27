@@ -59,12 +59,36 @@
   var app = document.getElementById("app");
   var connection = "saved";
   var shown = embedded;
-  var selected = null;
+  // The stop the reader picked, by its subject: a click, Enter, Space or keyboard focus picks; pointing never does.
+  var picked = page.state("line:selected");
+  function selected() { var key = picked.get(); return key === undefined ? null : key; }
+  // Every control the page draws carries its key, page.key(kind, id): the record's own id for what it stands for, never
+  // its place on the page. A redraw puts focus back on the same key (page.js).
+  function withKey(node, kind, id) {
+    if (node && id !== undefined && id !== null && String(id) !== "") { node.setAttribute("data-key", page.key(kind, id)); }
+    return node;
+  }
+  // The control that opened the detail panel, by its key: Escape in the panel returns focus to it.
+  var opener = page.state("line:opener");
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("keydown", function (event) {
+      var active = document.activeElement;
+      if (event.key !== "Escape" || !active || !active.closest || !active.closest("#detail")) { return; }
+      var key = opener.get();
+      // Matched by attribute value, never by a selector built from record text; the opener on the line, not in the panel.
+      var back = Array.prototype.filter.call(app.querySelectorAll("[data-key]"), function (node) {
+        return node.getAttribute("data-key") === key && !node.closest("#detail");
+      })[0];
+      if (back) { event.preventDefault(); back.focus({ preventScroll: true }); }
+    });
+  }
+  // The lane the pointer or focus lights on the line, kept through a redraw.
+  var lit = page.state("line:lit");
+  // The page of a run's checks the reader turned to, with the run it belongs to.
+  var checksRead = page.state("line:checks-page");
   // What the reader picked to show of the story: a tone to filter by, and a depth this visit, until it is remembered.
-  var storyFilter = "all";
-  var storyDepthChosen = null;
   // What the page last showed, so a change can be animated rather than just swapped in.
-  var prev = { figures: Object.create(null), runningCheck: null, stages: null, story: null, progress: null, lanes: null, byLane: null, parked: null, dots: null, selected: null, lineScroll: null,
+  var prev = { figures: Object.create(null), runningCheck: null, stages: null, story: null, progress: null, lanes: null, byLane: null, parked: null, dots: null, selected: null,
     checkingHeight: null, checkPage: null };
   var lastGood = null;
   var nativeReviews = {};
@@ -99,7 +123,8 @@
   function text(value) { return typeof value === "string" ? value : ""; }
   function short(head) { return typeof head === "string" && head.length >= 7 ? head.slice(0, 7) : text(head); }
   function seconds(at) { var t = typeof at === "string" ? Date.parse(at) : NaN; return isNaN(t) ? null : t / 1000; }
-  function reduced() { return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches; }
+  // Live-update motion asks the page's one motion check (page.js) as not the reader's, so a keyboard reader sees it too.
+  function reduced() { return !page.motion(false); }
   function later(callback) {
     if (typeof requestAnimationFrame === "function") { requestAnimationFrame(function () { requestAnimationFrame(callback); }); } else { callback(); }
   }
@@ -277,7 +302,7 @@
   function changeLink(changeRequest) {
     var target = changeTarget(changeRequest);
     if (!target) { return el("span", "pr-num", text(changeRequest)); }
-    var link = el("a", "issue-link pr-num", target.label);
+    var link = withKey(el("a", "issue-link pr-num", target.label), "request", target.label);
     link.setAttribute("href", target.href);
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noopener noreferrer");
@@ -440,7 +465,7 @@
     var inner = el("div", "inner");
     section.appendChild(inner);
     parts[chapter[0]] = inner;
-    var link = el("a");
+    var link = withKey(el("a"), "chapter", chapter[0]);
     link.setAttribute("href", "#" + chapter[0]);
     link.setAttribute("aria-label", chapter[1]);
     add(link, el("span", null, chapter[1]), el("i"));
@@ -453,6 +478,15 @@
     return section;
   }
   CHAPTERS.forEach(function (chapter) { chapterOf(chapter); });
+  /**
+   * A chapter the page makes when it first has something to show there, as the plan when a plan first arrives: made as
+   * every chapter is, watched and arriving like the others. Returns its section.
+   */
+  function chapter(id) {
+    if (parts[id]) { return parts[id].parentNode; }
+    if (id === "plan") { return chapterOf(["plan", "The plan"], "happened"); }
+    return null;
+  }
   // The history page, when the binding declares one: served live at /view/<output>, beside the page as a file.
   // It sits in the chapter tab, below the chapters (see the corner's tab).
   var historyHref = typeof VIEW.history === "string" && VIEW.history
@@ -461,11 +495,10 @@
   if (typeof IntersectionObserver === "function") {
     var watch = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
-        if (!entry.isIntersecting || PAGED) { return; }
-        followScroll(entry.target.id);
-        Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
-          link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + entry.target.id));
-        });
+        // Only a new chapter is followed, so a deep link into the chapter being read keeps its item; following it shows
+        // the chapter, which marks it on the rail.
+        if (!entry.isIntersecting || PAGED || entry.target.id === page.here().chapter) { return; }
+        page.go({ chapter: entry.target.id }, "follow");
       });
     }, { rootMargin: "-45% 0px -45% 0px" });
     Array.prototype.forEach.call(app.querySelectorAll(".chapter"), function (section) { watch.observe(section); });
@@ -490,8 +523,8 @@
   // scrolling on past a page's end and the Left and Right arrow keys step between pages. With no hash the page opens on Now.
   // The reader picks the layout in the chapter tab: one chapter per page (the default) or every chapter on one page.
   var LAYOUT_KEY = (typeof VIEW.themeKey === "string" && VIEW.themeKey ? VIEW.themeKey.replace(/:theme$/, "") : "delivery-views") + ":layout";
-  var PAGED = true;
-  try { PAGED = localStorage.getItem(LAYOUT_KEY) !== "scroll"; } catch (error) { /* paged */ }
+  var layoutPick = page.state(LAYOUT_KEY, { saved: true });
+  var PAGED = layoutPick.get() !== "scroll";
   var currentPage = null;
   var corner = document.querySelector(".corner");
   var themeSwitch = document.querySelector(".theme-switch");
@@ -614,11 +647,8 @@
   fillTab();
   layoutButton.addEventListener("click", function () {
     PAGED = !PAGED;
-    try { localStorage.setItem(LAYOUT_KEY, PAGED ? "paged" : "scroll"); } catch (error) { /* lasts until reload */ }
-    var keep = currentPage;
-    showPage(keep);
-    var section = app.querySelector("#" + keep);
-    if (!PAGED && section && typeof section.scrollIntoView === "function") { section.scrollIntoView({ block: "start" }); }
+    layoutPick.set(PAGED ? "paged" : "scroll");
+    page.go({ chapter: currentPage }, "layout");
     openTab(false);
     tabButton.focus();
   });
@@ -650,23 +680,23 @@
     if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && !arrowsOwned(event.target)) {
       var ids = chapterIds();
       var to = ids[ids.indexOf(currentPage) + (event.key === "ArrowRight" ? 1 : -1)];
-      if (to) { event.preventDefault(); location.hash = to; }
+      if (to) { event.preventDefault(); page.go({ chapter: to }, "turn"); }
     }
   });
 
-  /** Shows one chapter's page; with a target inside it, brings the target into view. */
-  function showPage(id, target) {
+  /**
+   * Shows one chapter's page, and never scrolls: the page controller (page.js) moves the page, by the navigation's
+   * reason, and calls this as it does.
+   */
+  function showPage(id) {
     var ids = chapterIds();
     if (ids.indexOf(id) < 0) { id = ids[0]; }
-    var changed = id !== currentPage;
     currentPage = id;
     document.body.classList.toggle("paged", PAGED);
     Array.prototype.forEach.call(app.querySelectorAll(".chapter"), function (section) {
       var on = section.id === id;
       section.hidden = section.classList.contains("is-absent") || (PAGED && !on);
     });
-    var landAtEnd = landNextAtEnd;
-    landNextAtEnd = false;
     Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
       link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + id));
     });
@@ -677,35 +707,7 @@
     where.hidden = id === ids[0];
     document.title = (heading ? heading.textContent : document.title.split(" · ").pop()).replace(/\s+/g, " ") +
       (id === ids[0] ? "" : " · " + chapterName(id));
-    if (target && target !== app.querySelector("#" + id) && typeof target.scrollIntoView === "function") {
-      target.scrollIntoView({ block: "center" });
-    } else if (changed && PAGED && landAtEnd) {
-      window.scrollTo(0, document.documentElement.scrollHeight);
-    } else if (changed && PAGED) {
-      window.scrollTo(0, 0);
-    } else if (!PAGED && target && typeof target.scrollIntoView === "function") {
-      target.scrollIntoView({ block: "start" });
-    }
   }
-  /** The page a node lives on, opened, so a caller can bring the node into view. */
-  function revealPage(node) {
-    var section = node && node.closest ? node.closest(".chapter") : null;
-    if (PAGED && section && section.id !== currentPage) {
-      // A page whose address can't be rewritten (an opaque or embedded one) still turns to the chapter.
-      try { if (history.replaceState) { history.replaceState(null, "", "#" + section.id); } } catch (error) { /* the address stays */ }
-      showPage(section.id);
-    }
-  }
-  function route() {
-    var raw = (location.hash || "").slice(1);
-    var hash;
-    // A malformed escape (a link cut short, a typed `#%`) is read as written, so an unknown id opens the first page.
-    try { hash = decodeURIComponent(raw); } catch (error) { hash = raw; }
-    var target = hash ? document.getElementById(hash) : null;
-    var section = target && target.closest ? target.closest(".chapter") : null;
-    showPage(section ? section.id : hash, target);
-  }
-  window.addEventListener("hashchange", route);
 
   // The launcher: one place to reach anything on the page by name. It is a registry of commands, each
   // { id, group, title, detail?, keywords?, current?(), run() }, read afresh each time it opens, so a feature adds what
@@ -869,11 +871,7 @@
       return { id: "page:" + id, group: "Pages", lead: String(index + 1).padStart(2, "0"), title: chapterName(id),
         keywords: [String(index + 1), id],
         current: function () { return id === currentPage; },
-        run: function () {
-          if (PAGED) { location.hash = id; return; }
-          var section = app.querySelector("#" + id);
-          if (section && typeof section.scrollIntoView === "function") { section.scrollIntoView({ block: "start" }); }
-        } };
+        run: function () { page.go({ chapter: id }, "turn"); } };
     });
   });
   if (historyHref) {
@@ -895,7 +893,6 @@
   // end, so the pages still read as one scroll. A pull has to build past a threshold, counting starts only once the
   // reader has rested at the edge (a fling that reaches the end doesn't turn the page), and a turn is followed by a
   // short pause. A ring at that edge fills toward the page it would open.
-  var landNextAtEnd = false;
   var PULL_WHEEL = 460, PULL_TOUCH = 170, REST_MS = 220, PAUSE_MS = 700;
   var pull = { dir: 0, amount: 0, idle: null, edgeSince: 0, pausedUntil: 0, touchY: null };
   var pullEl = el("div", "page-pull");
@@ -936,8 +933,8 @@
     pull.pausedUntil = Date.now() + PAUSE_MS;
     pull.edgeSince = 0;
     if (!to) { return; }
-    landNextAtEnd = dir < 0;
-    location.hash = to;
+    // Back up past a page's top lands at the previous page's end, so the pages still read as one scroll.
+    page.go({ chapter: to }, dir < 0 ? "back-turn" : "turn");
   }
   function addPull(dir, amount, threshold) {
     if (pull.dir !== dir) { pull.dir = dir; pull.amount = 0; }
@@ -979,13 +976,6 @@
     if (pull.touchY !== null && pull.dir && pull.amount >= 1) { turn(pull.dir); } else if (pull.dir) { resetPull(); }
     pull.touchY = null;
   }, { passive: true });
-  /** In the one-page layout the tab names the chapter being read. */
-  function followScroll(id) {
-    if (id !== currentPage && history.replaceState) { history.replaceState(null, "", "#" + id); }
-    currentPage = id;
-    nameTab(id);
-    tabButton.setAttribute("aria-label", "Chapters: " + chapterName(id));
-  }
 
   // One card for the whole page, kept outside the chapters so no redraw removes it.
   var card = el("div", "issue-card");
@@ -1030,7 +1020,7 @@
   /** A ticket id that shows its card when hovered or focused, and opens the issue when the renderer linked it. */
   function issue(id, label) {
     var href = issueHref(text(id));
-    var node = el(href ? "a" : "span", "issue-link", label === undefined ? id : label);
+    var node = withKey(el(href ? "a" : "span", "issue-link", label === undefined ? id : label), "ticket", text(id));
     if (href) {
       node.setAttribute("href", href);
       node.setAttribute("target", "_blank");
@@ -1359,7 +1349,7 @@
       var kind = stopKind(piece, nowSubject);
       if (kind !== "later") { started = true; }
       var words = piece.planned && piece.item.stage === "planned" ? STAGE_WORDS.planned : pieceWords(doc, piece.item);
-      var stop = el("a", "starting-stop " + kind.split(" ").map(function (part) { return "is-" + part; }).join(" "));
+      var stop = withKey(el("a", "starting-stop " + kind.split(" ").map(function (part) { return "is-" + part; }).join(" ")), "starting", key);
       stop.setAttribute("href", "#line");
       stop.style.setProperty("--c", laneColour(text(piece.item.lane)));
       stop.style.setProperty("--i", String(index));
@@ -1791,6 +1781,7 @@
       var time = figures(el("time", "kicker-time"), "kicker", closed ? "Closed after " + lasted : "Started " + lasted + " ago");
       time.setAttribute("datetime", text(first.at));
       time.setAttribute("tabindex", "0");
+      withKey(time, "time", "kicker");
       // The page's own card says the ends, as a ticket's does, since nothing on the page carries a native tooltip: a
       // small line from the start to the close, each end as a person says it, and the run between.
       var showEnds = function () {
@@ -1912,7 +1903,7 @@
   function pullRef(changeRequest) {
     var target = changeTarget(changeRequest);
     if (!target) { return el("span", "fact-ref", text(changeRequest)); }
-    var link = el("a", "fact-ref", target.label);
+    var link = withKey(el("a", "fact-ref", target.label), "request", text(changeRequest));
     link.setAttribute("href", target.href);
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noopener noreferrer");
@@ -2098,6 +2089,7 @@
     all.forEach(function (piece) { byId[piece.item.subject] = piece.item; });
     var nextNames = upNext(doc, all, current).map(function (item) { return titleOf(doc, item); });
     var box = el("div", "checking");
+    box.setAttribute("data-region", "checking");
     box.setAttribute("aria-live", "polite");
     if (!current) {
       var waiting = all.filter(function (piece) { return !piece.planned && piece.item.stage === "queued" && piece.item.pending === true; }).length;
@@ -2230,27 +2222,28 @@
       var PAGE_SIZE = 10;
       var pageCount = Math.ceil(listed.length / PAGE_SIZE);
       var pageKey = text(current.startedAt) + "|" + text(current.subject);
-      var page = prev.checkPage && prev.checkPage.run === pageKey ? Math.min(prev.checkPage.page, Math.max(0, pageCount - 1)) : 0;
+      var pageRead = checksRead.get();
+      var checksPage = isObject(pageRead) && pageRead.run === pageKey ? Math.min(pageRead.page, Math.max(0, pageCount - 1)) : 0;
       var pager = pageCount > 1 ? el("div", "ck-pager") : null;
-      var showPage = function () {
-        prev.checkPage = { run: pageKey, page: page };
-        checkList.replaceChildren.apply(checkList, listed.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map(checkRow));
-        checkList.setAttribute("start", String(page * PAGE_SIZE + 1));
+      var showChecks = function () {
+        checksRead.set({ run: pageKey, page: checksPage });
+        checkList.replaceChildren.apply(checkList, listed.slice(checksPage * PAGE_SIZE, (checksPage + 1) * PAGE_SIZE).map(checkRow));
+        checkList.setAttribute("start", String(checksPage * PAGE_SIZE + 1));
         if (!pager) { return; }
-        var from = page * PAGE_SIZE + 1, to = Math.min(listed.length, (page + 1) * PAGE_SIZE);
+        var from = checksPage * PAGE_SIZE + 1, to = Math.min(listed.length, (checksPage + 1) * PAGE_SIZE);
         var step = function (by, words, mark) {
-          var button = add(el("button", "ck-page-step"), mark);
+          var button = withKey(add(el("button", "ck-page-step"), mark), "pager", by < 0 ? "previous" : "next");
           button.type = "button";
           button.setAttribute("aria-label", words);
-          button.disabled = page + by < 0 || page + by >= pageCount;
-          button.addEventListener("click", function () { page += by; showPage(); });
+          button.disabled = checksPage + by < 0 || checksPage + by >= pageCount;
+          button.addEventListener("click", function () { checksPage += by; page.redraw(showChecks, "reader"); });
           return button;
         };
         var where = el("span", "ck-page-where", from + "–" + to + " of " + listed.length);
         where.setAttribute("aria-live", "polite");
         pager.replaceChildren(step(-1, "Previous checks", "‹"), where, step(1, "Next checks", "›"));
       };
-      showPage();
+      showChecks();
       return listed.length ? [checkList].concat(pager ? [pager] : []) : [];
     }
     var steps = list(current.steps).filter(function (step) { return isObject(step) && step.label !== "selecting checks"; });
@@ -2733,7 +2726,7 @@
       if (meta.baseHead) {
         // Where the work ended up: the main line's last commit, opened on the forge when the renderer gave its address.
         var href = commitHref(meta.baseHead);
-        var sha = el(href ? "a" : "span", href ? "issue-link head" : "head", short(meta.baseHead));
+        var sha = withKey(el(href ? "a" : "span", href ? "issue-link head" : "head", short(meta.baseHead)), "commit", meta.baseHead);
         if (href) {
           sha.setAttribute("href", href);
           sha.setAttribute("target", "_blank");
@@ -2968,7 +2961,7 @@
       var colour = look.colours[one.piece.item.lane || ""];
       // A story that landed since the last draw lands on the line, as its stop once did.
       var landing = tick.state === "landed" && prev.stages && prev.stages[key] && prev.stages[key] !== "merged" && !reduced();
-      var g = shape(svg, "g", { class: "mg-tick " + tick.state + (landing ? " landing" : ""), "data-subject": key, "data-lane": one.lane, "data-state": tick.state,
+      var g = shape(svg, "g", { class: "mg-tick " + tick.state + (landing ? " landing" : ""), "data-subject": key, "data-key": page.key("tick", key), "data-lane": one.lane, "data-state": tick.state,
         tabindex: 0, role: "button", "aria-pressed": String(look.selected() === key),
         // Named in the stop's own words, so a story folded out of its row says no less than its stop did.
         "aria-label": titleOf(doc, one.piece.item) + ", " + key + ", " + (tick.state === "unlanded" ? "Not landed" : pieceWords(doc, one.piece.item)) });
@@ -3010,7 +3003,7 @@
         // A step says what its latest fact shows; once rejoined the ledger has no words left, and every step is done.
         var words = said[i] || (state === "filled" ? "Done." : "Not yet.");
         var r = shape(svg, "rect", { class: "mg-step " + state, x: lefts[i], y: trunkY - 5, width: widths[i], height: 10, rx: 2,
-          tabindex: 0, role: "img", "data-step": INTEGRATION_STOPS[i], "data-state": state, "aria-label": STEP_TITLES[i] + ": " + words });
+          tabindex: 0, role: "img", "data-step": INTEGRATION_STOPS[i], "data-key": page.key("step", INTEGRATION_STOPS[i]), "data-state": state, "aria-label": STEP_TITLES[i] + ": " + words });
         if (timed && INTEGRATION_STOPS[i] === "suite") { timedSuite(svg, step, state, lefts[i], trunkY, widths[i]); }
         // Only the step the bar is on reads "now".
         look.wire(r, null, STEP_TITLES[i] + " · " + (i === current ? "now" : state === "filled" ? "done" : "later"), words);
@@ -3050,7 +3043,7 @@
       finish.forEach(function (line, k) {
         var name = text(line.text) || text(line.id) || "Finish line " + (k + 1);
         var square = shape(svg, "rect", { class: "mg-square " + (line.met === true ? "met" : "unmet"), x: squaresX + k * 11, y: postY - 44,
-          width: 8, height: 8, rx: 1.5, tabindex: 0, role: "img", "aria-label": name + (line.met === true ? ", met" : ", not met") });
+          width: 8, height: 8, rx: 1.5, tabindex: 0, role: "img", "data-key": page.key("finish", text(line.id) || name), "aria-label": name + (line.met === true ? ", met" : ", not met") });
         look.wire(square, null, "Finish line · " + (line.met === true ? "met" : "not met"), name);
       });
       figureText(svg, "merge-met", { class: "mg-count", x: squaresX + finish.length * 11 + 3, y: postY - 37 }, met + "/" + finish.length);
@@ -3278,7 +3271,9 @@
     var tip = el("div", "mg-tip");
     tip.hidden = true;
     tip.setAttribute("aria-hidden", "true");
+    // The lit lane is kept in the store, so a redraw under the pointer leaves it lit.
     function light(lane) {
+      lit.set(lane);
       track.classList.toggle("lit", lane !== null);
       [].forEach.call(track.querySelectorAll("[data-lane]"), function (node) {
         node.classList.toggle("on", lane !== null && node.getAttribute("data-lane") === String(lane));
@@ -3297,18 +3292,19 @@
     var look = {
       colours: colours, nowSubject: nowSubject,
       laneOf: function (piece) { return lanes.indexOf(piece.item.lane || ""); },
-      selected: function () { return selected; },
-      // A tick, a step or a square names itself on hover and focus, and lights its lane where it has one; a tick also
-      // opens its piece's panel, as a stop does, so a story folded out of its row is still one step away.
+      selected: selected,
+      // A tick, a step or a square names itself on hover and focus, and lights its lane where it has one. Focus, a click,
+      // Enter or Space on a tick also opens its piece's panel, as a stop does, so a story folded out of its row is still
+      // one step away; pointing only names and lights.
       wire: function (node, piece, head, body) {
         var lane = node.getAttribute("data-lane");
+        var point = function () { name(node, head, body); light(lane === null ? null : Number(lane)); };
         var on = function () {
-          name(node, head, body);
-          light(lane === null ? null : Number(lane));
-          if (piece) { selected = subjectOf(piece.item); showDetail(doc, piece, colours, nowSubject); }
+          point();
+          if (piece) { picked.set(subjectOf(piece.item)); opener.set(node.getAttribute("data-key")); showDetail(doc, piece, colours, nowSubject); }
         };
         var off = function () { name(node, null); light(null); };
-        node.addEventListener("mouseenter", on);
+        node.addEventListener("mouseenter", point);
         node.addEventListener("focus", on);
         node.addEventListener("click", on);
         node.addEventListener("mouseleave", off);
@@ -3350,16 +3346,18 @@
         var kind = stages[subjectOf(piece.item)];
         var key = subjectOf(piece.item);
         var seg = el("div", "seg" + (kind === "active" && !(i === 0 && landedHere) ? " incoming" : ""));
-        var button = el("button", "stop-btn " + kind);
+        var button = withKey(el("button", "stop-btn " + kind), "stop", key);
         button.type = "button";
         button.setAttribute("data-subject", key);
         var waiting = kind === "unlanded" ? [] : waitWords(doc, key);
         button.setAttribute("aria-label", titleOf(doc, piece.item) + ", " + (kind === "unlanded" ? "Not landed" : pieceWords(doc, piece.item)) +
           (waiting.length ? ". " + waiting.join(" ") : ""));
-        button.setAttribute("aria-pressed", String(selected === key));
-        var show = function () { selected = key; showDetail(doc, piece, colours, nowSubject); };
+        button.setAttribute("aria-pressed", String(selected() === key));
+        var show = function () { picked.set(key); opener.set(button.getAttribute("data-key")); showDetail(doc, piece, colours, nowSubject); };
         button.addEventListener("click", show);
-        button.addEventListener("mouseenter", show);
+        // Pointing at a stop lights its lane; only a click or keyboard focus picks it.
+        button.addEventListener("mouseenter", function () { light(laneIndex); });
+        button.addEventListener("mouseleave", function () { light(null); });
         button.addEventListener("focus", show);
         button.addEventListener("focus", function () { light(laneIndex); });
         button.addEventListener("blur", function () { light(null); });
@@ -3413,8 +3411,9 @@
     // Where the line scrolls sideways, as on a phone, it opens at its end, where the lanes merge and the newest work is,
     // and keeps the reader's own place on later redraws.
     // Kept as the distance from the right edge, where the newest work is, so a change of width still shows it.
-    if (box.scrollWidth > box.clientWidth) { box.scrollLeft = box.scrollWidth - box.clientWidth - (prev.lineScroll || 0); }
-    box.addEventListener("scroll", function () { prev.lineScroll = Math.max(0, box.scrollWidth - box.clientWidth - box.scrollLeft); });
+    var stillLit = lit.get();
+    if (typeof stillLit === "number") { light(stillLit); }
+    page.sideways("line", box);
     prev.stages = stages;
     prev.folds = folds;
     // The motion is measured from the drawn rows, so it is laid once they are in the page, and again when their width changes.
@@ -3428,7 +3427,7 @@
       layFlow();
       if (typeof ResizeObserver === "function") { prev.flowWatch = new ResizeObserver(layFlow); prev.flowWatch.observe(track); }
     }
-    var pick = all.filter(function (piece) { return subjectOf(piece.item) === selected; })[0] ||
+    var pick = all.filter(function (piece) { return subjectOf(piece.item) === selected(); })[0] ||
       all.filter(function (piece) { return stopKind(piece, nowSubject) === "now"; })[0] ||
       all.filter(function (piece) { return stopKind(piece, nowSubject) === "held"; })[0] ||
       all.filter(function (piece) { return stopKind(piece, nowSubject) !== "merged"; })[0] || all[0];
@@ -3778,26 +3777,37 @@
   // A push redraws at once; the runs come from the view the server renders after it. The server's word that the runs
   // moved comes once their views are written, so that re-read waits for nothing.
   var runsAsked = null;
+  // The blocks a refresh reads, and each as the page now has it, so a refresh that finds nothing new draws nothing.
+  var REFRESHED = ["runs", "links", "reviews", "needs", "files", "left-open", "integration"];
+  var inUse = {};
+  REFRESHED.forEach(function (name) {
+    var block = document.getElementById("delivery-" + name);
+    inUse[name] = block ? block.textContent : null;
+  });
   function refreshRuns(wait) {
     if (typeof fetch !== "function" || typeof location !== "object" || !/^https?:$/.test(location.protocol)) { return; }
     clearTimeout(runsAsked);
     runsAsked = setTimeout(function () {
       fetch(location.href, { cache: "no-store" }).then(function (answer) { return answer.text(); }).then(function (page) {
-        var found = /<script type="application\/json" id="delivery-runs">([^<]*)<\/script>/.exec(page);
-        var next = found ? JSON.parse(found[1]) : null;
-        var linked = /<script type="application\/json" id="delivery-links">([^<]*)<\/script>/.exec(page);
-        if (linked) { readLinks(JSON.parse(linked[1])); }
-        var reviews = /<script type="application\/json" id="delivery-reviews">([^<]*)<\/script>/.exec(page);
-        if (reviews) { nativeReviews = JSON.parse(reviews[1]); }
-        var listed = /<script type="application\/json" id="delivery-needs">([^<]*)<\/script>/.exec(page);
-        NEEDS = listed ? readNeeds(listed[1]) : null;
-        var pushed = /<script type="application\/json" id="delivery-files">([^<]*)<\/script>/.exec(page);
-        FILES = pushed ? readNeeds(pushed[1]) : null;
-        var opened = /<script type="application\/json" id="delivery-left-open">([^<]*)<\/script>/.exec(page);
-        LEFT_OPEN = opened ? readNeeds(opened[1]) : null;
-        var drifted = /<script type="application\/json" id="delivery-integration">([^<]*)<\/script>/.exec(page);
-        FORGE = drifted ? readForge(drifted[1]) : null;
-        if (isObject(next)) { runs = next; safely(lastGood || shown); }
+        // The seven blocks the served page carries for the line map, each read as written: only one that differs from the
+        // block in use is taken, and the page redraws only when one did.
+        var read = {};
+        REFRESHED.forEach(function (name) {
+          var found = new RegExp('<script type="application/json" id="delivery-' + name + '">([^<]*)<\\/script>').exec(page);
+          read[name] = found ? found[1] : null;
+        });
+        var changed = REFRESHED.filter(function (name) { return read[name] !== inUse[name]; });
+        if (!changed.length) { return; }
+        changed.forEach(function (name) { inUse[name] = read[name]; });
+        var next = read.runs !== null ? JSON.parse(read.runs) : null;
+        if (read.links !== null) { readLinks(JSON.parse(read.links)); }
+        if (read.reviews !== null) { nativeReviews = JSON.parse(read.reviews); }
+        NEEDS = read.needs !== null ? readNeeds(read.needs) : null;
+        FILES = read.files !== null ? readNeeds(read.files) : null;
+        LEFT_OPEN = read["left-open"] !== null ? readNeeds(read["left-open"]) : null;
+        FORGE = read.integration !== null ? readForge(read.integration) : null;
+        if (isObject(next)) { runs = next; }
+        safely(lastGood || shown, "runs");
       }).catch(function () { /* the runs already shown stay */ });
     }, typeof wait === "number" ? wait : 3000);
   }
@@ -3924,7 +3934,7 @@
         var base = file.path.slice(area ? area.length + 1 : 0);
         if (Array.isArray(file.spans)) {
           var lines = Math.max(1, file.lines || 0);
-          var button = el("button", "file shared" + (fileReading === file.path ? " open" : ""));
+          var button = withKey(el("button", "file shared" + (fileReading === file.path ? " open" : "")), "file", file.path);
           button.setAttribute("type", "button");
           button.setAttribute("data-path", file.path);
           button.setAttribute("aria-expanded", fileReading === file.path ? "true" : "false");
@@ -4252,7 +4262,7 @@
         var key = subjectOf(piece.item);
         // The row goes to the line with its stop picked; the title is the button a keyboard reaches, and the ticket
         // keeps its own link.
-        var title = el("button", "left-title", titleOf(doc, piece.item));
+        var title = withKey(el("button", "left-title", titleOf(doc, piece.item)), "left", key);
         title.type = "button";
         title.setAttribute("aria-label", "Show " + titleOf(doc, piece.item) + " on the line");
         var row = add(el("li"), ring, key ? issue(key) : null, title, el("span", "left-state", pieceWords(doc, piece.item)));
@@ -4262,9 +4272,7 @@
           var stop = [].filter.call(parts.line.querySelectorAll(".stop-btn"), function (button) { return button.getAttribute("data-subject") === key; })[0];
           if (!stop) { return; }
           stop.click();
-          var section = parts.line.closest ? parts.line.closest(".chapter") || parts.line : parts.line;
-          revealPage(section);
-          if (typeof section.scrollIntoView === "function") { section.scrollIntoView({ behavior: reduced() ? "auto" : "smooth", block: "start" }); }
+          page.go({ chapter: "line", node: stop }, "link");
           // The stop is pointed out by its ticket's card, as if pointed at, once the page has stopped moving: a scroll
           // hides the card, so it is shown after the last one. It goes with the reader's next scroll.
           var point = function () { if (stop.isConnected) { showCard(stop, key); } };
@@ -4300,16 +4308,19 @@
   /* The plan: is the work still what was agreed, and what proves it? */
   // Proofs are derived from each record the page draws, by the same lookups The line uses; the plan itself comes from the
   // renderer, at load and from each page it renders after. Every unit, row and fold is found through these maps, never through a selector built from plan text.
-  var planFolds = Object.create(null);
   var planAsApproved = false;
   var planRows = Object.create(null);
+  // The plan's folds the reader keeps open, saved as one list of their names; each fold's own state is the page's store.
   var FOLD_KEY = (typeof VIEW.themeKey === "string" && VIEW.themeKey ? VIEW.themeKey.replace(/:theme$/, "") : "delivery-views") + ":plan-folds";
-  try {
-    list(JSON.parse(localStorage.getItem(FOLD_KEY) || "[]")).forEach(function (name) { if (typeof name === "string") { planFolds[name] = true; } });
-  } catch (error) { /* folds start closed and are remembered until the page reloads */ }
+  var planFoldsSaved = page.state(FOLD_KEY, { saved: "json" });
+  var planFoldNames = [];
+  list(planFoldsSaved.get()).forEach(function (name) {
+    if (typeof name !== "string") { return; }
+    planFoldNames.push(name);
+    page.state("fold:plan:" + name).set(true);
+  });
   function rememberFolds() {
-    try { localStorage.setItem(FOLD_KEY, JSON.stringify(Object.keys(planFolds).filter(function (name) { return planFolds[name]; }))); }
-    catch (error) { /* remembered until the page reloads */ }
+    planFoldsSaved.set(planFoldNames.filter(function (name) { return page.state("fold:plan:" + name).get() === true; }));
   }
   function own(holder, key) { return isObject(holder) && Object.prototype.hasOwnProperty.call(holder, key) ? holder[key] : undefined; }
   function planUnits(units) { return list(units).filter(isObject); }
@@ -4457,7 +4468,7 @@
   function planNow(doc) {
     if (!plan) { return null; }
     var counts = planCounts(doc);
-    var link = figures(el("a", "plan-now-link"), "plan-now", counts.proven + " of " + counts.total + " criteria proven");
+    var link = withKey(figures(el("a", "plan-now-link"), "plan-now", counts.proven + " of " + counts.total + " criteria proven"), "plan-now", "criteria");
     link.setAttribute("href", "#plan");
     return add(el("span", "plan-now-plan"), link, figures(el("span"), "plan-changes", " · " + timesChanged(list(plan.changes).length)));
   }
@@ -4647,7 +4658,6 @@
     entries.forEach(function (entry) {
       var parts = approvalParts(entry);
       var row = el("details", "ap-row");
-      row.addEventListener("toggle", function () { if (row.classList.contains("is-whole") && row.open) { row.open = false; } });
       var summary = el("summary");
       var id = text(entry.id);
       // An id that only numbers its row (handoff-3) says nothing a reader needs; a named one (PD1, O25) does.
@@ -4656,7 +4666,14 @@
       add(summary, el("span", "ap-id", shownId), el("span", "ap-title", parts.title), el("span", "ap-who", who === parts.title ? "" : who),
         el("span", "ap-caret"));
       add(row, summary, parts.rest ? el("p", "ap-rest", parts.rest) : null);
-      if (!parts.rest) { row.classList.add("is-whole"); }
+      if (!parts.rest) {
+        // A row with nothing more to say never opens.
+        row.classList.add("is-whole");
+        withKey(summary, "approval", id || parts.title);
+        summary.addEventListener("click", function (event) { event.preventDefault(); });
+      } else {
+        page.fold(row, { key: "approval:" + (id || parts.title) });
+      }
       listing.appendChild(add(el("li"), row));
     });
     // What clears the flag. The operator doesn't run anything: they tell the agent leading the work, which records it.
@@ -4750,8 +4767,6 @@
     }).filter(Boolean);
     return { head: text(entry.head), body: body };
   }
-  // The headed decisions the reader opened, by number, kept across the plan's redraws until the page reloads.
-  var decisionsOpen = Object.create(null);
   /** A decision's words through the page's one formatter, with "decision N", for a number the list holds, a link to it. */
   function decisionWords(words, count) {
     var nodes = [], last = 0, match, pattern = /\bdecision (\d+)\b/gi;
@@ -4772,12 +4787,11 @@
   /** Opens a decision a reference names, and brings it to the reader. */
   function openDecision(n) {
     var row = document.getElementById("plan-decision-" + n);
-    var box = row ? row.querySelector("details") : null;
     if (!row) { return; }
-    if (box) { box.open = true; decisionsOpen[n] = true; }
-    if (typeof row.scrollIntoView === "function") { row.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    // The decision's own fold stands for its row, so going to the row opens it and every fold holding it.
+    page.go({ item: row.id }, "link");
     var summary = row.querySelector("summary");
-    if (summary) { summary.focus(); }
+    if (summary) { summary.focus({ preventScroll: true }); }
   }
   /**
    * The plan's decisions, numbered as the plan numbers them: each headline always shows, so the calls read at a glance,
@@ -4787,9 +4801,11 @@
     var box = el("div", "plan-decided");
     var rows = el("ol", "plan-decisions");
     var boxes = [];
-    var all = el("button", "pd-all");
+    var all = withKey(el("button", "pd-all"), "decisions", "all");
     all.type = "button";
-    function sayAll() { all.textContent = boxes.every(function (entry) { return entry.open; }) ? "Close all" : "Open all"; }
+    // Whether every decision is open, by the page's store, which a click has set before the fold has finished moving.
+    function allOpen() { return boxes.every(function (entry) { return page.state("fold:decision:" + entry.getAttribute("data-n")).get() === true; }); }
+    function sayAll() { all.textContent = allOpen() ? "Close all" : "Open all"; }
     decisions.forEach(function (decision, i) {
       var n = i + 1;
       var row = el("li", "pd");
@@ -4809,15 +4825,14 @@
       });
       var fold = el("details", "pd-fold");
       fold.setAttribute("data-n", String(n));
-      if (decisionsOpen[n]) { fold.open = true; }
-      fold.addEventListener("toggle", function () { decisionsOpen[n] = fold.open; sayAll(); });
       boxes.push(fold);
       rows.appendChild(add(row, add(fold, add.apply(null, [el("summary", "pd-line")].concat(line)), body)));
+      page.fold(fold, { key: "decision:" + n, of: row, onChange: sayAll, onOpen: sayAll });
     });
     if (boxes.length) {
       all.addEventListener("click", function () {
-        var open = !boxes.every(function (entry) { return entry.open; });
-        boxes.forEach(function (entry) { entry.open = open; decisionsOpen[entry.getAttribute("data-n")] = open; });
+        var open = !allOpen();
+        boxes.forEach(function (entry) { page.open(entry, open); });
         sayAll();
       });
       sayAll();
@@ -4829,11 +4844,14 @@
   function fold(name, label, count, body) {
     var box = el("details", "plan-fold");
     box.setAttribute("data-fold", name);
-    if (planFolds[name]) { box.open = true; }
+    if (planFoldNames.indexOf(name) < 0) { planFoldNames.push(name); }
     var summary = el("summary", null, label);
     if (count !== null) { summary.appendChild(el("span", "pf-count", String(count))); }
     add(box, summary, body);
-    return runFold(box, { onChange: function (open) { planFolds[name] = open; rememberFolds(); } });
+    return page.fold(box, { key: "plan:" + name, onChange: rememberFolds, onOpen: function () {
+      // Opened by a link or by the page as well as by a click, it is saved as the reader will find it.
+      if (list(planFoldsSaved.get()).indexOf(name) < 0) { rememberFolds(); }
+    } });
   }
   /** Before and after as one text, with what was dropped struck and what was added marked, word by word. */
   function redline(before, after) {
@@ -5128,7 +5146,7 @@
       planTries += 1;
       if (planBehind || planTries >= PLAN_PATIENCE) {
         planRested = planNamed;
-        safely(lastGood || shown);
+        safely(lastGood || shown, "plan");
       } else {
         followPlan(planNamed);
       }
@@ -5137,43 +5155,32 @@
     var older = isObject(block) && isObject(block.plan) && typeof block.plan.updated === "string" && seconds(block.plan.updated) !== null;
     planTries += 1;
     var behind = planBehind || !older || planTries >= PLAN_PATIENCE;
-    if (behind !== planBehind) { planBehind = behind; safely(lastGood || shown); }
+    if (behind !== planBehind) { planBehind = behind; safely(lastGood || shown, "plan"); }
     // Only a change of note drew, so ask again from here too; a second ask is refused while one is waiting.
     followPlan(planNamed);
   }
-  // The new plan is only kept if the page can draw it: the plan in use goes back otherwise.
+  // The new plan is only kept if the page can draw it: the plan in use goes back otherwise. A new plan is a new read, so
+  // it draws at once, and the redraw transaction keeps the reader's place: past the chapter, a plan of another height
+  // moves the window with what they were reading.
   function takePlan(block) {
-    var was = { PLAN: PLAN, plan: plan, named: planNamed };
-    PLAN = block;
-    plan = block.plan;
-    planBehind = false;
-    var place = planPlace();
-    try {
-      draw(lastGood || shown);
-    } catch (error) {
-      PLAN = was.PLAN;
-      plan = was.plan;
-      planNamed = was.named;
-      planBehind = true;
-      // The failed draw may have asked at the quick pace; this answer says to ask at the slow one.
-      clearTimeout(planAsked);
-      planAsked = null;
-      safely(lastGood || shown);
-    }
-    keepPlace(place);
-  }
-  // Where the reader is. Past the chapter, a plan of another height moves what they are reading, along with anything the
-  // new plan changed above it, so the window moves with the chapter's end; anywhere else it stays.
-  function planPlace() {
-    if (typeof scrollY !== "number") { return null; }
-    var bottom = parts.plan.getBoundingClientRect().bottom;
-    return { y: scrollY, past: bottom <= 0, end: bottom + scrollY };
-  }
-  function keepPlace(place) {
-    if (!place) { return; }
-    var y = place.y + (place.past ? parts.plan.getBoundingClientRect().bottom + scrollY - place.end : 0);
-    // The page scrolls smoothly for its links; this is no movement the reader asked for.
-    if (scrollY !== y && typeof scrollTo === "function") { scrollTo({ top: y, behavior: "instant" }); }
+    page.redraw(function () {
+      var was = { PLAN: PLAN, plan: plan, named: planNamed };
+      PLAN = block;
+      plan = block.plan;
+      planBehind = false;
+      try {
+        draw(lastGood || shown);
+      } catch (error) {
+        PLAN = was.PLAN;
+        plan = was.plan;
+        planNamed = was.named;
+        planBehind = true;
+        // The failed draw may have asked at the quick pace; this answer says to ask at the slow one.
+        clearTimeout(planAsked);
+        planAsked = null;
+        safely(lastGood || shown, "plan");
+      }
+    }, "read");
   }
 
   function drawPlan(doc) {
@@ -5199,7 +5206,7 @@
     var behind = null;
     if (live ? planBehind : named && named !== plan.updated) {
       // Said under the headline, not in it: what is wrong, and the one thing the reader can do about it.
-      var again = el("button", null, "Reload the page");
+      var again = withKey(el("button", null, "Reload the page"), "plan", "reload");
       again.type = "button";
       again.addEventListener("click", function () { if (typeof location === "object" && typeof location.reload === "function") { location.reload(); } });
       behind = add(el("p", "plan-reload"), el("span", null, live ? "The plan has changed, and this page couldn't load the new one." : "The plan has changed since this page was made."), again);
@@ -5234,6 +5241,7 @@
         var li = add(el("li", proof.next && proofStuck(proof.next, proof) ? "stuck" : null), issue(text(unit.subject), unitName(unit)), el("span", "po-title", text(unit.title)),
           add(el("span", "po-next"), el("b", null, unitStanding(proof)), said ? " · " + said : null));
         li.setAttribute("tabindex", "-1");
+        withKey(li, "plan-row", text(unit.subject));
         planRows[text(unit.subject)] = li;
         ul.appendChild(li);
       });
@@ -5252,10 +5260,10 @@
     switcher.setAttribute("role", "group");
     switcher.setAttribute("aria-label", "Show the plan");
     [[false, "As amended"], [true, "As approved"]].forEach(function (choice) {
-      var button = el("button", null, choice[1]);
+      var button = withKey(el("button", null, choice[1]), "plan-switch", choice[0] ? "approved" : "amended");
       button.type = "button";
       button.setAttribute("aria-pressed", String(planAsApproved === choice[0]));
-      button.addEventListener("click", function () { planAsApproved = choice[0]; drawPlan(shown); });
+      button.addEventListener("click", function () { planAsApproved = choice[0]; page.redraw(function () { drawPlan(shown); }, "reader"); });
       switcher.appendChild(button);
     });
     switcher.appendChild(el("span", "ps-when", "Approved " + (spoken(approved.at) || "at an unknown time") + (text(approved.review) ? " · " + text(approved.review) : "")));
@@ -5265,6 +5273,7 @@
     shownUnits.forEach(function (unit) {
       var row = unitRow(allProofs[text(unit.subject)], kinds, planAsApproved);
       row.setAttribute("tabindex", "-1");
+      withKey(row, "plan-unit-row", text(unit.subject));
       planRows["all:" + text(unit.subject)] = row;
       all.appendChild(row);
     });
@@ -5331,22 +5340,20 @@
       // A story whose card says where it stands leaves its proofs to the plan, behind the button.
       stated && !removed && !proof.proven ? null : el("span", "pu-standing", removed ? "Removed from the plan" : unitStanding(proof)));
     if (!removed && proof.next && !stated) { box.appendChild(el("span", "d-plan-next", proofSaid(proof.next, proof, Boolean(closedEntry(doc))))); }
-    var go = el("button", "d-plan", "See in the plan");
+    var go = withKey(el("button", "d-plan", "See in the plan"), "plan-unit", subject);
     go.type = "button";
     go.setAttribute("data-plan-unit", subject);
     go.addEventListener("click", function (event) {
       event.stopPropagation();
       var row = !proof.proven && unit.removed !== true ? planRows[subject] : null;
       if (!row) {
-        planFolds.units = true;
-        rememberFolds();
+        // The row is in the units fold, which page.go opens, saved, on the way to it.
         planAsApproved = false;
-        drawPlan(shown);
+        page.redraw(function () { drawPlan(shown); }, "reader");
         row = planRows["all:" + subject];
       }
       if (row) {
-        revealPage(row);
-        if (typeof row.scrollIntoView === "function") { row.scrollIntoView({ block: "center" }); }
+        page.go({ chapter: "plan", node: row }, "link");
         row.focus({ preventScroll: true });
       }
     });
@@ -5365,16 +5372,19 @@
   /** A tone's mark, as a beat and the legend both draw it; a tone the page doesn't know draws as a note. */
   function toneMark(tone) { return glyph(MARK_OF[tone] || "note"); }
   var DEPTH_KEY = (typeof VIEW.themeKey === "string" && VIEW.themeKey ? VIEW.themeKey.replace(/:theme$/, "") : "delivery-views") + ":story-depth";
+  // The reader's depth, saved under its own key, and the filter, kept for the visit.
+  var depthPick = page.state(DEPTH_KEY, { saved: true });
+  var filterPick = page.state("story:filter");
+  function storyFilterNow() { var picked = filterPick.get(); return typeof picked === "string" ? picked : "all"; }
   function storyOf(doc) {
     var story = isObject(doc.story) ? doc.story : null;
     return story && Array.isArray(story.chapters) && Array.isArray(story.beats) && Array.isArray(story.threads) && isObject(story.digest) ? story : null;
   }
   // The reader's depth: theirs once chosen, else Story while the delivery runs and Headlines once it has closed.
   function storyDepth(story) {
-    var chosen = null;
-    try { chosen = localStorage.getItem(DEPTH_KEY); } catch (error) { chosen = null; }
+    var chosen = depthPick.get();
     if (DEPTHS.some(function (depth) { return depth[0] === chosen; })) { return chosen; }
-    return storyDepthChosen || (story.state === "closed" ? "headline" : "story");
+    return story.state === "closed" ? "headline" : "story";
   }
   // The beat that tells one entry in full, by the entry's id, or null when the story holds none for it.
   var toldBy = typeof WeakMap === "function" ? new WeakMap() : null;
@@ -5410,7 +5420,7 @@
   /** A commit the words name, as a link to it on the forge when the page was given its address: cut short to read. */
   function commitRef(sha) {
     var href = commitHref(sha);
-    var commit = el(href ? "a" : "code", "fact-ref", short(sha));
+    var commit = withKey(el(href ? "a" : "code", "fact-ref", short(sha)), "commit", sha);
     if (href) {
       commit.setAttribute("href", href);
       commit.setAttribute("target", "_blank");
@@ -5534,16 +5544,17 @@
   /** What each mark on the page means: one entry for each tone among the beats in view, in the story's words. */
   function storyLegend(story, depth) {
     var present = Object.create(null);
-    story.beats.forEach(function (beat) { if (beatShown(beat, depth, storyFilter)) { present[text(beat.tone)] = true; } });
+    story.beats.forEach(function (beat) { if (beatShown(beat, depth, storyFilterNow())) { present[text(beat.tone)] = true; } });
     var legend = el("div", "story-legend");
     list(story.tones).filter(function (tone) { return isObject(tone) && present[text(tone.tone)]; }).forEach(function (tone) {
       legend.appendChild(add(el("span"), toneMark(text(tone.tone)), text(tone.word)));
     });
     return legend.childNodes.length ? legend : null;
   }
-  function drawHappened(doc) {
+  /** What happened; `eased` when the reader changed its depth or filter, the one change its height eases for. */
+  function drawHappened(doc, eased) {
     var inner = parts.happened;
-    var from = runHeldHeight(inner);
+    var from = eased ? runHeldHeight(inner) : null;
     var story = storyOf(doc);
     if (!story) {
       inner.replaceChildren(el("div", "kicker", "What happened"), el("h2", "title", "The story could not be told from this record."));
@@ -5553,10 +5564,9 @@
     var depth = storyDepth(story);
     var seen = Object.create(null);
     story.beats.forEach(function (beat) { if (isObject(beat)) { seen[beatKey(beat)] = true; } });
-    var switches = add(el("div", "story-bar"), choice("Depth", DEPTHS, depth, function (picked) {
-      storyDepthChosen = picked;
-      try { localStorage.setItem(DEPTH_KEY, picked); } catch (error) { /* chosen until the page reloads */ }
-    }, "depth"), choice("Show", FILTERS, storyFilter, function (picked) { storyFilter = picked; }, "tab"));
+    var storyFilter = storyFilterNow();
+    var switches = add(el("div", "story-bar"), choice("Depth", DEPTHS, depth, function (picked) { depthPick.set(picked); }, "depth"),
+      choice("Show", FILTERS, storyFilter, function (picked) { filterPick.set(picked); }, "tab"));
     var beats = Object.create(null);
     story.beats.forEach(function (beat) { if (isObject(beat)) { beats[text(beat.id)] = beat; } });
     // The setbacks, each told once in the ledger above the chapters, by row id.
@@ -5602,8 +5612,9 @@
     add(inner, el("div", "kicker", "What happened"), el("h2", "title", text(digest.head)),
       say ? el("p", "say", say) : null, storyLegend(story, depth), switches,
       ledger && ledger.length && (storyFilter === "all" || storyFilter === "problems") ? setbackLedger(ledger) : null, ol);
-    // Depth changes density in place: the chapter eases from the height it had, on the shared fold's motion.
-    runEaseHeight(inner, from);
+    // Depth changes density in place: the chapter eases from the height it had, on the shared fold's motion. A redraw
+    // the reader didn't ask for keeps its height still.
+    if (eased) { runEaseHeight(inner, from); }
   }
   /**
    * Before anything has happened: no switches over an empty list, just what the chapter will tell and the marks it
@@ -5666,6 +5677,7 @@
       li.id = "setback-" + text(row.id);
       li.setAttribute("data-row", text(row.id));
       li.setAttribute("tabindex", "0");
+      withKey(li, "setback", text(row.id));
       var words = isObject(row.words) ? row.words : {};
       var what = add(el("div", "ledger-what"), add.apply(null, [el("b")].concat(linked(words.head))), el("span", "ledger-line", text(words.line)));
       var when = open
@@ -5687,15 +5699,14 @@
     var here = text(chapter.id);
     var state = row.state === "open" ? "still stands" : chapters.ended === here && chapters.opened === here ? "over" :
       chapters.ended === here ? "ended here" : "opened here, ended later";
-    var link = el("a", "setback-link", text(words.head).replace(/\.$/, "") + " · " + state);
+    var link = withKey(el("a", "setback-link", text(words.head).replace(/\.$/, "") + " · " + state), "setback-link", text(row.id) + ":" + here);
     link.setAttribute("href", "#setback-" + text(row.id));
     link.addEventListener("click", function (event) {
       var target = document.getElementById("setback-" + text(row.id));
       if (!target) { return; }
       event.preventDefault();
-      target.focus();
-      revealPage(target);
-      if (typeof target.scrollIntoView === "function") { target.scrollIntoView({ block: "nearest" }); }
+      page.go({ item: target.id }, "link");
+      target.focus({ preventScroll: true });
     });
     return add(el("p", "chapter-setback" + (row.state === "open" ? " is-open" : "")), glyph("stop"), link);
   }
@@ -5705,11 +5716,12 @@
     group.setAttribute("role", "group");
     group.setAttribute("aria-label", label);
     options.forEach(function (option) {
-      var button = el("button", null, option[1]);
+      var button = withKey(el("button", null, option[1]), data, option[0]);
       button.type = "button";
       button.setAttribute("aria-pressed", String(current === option[0]));
       button.setAttribute("data-" + data, option[0]);
-      button.addEventListener("click", function () { var focus = focusMark(); pick(option[0]); drawHappened(shown); refocus(focus); });
+      // Drawn again through the page's one redraw transaction, which brings focus back to the button by its key.
+      button.addEventListener("click", function () { pick(option[0]); page.redraw(function () { drawHappened(shown, true); }, "reader"); });
       group.appendChild(button);
     });
     return group;
@@ -5740,7 +5752,7 @@
     if (!groups.length) {
       parts.across.replaceChildren();
       // A reader on the chapter as it empties turns to the first page rather than an empty one.
-      if (currentPage === "across") { showPage(chapterIds()[0]); }
+      if (currentPage === "across") { page.go({ chapter: chapterIds()[0] }, "address"); }
       return;
     }
     // A group of another epic delivers nothing of this one: it is named after the epic's own, under Also linked.
@@ -5783,8 +5795,7 @@
         add(fold, add(el("div", "across-group"), headOf(group), ul.firstChild ? ul : null));
       });
       // Shut by default, as Elsewhere is; a reader who opened it keeps it open through a redraw.
-      if (prev.acrossOpen) { fold.setAttribute("open", ""); }
-      fold.addEventListener("toggle", function () { prev.acrossOpen = fold.hasAttribute("open"); });
+      page.fold(fold, { key: "across" });
       nodes.push(fold);
     }
     if (others.length) {
@@ -5951,7 +5962,7 @@
     if (link) { link.hidden = !shared; }
     if (!shared) {
       parts[id].replaceChildren();
-      if (currentPage === id) { showPage(chapterIds()[0]); }
+      if (currentPage === id) { page.go({ chapter: chapterIds()[0] }, "address"); }
       return null;
     }
     return parts[id];
@@ -6037,8 +6048,6 @@
   }
 
   /* 6. Parked */
-  // Set-aside rows the reader opened, kept across live redraws.
-  var asideOpen = {};
   function asideChevron() {
     var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 24 24");
@@ -6047,30 +6056,22 @@
     svg.innerHTML = '<path d="M6 9l6 6l6 -6"/>';
     return svg;
   }
-  function toggleAside(row, words) {
-    if (!row.classList.contains("clamps")) return;
-    var open = row.classList.toggle("open");
-    asideOpen[words] = open;
-    row.setAttribute("aria-expanded", open ? "true" : "false");
-  }
-  // Only rows whose text runs past two lines become openable.
+  // Only rows whose text runs past two lines become openable: each is measured clamped, whether or not it is open.
   function markClamped(listNode) {
     Array.prototype.forEach.call(listNode.children, function (row) {
       var head = row.firstChild;
-      var wasOpen = row.classList.contains("open");
-      if (wasOpen) row.classList.remove("open");
+      row.classList.add("measuring");
       var clamps = head.scrollHeight > head.clientHeight + 1;
-      if (wasOpen) row.classList.add("open");
+      row.classList.remove("measuring");
       row.classList.toggle("clamps", clamps);
       if (clamps) {
         row.tabIndex = 0;
         row.setAttribute("role", "button");
-        row.setAttribute("aria-expanded", wasOpen ? "true" : "false");
+        if (!row.hasAttribute("aria-expanded")) { row.setAttribute("aria-expanded", "false"); }
       } else {
         row.removeAttribute("tabindex");
         row.removeAttribute("role");
         row.removeAttribute("aria-expanded");
-        row.classList.remove("open");
       }
     });
   }
@@ -6104,14 +6105,12 @@
         var asideList = el("ol", "aside");
         aside.forEach(function (words) {
           // The full text, clamped to two lines; a row that overflows opens in place to show all of it.
+          // A row is a disclosure on the page's one fold, keyed by its words, which are what the plan names it by.
           var row = add(el("li"), el("span", "aside-head", words), asideChevron());
-          if (asideOpen[words]) row.classList.add("open");
-          row.addEventListener("click", function () { toggleAside(row, words); });
-          row.addEventListener("keydown", function (event) {
-            if (event.key !== "Enter" && event.key !== " ") return;
-            event.preventDefault();
-            toggleAside(row, words);
-          });
+          // Focusable as it is drawn, so focus can come back to it through a redraw; a row that turns out not to clamp
+          // loses it once measured.
+          row.tabIndex = 0;
+          page.fold({ button: row }, { key: "aside:" + words, can: function () { return row.classList.contains("clamps"); } });
           asideList.appendChild(row);
         });
         requestAnimationFrame(function () { markClamped(asideList); });
@@ -6149,9 +6148,7 @@
     });
     var fold = add(el("details", "elsewhere-fold"), el("summary", null, words), ul);
     // Shut by default; a reader who opened it keeps it open through a redraw.
-    if (prev.elsewhereOpen) { fold.setAttribute("open", ""); }
-    fold.addEventListener("toggle", function () { prev.elsewhereOpen = fold.hasAttribute("open"); });
-    return fold;
+    return page.fold(fold, { key: "elsewhere" });
   }
 
   function usable(doc) { return isObject(doc) && isObject(doc.state); }
@@ -6162,7 +6159,6 @@
       Object.keys(parts).filter(function (name) { return name !== "now"; }).forEach(function (name) { parts[name].replaceChildren(); });
       return;
     }
-    var focus = focusMark();
     // A redraw can remove the id under the pointer without a mouseleave, so its card goes too.
     hideCard();
     shown = doc;
@@ -6178,7 +6174,6 @@
     drawHappened(doc);
     drawParked(doc);
     dropTurned();
-    refocus(focus);
     keepPace();
   }
   /**
@@ -6203,41 +6198,24 @@
       if (node && typeof node.getAnimations === "function") { node.getAnimations({ subtree: true }).forEach(onPace); }
     }, true);
   }
-  // A redraw replaces the stops, links and tabs; keyboard focus stays on the one it was on.
-  function focusMark() {
-    var active = document.activeElement;
-    if (!active || !app.contains(active) || !active.getAttribute) { return null; }
-    var names = ["data-subject", "data-ticket", "data-tab"];
-    for (var i = 0; i < names.length; i += 1) {
-      if (active.hasAttribute(names[i])) {
-        // The same id can sit under its stop and in the detail; focus comes back to the same place.
-        return { node: active, name: names[i], value: active.getAttribute(names[i]), within: active.closest("#detail, .stop-label, .feed, .parked, .checking, .kicker, .chapter") };
+  // A record that fails to draw leaves the last good drawing in place and says so. Every redraw goes through the page's
+  // one redraw transaction (page.js), which keeps the reader's place; `why` names what asked for it.
+  function safely(doc, why) {
+    page.redraw(function () {
+      try { draw(doc); lastGood = doc; } catch (error) {
+        if (lastGood && doc !== lastGood) {
+          if (connection === "live") { connection = "failed"; }
+          try { draw(lastGood); } catch (again) { /* the last drawing stays */ }
+        }
       }
-    }
-    return null;
-  }
-  function refocus(mark) {
-    if (!mark || app.contains(mark.node)) { return; }
-    // Matched by attribute value, never by a selector built from record text.
-    var same = Array.prototype.filter.call(app.querySelectorAll("[" + mark.name + "]"), function (node) { return node.getAttribute(mark.name) === mark.value; });
-    var place = mark.within ? (mark.within.id ? "#" + mark.within.id : "." + mark.within.className.split(" ")[0]) : null;
-    var again = same.filter(function (node) { return !place || node.closest(place); })[0] || same[0];
-    if (again) { again.focus({ preventScroll: true }); }
+      // Every draw keeps the reader on their page; the first one opens the page the address names.
+      if (currentPage === null) {
+        page.start({ chapters: chapterIds, show: showPage, layout: function () { return PAGED ? "paged" : "scroll"; } });
+      } else if (PAGED) { showPage(currentPage); }
+    }, why);
   }
 
-  // A record that fails to draw leaves the last good drawing in place and says so.
-  function safely(doc) {
-    try { draw(doc); lastGood = doc; } catch (error) {
-      if (lastGood && doc !== lastGood) {
-        if (connection === "live") { connection = "failed"; }
-        try { draw(lastGood); } catch (again) { /* the last drawing stays */ }
-      }
-    }
-    // Every draw keeps the reader on their page; the first one opens the page the address names.
-    if (currentPage === null) { route(); } else if (PAGED) { showPage(currentPage); }
-  }
-
-  safely(embedded);
+  safely(embedded, "first");
   var store = globalThis.deliveryStateStore;
   if (isObject(store)) {
     if (typeof store.onStatus === "function") {
@@ -6247,7 +6225,7 @@
           var next = live ? "live" : "down";
           if (next === connection) { return; }
           connection = next;
-          safely(lastGood || shown);
+          safely(lastGood || shown, "status");
         });
       } catch (error) { /* a store without a status line still serves its pushes and read below */ }
     }
@@ -6262,7 +6240,7 @@
           pushed = true;
           connection = "live";
           app.setAttribute("data-source", "live");
-          safely(doc);
+          safely(doc, "push");
           refreshRuns();
         });
       } catch (error) { /* a store that cannot subscribe still serves its read below */ }
@@ -6272,15 +6250,15 @@
         if (pushed || !usable(doc)) { return; }
         app.setAttribute("data-source", "live");
         if (connection === "saved") { connection = "connected"; }
-        safely(doc);
+        safely(doc, "read");
       }, function () {
-        if (!pushed) { connection = "unreadable"; safely(lastGood || shown); }
+        if (!pushed) { connection = "unreadable"; safely(lastGood || shown, "read"); }
       });
     }
   }
   // Relative times and running checks follow the page's own clock between writes.
   // Each tick also re-reads the served page: a supervisor's pass rewrites its Needs you list without a record push.
-  if (typeof setInterval === "function") { setInterval(function () { refreshRuns(); safely(lastGood || shown); }, 30000); }
+  if (typeof setInterval === "function") { setInterval(function () { refreshRuns(); safely(lastGood || shown, "tick"); }, 30000); }
   // The run line is drawn at the page's width, so a new width redraws it.
   var resizing = null;
   if (typeof addEventListener === "function") {
@@ -6290,7 +6268,7 @@
       if (innerWidth === drawnWidth) { return; }
       drawnWidth = innerWidth;
       clearTimeout(resizing);
-      resizing = setTimeout(function () { safely(lastGood || shown); }, 200);
+      resizing = setTimeout(function () { safely(lastGood || shown, "width"); }, 200);
     });
   }
 })();

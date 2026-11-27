@@ -1,15 +1,16 @@
 // The runs page: every run, open ones first under Now, then the ended ones, each newest first. Each run's line draws its
-// workflow stages in the order it first entered them, the current one ringed; its panel opens in place. A live page reads
-// itself again whenever the server says the runs moved, and keeps open what the reader opened.
+// workflow stages in the order it first entered them, the current one ringed; its panel opens in place, through the page
+// controller's one fold (page.js). A live page reads itself again whenever the server says the runs moved, and redraws
+// through the controller, which keeps the reader's place, what they opened and what they focused.
 (function () {
   "use strict";
   function read(id, fallback) {
     try { return JSON.parse(document.getElementById(id).textContent) || fallback; } catch (error) { return fallback; }
   }
-  var page = read("delivery-run-page", { runs: [], notes: ["The runs could not be read."] });
+  var record = read("delivery-run-page", { runs: [], notes: ["The runs could not be read."] });
   var VIEW = read("delivery-run-page-view", {});
   var app = document.getElementById("app");
-  var opened = {};
+  var CHAPTER = "runs";
   var served = typeof location === "object" && /^https?:$/.test(location.protocol);
 
   function el(tag, className, value) {
@@ -41,9 +42,10 @@
     // Each path segment is encoded and the separators kept, as the live server names a view by its output.
     return (served ? "/view/" : "") + output.split("/").map(encodeURIComponent).join("/");
   }
-  function link(words, output) {
+  function link(words, output, kind, id) {
     var node = el("a", null, words);
     node.setAttribute("href", viewHref(output));
+    node.setAttribute("data-key", page.key(kind, id));
     return node;
   }
   function safeHref(value) { return /^https?:\/\//.test(value) ? value : null; }
@@ -101,7 +103,12 @@
     var href = isObject(known) ? safeHref(text(known.href)) : safeHref(change);
     var changeNode = el("p", "change");
     if (!change) { changeNode.textContent = "No change request opened."; }
-    else if (href) { var anchor = el("a", null, isObject(known) ? text(known.label) : change); anchor.setAttribute("href", href); changeNode.appendChild(anchor); }
+    else if (href) {
+      var anchor = el("a", null, isObject(known) ? text(known.label) : change);
+      anchor.setAttribute("href", href);
+      anchor.setAttribute("data-key", page.key("change", text(run.runId)));
+      changeNode.appendChild(anchor);
+    }
     else { changeNode.textContent = change; }
     box.appendChild(section("Change request", changeNode));
     var summary = isObject(run.summary) ? run.summary : null;
@@ -116,13 +123,15 @@
       resultNode.textContent = (text(result.result) || "ended") + " · " + cost + " · coverage " + (text(result.coverage) || "unreported");
     }
     box.appendChild(section("Result", resultNode));
-    if (run.section === "ended" && text(VIEW.history)) { box.appendChild(add(el("p", "history-link"), link("In the delivery history", VIEW.history))); }
+    if (run.section === "ended" && text(VIEW.history)) { box.appendChild(add(el("p", "history-link"), link("In the delivery history", VIEW.history, "history", text(run.runId)))); }
     return box;
   }
 
   function runNode(run) {
     var item = el("article", "run" + (run.needsYou ? " needs" : ""));
     item.setAttribute("data-run", text(run.runId));
+    // Its id is its run's, so a link to the run opens its panel.
+    if (text(run.runId)) { item.setAttribute("id", run.runId); }
     item.setAttribute("data-section", text(run.section));
     var button = el("button", "run-head");
     button.setAttribute("type", "button");
@@ -143,19 +152,16 @@
     if (run.section === "now") { list(run.waits).forEach(function (wait) { if (isObject(wait)) { item.appendChild(waitNode(wait)); } }); }
     if (text(run.piece)) {
       item.appendChild(add(el("p", "piece"), "Piece " + run.piece + " of this delivery", text(VIEW.lineMap) ? " · " : null,
-        text(VIEW.lineMap) ? link("on the line map", VIEW.lineMap) : null));
+        text(VIEW.lineMap) ? link("on the line map", VIEW.lineMap, "piece", text(run.runId)) : null));
     }
-    var openable = run.unavailable !== true && run.clipped !== true;
-    button.setAttribute("aria-expanded", openable && opened[run.runId] ? "true" : "false");
+    var openable = run.unavailable !== true && run.clipped !== true && text(run.runId);
     if (openable) {
+      // The page's one fold: shut until the reader opens it, kept open for the visit across every redraw.
       var detail = detailNode(run);
-      detail.hidden = !opened[run.runId];
       item.appendChild(detail);
-      button.addEventListener("click", function () {
-        opened[run.runId] = !opened[run.runId];
-        detail.hidden = !opened[run.runId];
-        button.setAttribute("aria-expanded", opened[run.runId] ? "true" : "false");
-      });
+      page.fold({ button: button, region: detail }, { key: page.key("run", run.runId), of: item });
+    } else {
+      button.setAttribute("data-key", page.key("run", text(run.runId) || text(run.ticket) || "unread"));
     }
     return item;
   }
@@ -184,6 +190,7 @@
         var local = el("a", "preview-live", "Live view");
         local.setAttribute("href", live);
         local.setAttribute("aria-label", "Live view of " + said);
+        local.setAttribute("data-key", page.key("preview-live", text(preview.plan) || live));
         links.appendChild(local);
       }
       var hosted = /^https:\/\//.test(text(preview.hosted)) ? preview.hosted : null;
@@ -191,6 +198,7 @@
         var away = el("a", "preview-hosted", "Hosted view");
         away.setAttribute("href", hosted);
         away.setAttribute("aria-label", "Hosted view of " + said);
+        away.setAttribute("data-key", page.key("preview-hosted", text(preview.plan) || hosted));
         links.appendChild(away);
       }
       row.appendChild(links);
@@ -202,18 +210,21 @@
 
   function draw() {
     var kicker = add(el("div", "kicker"), el("span", null, "Runs"),
-      text(VIEW.lineMap) ? link("The line map", VIEW.lineMap) : null, text(VIEW.history) ? link("The delivery history", VIEW.history) : null);
+      text(VIEW.lineMap) ? link("The line map", VIEW.lineMap, "view", VIEW.lineMap) : null,
+      text(VIEW.history) ? link("The delivery history", VIEW.history, "view", VIEW.history) : null);
     var say = VIEW.runs === true ? "Every run of every workflow in this repository, as of " + at(VIEW.asOf) + " UTC."
       : "No runs command is configured.";
     var top = add(el("div", "page"), kicker, el("h1", "title", "What every workflow is doing."), el("p", "say", say));
+    // The page's one chapter, named for itself.
+    top.setAttribute("id", CHAPTER);
     if (VIEW.watched === "unwatched") {
       top.appendChild(el("p", "unwatched", "Runs aren't being watched: the live server could not read the run store, so this page shows them as of its last render."));
     }
-    var notes = list(page.notes);
+    var notes = list(record.notes);
     if (notes.length) { top.appendChild(add.apply(null, [el("ul", "notes")].concat(notes.map(function (note) { return el("li", null, text(note)); })))); }
     var previews = list(VIEW.previews).filter(isObject);
     if (previews.length) { top.appendChild(previewsNode(previews)); }
-    var runs = list(page.runs).filter(isObject);
+    var runs = list(record.runs).filter(isObject);
     var now = runs.filter(function (run) { return run.section === "now"; });
     var ended = runs.filter(function (run) { return run.section !== "now"; });
     var nowBox = add(el("section", "now"), el("h2", null, "Now"));
@@ -227,7 +238,8 @@
     app.replaceChildren(add(top, nowBox, endedBox));
   }
 
-  function refetch() {
+  // Read again on the server's word, as `why` names it: a pushed record or moved runs.
+  function refetch(why) {
     if (!served || typeof fetch !== "function") { return; }
     // Its own address, never the one it was opened at: served as the front page while there was no record, the front
     // page becomes the line map once a record reads, and this page would never find itself there again.
@@ -237,16 +249,18 @@
       if (!found) { return; }
       var next = JSON.parse(found[1]);
       if (!isObject(next)) { return; }
-      page = next;
+      record = next;
       if (seen) { VIEW = JSON.parse(seen[1]) || VIEW; }
-      draw();
+      page.redraw(draw, why);
     }).catch(function () { /* the runs already shown stay */ });
   }
 
-  draw();
+  page.redraw(draw, "first");
+  // A one-chapter page: a link to Now, Ended or a run opens there through the controller.
+  page.start({ chapters: function () { return [CHAPTER]; }, show: function () {} });
   var store = globalThis.deliveryStateStore;
   if (isObject(store)) {
-    if (typeof store.onRuns === "function") { try { store.onRuns(refetch); } catch (error) { /* the page stays as rendered */ } }
-    if (typeof store.subscribe === "function") { try { store.subscribe(refetch); } catch (error) { /* likewise */ } }
+    if (typeof store.onRuns === "function") { try { store.onRuns(function () { refetch("runs"); }); } catch (error) { /* the page stays as rendered */ } }
+    if (typeof store.subscribe === "function") { try { store.subscribe(function () { refetch("push"); }); } catch (error) { /* likewise */ } }
   }
 })();

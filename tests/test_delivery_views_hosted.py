@@ -263,6 +263,31 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(views_common.ConfigError):views_common.validate_config(bad)
 
 
+class BuildAssetsTests(unittest.TestCase):
+    """The hosted build adapts the corpus renderer to its store; the page's own mechanics stay the page's."""
+    BUILD = ROOT / 'hosted/delivery-viewer/scripts/build-assets.mjs'
+
+    @staticmethod
+    def scroll_writes(source):
+        return [word for word in ('hostedY', 'scrollTo', 'scrollY', 'scrollIntoView') if word in source]
+
+    def test_the_build_makes_no_chapter_of_its_own(self):
+        source = self.BUILD.read_text(encoding='utf-8')
+        hand_built = [word for word in ('el("section", "chapter', 'chapter-plan arrived') if word in source]
+        self.assertEqual(hand_built, [], 'a chapter is made by the page (chapter("plan") in line-map.js), watched and arriving like the others')
+        planted = source + '\n// var section = el("section", "chapter chapter-plan arrived");\n'
+        self.assertEqual([word for word in ('el("section", "chapter', 'chapter-plan arrived') if word in planted],
+                         ['el("section", "chapter', 'chapter-plan arrived'])
+
+    def test_the_build_keeps_no_scroll_of_its_own(self):
+        source = self.BUILD.read_text(encoding='utf-8')
+        self.assertEqual(self.scroll_writes(source), [],
+                         'the page keeps the reader\'s place itself, through page.redraw in page.js; no hosted patch should')
+        # A scroll restore planted back in the build is found.
+        planted = source + '\n// var hostedY = scrollY; scrollTo({top: hostedY});\n'
+        self.assertEqual(self.scroll_writes(planted), ['hostedY', 'scrollTo', 'scrollY'])
+
+
 class ReceiverTests(unittest.TestCase):
     """Real loopback HTTP exercises exact transport bytes and redirect handling."""
     run_quietly=True

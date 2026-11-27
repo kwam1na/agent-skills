@@ -1,4 +1,5 @@
-// The delivery history: every listed run and export, newest first, each opening its run summary in place.
+// The delivery history: every listed run and export, newest first, each opening its run summary in place through the
+// page controller's one fold (page.js). A link to a row's key opens it.
 (function () {
   "use strict";
   var history = { rows: [], notes: [] };
@@ -42,20 +43,25 @@
     lineMap = el("a", null, "Back to the line map");
     // Each path segment is encoded and the separators kept, as the live server names a view by its output.
     lineMap.setAttribute("href", (served ? "/view/" : "") + VIEW.lineMap.split("/").map(encodeURIComponent).join("/"));
+    lineMap.setAttribute("data-key", page.key("view", VIEW.lineMap));
   }
   var runsPage = null;
   if (text(VIEW.runsPage)) {
     runsPage = el("a", null, "The runs");
     runsPage.setAttribute("href", (served ? "/view/" : "") + VIEW.runsPage.split("/").map(encodeURIComponent).join("/"));
+    runsPage.setAttribute("data-key", page.key("view", VIEW.runsPage));
   }
   var sources = [VIEW.runs === true ? "the delivery product" : null, text(VIEW.exports) ? "the exports tracked under " + VIEW.exports : null].filter(Boolean);
-  var page = add(el("div", "page"),
+  var CHAPTER = "history";
+  var top = add(el("div", "page"),
     add(el("div", "kicker"), el("span", null, "Delivery history"), lineMap, runsPage),
     el("h1", "title", "Past deliveries and runs, newest first."),
     el("p", "say", sources.length ? "Runs from " + sources.join(" and ") + ", as of " + at(history.asOf) + " UTC. Reload for newer."
       : "No runs command or export directory is configured."));
+  // The page's one chapter, named for itself.
+  top.setAttribute("id", CHAPTER);
   var notes = list(history.notes);
-  if (notes.length) { page.appendChild(add.apply(null, [el("ul", "notes")].concat(notes.map(function (note) { return el("li", null, text(note)); })))); }
+  if (notes.length) { top.appendChild(add.apply(null, [el("ul", "notes")].concat(notes.map(function (note) { return el("li", null, text(note)); })))); }
   var runs = add(el("div", "runs"), add(el("div", "head"),
     el("span", null, "Ticket"), el("span", null, "State"), el("span", null, "Started"), el("span", null, "Last seen"),
     el("span", null, "Duration"), el("span", null, "Rounds"), el("span", null, "Findings P0/P1/P2/P3"), el("span", null, "Delivery")));
@@ -65,9 +71,10 @@
     var summary = row && typeof row.summary === "object" && row.summary ? row.summary : {};
     var item = el("div", "row");
     item.setAttribute("data-run", text(row.key));
+    // Its id is its key, so a link to the row opens it.
+    if (text(row.key)) { item.setAttribute("id", row.key); }
     var button = el("button");
     button.setAttribute("type", "button");
-    button.setAttribute("aria-expanded", "false");
     var ticket = el("span", "ticket", text(summary.ticket) || text(row.label) || text(summary.runId) || text(row.key));
     var under = row.source === "telemetry" ? "telemetry record" + (text(row.label) && text(summary.ticket) ? " · " + text(row.label) : "")
       : text(summary.runId) || text(row.file);
@@ -82,14 +89,12 @@
     if (text(row.note)) { button.appendChild(el("span", "note", text(row.note))); }
     item.appendChild(button);
     var detail = el("div", "detail");
-    detail.hidden = true;
-    button.addEventListener("click", function () {
-      var opening = detail.hidden;
-      if (opening && !detail.firstChild) { detail.appendChild(runSummaryNode(summary)); }
-      detail.hidden = !opening;
-      button.setAttribute("aria-expanded", opening ? "true" : "false");
-    });
     add(runs, item, detail);
+    // The page's one fold, kept for the visit; its run summary is drawn the first time it opens, however it opens.
+    page.fold({ button: button, region: detail }, { key: page.key("history", text(row.key) || text(summary.runId) || "unread"), of: item,
+      onOpen: function () { if (!detail.firstChild) { detail.appendChild(runSummaryNode(summary)); } } });
   });
-  app.replaceChildren(add(page, runs));
+  app.replaceChildren(add(top, runs));
+  // A one-chapter page: a link to a row opens it through the controller.
+  page.start({ chapters: function () { return [CHAPTER]; }, show: function () {} });
 })();

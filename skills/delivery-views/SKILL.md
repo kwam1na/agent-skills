@@ -79,7 +79,8 @@ happened, parked), and a seventh, the plan, when the delivery has one (see
 names sibling deliveries (see "What the views show of siblings" below), with a
 detail panel for each piece of work. Its style and
 program are the skill's `assets/line-map.css`, `assets/line-map.js`,
-`assets/run-summary.css` and `assets/run-summary.js`, inlined into the page, and
+`assets/run-summary.css` and `assets/run-summary.js`, with the page controller,
+`assets/page.js`, inlined into the page before them, and
 it loads only its three typefaces from Google Fonts. It
 opts in to the live stream, so `live` serves it at `/view/<output>` and the
 page follows every record write; opened as a file, it shows the record as it
@@ -95,9 +96,22 @@ keys leave the page alone while the reader types in a field, holds a modifier,
 has the launcher open, or is in the chapters tab or a row that scrolls sideways.
 The Go to launcher, opened with Cmd-K or Ctrl-K, with `/` when not typing, or
 from the corner, reaches any page and anything else the page offers by name.
+Each page turn adds one entry to the browser's history, so Back and Forward step
+through the chapters the reader turned to, each at its top; a link within the
+chapter shown, a redraw or the layout switch adds none, and in the one-page
+layout nothing does, so Back leaves the page. Every navigation moves the page
+once.
 A live page reads its run summaries again from the view the server renders
 three seconds after each pushed record, every 30 seconds, and at once on each
-`event: runs`, which the server sends only after the views are written.
+`event: runs`, which the server sends only after the views are written, and
+redraws only when one of the seven blocks it reads (runs, links, reviews, needs,
+files, left-open and integration) has changed. What happened eases its height
+only when the reader changes its depth or filter. Every
+redraw, whether a pushed record, the clock, a new width or a refresh, keeps the
+reader's place: the element at the top of the window stays where it stood, or,
+with it gone, the scroll stays as far as the page still reaches. A new record
+or connection status draws at once; of the other redraws asked for in one
+frame, the first draws at once and the rest merge into one at the next frame.
 
 Now's headline is the delivery's name, under its kicker. Beneath it a status row
 says where the delivery stands: up to four marks, with one sentence beside them
@@ -191,9 +205,10 @@ the same shape at any delivery size:
 - **The finish post** carries its label and, beside it, one square per finish
   line, filled once met, with how many are met.
 - **Naming and lighting.** Hovering or focusing a tick names its story and state
-  and lights its lane; hovering a lane's row lights its ticks. A tick opens its
-  story's panel, as a stop does, so a story folded out of its row is still one
-  step away. Each step of the bar names its status, and each square its finish
+  and lights its lane; hovering a lane's row or a stop lights its lane. Hovering
+  only names and lights: a click, Enter, Space or keyboard focus on a tick opens
+  its story's panel, as on a stop, so a story folded out of its row is still one
+  step away, and the panel stays on what the reader picked. Each step of the bar names its status, and each square its finish
   line. Every tick, step and square is reached from the keyboard, and the
   drawing's accessible name states the landed, met and rejoin counts.
 
@@ -282,12 +297,50 @@ result texts from the newest round backwards. The record shows what was stored
 as each lens's brief and result, as stored; it does not prove the lens received
 or followed it.
 
+## Extending the page
+
+The views' page controller, `assets/page.js`, owns where the reader is, how the
+page scrolls and how it redraws. A feature reaches these only through its
+public calls, as the views' own code does, never beside them: no asset but
+`page.js` writes the scroll or the address, and the page tests' pins say which
+call to use.
+
+| To add | Call | It gets, with no other code |
+| --- | --- | --- |
+| a kind of navigation | `page.reasons.<name> = {address, scroll}`, then `page.go(location, name)` | its history entry or none (always none in the one-page layout), and one scroll by its rule |
+| a sideways-scrolling region | `page.sideways(key, node)` on every draw | its distance from its right edge kept through redraws |
+| a redraw trigger | `page.redraw(draw, why)` | the reader's place kept, and redraws within one frame merged |
+| motion | `page.motion(fromReader)` | reduced motion respected, and a keyboard reader's own actions kept still |
+| something open, closed or picked | `page.state(key, {saved})` | kept through redraws; with `saved`, through reloads, in the browser's storage under `key` |
+| a fold or disclosure | `page.fold(node, {key})`, and `page.open(node, open)` to open or shut it | the page's motion, its state kept, and opened by a link to anything inside it |
+| a focusable control | `page.key(kind, id)` as its `data-key` | focus returned to it after a redraw, in the same region, whatever was drawn above it |
+
+Every open, shut or picked state on the page is a `page.state` entry: a fold's is
+`fold:<key>`. A saved entry keeps the page's own storage keys and formats: the
+layout as `paged` or `scroll`, the story's depth by its name, and the plan's open
+folds as a JSON list of their names. A link to anything inside a fold, followed
+in the page or loaded fresh, opens that fold and every fold holding it; `of`
+names an element a fold stands for, as a decision's fold stands for its row.
+
+Every control the views draw carries a `data-key` from `page.key(kind, id)`: a
+kind of control and the record's own id for it (`stop:PAY-2358`,
+`fold:plan:units`, `round:<run>:2`), never its place on the page. A redraw puts
+focus back on the same key, in the same region (the nearest holder with an id,
+so a ticket in the detail panel and the same ticket under its stop are told
+apart), and Escape in the detail panel returns focus to the stop or tick that
+opened it.
+
+A reason's `address` is `push`, `replace`, `push-if-chapter-changes` or `none`;
+its `scroll` is `top`, `end`, `item`, `item-or-top`, `keep` or `none`. The
+built-in reasons are `turn`, `back-turn`, `link`, `address`, `history`,
+`layout`, `first` and `follow`.
+
 ## The history
 
 `scripts/render.py history` prints the delivery history: past deliveries and
 runs, newest first, each opening the line map's run summary in place. Its
 style and program are `assets/history.css` and `assets/history.js` with the
-run summary's two assets, inlined into the page. Declare it beside the line
+run summary's two assets and the page controller, inlined into the page. Declare it beside the line
 map; the line map links to it, and it links back to the binding's line map, as
 a file and, when served, at the line map's `/view/` address:
 
@@ -306,12 +359,19 @@ delivery each run belongs to. Its run commands share the render's deadline, and
 past the 4 MiB page budget the oldest rows give up their summaries first.
 `--now` fixes the history's as-of time, for tests.
 
+The history follows the same page rules as the line map, through `page.js`: it
+is a one-chapter page named `history`, each row is a `page.fold` disclosure
+keyed `history:<row key>` whose run summary is drawn the first time it opens,
+and each row's `id` is its key, so a link to `#<row key>` opens that row and
+brings it into view. Every control carries a key, and nothing is kept in the
+browser's storage: a row's open state lasts for the visit.
+
 ## The runs page
 
 `scripts/render.py runs` prints the runs page: every run of every workflow the
 `runs` command lists, in the line map's typefaces, colour tokens and run
 summary. Its style and program are `assets/runs.css` and `assets/runs.js` with
-the run summary's two assets, inlined into the page. Declare it beside the line
+the run summary's two assets and the page controller, inlined into the page. Declare it beside the line
 map, and name it in the binding's `state.liveRuns` so the live server watches
 the run store and serves it as the front page while there is no record:
 
@@ -347,8 +407,18 @@ either can't be read for is shown unavailable, and the others render. Past the
 4 MiB budget, ended runs give up their details first, oldest first, then open
 ones. When the live server says, in `DELIVERY_LIVE_RUNS`, that the run store
 isn't watched, the page says so. Served live, the page reads itself again on
-each `event: runs` through the adapter's `onRuns`, keeping open panels open.
+each `event: runs` through the adapter's `onRuns`, and on each pushed record.
 `--now` fixes the page's as-of time, for tests.
+
+The runs page follows the same page rules as the line map, through `page.js`:
+it is a one-chapter page named `runs`, and every read draws through
+`page.redraw`, so a push or a runs event keeps the reader's place, the panels
+they opened and the control they focused, even when a run is added above. Each
+run is a `page.fold` disclosure keyed `run:<runId>`, and each run's `id` is its
+run id, so a link to `#now`, `#ended` or a run lands there, opening the run's
+panel. Links to the line map, the history and the previews leave the page as
+links do. Every control carries a key, and nothing is kept in the browser's
+storage: a panel's open state lasts for the visit.
 
 With no record, the live server gives every view `{"spec":
 "delivery-state-absent/1"}`. `runs` renders from it as from a record; `line-map`
