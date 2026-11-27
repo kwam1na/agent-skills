@@ -197,6 +197,10 @@ export function planEnd(app) {
  * `planEnd`, and the result's `scrollY` says where the window ended. The result's `fetched` lists fetches of the page's
  * address and `fetchOptions` what each asked for.
  *
+ * `layout: { height? }` lays the page out crudely (each shown element a 10-pixel box in document order, holding its shown
+ * descendants) in a window `height` tall, 300 by default; every layout read clamps the reader's place to what the page then
+ * holds, as a browser's does, and `scrollTo` moves it. Read `scrollY` from a `run` step.
+ *
  * `frames: true` gives the page `requestAnimationFrame` with frames held, not run: a `{ frame: <ms> }` step moves the page's
  * `performance.now()` on by that many milliseconds and runs the frames then waiting, once each, so a count that eases
  * from one number to another can be read where it starts, part way and where it ends.
@@ -257,6 +261,56 @@ export async function openPage(page, scenario = {}) {
           if (!this.closest("#plan")) return sized.call(this);
           return { bottom: planEnd(window.document.getElementById("app")) - at, top: 0, left: 0, right: 0, width: 0, height: 0 };
         };
+      }
+      if (scenario.layout) {
+        // A page laid out as a browser would, crudely: every element shown is a box 10 pixels tall stacked in document
+        // order, holding its shown descendants, and nothing inside `hidden` takes room. The window is `layout.height`
+        // tall. As in a browser, every layout read clamps the reader's place to what the page can hold at that moment, so a
+        // redraw that measures while a part stands short moves the window unless the page puts the reader back.
+        const viewport = scenario.layout.height ?? 300;
+        let at = 0;
+        let boxes = null;
+        const changes = new window.MutationObserver(() => {});
+        const laidOut = () => {
+          if (boxes && !changes.takeRecords().length) return boxes;
+          changes.takeRecords();
+          boxes = new Map();
+          let row = 0;
+          const place = (node) => {
+            if (node.hidden || node.tagName === "SCRIPT" || node.tagName === "STYLE") return;
+            const top = row;
+            row += 1;
+            for (const child of node.children) place(child);
+            boxes.set(node, { top: top * 10, bottom: row * 10 });
+          };
+          place(window.document.body);
+          boxes.height = row * 10;
+          return boxes;
+        };
+        const flush = () => { const height = laidOut().height; at = Math.max(0, Math.min(at, height - viewport)); return height; };
+        Object.defineProperty(window, "innerHeight", { configurable: true, get() { return viewport; } });
+        Object.defineProperty(window, "scrollY", { configurable: true, get() { flush(); return at; } });
+        Object.defineProperty(window, "pageYOffset", { configurable: true, get() { flush(); return at; } });
+        Object.defineProperty(window.HTMLElement.prototype, "scrollHeight", { configurable: true, get() {
+          return this === window.document.documentElement || this === window.document.body ? flush() : 0; } });
+        window.scrollTo = (x, y) => {
+          const top = typeof x === "object" && x !== null ? x.top : y;
+          if (typeof top === "number") { at = top; flush(); }
+        };
+        window.Element.prototype.getBoundingClientRect = function () {
+          flush();
+          const box = boxes.get(this);
+          if (!box) return { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0 };
+          return { top: box.top - at, bottom: box.bottom - at, left: 0, right: 100, width: 100, height: box.bottom - box.top, x: 0, y: box.top - at };
+        };
+        if (!scenario.motion) {
+          Object.defineProperty(window.HTMLElement.prototype, "offsetHeight", { configurable: true, get() {
+            flush();
+            const box = boxes.get(this);
+            return box ? box.bottom - box.top : 0;
+          } });
+        }
+        changes.observe(window.document, { subtree: true, childList: true, attributes: true });
       }
       if (scenario.motion) {
         const reduced = Boolean(scenario.motion.reduced);

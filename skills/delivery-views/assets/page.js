@@ -30,5 +30,95 @@ var page = (function () {
     return kind + ":" + String(id);
   }
 
-  return { motion: motion, key: key };
+  // The redraw transaction. A page that rebuilds itself (a tick, a new width, a pushed record) loses the reader's place:
+  // a browser that lays the page out mid-draw, while a part stands short, clamps the window to what it then holds. The
+  // place is kept here, in one transaction around the draw, never in each caller.
+  // The stable keys a place is anchored by: what the record names, never a position on the page.
+  var ANCHOR_KEYS = ["id", "data-subject", "data-ticket", "data-fold"];
+  var drawnThisFrame = false;
+  var waiting = null;
+  // What a redraw is for, and whether it draws at once: something new to say (the page's first record, one read or one
+  // pushed, or a new connection status) is shown at once and makes a merged redraw still waiting needless; a redraw of
+  // what is already said (the clock, a new width, a refresh) merges with the others asked for in its frame.
+  var AT_ONCE = { first: true, read: true, push: true, status: true };
+
+  function root() { return document.getElementById("app") || document.body; }
+  function keyOf(node) {
+    for (var i = 0; i < ANCHOR_KEYS.length; i += 1) {
+      var value = node.getAttribute(ANCHOR_KEYS[i]);
+      if (value) { return { name: ANCHOR_KEYS[i], value: value }; }
+    }
+    return null;
+  }
+  // Matched by attribute value, never by a selector built from record text.
+  function sameKey(within, mark) {
+    return Array.prototype.filter.call(within.querySelectorAll("[" + mark.name + "]"), function (node) { return node.getAttribute(mark.name) === mark.value; });
+  }
+  function shown(box) { return box.bottom > box.top; }
+  /**
+   * The reader's place: the keyed element at the top of the window (the deepest one across its top edge, or else the
+   * first below it) and how far from that edge it sits, with the scroll it was at.
+   */
+  function place() {
+    if (typeof scrollY !== "number") { return null; }
+    var within = root();
+    var across = null, below = null;
+    var nodes = within.querySelectorAll("[" + ANCHOR_KEYS.join("], [") + "]");
+    for (var i = 0; i < nodes.length; i += 1) {
+      var box = nodes[i].getBoundingClientRect();
+      if (!shown(box)) { continue; }
+      if (box.top <= 0 && box.bottom > 0) { across = { node: nodes[i], top: box.top }; } else if (box.top > 0 && !below) { below = { node: nodes[i], top: box.top }; }
+      if (box.top > 0 && below) { break; }
+    }
+    var anchor = across || below;
+    var mark = anchor ? keyOf(anchor.node) : null;
+    if (mark) { mark.nth = sameKey(within, mark).indexOf(anchor.node); mark.top = anchor.top; }
+    return { y: scrollY, mark: mark };
+  }
+  function moveTo(y) {
+    if (typeof scrollTo === "function" && y !== scrollY) { scrollTo({ top: y, behavior: "instant" }); }
+  }
+  /** Puts the reader back: the anchor where it stood, or, with it gone, the same scroll as far as the page now holds. */
+  function keep(at) {
+    if (!at) { return; }
+    if (at.mark) {
+      var same = sameKey(root(), at.mark);
+      var again = same[at.mark.nth] || same[0];
+      var box = again ? again.getBoundingClientRect() : null;
+      if (box && shown(box)) { moveTo(scrollY + box.top - at.mark.top); return; }
+    }
+    if (scrollY === at.y) { return; }
+    var most = document.documentElement.scrollHeight - innerHeight;
+    moveTo(Math.max(0, Math.min(at.y, most)));
+  }
+  function run(draw, why) {
+    // The first draw opens the address the reader came by; there is no place to keep yet.
+    var at = why === "first" ? null : place();
+    try { draw(); } finally {
+      keep(at);
+      if (typeof requestAnimationFrame === "function") {
+        drawnThisFrame = true;
+        requestAnimationFrame(function () { drawnThisFrame = false; });
+      }
+    }
+  }
+  /**
+   * Redraws the page with `draw`, keeping the reader's place. `why` names what asked for it: "first" for the draw that
+   * opens the page, "read" or "push" for a new record, "status" for a new connection status, anything else ("tick",
+   * "width", "runs", "plan") for a redraw of what is already said. Something new draws at once, as does the first redraw
+   * in a frame; any more asked for in that frame merge into one, the last asked, drawn at the next frame unless something
+   * new has been drawn by then.
+   */
+  function redraw(draw, why) {
+    if (typeof draw !== "function") { throw new TypeError("page.redraw needs the page's draw function"); }
+    if (typeof why !== "string" || !why) { throw new TypeError("page.redraw needs a reason"); }
+    if (AT_ONCE[why] === true) { waiting = null; run(draw, why); return; }
+    if (!drawnThisFrame) { run(draw, why); return; }
+    if (!waiting) {
+      requestAnimationFrame(function () { var next = waiting; waiting = null; if (next) { run(next.draw, next.why); } });
+    }
+    waiting = { draw: draw, why: why };
+  }
+
+  return { motion: motion, key: key, redraw: redraw };
 }());

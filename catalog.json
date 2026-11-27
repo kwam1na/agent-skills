@@ -219,7 +219,8 @@
         "On a delivery with an integration target, the line map's count line under the delivery's name reads in two beats naming the target, its drift and the catch-ups, the line runs on past the integration base through the target merged in, the suite, the review and the change request into the target, and a Before it rejoins ledger pins each proof to the head it was taken at and strikes one a newer head supersedes; a delivery without one renders as before.",
         "While a delivery rejoins its target, the line draws that step in place of the epic's post.",
         "Without a git identity in its checkout the local line map's corner shows only the theme switch, and the hosted page never carries one; the files view stays hidden until a branch read lists a file or fails.",
-        "Every view, local and hosted, loads the page controller (assets/page.js) first and asks its one motion check: reduced motion stills everything, and a keyboard reader's own actions do not ease, while a live update still lands for them."
+        "Every view, local and hosted, loads the page controller (assets/page.js) first and asks its one motion check: reduced motion stills everything, and a keyboard reader's own actions do not ease, while a live update still lands for them.",
+        "Every redraw of a delivery view, from a pushed record, the clock, a new width or a refresh, keeps the reader's place through the page controller's one redraw transaction; with the element they read gone, the scroll is kept as far as the page still reaches. The hosted page keeps no scroll of its own."
       ],
       "dependencies": [
         {

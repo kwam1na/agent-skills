@@ -113,11 +113,72 @@ test("page.motion refuses reduced motion always and a key press only for the rea
   expect(asked()).toEqual([true, true]);
   reduced = true;
   expect(asked()).toEqual([false, false]);
-  expect(Object.keys(window.page).sort()).toEqual(["key", "motion"]);
+  expect(Object.keys(window.page).sort()).toEqual(["key", "motion", "redraw"]);
   expect(window.page.key("stop", "PAY-2358")).toBe("stop:PAY-2358");
   expect(window.page.key("decision", 3)).toBe("decision:3");
   for (const [kind, id] of [["", "x"], [5, "x"], [{}, "x"], ["stop", ""], ["stop", undefined], ["stop", null]]) {
     expect((() => { try { window.page.key(kind, id); return null; } catch (error) { return error.name; } })()).toBe("TypeError");
   }
   dom.window.close();
+});
+
+/** page.js alone in a window whose frames are held until `frame()` runs them, and whose scroll the test moves. */
+function controlled() {
+  const frames = [];
+  const view = { at: 0, height: 0 };
+  const dom = new JSDOM('<!doctype html><body><main id="app"></main></body>', { runScripts: "outside-only", beforeParse(window) {
+    window.requestAnimationFrame = (callback) => { frames.push(callback); return frames.length; };
+    Object.defineProperty(window, "scrollY", { configurable: true, get() { return view.at; } });
+    Object.defineProperty(window, "innerHeight", { configurable: true, get() { return 300; } });
+    Object.defineProperty(window.HTMLElement.prototype, "scrollHeight", { configurable: true, get() { return view.height; } });
+    window.scrollTo = ({ top }) => { view.at = top; };
+  } });
+  dom.window.eval(asset("page.js"));
+  const frame = () => frames.splice(0).forEach((callback) => callback(0));
+  return { window: dom.window, view, frame };
+}
+
+test("redraws of the record in use asked for within one frame merge into one at the next frame; a new record or status draws at once", () => {
+  const { window, frame } = controlled();
+  const drawn = [];
+  window.page.redraw(() => drawn.push("tick"), "tick");
+  window.page.redraw(() => drawn.push("runs"), "runs");
+  window.page.redraw(() => drawn.push("width"), "width");
+  expect(drawn).toEqual(["tick"]);
+  frame();
+  expect(drawn).toEqual(["tick", "width"]);
+  // The frame after that is a new one: its first redraw draws at once.
+  frame();
+  window.page.redraw(() => drawn.push("later"), "tick");
+  expect(drawn).toEqual(["tick", "width", "later"]);
+  // A new record or status draws at once, in any frame, and the redraw waiting in that frame is no longer needed.
+  window.page.redraw(() => drawn.push("plan"), "plan");
+  window.page.redraw(() => drawn.push("status"), "status");
+  window.page.redraw(() => drawn.push("pushed"), "push");
+  window.page.redraw(() => drawn.push("pushed again"), "push");
+  frame();
+  expect(drawn).toEqual(["tick", "width", "later", "status", "pushed", "pushed again"]);
+  for (const [draw, why] of [[null, "tick"], [() => {}, ""], [() => {}, undefined]]) {
+    expect((() => { try { window.page.redraw(draw, why); return null; } catch (error) { return error.name; } })()).toBe("TypeError");
+  }
+  window.close();
+});
+
+test("with nothing keyed in view, a redraw puts the scroll back as far as the page now holds it", () => {
+  for (const [height, kept] of [[2000, 800], [500, 200]]) {
+    const { window, view } = controlled();
+    view.at = 800;
+    view.height = 2000;
+    // The draw stands in for a browser that laid the page out short mid-draw, and the page's new height.
+    window.page.redraw(() => { view.at = 0; view.height = height; }, "tick");
+    expect(view.at).toBe(kept);
+    window.close();
+  }
+  // The page's first draw opens its address, and keeps no place.
+  const { window, view } = controlled();
+  view.at = 800;
+  view.height = 2000;
+  window.page.redraw(() => { view.at = 0; }, "first");
+  expect(view.at).toBe(0);
+  window.close();
 });
