@@ -116,7 +116,7 @@ test("page.motion refuses reduced motion always and a key press only for the rea
   expect(Object.keys(window.page).sort()).toEqual(["key", "motion"]);
   expect(window.page.key("stop", "PAY-2358")).toBe("stop:PAY-2358");
   expect(window.page.key("decision", 3)).toBe("decision:3");
-  for (const [kind, id] of [["", "x"], ["stop", ""], ["stop", undefined], ["stop", null]]) {
+  for (const [kind, id] of [["", "x"], [5, "x"], [{}, "x"], ["stop", ""], ["stop", undefined], ["stop", null]]) {
     expect((() => { try { window.page.key(kind, id); return null; } catch (error) { return error.name; } })()).toBe("TypeError");
   }
   dom.window.close();
