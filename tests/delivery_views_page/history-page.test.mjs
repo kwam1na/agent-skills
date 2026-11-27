@@ -31,11 +31,14 @@ test("a first load at a row's id opens that row with its run summary and scrolls
     layout: { height: 200 }, steps: [{ run(window) {
       const box = window.document.getElementById(key).getBoundingClientRect();
       seen.push(window.scrollY > 0, box.top >= 0 && box.top < 200, window.scrollY);
-    } }, { wait: 20 }, { run(window) { seen.push(window.scrollY); } }] });
+    } }, { wait: 20 }, { run(window) { seen.push(window.scrollY); } },
+    // Shut and opened again, the row shows its one summary: it is drawn the first time only.
+    { click: `[id="${key}"] > button` }, { click: `[id="${key}"] > button` }] });
   const row = shown[0].app.querySelector(`[id="${key}"]`);
   expect([row.getAttribute("data-run"), row.querySelector("button").getAttribute("aria-expanded"), row.nextElementSibling.textContent])
     .toEqual([key, "true", golden.details[key].detail]);
   expect(shown[0].app.querySelectorAll('[data-run] > button[aria-expanded="true"]').length).toBe(1);
+  expect(shown.at(-1).app.querySelector(`[id="${key}"]`).nextElementSibling.textContent).toBe(golden.details[key].detail);
   // Placed once: nothing moves it after.
   expect([seen[0], seen[1], seen[3]]).toEqual([true, true, seen[2]]);
 });

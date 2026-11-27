@@ -162,9 +162,9 @@ const PREVIEWS = [
   { live: "127.0.0.1:4101", plan: "b-slug" },
 ];
 
-function renderWithPreviews(previews) {
+function renderWithPreviews(previews, runsCommands = COMMANDS) {
   process.env.DELIVERY_PLAN_PREVIEWS = JSON.stringify(previews);
-  try { return renderRunsPage(ABSENT, { runsCommands: COMMANDS }); } finally { delete process.env.DELIVERY_PLAN_PREVIEWS; }
+  try { return renderRunsPage(ABSENT, { runsCommands }); } finally { delete process.env.DELIVERY_PLAN_PREVIEWS; }
 }
 
 function previewRows(app) {
@@ -290,15 +290,19 @@ test("links away from the runs page are left to the browser", async () => {
 });
 
 const FOCUSABLE = "#app :is(a[href], button, summary, input, select, [tabindex])";
-test("every focusable control on the runs page, with previews and every run open, carries a key", async () => {
+test("every focusable control on the runs page, with previews, every run open and one that can't be read, carries a key", async () => {
   const missing = [];
-  await openPage(renderWithPreviews(PREVIEWS), { steps: [{ run(window) {
+  // AGENT can't be read: its head opens nothing, and is keyed all the same.
+  const unread = Object.fromEntries(Object.entries(COMMANDS).filter(([command]) => command !== `runs show ${AGENT} --json`));
+  let head = null;
+  await openPage(renderWithPreviews(PREVIEWS, unread), { steps: [{ run(window) {
+    head = headOf(window, AGENT).getAttribute("data-key");
     for (const head of window.document.querySelectorAll(".run-head")) head.click();
     for (const node of window.document.querySelectorAll(FOCUSABLE)) {
       if (!node.getAttribute("data-key")) missing.push(`${node.tagName.toLowerCase()}.${(node.getAttribute("class") || "").split(" ")[0]}`);
     }
   } }] });
-  expect(missing).toEqual([]);
+  expect([missing, head]).toEqual([[], `run:${AGENT}`]);
 });
 
 /** Each line of `runs.js` and `history.js` that does what `pattern` finds, as "file:line". */
