@@ -414,3 +414,19 @@ test("a navigation lands where its reason says: an item centred, a chapter at it
   ], { address: "http://localhost/view/line-map.html#plan-decision-3" });
   expect(decided).toEqual({ first: true, unit: true, reference: true });
 });
+
+test("in either layout the rail marks the chapter being read: on opening, on following the scroll, and after a turn", async () => {
+  for (const [layout, stored] of [["paged", {}], ["one-page", ONE_PAGE]]) {
+    const marked = [];
+    const mark = (label) => ({ run(window) {
+      marked.push([label, [...window.document.querySelectorAll('.rail a[aria-current="true"]')].map((link) => link.getAttribute("href"))]);
+    } });
+    const into = (id) => ({ run(window) { window.__observers[0].callback([{ isIntersecting: true, target: window.document.getElementById(id) }]); } });
+    await open(MAIN, [mark("open"), into("now"), mark("read now"), { run: click('.rail a[href="#left"]') }, into("left"), mark("turned"),
+      into("who"), mark("read who")], { stored, observers: true });
+    const want = layout === "paged"
+      ? [["open", ["#now"]], ["read now", ["#now"]], ["turned", ["#left"]], ["read who", ["#left"]]]
+      : [["open", ["#now"]], ["read now", ["#now"]], ["turned", ["#left"]], ["read who", ["#who"]]];
+    expect([layout, marked]).toEqual([layout, want]);
+  }
+});

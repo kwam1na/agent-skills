@@ -462,12 +462,10 @@
   if (typeof IntersectionObserver === "function") {
     var watch = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
-        // Only a new chapter rewrites the address, so a deep link into the chapter being read keeps its item.
+        // Only a new chapter is followed, so a deep link into the chapter being read keeps its item; following it shows
+        // the chapter, which marks it on the rail.
         if (!entry.isIntersecting || PAGED || entry.target.id === page.here().chapter) { return; }
         page.go({ chapter: entry.target.id }, "follow");
-        Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
-          link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + entry.target.id));
-        });
       });
     }, { rootMargin: "-45% 0px -45% 0px" });
     Array.prototype.forEach.call(app.querySelectorAll(".chapter"), function (section) { watch.observe(section); });
@@ -666,11 +664,9 @@
       var on = section.id === id;
       section.hidden = section.classList.contains("is-absent") || (PAGED && !on);
     });
-    if (PAGED) {
-      Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
-        link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + id));
-      });
-    }
+    Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
+      link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + id));
+    });
     nameTab(id);
     tabButton.setAttribute("aria-label", "Chapters: " + chapterName(id));
     var heading = document.querySelector("h1");
