@@ -251,6 +251,9 @@ describe("trusted corpus DOM bridge (behavior only)", () => {
       expect(observers.filter((watching) => watching.observed.includes(plan))).toHaveLength(2);
       expect(plan.classList.contains("arrived")).toBe(false);
       expect(window.document.querySelector('.rail a[href="#plan"]')).not.toBeNull();
+      // It stands where the plan's chapter always does: just before What happened, on the page and on the rail.
+      expect(plan.nextElementSibling?.id).toBe("happened");
+      expect(window.document.querySelector('.rail a[href="#plan"]')!.nextElementSibling?.getAttribute("href")).toBe("#happened");
     } finally {
       window.close();
     }

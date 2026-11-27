@@ -28,7 +28,7 @@ function changed(page, name) {
   return page.replace("</body>", `<script type="application/json" id="delivery-${name}">{}</script></body>`);
 }
 
-/** How many times the page drew itself after it opened: a push, then the runs refresh answering with `answer`. */
+/** How the page drew itself after it opened: a push, then two runs refreshes, each answering with `answer`. */
 async function draws(answer) {
   const reasons = [];
   await openPage(LIVE, { now: NOW, store: undefined, server: { document: corpus() }, rendered: answer, quicker: 1, steps: [
@@ -40,11 +40,13 @@ async function draws(answer) {
     } },
     { event: corpus() },
     { runs: '{"generation": 1}' }, { asked: 1 }, { wait: 30 },
+    // A second refresh finding the same page again: what it took is now in use, so it draws nothing.
+    { runs: '{"generation": 2}' }, { asked: 2 }, { wait: 30 },
   ] });
   return reasons;
 }
 
-test("a push draws the line map once, and the runs refresh that follows draws again only when a block it reads changed", async () => {
+test("a push draws the line map once, and a runs refresh draws again only when a block it reads changed since the last", async () => {
   expect(await draws(LIVE)).toEqual(["push"]);
   for (const name of BLOCKS) {
     expect([name, await draws(changed(LIVE, name))]).toEqual([name, ["push", "runs"]]);
