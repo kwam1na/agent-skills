@@ -201,6 +201,9 @@ export function planEnd(app) {
  * descendants) in a window `height` tall, 300 by default; every layout read clamps the reader's place to what the page then
  * holds, as a browser's does, and `scrollTo` moves it. Read `scrollY` from a `run` step.
  *
+ * `observers: true` gives the page intersection observers that only record what they watch, as `window.__observers`; a
+ * `run` step calls one's `callback` to say what came into view.
+ *
  * `frames: true` gives the page `requestAnimationFrame` with frames held, not run: a `{ frame: <ms> }` step moves the page's
  * `performance.now()` on by that many milliseconds and runs the frames then waiting, once each, so a count that eases
  * from one number to another can be read where it starts, part way and where it ends.
@@ -261,6 +264,18 @@ export async function openPage(page, scenario = {}) {
           if (!this.closest("#plan")) return sized.call(this);
           // The plan's parts span from the page's top to the chapter's end: wholly above the window once it is past them.
           return { bottom: planEnd(window.document.getElementById("app")) - at, top: -at, left: 0, right: 0, width: 0, height: 0 };
+        };
+      }
+      if (scenario.observers) {
+        // Intersection observers the page makes, kept on the window as `__observers`, each { callback, observed }, so a
+        // step can say what came into view.
+        window.__observers = [];
+        window.IntersectionObserver = function (callback) {
+          const observer = { callback, observed: [] };
+          window.__observers.push(observer);
+          this.observe = (node) => observer.observed.push(node);
+          this.unobserve = () => {};
+          this.disconnect = () => {};
         };
       }
       if (scenario.layout) {

@@ -255,6 +255,10 @@ var page = (function () {
     var name = addressed();
     if (here.chapter !== null && sameAddress({ chapter: here.chapter, item: here.item })) { return; }
     var ids = chapterIds();
+    var named = name ? document.getElementById(name) : null;
+    // An address naming something outside every chapter, as the hosted page's skip link to its main does, is the
+    // browser's alone: the reader stays on their chapter.
+    if (here.chapter !== null && ids.indexOf(name) < 0 && named && !chapterHolding(named)) { return; }
     go(ids.indexOf(name) >= 0 ? { chapter: name } : { item: name }, reason);
   }
   /** A same-page link to a chapter, or into one, goes through the controller; any other link is the browser's. */

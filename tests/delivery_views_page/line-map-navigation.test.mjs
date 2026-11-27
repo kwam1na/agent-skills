@@ -118,9 +118,9 @@ test("paged: each page turn adds one history entry; nothing else does", async ()
   const grown = {};
   await open(MAIN, Object.entries({ turn: "line", "back-turn": "now", link: "who", address: "left", history: "happened", layout: "parked",
     first: "line", follow: "who" }).flatMap(([reason, chapter]) => measured(grown, reason, (window) => window.page.go({ chapter }, reason))));
-  expect(Object.fromEntries(Object.entries(grown).map(([reason, entry]) => [reason, [entry.grew, entry.shown]]))).toEqual({
-    turn: [1, "line"], "back-turn": [1, "now"], link: [1, "who"], address: [0, "left"], history: [0, "happened"], layout: [0, "parked"],
-    first: [0, "line"], follow: [0, "who"] });
+  expect(Object.fromEntries(Object.entries(grown).map(([reason, entry]) => [reason, [entry.grew, entry.shown, entry.moves.length]]))).toEqual({
+    turn: [1, "line", 1], "back-turn": [1, "now", 1], link: [1, "who", 1], address: [0, "left", 1], history: [0, "happened", 1],
+    layout: [0, "parked", 1], first: [0, "line", 1], follow: [0, "who", 0] });
 });
 
 test("a tick, a push, an item link within the chapter shown and a link within reach add no entry; one into another chapter adds one, and Back returns", async () => {
@@ -193,6 +193,16 @@ test("a link to the page's own main, as the hosted skip link is, and a link to a
     }
   } }]);
   expect(prevented).toEqual({ skip: false, away: false });
+  // A cmd- or ctrl-click, or a middle click, on a chapter's link is the browser's too: it opens elsewhere.
+  const modified = {};
+  await open(MAIN, [{ run(window) {
+    for (const [name, init] of [["meta", { metaKey: true }], ["ctrl", { ctrlKey: true }], ["middle", { button: 1 }]]) {
+      window.addEventListener("click", (event) => { modified[name] = event.defaultPrevented; event.preventDefault(); }, { once: true });
+      window.document.querySelector('.rail a[href="#line"]').dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
+    }
+    modified.shown = window.document.querySelector(".chapter:not([hidden])").id;
+  } }]);
+  expect(modified).toEqual({ meta: false, ctrl: false, middle: false, shown: "now" });
 });
 
 test("every navigation makes exactly one move, and a link that takes focus takes it without scrolling", async () => {
@@ -316,7 +326,8 @@ test("reasons are data: go names none of them, an unknown one throws, and one de
 });
 
 /** Every scroll or address write in the views' scripts outside page.js, as "file: write". */
-const WRITES = [/scrollTo\b/, /scrollIntoView\b/, /scrollBy\(/, /\.scroll\(/, /scrollTop\s*=[^=]/, /scrollLeft\s*=[^=]/, /location\.hash\s*=[^=]/, /pushState\(/, /replaceState\(/];
+const WRITES = [/scrollTo\b/, /scrollIntoView\b/, /scrollBy\(/, /\.scroll\(/, /scrollTop\s*[-+]?=[^=]/, /scrollLeft\s*[-+]?=[^=]/,
+  /location\.hash\s*=[^=]/, /location\.href\s*=[^=]/, /location\.(replace|assign)\(/, /pushState\(/, /replaceState\(/];
 function writes(sources) {
   const found = [];
   for (const [name, source] of Object.entries(sources)) {
@@ -326,6 +337,8 @@ function writes(sources) {
         if (!pattern.test(line)) continue;
         // The launcher's own list scrolls inside its fixed panel, not the page.
         if (name === "line-map.js" && /row\.scrollIntoView\(\{ block: "nearest" \}\)/.test(line)) continue;
+        // The launcher's history command leaves for another document, as a link away does; it writes no address here.
+        if (name === "line-map.js" && /location\.href = historyHref;/.test(line)) continue;
         found.push(`${name}: ${pattern.source}`);
       }
     }
@@ -344,8 +357,60 @@ test("no asset outside page.js writes the scroll or the address, and no styleshe
   expect(smooth(sheets).length === 0 ? "" : `${smooth(sheets).join(", ")} scrolls smoothly: page.go asks page.motion(true) for an item`).toBe("");
   // Each pin is shown red by a write planted in the line map.
   for (const planted of ["window.scrollTo(0, 0);", "node.scrollIntoView();", "box.scrollBy(1, 0);", "window.scroll(0, 0);", "box.scrollTop = 1;",
-    "box.scrollLeft = 1;", "location.hash = id;", "history.pushState(null, \"\", \"#x\");", "history.replaceState(null, \"\", \"#x\");"]) {
+    "box.scrollLeft = 1;", "box.scrollTop += 1;", "box.scrollLeft -= 1;", "location.hash = id;", "location.href = \"#x\";", "location.replace(\"#x\");",
+    "location.assign(\"#x\");", "history.pushState(null, \"\", \"#x\");", "history.replaceState(null, \"\", \"#x\");"]) {
     expect([planted, writes({ ...scripts, "line-map.js": `${scripts["line-map.js"]}\n${planted}` }).length]).toEqual([planted, 1]);
   }
   expect(smooth({ ...sheets, "line-map.css": `${sheets["line-map.css"]}\nhtml { scroll-behavior: smooth; }` })).toEqual(["line-map.css"]);
+});
+
+test("one-page: following the scroll moves nothing, adds no entry, and rewrites the address only for a new chapter", async () => {
+  const seen = {};
+  // The first observer the page makes is the one that follows the chapter being read.
+  const into = (id) => (window) => window.__observers[0].callback([{ isIntersecting: true, target: window.document.getElementById(id) }]);
+  await open(DECIDED, [
+    ...measured(seen, "plan", into("plan")),
+    { run(window) { seen.item = window.page.here().item; } },
+    ...measured(seen, "left", into("left")),
+  ], { stored: ONE_PAGE, observers: true, address: "http://localhost/view/line-map.html#plan-decision-3" });
+  // Read into the chapter a deep link opened: the address keeps its item.
+  expect([seen.plan.moves, seen.plan.grew, seen.plan.hash, seen.item]).toEqual([[], 0, "#plan-decision-3", "plan-decision-3"]);
+  expect([seen.left.moves, seen.left.grew, seen.left.hash]).toEqual([[], 0, "#left"]);
+});
+
+test("an address naming something outside every chapter, as the hosted skip link's does, leaves the reader's chapter alone", async () => {
+  const seen = {};
+  await open(MAIN, [
+    ...measured(seen, "to who", click('.rail a[href="#who"]')),
+    ...measured(seen, "skip", outside("#app")),
+  ]);
+  expect([seen.skip.shown, seen.skip.moves, seen.skip.hash]).toEqual(["who", [], "#app"]);
+});
+
+/** Whether a node stands centred in the window, or as near as the page lets it (at the page's top or end). */
+function centred(window, node) {
+  const box = node.getBoundingClientRect();
+  const most = window.document.documentElement.scrollHeight - window.innerHeight;
+  const want = Math.max(0, (window.innerHeight - (box.bottom - box.top)) / 2);
+  return Math.abs(box.top - want) < 1 || (window.scrollY === most && box.top > want) || (window.scrollY === 0 && box.top < want);
+}
+
+test("a navigation lands where its reason says: an item centred, a chapter at its top, a first open on the item it names", async () => {
+  const at = {};
+  await open(MAIN, [
+    { run(window) { click('.rail a[href="#left"]')(window); click("#left .left-title")(window); } },
+    { run(window) { at.row = [window.document.querySelector(".chapter:not([hidden])").id, centred(window, window.document.querySelector('#line .stop-btn.on, #line .stop-btn[aria-pressed="true"]') ?? window.document.querySelector("#line .stop-btn"))]; } },
+    { run(window) { click('.rail a[href="#who"]')(window); click(".chapter-tab-layout")(window); } },
+    { run(window) { at.layout = window.document.getElementById("who").getBoundingClientRect().top; } },
+  ]);
+  expect(at).toEqual({ row: ["line", true], layout: 0 });
+  const decided = {};
+  await open(DECIDED, [
+    { run(window) { decided.first = centred(window, window.document.getElementById("plan-decision-3")); } },
+    { run(window) { window.document.querySelector('.stop-btn[data-subject="SHOP-92"]').click(); window.document.querySelector("#detail .d-plan").click(); } },
+    { run(window) { decided.unit = centred(window, window.document.activeElement); } },
+    { run(window) { click("#plan .pd-ref")(window); } },
+    { run(window) { decided.reference = centred(window, window.document.getElementById("plan-decision-1")); } },
+  ], { address: "http://localhost/view/line-map.html#plan-decision-3" });
+  expect(decided).toEqual({ first: true, unit: true, reference: true });
 });

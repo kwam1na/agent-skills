@@ -214,11 +214,11 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "65813c1ccde2464c03cb5e3b85d426382f8fda9a7fcab2a3443c28e519903d9c"
+          "sha256": "f566e2ce0ff3e08069f3a490b51f4d03c3d2bdabc812faf1ce6bc4b345cffb4c"
         },
         {
           "path": "skills/delivery-views/assets/page.js",
-          "sha256": "161291ce2fa6f3aa0a00fcc3bee2ae033b5fc4d0362f71a1b07d1a596ee259ee"
+          "sha256": "95f7ed3c71fb66ece8e27e1d36d968e014a91b5b3d6dceedf2ac9978386998bc"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",

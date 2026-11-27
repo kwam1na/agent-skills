@@ -462,7 +462,8 @@
   if (typeof IntersectionObserver === "function") {
     var watch = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
-        if (!entry.isIntersecting || PAGED) { return; }
+        // Only a new chapter rewrites the address, so a deep link into the chapter being read keeps its item.
+        if (!entry.isIntersecting || PAGED || entry.target.id === page.here().chapter) { return; }
         page.go({ chapter: entry.target.id }, "follow");
         Array.prototype.forEach.call(rail.querySelectorAll("a"), function (link) {
           link.setAttribute("aria-current", String(link.getAttribute("href") === "#" + entry.target.id));
