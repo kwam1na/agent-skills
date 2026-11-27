@@ -103,7 +103,10 @@ layout nothing does, so Back leaves the page. Every navigation moves the page
 once.
 A live page reads its run summaries again from the view the server renders
 three seconds after each pushed record, every 30 seconds, and at once on each
-`event: runs`, which the server sends only after the views are written. Every
+`event: runs`, which the server sends only after the views are written, and
+redraws only when one of the seven blocks it reads (runs, links, reviews, needs,
+files, left-open and integration) has changed. What happened eases its height
+only when the reader changes its depth or filter. Every
 redraw, whether a pushed record, the clock, a new width or a refresh, keeps the
 reader's place: the element at the top of the window stays where it stood, or,
 with it gone, the scroll stays as far as the page still reaches. A new record

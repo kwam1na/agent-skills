@@ -271,6 +271,14 @@ class BuildAssetsTests(unittest.TestCase):
     def scroll_writes(source):
         return [word for word in ('hostedY', 'scrollTo', 'scrollY', 'scrollIntoView') if word in source]
 
+    def test_the_build_makes_no_chapter_of_its_own(self):
+        source = self.BUILD.read_text(encoding='utf-8')
+        hand_built = [word for word in ('el("section", "chapter', 'chapter-plan arrived') if word in source]
+        self.assertEqual(hand_built, [], 'a chapter is made by the page (chapter("plan") in line-map.js), watched and arriving like the others')
+        planted = source + '\n// var section = el("section", "chapter chapter-plan arrived");\n'
+        self.assertEqual([word for word in ('el("section", "chapter', 'chapter-plan arrived') if word in planted],
+                         ['el("section", "chapter', 'chapter-plan arrived'])
+
     def test_the_build_keeps_no_scroll_of_its_own(self):
         source = self.BUILD.read_text(encoding='utf-8')
         self.assertEqual(self.scroll_writes(source), [],

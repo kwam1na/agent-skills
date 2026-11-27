@@ -478,6 +478,15 @@
     return section;
   }
   CHAPTERS.forEach(function (chapter) { chapterOf(chapter); });
+  /**
+   * A chapter the page makes when it first has something to show there, as the plan when a plan first arrives: made as
+   * every chapter is, watched and arriving like the others. Returns its section.
+   */
+  function chapter(id) {
+    if (parts[id]) { return parts[id].parentNode; }
+    if (id === "plan") { return chapterOf(["plan", "The plan"], "happened"); }
+    return null;
+  }
   // The history page, when the binding declares one: served live at /view/<output>, beside the page as a file.
   // It sits in the chapter tab, below the chapters (see the corner's tab).
   var historyHref = typeof VIEW.history === "string" && VIEW.history
@@ -3768,26 +3777,37 @@
   // A push redraws at once; the runs come from the view the server renders after it. The server's word that the runs
   // moved comes once their views are written, so that re-read waits for nothing.
   var runsAsked = null;
+  // The blocks a refresh reads, and each as the page now has it, so a refresh that finds nothing new draws nothing.
+  var REFRESHED = ["runs", "links", "reviews", "needs", "files", "left-open", "integration"];
+  var inUse = {};
+  REFRESHED.forEach(function (name) {
+    var block = document.getElementById("delivery-" + name);
+    inUse[name] = block ? block.textContent : null;
+  });
   function refreshRuns(wait) {
     if (typeof fetch !== "function" || typeof location !== "object" || !/^https?:$/.test(location.protocol)) { return; }
     clearTimeout(runsAsked);
     runsAsked = setTimeout(function () {
       fetch(location.href, { cache: "no-store" }).then(function (answer) { return answer.text(); }).then(function (page) {
-        var found = /<script type="application\/json" id="delivery-runs">([^<]*)<\/script>/.exec(page);
-        var next = found ? JSON.parse(found[1]) : null;
-        var linked = /<script type="application\/json" id="delivery-links">([^<]*)<\/script>/.exec(page);
-        if (linked) { readLinks(JSON.parse(linked[1])); }
-        var reviews = /<script type="application\/json" id="delivery-reviews">([^<]*)<\/script>/.exec(page);
-        if (reviews) { nativeReviews = JSON.parse(reviews[1]); }
-        var listed = /<script type="application\/json" id="delivery-needs">([^<]*)<\/script>/.exec(page);
-        NEEDS = listed ? readNeeds(listed[1]) : null;
-        var pushed = /<script type="application\/json" id="delivery-files">([^<]*)<\/script>/.exec(page);
-        FILES = pushed ? readNeeds(pushed[1]) : null;
-        var opened = /<script type="application\/json" id="delivery-left-open">([^<]*)<\/script>/.exec(page);
-        LEFT_OPEN = opened ? readNeeds(opened[1]) : null;
-        var drifted = /<script type="application\/json" id="delivery-integration">([^<]*)<\/script>/.exec(page);
-        FORGE = drifted ? readForge(drifted[1]) : null;
-        if (isObject(next)) { runs = next; safely(lastGood || shown, "runs"); }
+        // The seven blocks the served page carries for the line map, each read as written: only one that differs from the
+        // block in use is taken, and the page redraws only when one did.
+        var read = {};
+        REFRESHED.forEach(function (name) {
+          var found = new RegExp('<script type="application/json" id="delivery-' + name + '">([^<]*)<\\/script>').exec(page);
+          read[name] = found ? found[1] : null;
+        });
+        var changed = REFRESHED.filter(function (name) { return read[name] !== inUse[name]; });
+        if (!changed.length) { return; }
+        changed.forEach(function (name) { inUse[name] = read[name]; });
+        var next = read.runs !== null ? JSON.parse(read.runs) : null;
+        if (read.links !== null) { readLinks(JSON.parse(read.links)); }
+        if (read.reviews !== null) { nativeReviews = JSON.parse(read.reviews); }
+        NEEDS = read.needs !== null ? readNeeds(read.needs) : null;
+        FILES = read.files !== null ? readNeeds(read.files) : null;
+        LEFT_OPEN = read["left-open"] !== null ? readNeeds(read["left-open"]) : null;
+        FORGE = read.integration !== null ? readForge(read.integration) : null;
+        if (isObject(next)) { runs = next; }
+        safely(lastGood || shown, "runs");
       }).catch(function () { /* the runs already shown stay */ });
     }, typeof wait === "number" ? wait : 3000);
   }
@@ -5531,9 +5551,10 @@
     });
     return legend.childNodes.length ? legend : null;
   }
-  function drawHappened(doc) {
+  /** What happened; `eased` when the reader changed its depth or filter, the one change its height eases for. */
+  function drawHappened(doc, eased) {
     var inner = parts.happened;
-    var from = runHeldHeight(inner);
+    var from = eased ? runHeldHeight(inner) : null;
     var story = storyOf(doc);
     if (!story) {
       inner.replaceChildren(el("div", "kicker", "What happened"), el("h2", "title", "The story could not be told from this record."));
@@ -5591,8 +5612,9 @@
     add(inner, el("div", "kicker", "What happened"), el("h2", "title", text(digest.head)),
       say ? el("p", "say", say) : null, storyLegend(story, depth), switches,
       ledger && ledger.length && (storyFilter === "all" || storyFilter === "problems") ? setbackLedger(ledger) : null, ol);
-    // Depth changes density in place: the chapter eases from the height it had, on the shared fold's motion.
-    runEaseHeight(inner, from);
+    // Depth changes density in place: the chapter eases from the height it had, on the shared fold's motion. A redraw
+    // the reader didn't ask for keeps its height still.
+    if (eased) { runEaseHeight(inner, from); }
   }
   /**
    * Before anything has happened: no switches over an empty list, just what the chapter will tell and the marks it
@@ -5699,7 +5721,7 @@
       button.setAttribute("aria-pressed", String(current === option[0]));
       button.setAttribute("data-" + data, option[0]);
       // Drawn again through the page's one redraw transaction, which brings focus back to the button by its key.
-      button.addEventListener("click", function () { pick(option[0]); page.redraw(function () { drawHappened(shown); }, "reader"); });
+      button.addEventListener("click", function () { pick(option[0]); page.redraw(function () { drawHappened(shown, true); }, "reader"); });
       group.appendChild(button);
     });
     return group;

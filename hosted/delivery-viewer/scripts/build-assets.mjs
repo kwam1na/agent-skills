@@ -45,13 +45,8 @@ patch(
     FILES = payload.files ? readNeeds(JSON.stringify(payload.files)) : null;
     LEFT_OPEN = payload.leftOpen ? readNeeds(JSON.stringify(payload.leftOpen)) : null;
     FORGE = payload.integration ? readForge(JSON.stringify(payload.integration)) : null;
-    if (PLAN && !parts.plan) {
-      var section = el("section", "chapter chapter-plan arrived"); section.id = "plan";
-      parts.plan = el("div", "inner"); section.appendChild(parts.plan);
-      app.insertBefore(section, parts.happened.parentElement);
-      var link = el("a"); link.setAttribute("href", "#plan"); link.setAttribute("aria-label", "The plan");
-      add(link, el("span", null, "The plan"), el("i")); rail.insertBefore(link, rail.querySelector('[href="#happened"]'));
-    }
+    // A plan first published mid-visit gets its chapter as every chapter is made: watched, and arriving like the others.
+    if (PLAN) { chapter("plan"); }
     if (parts.plan) { parts.plan.parentElement.hidden = !PLAN; rail.querySelector('[href="#plan"]').hidden = !PLAN; }
   }
   safely(embedded, "first");
