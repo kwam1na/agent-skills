@@ -352,3 +352,13 @@ test("two of the reader's own redraws in one frame both draw at once", () => {
   expect(drawn).toEqual(["first", "second"]);
   window.close();
 });
+
+/** Each view script that would end the inline script it is drawn into, as render.py inlines every one. */
+const closesScript = (sources) => Object.entries(sources).filter(([, source]) => /<\/script/i.test(source)).map(([name]) => name);
+test("no delivery-views script holds a literal </script>, which would end the script tag it is inlined into", () => {
+  const assets = path.join(ROOT, "skills", "delivery-views", "assets");
+  const sources = Object.fromEntries(readdirSync(assets).filter((name) => name.endsWith(".js")).map((name) => [name, readFileSync(path.join(assets, name), "utf8")]));
+  const planted = closesScript({ ...sources, "runs.js": `${sources["runs.js"]}\nvar end = "</script>";` });
+  expect([closesScript(sources), planted].map((names) => names.length ? `${names.join(", ")}: write <\\/script> in a string or pattern, as the HTML parser ends the script at </script>` : ""))
+    .toEqual(["", "runs.js: write <\\/script> in a string or pattern, as the HTML parser ends the script at </script>"]);
+});

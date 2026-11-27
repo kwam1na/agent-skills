@@ -410,7 +410,8 @@ var page = (function () {
     };
     [details, region, options.of].forEach(function (holder) { if (holder && folds) { folds.set(holder, entry); } });
     var want = record.get();
-    if (want === true || want === false) { show(want); }
+    // A disclosure is drawn as the store has it, or shut, its button and region saying the same.
+    if (want === true || want === false) { show(want); } else if (!details) { show(isOpen()); }
     if (isOpen() && typeof options.onOpen === "function") { options.onOpen(); }
     var closing = false;
     if (details) {
