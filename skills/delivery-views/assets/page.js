@@ -115,12 +115,11 @@ var page = (function () {
     moveTo(Math.max(0, Math.min(at.y, most)));
   }
   // Focus by key: the control focused before a redraw is found again by its data-key, in the same region: the nearest
-  // holder a page names with data-region (the checking box, a stop's label), within the nearest holder with an id (the
-  // detail panel, a chapter). A ticket in the panel, under its stop and in the checking box are told apart.
+  // holder a page names with data-region (the line map's checking box), and the nearest holder with an id (the detail
+  // panel, a chapter). The same ticket in the panel, in the checking box and elsewhere in its chapter are told apart.
   function regionOf(node) {
     var named = node.parentElement ? node.parentElement.closest("[data-region]") : null;
     var holder = node.parentElement ? node.parentElement.closest("[id]") : null;
-    if (named && holder && !holder.contains(named)) { named = null; }
     return (named ? named.getAttribute("data-region") + "@" : "") + (holder ? holder.id : "");
   }
   function focusMark() {

@@ -270,8 +270,7 @@ test("a ticket focused in the checking box comes back to the checking box, not t
 function regionOf(node) {
   const named = node.parentElement?.closest("[data-region]");
   const holder = node.parentElement?.closest("[id]");
-  const kept = named && holder && holder.contains(named) ? named : null;
-  return (kept ? kept.getAttribute("data-region") + "@" : "") + (holder ? holder.id : "");
+  return (named ? named.getAttribute("data-region") + "@" : "") + (holder ? holder.id : "");
 }
 // Two controls share a key only when they stand for the same thing in two places (a ticket named twice in the feed):
 // then they say the same thing. A key a kind gives every member alike would put different words under one key.
@@ -332,4 +331,31 @@ test("a reader past a control keyed only by data-key keeps their place when a ro
   await openPage(REVIEWED, { now: NOW, store: {}, frames: true, steps: [{ frame: 16 },
     { run(window) { rows.tabbable = [...window.document.querySelectorAll("#parked ol.aside > li")].map((row) => row.hasAttribute("tabindex")); } }] });
   expect(rows.tabbable.every((tabbable) => tabbable === false)).toBe(true);
+});
+
+test("each shared file's button is keyed by its own path, and the plan unit button redraws the plan through page.redraw", async () => {
+  const lane = (id, title) => ({ id, title, focus: "", state: "working", waitingOn: null, since: "2026-11-18T10:00:00Z" });
+  const span = (laneId, path, start, end) => ({ lane: laneId, path, baseHead: "a".repeat(40), start, end });
+  const document = { state: { meta: { headline: "Files" }, queue: [], lanes: [lane("lane-1", "One"), lane("lane-2", "Two")],
+    planned: [{ subject: "S-1", lane: "lane-1", stage: "building" }, { subject: "S-2", lane: "lane-2", stage: "building" }],
+    laneOwnership: { "lane-1": ["src/*"], "lane-2": ["src/*"] },
+    laneRegions: [span("lane-1", "src/a.py", 1, 20), span("lane-2", "src/a.py", 20, 41), span("lane-1", "src/b.py", 1, 5), span("lane-2", "src/b.py", 5, 11)] },
+    journal: [] };
+  const files = { spec: "delivery-lane-changes/1", at: "2026-11-18T11:59:30Z", base: "b".repeat(40), lanes: {},
+    files: [{ path: "src/a.py", lines: 40, spans: [{ lane: "lane-1", start: 1, end: 20 }, { lane: "lane-2", start: 20, end: 41 }] },
+      { path: "src/b.py", lines: 10, spans: [{ lane: "lane-1", start: 1, end: 5 }, { lane: "lane-2", start: 5, end: 11 }] }] };
+  const [shown] = await openPage(renderPage(document, { config: { spec: "delivery-views-config/1" }, files }), { now: "2026-11-18T12:00:00Z" });
+  expect([...shown.app.querySelectorAll("button.file.shared")].map((button) => button.getAttribute("data-key")).sort()).toEqual(["file:src/a.py", "file:src/b.py"]);
+  // PAY-1 is proven, so its unit button draws the plan's units again to reach it: through the page's redraw, as the reader's.
+  const { document: planned, plan } = recordOnlyDelivery();
+  const reasons = [];
+  await openPage(pageWithRuns(planned, {}, { config: CONFIG, plan }), { now: "2026-10-30T12:00:00Z", store: false, steps: [
+    { click: ':is(.stop-btn, .mg-tick)[data-subject="PAY-1"]' },
+    { run(window) {
+      const redraw = window.page.redraw;
+      window.page.redraw = (draw, why) => { reasons.push(why); return redraw(draw, why); };
+      window.document.querySelector("#detail .d-plan").click();
+    } },
+  ] });
+  expect(reasons).toEqual(["reader"]);
 });
